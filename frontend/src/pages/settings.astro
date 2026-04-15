@@ -888,7 +888,7 @@ if (me.totp_enabled) {
         <h2 class="text-xl font-semibold text-zinc-100 mb-4 border-b border-zinc-800 pb-2">Security</h2>
         <form id="password-form" class="space-y-6 max-w-md">
           <div class="space-y-4">
-            <div class="space-y-2">
+            {me.has_password && <div class="space-y-2">
               <label for="current_password" class="block text-sm font-medium text-zinc-400">Current Password</label>
               <div class="relative group/field">
                 <input
@@ -912,7 +912,7 @@ if (me.totp_enabled) {
                   </svg>
                 </button>
               </div>
-            </div>
+            </div>}
             <div class="space-y-2">
               <label for="new_password" class="block text-sm font-medium text-zinc-400">New Password</label>
               <div class="relative group/field">
@@ -1816,7 +1816,7 @@ if (me.totp_enabled) {
       e.preventDefault();
 
       const formData = new FormData(form);
-      const current_password = formData.get('current_password');
+      const current_password = formData.get('current_password') || null;
       const new_password = formData.get('new_password');
       const confirm_password = formData.get('confirm_password');
 

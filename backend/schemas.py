@@ -17,6 +17,7 @@ class User(UserBase):
     display_name: str
     totp_enabled: bool = False
     email_confirmed: bool = True
+    has_password: bool = True
     created_at: datetime
 
     class Config:
@@ -131,7 +132,7 @@ class UserSettings(BaseModel):
         from_attributes = True
 
 class PasswordUpdate(BaseModel):
-    current_password: str
+    current_password: Optional[str] = None
     new_password: str
 
 class WatchEventCreate(BaseModel):

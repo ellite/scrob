@@ -13,7 +13,7 @@ class User(Base):
     id            : Mapped[int]            = mapped_column(Integer, primary_key=True)
     email         : Mapped[str]            = mapped_column(String(255), unique=True, nullable=False)
     username      : Mapped[str]            = mapped_column(String(100), unique=True, nullable=False)
-    password_hash : Mapped[str]            = mapped_column(String(255), nullable=False)
+    password_hash : Mapped[Optional[str]]  = mapped_column(String(255), nullable=True)
     api_key       : Mapped[str]            = mapped_column(String(64), unique=True, nullable=False)
     role          : Mapped[UserRole]       = mapped_column(Enum(UserRole), nullable=False, default=UserRole.user)
     email_confirmed : Mapped[bool]           = mapped_column(Boolean, nullable=False, default=True, server_default="true")
@@ -27,6 +27,10 @@ class User(Base):
         if self.profile and self.profile.display_name:
             return self.profile.display_name
         return self.username
+
+    @property
+    def has_password(self) -> bool:
+        return self.password_hash is not None
 
     settings          : Mapped[Optional["UserSettings"]]   = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
     profile           : Mapped[Optional["UserProfileData"]] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")

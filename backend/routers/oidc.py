@@ -129,7 +129,7 @@ async def oidc_exchange(
         user = User(
             email=str(identifier),
             username=username,
-            password_hash=get_password_hash(secrets.token_urlsafe(32)),
+            password_hash=None,
             api_key=secrets.token_urlsafe(32),
         )
         db.add(user)
