@@ -25,7 +25,7 @@ from dependencies import get_current_user
 router = APIRouter()
 
 BATCH_SIZE = 500
-TMDB_CONCURRENCY = 10  # Max concurrent TMDB requests
+TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
 # asyncpg hard limit is 32767 parameters per query; stay well under it
 _MAX_IN_PARAMS = 30_000
 

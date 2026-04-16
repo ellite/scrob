@@ -1038,6 +1038,23 @@ if (me.totp_enabled) {
   </div>
 
   <!-- Delete Confirmation Modal -->
+  <div id="heal-modal" class="fixed inset-0 bg-zinc-950/80 backdrop-blur-sm z-[100] hidden items-center justify-center p-4">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+      <h2 class="text-2xl font-bold text-zinc-100 mb-2">Heal missing metadata?</h2>
+      <p class="text-zinc-400 mb-8 text-sm leading-relaxed">
+        This will re-fetch posters and dates for collection items that are missing them. It runs in the background and may take a few minutes.
+      </p>
+      <div class="flex gap-3">
+        <button type="button" id="cancel-heal" class="flex-1 px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-bold rounded-xl transition-all cursor-pointer">
+          Cancel
+        </button>
+        <button type="button" id="confirm-heal" class="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-zinc-100 font-bold rounded-xl transition-all cursor-pointer">
+          Heal
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div id="delete-modal" class="fixed inset-0 bg-zinc-950/80 backdrop-blur-sm z-[100] hidden items-center justify-center p-4">
     <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
       <h2 class="text-2xl font-bold text-zinc-100 mb-2">Are you sure?</h2>
@@ -1936,9 +1953,24 @@ if (me.totp_enabled) {
 
   function setupHealButton() {
     const btn = document.getElementById('heal-btn');
-    if (!btn) return;
-    btn.addEventListener('click', async () => {
-      if (!confirm('This will re-fetch missing posters and dates for your entire collection. It runs in the background and may take a few minutes. Continue?')) return;
+    const modal = document.getElementById('heal-modal');
+    const cancelBtn = document.getElementById('cancel-heal');
+    const confirmBtn = document.getElementById('confirm-heal');
+    if (!btn || !modal || !cancelBtn || !confirmBtn) return;
+
+    btn.addEventListener('click', () => {
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    });
+
+    confirmBtn.addEventListener('click', async () => {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
       btn.disabled = true;
       const originalText = btn.textContent;
       btn.textContent = 'Healing...';
