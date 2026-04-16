@@ -348,7 +348,7 @@ async def get_public_profile(
         .join(Media, WatchEvent.media_id == Media.id)
         .where(WatchEvent.user_id == user_id, Media.media_type == "movie")
         .order_by(WatchEvent.watched_at.desc())
-        .limit(6)
+        .limit(12)
     )
     recently_watched_movies = [
         {
@@ -368,7 +368,7 @@ async def get_public_profile(
         .outerjoin(ShowModel, Media.show_id == ShowModel.id)
         .where(WatchEvent.user_id == user_id, Media.media_type == "episode")
         .order_by(WatchEvent.watched_at.desc())
-        .limit(6)
+        .limit(12)
     )
     recently_watched_shows = [
         {
@@ -397,7 +397,7 @@ async def get_public_profile(
             Rating.rating.isnot(None),
         )
         .order_by(Rating.rating.desc())
-        .limit(8)
+        .limit(16)
     )
     top_rated_movies = [
         {
@@ -422,7 +422,7 @@ async def get_public_profile(
             Rating.rating.isnot(None),
         )
         .order_by(Rating.rating.desc())
-        .limit(8)
+        .limit(16)
     )
     top_rated_shows = [
         {
