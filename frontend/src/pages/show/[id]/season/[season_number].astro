@@ -57,7 +57,14 @@ const show = season?.show;
         <div class="flex flex-col md:flex-row gap-8 lg:gap-12 mb-16">
           <div class="w-56 shrink-0 mx-auto md:mx-0">
             <div class="aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 bg-zinc-900 ring-1 ring-white/10">
-              <img src={season.poster_path || show?.poster_path} alt={season.name} class="w-full h-full object-cover" />
+              {(season.poster_path || show?.poster_path) ? (
+                <img src={season.poster_path || show?.poster_path} alt={season.name} class="w-full h-full object-cover" />
+              ) : (
+                <div class="w-full h-full flex flex-col items-center justify-center text-zinc-400 p-4 text-center">
+                  <span class="text-4xl mb-2">📺</span>
+                  <span class="text-sm font-medium">No Poster Available</span>
+                </div>
+              )}
             </div>
           </div>
 
