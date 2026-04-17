@@ -195,7 +195,14 @@ const originalLanguage = show?.original_language
                     <a href={`/show/${show.tmdb_id}/season/${seasonNum}`} class="flex gap-6 block mb-4 active:opacity-70 transition-opacity duration-100">
                         <div class="w-28 shrink-0">
                             <div class="aspect-[2/3] rounded-2xl overflow-hidden border border-zinc-800 shadow-lg group-hover/season:ring-2 group-hover/season:ring-blue-500/50 transition-all duration-500">
-                                <img src={poster} alt={s.name} class="w-full h-full object-cover group-hover/season:scale-110 transition-transform duration-700" />
+                                {poster ? (
+                                    <img src={poster} alt={s.name} class="w-full h-full object-cover group-hover/season:scale-110 transition-transform duration-700" />
+                                ) : (
+                                    <div class="w-full h-full bg-zinc-900 flex flex-col items-center justify-center text-zinc-500 gap-1">
+                                        <span class="text-3xl">📺</span>
+                                        <span class="text-[10px] font-bold uppercase tracking-widest">No Poster</span>
+                                    </div>
+                                )}
                             </div>
                         </div>
                         <div class="flex-1 py-2">
