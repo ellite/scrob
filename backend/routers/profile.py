@@ -766,7 +766,55 @@ async def get_user_stats(
         for i in range(7)
     ]
 
-    # Rating date filters mirror the watch event date filters but on rated_at
+    # ── Genre Activity ───────────────────────────────────────────────────────
+    # Movies Genres
+    movie_genres_q = await db.execute(
+        select(Media.tmdb_data["genres"])
+        .join(WatchEvent, WatchEvent.media_id == Media.id)
+        .where(
+            WatchEvent.user_id == user_id,
+            Media.media_type == "movie",
+            Media.tmdb_data["genres"].isnot(None),
+            *date_filters
+        )
+    )
+    movie_genre_counts = {}
+    for (genres_list,) in movie_genres_q.all():
+        if genres_list:
+            for g in genres_list:
+                movie_genre_counts[g] = movie_genre_counts.get(g, 0) + 1
+
+    # Shows Genres
+    show_genres_q = await db.execute(
+        select(ShowModel.tmdb_data["genres"])
+        .join(Media, Media.show_id == ShowModel.id)
+        .join(WatchEvent, WatchEvent.media_id == Media.id)
+        .where(
+            WatchEvent.user_id == user_id,
+            Media.media_type == "episode",
+            ShowModel.tmdb_data["genres"].isnot(None),
+            *date_filters
+        )
+    )
+    show_genre_counts = {}
+    for (genres_list,) in show_genres_q.all():
+        if genres_list:
+            for g in genres_list:
+                show_genre_counts[g] = show_genre_counts.get(g, 0) + 1
+
+    top_movie_genres = sorted(
+        [{"name": k, "count": v} for k, v in movie_genre_counts.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )[:10]
+
+    top_show_genres = sorted(
+        [{"name": k, "count": v} for k, v in show_genre_counts.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )[:10]
+
+    # ── Rating date filters mirror the watch event date filters but on rated_at
     rating_date_filters = []
     if since:
         rating_date_filters.append(Rating.rated_at >= since)
@@ -864,6 +912,8 @@ async def get_user_stats(
         "rating_distribution": rating_distribution,
         "avg_movie_rating": avg_movie_rating,
         "avg_show_rating": avg_show_rating,
+        "top_movie_genres": top_movie_genres,
+        "top_show_genres": top_show_genres,
         # Collection
         "movies_collected": movies_collected,
         "shows_collected": shows_collected,

@@ -33,7 +33,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
         </div>
         <h2 class="text-2xl font-black text-zinc-100 mb-2">Access Restricted</h2>
         <p class="text-zinc-400 font-medium mb-8">{accessError}</p>
-        <a href="/" class="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-xl transition-all inline-block">
+        <a href="/" class="px-6 py-3 bg-sky-600 hover:bg-sky-500 text-white font-black rounded-xl transition-all inline-block">
           Return Home
         </a>
       </div>
@@ -66,7 +66,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
       <section>
         <div class="flex items-center justify-between gap-4 flex-wrap mb-6">
           <h2 class="text-2xl font-black text-zinc-100 tracking-tighter uppercase flex items-center gap-3">
-            <span class="w-1.5 h-6 bg-blue-600 rounded-full"></span>
+            <span class="w-1.5 h-6 bg-sky-600 rounded-full"></span>
             Watching
           </h2>
           <div class="flex items-center gap-2">
@@ -98,6 +98,25 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
             <div id="activity-chart" class="h-40 animate-pulse bg-zinc-800/50 rounded-xl"></div>
           </div>
 
+          <!-- Most watched genres -->
+          <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
+            <h3 class="text-xs font-black text-zinc-500 uppercase tracking-[0.2em] mb-5">Most Watched Genres</h3>
+            <div id="genres-container" class="grid grid-cols-1 md:grid-cols-2 gap-8 animate-pulse">
+              <div class="space-y-3">
+                <div class="h-3 w-20 bg-zinc-800 rounded"></div>
+                <div class="space-y-2">
+                  {[...Array(5)].map(() => <div class="h-8 bg-zinc-800/50 rounded-xl"></div>)}
+                </div>
+              </div>
+              <div class="space-y-3">
+                <div class="h-3 w-20 bg-zinc-800 rounded"></div>
+                <div class="space-y-2">
+                  {[...Array(5)].map(() => <div class="h-8 bg-zinc-800/50 rounded-xl"></div>)}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Watch time breakdown -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
             <h3 class="text-xs font-black text-zinc-500 uppercase tracking-[0.2em] mb-5">Watch Time</h3>
@@ -107,12 +126,6 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
             </div>
           </div>
 
-          <!-- Rating distribution -->
-          <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
-            <h3 class="text-xs font-black text-zinc-500 uppercase tracking-[0.2em] mb-5">Rating Distribution</h3>
-            <div id="rating-chart" class="h-36 animate-pulse bg-zinc-800/50 rounded-xl"></div>
-          </div>
-
           <!-- Avg ratings -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
             <h3 class="text-xs font-black text-zinc-500 uppercase tracking-[0.2em] mb-5">Average Ratings</h3>
@@ -120,6 +133,12 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
               <div class="h-10 bg-zinc-800/50 rounded-xl"></div>
               <div class="h-10 bg-zinc-800/50 rounded-xl"></div>
             </div>
+          </div>
+
+          <!-- Rating distribution -->
+          <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
+            <h3 class="text-xs font-black text-zinc-500 uppercase tracking-[0.2em] mb-5">Rating Distribution</h3>
+            <div id="rating-chart" class="h-36 animate-pulse bg-zinc-800/50 rounded-xl"></div>
           </div>
 
           <!-- Most active weekday -->
@@ -300,6 +319,9 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
         const barMinWidth = isDaily ? (activityData.length > 90 ? 4 : 10) : 32;
         
         activityChart.innerHTML = `
+          <div id="activity-info" style="height:18px;margin-bottom:4px;display:flex;align-items:center">
+            <span id="activity-info-text" style="font-size:11px;font-weight:700;color:#a1a1aa"></span>
+          </div>
           <div class="overflow-x-auto scrollbar-none" style="flex:1;min-height:0">
             <div style="display:flex;flex-direction:column;min-width:max-content;height:100%;padding-bottom:4px">
               <div style="flex:1;display:flex;align-items:flex-end;gap:2px;min-height:0">
@@ -307,10 +329,14 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
                   const total = d.movies + d.episodes;
                   const pct = (total / maxVal) * 100;
                   const moviePct = total > 0 ? (d.movies / total) * 100 : 50;
+                  const parts = d.month.split('-').map(Number);
+                  const barLabel = isDaily
+                    ? `${monthNames[parts[1]-1]}. ${parts[2]}, ${parts[0]}`
+                    : `${monthNames[parts[1]-1]}. ${parts[0]}`;
                   return `
-                    <div style="flex:1;min-width:${barMinWidth}px;height:100%;display:flex;flex-direction:column;justify-content:flex-end" title="${d.month}: ${d.movies} movies, ${d.episodes} episodes">
+                    <div data-info="${barLabel}: ${d.movies} Movies, ${d.episodes} Episodes" style="flex:1;min-width:${barMinWidth}px;height:100%;display:flex;flex-direction:column;justify-content:flex-end">
                       <div style="height:${total > 0 ? Math.max(pct, 2) : 0}%;width:100%;border-radius:3px 3px 0 0;overflow:hidden;display:flex;flex-direction:column">
-                        <div style="flex:${moviePct};background:rgba(59,130,246,0.8)"></div>
+                        <div style="flex:${moviePct};background:rgba(14,165,233,0.8)"></div>
                         <div style="flex:${100-moviePct};background:rgba(168,85,247,0.8)"></div>
                       </div>
                     </div>
@@ -326,10 +352,22 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
             </div>
           </div>
           <div style="display:flex;gap:16px;margin-top:10px;padding-top:8px;border-top:1px solid rgba(39,39,42,0.4)">
-            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(59,130,246,0.8);display:inline-block"></span>Movies</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(14,165,233,0.8);display:inline-block"></span>Movies</span>
             <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(168,85,247,0.8);display:inline-block"></span>Episodes</span>
           </div>
         `;
+        const infoText = document.getElementById('activity-info-text');
+        activityChart.addEventListener('mouseover', e => {
+          const bar = e.target.closest('[data-info]');
+          if (bar && infoText) infoText.textContent = bar.dataset.info;
+        });
+        activityChart.addEventListener('mouseleave', () => {
+          if (infoText) infoText.textContent = '';
+        });
+        activityChart.addEventListener('touchstart', e => {
+          const bar = e.target.closest('[data-info]');
+          if (bar && infoText) infoText.textContent = bar.dataset.info;
+        }, { passive: true });
       } else {
         activityChart.innerHTML = '<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">No watch history for the selected period.</p>';
       }
@@ -353,7 +391,8 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
             ${fullDist.map(d => {
               const pct = (d.count / maxCount) * 100;
               return `
-                <div style="flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end" title="${d.rating}/10 — ${d.count} ratings">
+                <div style="flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center">
+                  <span style="font-size:9px;font-weight:800;color:${d.count > 0 ? 'rgba(245,158,11,0.85)' : 'transparent'};margin-bottom:2px;line-height:1">${d.count > 0 ? d.count : '0'}</span>
                   <div style="height:${d.count > 0 ? Math.max(pct, 3) : 2}%;width:100%;background:${d.count > 0 ? 'rgba(245,158,11,0.7)' : 'rgba(63,63,70,0.4)'};border-radius:3px 3px 0 0"></div>
                 </div>
               `;
@@ -364,9 +403,38 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
           </div>
         `;
       } else {
-        ratingChart.classList.remove('animate-pulse');
+        ratingChart.classList.remove('animate-pulse', 'bg-zinc-800/50', 'rounded-xl');
         ratingChart.innerHTML = '<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">No ratings for the selected period.</p>';
       }
+    }
+
+    // Most watched genres
+    const genresContainer = document.getElementById('genres-container');
+    if (genresContainer) {
+      genresContainer.classList.remove('animate-pulse');
+      const renderGenreList = (title, genres, bgColor, textColor) => {
+        const max = genres.length > 0 ? Math.max(...genres.map(g => g.count)) : 1;
+        return `
+          <div class="space-y-3">
+            <h4 class="text-[10px] font-black text-zinc-500 uppercase tracking-widest">${title}</h4>
+            <div class="space-y-2">
+              ${genres.length > 0 ? genres.map(g => {
+                const pct = (g.count / max) * 100;
+                return `
+                  <div class="relative flex items-center justify-between px-3 py-2 bg-zinc-800/30 rounded-lg overflow-hidden">
+                    <div class="absolute inset-0" style="width:${pct}%;background:${bgColor};pointer-events:none"></div>
+                    <span class="relative text-xs font-bold text-zinc-300">${g.name}</span>
+                    <span class="relative text-xs font-black" style="color:${textColor}">${g.count}</span>
+                  </div>
+                `;
+              }).join('') : `<p class="text-xs text-zinc-600 italic">No data</p>`}
+            </div>
+          </div>
+        `;
+      };
+      genresContainer.innerHTML =
+        renderGenreList('Movies', data.top_movie_genres || [], 'rgba(14,165,233,0.1)', '#38bdf8') +
+        renderGenreList('Shows', data.top_show_genres || [], 'rgba(168,85,247,0.1)', '#c084fc');
     }
 
     // Watch time breakdown
@@ -374,12 +442,12 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
     if (watchTimeBreakdown) {
       watchTimeBreakdown.classList.remove('animate-pulse');
       watchTimeBreakdown.innerHTML = [
-        { label: 'Movies', value: data.movie_watch_minutes, color: 'blue' },
-        { label: 'Shows',  value: data.show_watch_minutes,  color: 'purple' },
-      ].map(({ label, value, color }) => `
+        { label: 'Movies', value: data.movie_watch_minutes, textColor: '#38bdf8' },
+        { label: 'Shows',  value: data.show_watch_minutes,  textColor: '#c084fc' },
+      ].map(({ label, value, textColor }) => `
         <div class="flex items-center justify-between bg-zinc-800/40 rounded-xl px-4 py-3">
           <span class="text-sm font-bold text-zinc-300">${label}</span>
-          <span class="text-${color}-400 font-black text-lg">${formatMinutes(value)}</span>
+          <span style="color:${textColor}" class="font-black text-lg">${formatMinutes(value)}</span>
         </div>
       `).join('');
     }
@@ -389,13 +457,13 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
     if (avgRatings) {
       avgRatings.classList.remove('animate-pulse');
       avgRatings.innerHTML = [
-        { label: 'Movies', value: data.avg_movie_rating, color: 'blue' },
-        { label: 'Shows', value: data.avg_show_rating, color: 'purple' },
-      ].map(({ label, value, color }) => `
+        { label: 'Movies', value: data.avg_movie_rating, textColor: '#38bdf8' },
+        { label: 'Shows', value: data.avg_show_rating,   textColor: '#c084fc' },
+      ].map(({ label, value, textColor }) => `
         <div class="flex items-center justify-between bg-zinc-800/40 rounded-xl px-4 py-3">
           <span class="text-sm font-bold text-zinc-300">${label}</span>
           ${value != null
-            ? `<span class="flex items-center gap-1.5 text-${color}-400 font-black text-lg"><span class="text-sm text-yellow-400">★</span>${value.toFixed(1)}</span>`
+            ? `<span class="flex items-center gap-1.5 font-black text-lg" style="color:${textColor}"><span class="text-sm text-yellow-400">★</span>${value.toFixed(1)}</span>`
             : `<span class="text-zinc-600 text-sm font-medium">No ratings</span>`
           }
         </div>
@@ -416,10 +484,10 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
         weekdayChart.innerHTML = data.weekday_activity.map(d => {
           const pct = (d.avg / maxAvg) * 100;
           const isPeak = d.day === peakDay;
-          const color = isPeak ? 'rgba(59,130,246,0.9)' : 'rgba(63,63,70,0.8)';
+          const color = isPeak ? 'rgba(14,165,233,0.9)' : 'rgba(63,63,70,0.8)';
           return `
             <div style="flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px">
-              <span style="font-size:10px;font-weight:700;color:${isPeak ? 'rgba(59,130,246,0.9)' : '#52525b'}">${d.avg > 0 ? d.avg.toFixed(1) : ''}</span>
+              <span style="font-size:10px;font-weight:700;color:${isPeak ? 'rgba(14,165,233,0.9)' : '#52525b'}">${d.avg > 0 ? d.avg.toFixed(1) : ''}</span>
               <div style="height:${Math.max(pct, 3)}%;width:100%;background:${color};border-radius:4px 4px 0 0" title="${d.day}: avg ${d.avg} items/week"></div>
               <span style="font-size:11px;font-weight:800;color:${isPeak ? '#e4e4e7' : '#71717a'};text-transform:uppercase;letter-spacing:.05em">${d.day}</span>
             </div>
@@ -438,13 +506,13 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
     if (collectionBreakdown) {
       collectionBreakdown.classList.remove('animate-pulse');
       collectionBreakdown.innerHTML = [
-        { label: 'Movies Collected',   value: data.movies_collected.toLocaleString(),   color: 'blue' },
-        { label: 'Shows Collected',    value: data.shows_collected.toLocaleString(),    color: 'purple' },
-        { label: 'Episodes Collected', value: data.episodes_collected.toLocaleString(), color: 'indigo' },
-      ].map(({ label, value, color }) => `
+        { label: 'Movies Collected',   value: data.movies_collected.toLocaleString(),   textColor: '#38bdf8' },
+        { label: 'Shows Collected',    value: data.shows_collected.toLocaleString(),    textColor: '#c084fc' },
+        { label: 'Episodes Collected', value: data.episodes_collected.toLocaleString(), textColor: '#818cf8' },
+      ].map(({ label, value, textColor }) => `
         <div class="flex items-center justify-between bg-zinc-800/40 rounded-xl px-4 py-3">
           <span class="text-sm font-bold text-zinc-300">${label}</span>
-          <span class="text-${color}-400 font-black text-lg">${value}</span>
+          <span style="color:${textColor}" class="font-black text-lg">${value}</span>
         </div>
       `).join('');
     }
@@ -487,7 +555,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
       pieContainer.classList.remove('animate-pulse');
       pieContainer.innerHTML =
-        donut(moviesPct, 'rgba(59,130,246,0.85)', 'rgba(168,85,247,0.7)', 'Movies vs Shows', 'Movies',  'Shows',     data.movies_collected,         data.shows_collected) +
+        donut(moviesPct, 'rgba(14,165,233,0.85)', 'rgba(168,85,247,0.7)', 'Movies vs Shows', 'Movies',  'Shows',     data.movies_collected,         data.shows_collected) +
         donut(mwPct,     'rgba(34,197,94,0.85)',  'rgba(63,63,70,0.6)',   'Movies Watched',  'Watched', 'Unwatched', data.movies_watched_collected, data.movies_unwatched_collected) +
         donut(swPct,     'rgba(34,197,94,0.85)',  'rgba(63,63,70,0.6)',   'Shows Watched',   'Watched', 'Unwatched', data.shows_watched_collected,  data.shows_unwatched_collected);
     }
