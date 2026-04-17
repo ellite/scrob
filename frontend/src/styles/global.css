@@ -236,10 +236,23 @@ nav, div, a, button, input, span {
   transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
+/* ── Scrollbar utilities ────────────────────────────────────────────────── */
 .scrollbar-none {
   -ms-overflow-style: none;
   scrollbar-width: none;
+  cursor: grab;
+  /* Prevent browser's native drag-to-scroll/select on images/links during our manual drag */
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .scrollbar-none::-webkit-scrollbar {
   display: none;
+}
+.scrollbar-none.is-dragging {
+  cursor: grabbing;
+  scroll-behavior: auto; /* Instant scroll while dragging */
+}
+.scrollbar-none.is-dragging * {
+  cursor: grabbing;
+  pointer-events: none; /* Prevent link clicks while dragging */
 }

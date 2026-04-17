@@ -944,5 +944,91 @@ const bottomNavItem = (active: boolean) =>
       });
     }
   </script>
+
+  <script>
+    // ── Grab and Drag Scrolling ────────────────────────────────────────────────
+    function initDragScroll() {
+      const sliders = document.querySelectorAll<HTMLElement>('.scrollbar-none');
+      
+      sliders.forEach(slider => {
+        let isDown = false;
+        let startX: number;
+        let scrollLeft: number;
+        let hasMoved = false;
+
+        slider.addEventListener('mousedown', (e) => {
+          // Only trigger on primary mouse button (left click)
+          if (e.button !== 0) return;
+          
+          isDown = true;
+          hasMoved = false;
+          slider.classList.add('is-dragging');
+          startX = e.pageX - slider.offsetLeft;
+          scrollLeft = slider.scrollLeft;
+        });
+
+        slider.addEventListener('mouseleave', () => {
+          if (!isDown) return;
+          isDown = false;
+          slider.classList.remove('is-dragging');
+        });
+
+        slider.addEventListener('mouseup', (e) => {
+          if (!isDown) return;
+          isDown = false;
+          slider.classList.remove('is-dragging');
+          
+          // If we moved, prevent the next click event from firing on child elements
+          if (hasMoved) {
+            const preventClick = (event: MouseEvent) => {
+              event.stopImmediatePropagation();
+              event.preventDefault();
+              slider.removeEventListener('click', preventClick, true);
+            };
+            slider.addEventListener('click', preventClick, true);
+          }
+        });
+
+        slider.addEventListener('mousemove', (e) => {
+          if (!isDown) return;
+          
+          const x = e.pageX - slider.offsetLeft;
+          const walk = (x - startX) * 1.5; // multiplier for speed
+          
+          if (Math.abs(walk) > 5) {
+            hasMoved = true;
+            e.preventDefault();
+            slider.scrollLeft = scrollLeft - walk;
+          }
+        });
+
+        // Prevent native drag starts (for images/links) to avoid interfering
+        slider.addEventListener('dragstart', (e) => {
+          if (isDown) e.preventDefault();
+        });
+      });
+    }
+
+    // Run on initial load
+    initDragScroll();
+
+    // Re-run if using Astro View Transitions (if added in the future)
+    document.addEventListener('astro:after-swap', initDragScroll);
+    
+    // Also re-run after dynamic content is loaded (for Trending/Airing sections)
+    // We can use a simple interval or a MutationObserver. 
+    // Given the project style, an interval or manual trigger is common.
+    // For now, let's also hook into the loadSection calls if they existed here, 
+    // but they are in index.astro. For general discovery, we'll use a MutationObserver.
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.addedNodes.length) {
+          initDragScroll();
+        }
+      });
+    });
+    
+    observer.observe(document.body, { childList: true, subtree: true });
+  </script>
 </body>
 </html>
