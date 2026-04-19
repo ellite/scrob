@@ -227,6 +227,8 @@ html.light [data-action="request"][data-state="active"]:hover {
   background-color: #ffedd5; color: #7c2d12; /* orange-100 / orange-900 */
 }
 
+html.light .item-rating { color: #fbbf24; /* amber-400 */ }
+
 /* Transitions for theme switching */
 body {
   transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
