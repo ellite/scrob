@@ -43,7 +43,7 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
 ---
 
 <div
-  class="group relative flex flex-col rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-blue-500/50 hover:shadow-2xl hover:shadow-blue-900/20 transition-all duration-300 transform hover:-translate-y-1"
+  class="group relative flex flex-col rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-blue-500/50 hover:shadow-2xl hover:shadow-blue-900/20 transition-all duration-300 transform hover:-translate-y-1 active:scale-95 active:opacity-70"
   data-card
   data-tmdb-id={String(item.tmdb_id)}
   data-media-type={item.type}

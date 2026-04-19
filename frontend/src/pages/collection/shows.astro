@@ -43,8 +43,8 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
 
 <Base title="My Shows">
   <div class="flex items-center gap-1 mb-6 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit">
-    <a href="/shows" class="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">Explore</a>
-    <a href="/collection/shows" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors">My Collection</a>
+    <a href="/shows" class="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors active:scale-95 active:opacity-70">Explore</a>
+    <a href="/collection/shows" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors active:scale-95 active:opacity-70">My Collection</a>
   </div>
   <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
     <div class="flex items-baseline gap-3">
@@ -53,10 +53,10 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
     </div>
 
     <!-- Sort controls -->
-    <div class="flex flex-wrap gap-2 text-sm bg-zinc-900/50 p-1 rounded-xl border border-zinc-800">
+    <div class="flex flex-wrap gap-2 text-sm bg-zinc-900/50 p-1 rounded-xl border border-zinc-800 justify-around">
       {[
         { value: "title", label: "A–Z" },
-        { value: "rating", label: "Top Rated" },
+        { value: "rating", label: "Top" },
         { value: "release_date", label: "Newest" },
         { value: "created_at", label: "Recently Added" },
       ].map(({ value, label }) => {
@@ -66,7 +66,7 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
         return (
           <a
             href={`/collection/shows?${tabParams.toString()}`}
-            class={`px-4 py-2 rounded-lg transition-all font-medium ${sort === value ? "bg-blue-600 text-white shadow-lg" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"}`}
+            class={`px-4 py-2 rounded-lg transition-all font-medium active:scale-95 active:opacity-70 ${sort === value ? "bg-blue-600 text-white shadow-lg" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"}`}
           >
             {label}
           </a>

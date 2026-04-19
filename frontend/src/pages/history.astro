@@ -42,19 +42,19 @@ const baseUrl = `/history${type ? `?type=${type}` : ""}`;
     <div class="flex gap-3 mb-8">
       <a
         href="/history"
-        class={`px-4 py-1.5 rounded-full text-sm font-medium transition ${!type ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-100'}`}
+        class={`px-4 py-1.5 rounded-full text-sm font-medium transition active:scale-95 active:opacity-70 ${!type ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-100'}`}
       >
         All
       </a>
       <a
         href="/history?type=movie"
-        class={`px-4 py-1.5 rounded-full text-sm font-medium transition ${type === 'movie' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-100'}`}
+        class={`px-4 py-1.5 rounded-full text-sm font-medium transition active:scale-95 active:opacity-70 ${type === 'movie' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-100'}`}
       >
         Movies
       </a>
       <a
         href="/history?type=episode"
-        class={`px-4 py-1.5 rounded-full text-sm font-medium transition ${type === 'episode' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-100'}`}
+        class={`px-4 py-1.5 rounded-full text-sm font-medium transition active:scale-95 active:opacity-70 ${type === 'episode' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-100'}`}
       >
         Shows
       </a>

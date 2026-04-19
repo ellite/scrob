@@ -20,7 +20,7 @@ const navLink = (active: boolean) =>
     : 'text-zinc-400 hover:text-zinc-100 transition-colors';
 
 const bottomNavItem = (active: boolean) =>
-  `flex flex-col items-center justify-center gap-1 flex-1 py-2 text-[10px] font-bold uppercase tracking-wider transition-colors ${active ? 'text-blue-400' : 'text-zinc-500'}`;
+  `flex flex-col items-center justify-center gap-1 flex-1 py-2 text-[10px] font-bold uppercase tracking-wider transition-colors active:bg-zinc-800/70 active:scale-95 ${active ? 'text-blue-400' : 'text-zinc-500'}`;
 ---
 <!doctype html>
 <html lang="en">
@@ -74,7 +74,7 @@ const bottomNavItem = (active: boolean) =>
       <div id="nav-default" class="flex items-center justify-between gap-3">
         <!-- Left: logo + desktop links -->
         <div class="flex items-center gap-6 min-w-0">
-          <a href="/" class="flex items-center gap-2 text-zinc-100 font-bold text-lg tracking-tight shrink-0 group">
+          <a href="/" class="flex items-center gap-2 text-zinc-100 font-bold text-lg tracking-tight shrink-0 group active:opacity-70 transition-opacity">
             <Image src={logo} alt="Scrob Logo" width={32} height={32} loading="eager" class="w-7 h-7 md:w-8 md:h-8 object-contain group-hover:scale-105 transition-transform" />
             <span>Scrob</span>
           </a>
@@ -121,11 +121,11 @@ const bottomNavItem = (active: boolean) =>
               </button>
               <div id="user-menu" class="hidden absolute top-full right-0 mt-2 w-48 z-50">
                 <div class="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl p-2">
-                  <a href="/profile" class="block px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition">Profile</a>
-                  <a href={`/stats/${user.id}`} class="block px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition">Statistics</a>
-                  <a href="/user-settings" class="block px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition">Profile Settings</a>
-                  <a href="/settings" class="block px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition">Settings</a>
-                  <a href="/about" class="block px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition">About</a>
+                  <a href="/profile" class="block px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">Profile</a>
+                  <a href={`/stats/${user.id}`} class="block px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">Statistics</a>
+                  <a href="/user-settings" class="block px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">Profile Settings</a>
+                  <a href="/settings" class="block px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">Settings</a>
+                  <a href="/about" class="block px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">About</a>
                   <div class="h-px bg-zinc-800 my-1 mx-1"></div>
                   <form method="POST" action="/logout" style="margin:0">
                     <button type="submit" class="block w-full text-left px-3 py-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition cursor-pointer">Logout</button>
@@ -166,7 +166,7 @@ const bottomNavItem = (active: boolean) =>
 
   <!-- Mobile bottom nav -->
   {!hideNav && (
-    <nav class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-zinc-900 border-t border-zinc-800 flex items-stretch safe-area-bottom">
+    <nav id="bottom-nav" class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-zinc-900 border-t border-zinc-800 flex items-stretch safe-area-bottom">
       <a href="/" class={bottomNavItem(activeHome)}>
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
         Home
@@ -933,6 +933,12 @@ const bottomNavItem = (active: boolean) =>
       msgEl.textContent = 'Tap the Share button, then "Add to Home Screen".';
       setTimeout(showBanner, 2000);
     }
+  </script>
+
+  <script>
+    document.getElementById('bottom-nav')?.addEventListener('touchstart', () => {
+      navigator.vibrate?.(10);
+    }, { passive: true });
   </script>
 
   <script>

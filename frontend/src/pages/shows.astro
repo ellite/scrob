@@ -57,8 +57,8 @@ const baseUrl = `/shows?${baseParams.toString()}`;
 
 <Base title="Explore Shows">
   <div class="flex items-center gap-1 mb-6 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit">
-    <a href="/shows" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors">Explore</a>
-    <a href="/collection/shows" class="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">My Collection</a>
+    <a href="/shows" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors active:scale-95 active:opacity-70">Explore</a>
+    <a href="/collection/shows" class="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors active:scale-95 active:opacity-70">My Collection</a>
   </div>
   <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
     <h1 class="text-3xl font-bold text-zinc-100 tracking-tight">Explore Shows</h1>
@@ -76,7 +76,7 @@ const baseUrl = `/shows?${baseParams.toString()}`;
           return (
             <a
               href={`/shows?${tabParams.toString()}`}
-              class={`px-4 py-2 rounded-lg transition-all font-medium ${category === value ? "bg-blue-600 text-white shadow-lg" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"}`}
+              class={`px-4 py-2 rounded-lg transition-all font-medium active:scale-95 active:opacity-70 ${category === value ? "bg-blue-600 text-white shadow-lg" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"}`}
             >
               {label}
             </a>

@@ -35,7 +35,7 @@ const pagesMobile  = getPages(1); // 3 wide
   <div class="flex items-center justify-center gap-2">
     {/* Previous */}
     {hasPrevious ? (
-      <a href={getUrl(currentPage - 1)} aria-label="Previous page" class="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition shadow-sm">
+      <a href={getUrl(currentPage - 1)} aria-label="Previous page" class="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:scale-95 active:opacity-70 transition shadow-sm">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
         </svg>
@@ -52,7 +52,7 @@ const pagesMobile  = getPages(1); // 3 wide
     <div class="flex items-center gap-2 md:hidden">
       {pagesMobile[0] > 1 && (
         <>
-          <a href={getUrl(1)} aria-label="Page 1" class="w-10 h-10 flex items-center justify-center bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition shadow-sm text-sm font-bold">1</a>
+          <a href={getUrl(1)} aria-label="Page 1" class="w-10 h-10 flex items-center justify-center bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:scale-95 active:opacity-70 transition shadow-sm text-sm font-bold">1</a>
           {pagesMobile[0] > 2 && <span class="text-zinc-700 px-0.5" aria-hidden="true">…</span>}
         </>
       )}
@@ -63,13 +63,13 @@ const pagesMobile  = getPages(1); // 3 wide
           aria-current={p === currentPage ? 'page' : undefined}
           class={`w-10 h-10 flex items-center justify-center rounded-xl transition-all border shadow-sm font-bold text-sm ${p === currentPage
             ? 'bg-blue-600 border-blue-500 text-white shadow-blue-900/20 scale-110 z-10'
-            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'}`}
+            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:scale-95 active:opacity-70'}`}
         >{p}</a>
       ))}
       {pagesMobile[pagesMobile.length - 1] < effectiveTotalPages && (
         <>
           {pagesMobile[pagesMobile.length - 1] < effectiveTotalPages - 1 && <span class="text-zinc-700 px-0.5" aria-hidden="true">…</span>}
-          <a href={getUrl(effectiveTotalPages)} aria-label={`Page ${effectiveTotalPages}`} class="w-10 h-10 flex items-center justify-center bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition shadow-sm text-sm font-bold">{effectiveTotalPages}</a>
+          <a href={getUrl(effectiveTotalPages)} aria-label={`Page ${effectiveTotalPages}`} class="w-10 h-10 flex items-center justify-center bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:scale-95 active:opacity-70 transition shadow-sm text-sm font-bold">{effectiveTotalPages}</a>
         </>
       )}
     </div>
@@ -78,7 +78,7 @@ const pagesMobile  = getPages(1); // 3 wide
     <div class="hidden md:flex items-center gap-2">
       {pagesDesktop[0] > 1 && (
         <>
-          <a href={getUrl(1)} aria-label="Page 1" class="w-10 h-10 flex items-center justify-center bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition shadow-sm text-sm font-bold">1</a>
+          <a href={getUrl(1)} aria-label="Page 1" class="w-10 h-10 flex items-center justify-center bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:scale-95 active:opacity-70 transition shadow-sm text-sm font-bold">1</a>
           {pagesDesktop[0] > 2 && <span class="text-zinc-700 px-1" aria-hidden="true">…</span>}
         </>
       )}
@@ -89,20 +89,20 @@ const pagesMobile  = getPages(1); // 3 wide
           aria-current={p === currentPage ? 'page' : undefined}
           class={`w-10 h-10 flex items-center justify-center rounded-xl transition-all border shadow-sm font-bold text-sm ${p === currentPage
             ? 'bg-blue-600 border-blue-500 text-white shadow-blue-900/20 scale-110 z-10'
-            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'}`}
+            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:scale-95 active:opacity-70'}`}
         >{p}</a>
       ))}
       {pagesDesktop[pagesDesktop.length - 1] < effectiveTotalPages && (
         <>
           {pagesDesktop[pagesDesktop.length - 1] < effectiveTotalPages - 1 && <span class="text-zinc-700 px-1" aria-hidden="true">…</span>}
-          <a href={getUrl(effectiveTotalPages)} aria-label={`Page ${effectiveTotalPages}`} class="w-10 h-10 flex items-center justify-center bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition shadow-sm text-sm font-bold">{effectiveTotalPages}</a>
+          <a href={getUrl(effectiveTotalPages)} aria-label={`Page ${effectiveTotalPages}`} class="w-10 h-10 flex items-center justify-center bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:scale-95 active:opacity-70 transition shadow-sm text-sm font-bold">{effectiveTotalPages}</a>
         </>
       )}
     </div>
 
     {/* Next */}
     {hasNext ? (
-      <a href={getUrl(currentPage + 1)} aria-label="Next page" class="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition shadow-sm">
+      <a href={getUrl(currentPage + 1)} aria-label="Next page" class="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:scale-95 active:opacity-70 transition shadow-sm">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
         </svg>
