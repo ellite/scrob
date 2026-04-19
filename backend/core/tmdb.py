@@ -283,3 +283,11 @@ async def get_external_ids(tmdb_id: int, type: str, api_key: str = None) -> dict
     """Fetch external IDs (IMDB, TVDB, etc.) for a movie or TV show."""
     path = "movie" if type == "movie" else "tv"
     return await _get(f"{TMDB_BASE}/{path}/{tmdb_id}/external_ids", headers=get_headers(api_key))
+
+
+async def get_movie_watch_providers(movie_id: int, api_key: str = None) -> dict:
+    return await _get(f"{TMDB_BASE}/movie/{movie_id}/watch/providers", headers=get_headers(api_key))
+
+
+async def get_show_watch_providers(show_id: int, api_key: str = None) -> dict:
+    return await _get(f"{TMDB_BASE}/tv/{show_id}/watch/providers", headers=get_headers(api_key))

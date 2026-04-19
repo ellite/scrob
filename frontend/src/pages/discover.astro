@@ -27,6 +27,22 @@ const PROVIDER_NAMES: Record<string, string> = {
 };
 
 const userServices = (profileData?.streaming_services ?? []).filter(id => id in PROVIDER_NAMES);
+const hasMediaServer = !!(settings?.plex_url || settings?.jellyfin_url || settings?.emby_url);
+const canPick = hasTmdbKey && (userServices.length > 0 || hasMediaServer);
+
+// Grab a random backdrop for the "Feeling lucky?" banner
+let luckyBackdropUrl: string | null = null;
+if (canPick) {
+  try {
+    const trending = await api.media.trendingMovies(1, token!);
+    const pool = (trending?.results ?? []).filter((m: any) => m.backdrop_path);
+    if (pool.length > 0) {
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      const bp = pick.backdrop_path as string;
+      luckyBackdropUrl = bp.startsWith('http') ? bp : `https://image.tmdb.org/t/p/w1280${bp}`;
+    }
+  } catch { /* no backdrop, fallback to gradient */ }
+}
 
 const MOVIE_GENRES = [
   { label: "Action", emoji: "💥" },
@@ -98,6 +114,55 @@ function skeletonWide() {
     </div>
   )}
 
+  <!-- Pick for me modal -->
+  <div id="pick-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div id="pick-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative w-full max-w-lg max-h-[90vh] bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+      <button id="pick-modal-close" class="absolute top-4 right-4 z-10 p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 rounded-full transition active:scale-95 cursor-pointer" aria-label="Close">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+
+      <!-- Loading -->
+      <div id="pick-loading" class="flex flex-col items-center justify-center py-20 px-8 gap-6">
+        <div id="pick-emoji" class="text-6xl"></div>
+        <p id="pick-phrase" class="text-zinc-300 text-center font-medium text-lg leading-snug"></p>
+      </div>
+
+      <!-- Result -->
+      <div id="pick-result" class="hidden flex-col overflow-y-auto">
+        <div id="pick-backdrop-wrap" class="relative h-48 bg-zinc-800 shrink-0 overflow-hidden">
+          <img id="pick-backdrop-img" src="" alt="" class="w-full h-full object-cover" />
+          <div class="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/30 to-transparent"></div>
+        </div>
+        <div class="p-6 flex flex-col gap-4">
+          <div>
+            <h2 id="pick-title" class="text-2xl font-black text-zinc-100 leading-tight"></h2>
+            <div id="pick-meta" class="flex items-center gap-3 mt-1.5 text-sm text-zinc-400"></div>
+          </div>
+          <p id="pick-overview" class="text-zinc-300 text-sm leading-relaxed line-clamp-4"></p>
+          <div id="pick-sources" class="flex flex-wrap gap-2"></div>
+          <div class="flex gap-3 pt-1">
+            <button id="pick-again-btn" class="flex items-center gap-2 px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 font-bold text-sm rounded-xl transition-all active:scale-95 active:opacity-70 cursor-pointer">
+              Pick again
+            </button>
+            <a id="pick-view-link" href="#" class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-xl transition-all active:scale-95">
+              View details →
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Error -->
+      <div id="pick-error" class="hidden flex-col items-center justify-center py-20 px-8 gap-4 text-center">
+        <span class="text-5xl">🤷</span>
+        <p id="pick-error-msg" class="text-zinc-300 font-medium"></p>
+        <button id="pick-error-retry" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-sm rounded-xl transition-all active:scale-95 cursor-pointer">
+          Try again
+        </button>
+      </div>
+    </div>
+  </div>
+
   {hasTmdbKey && (
     <>
       <!-- For You -->
@@ -109,6 +174,35 @@ function skeletonWide() {
           </div>
           <div id="for-you" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
             <Fragment set:html={skeleton()} />
+          </div>
+        </section>
+      )}
+
+      {canPick && (
+        <section class="relative mb-10 rounded-3xl overflow-hidden h-48 sm:h-56 flex items-center">
+          {luckyBackdropUrl
+            ? <img src={luckyBackdropUrl} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy" decoding="async" />
+            : <div class="absolute inset-0 bg-zinc-800"></div>
+          }
+          <div class="absolute inset-0 bg-gradient-to-r from-zinc-950/90 via-zinc-950/60 to-zinc-950/20"></div>
+          <div class="absolute inset-0 bg-gradient-to-t from-zinc-950/60 via-transparent to-transparent"></div>
+          <div class="relative px-8 sm:px-12">
+            <p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-2">Feeling lucky?</p>
+            <h2 class="text-2xl sm:text-3xl font-black text-zinc-100 mb-5 leading-tight">Let us pick something<br class="hidden sm:block" /> for you to watch.</h2>
+            <div class="flex gap-3">
+              <button
+                id="pick-movie-btn"
+                class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-blue-900/40 active:scale-95 text-sm uppercase tracking-wider cursor-pointer"
+              >
+                Pick a Movie
+              </button>
+              <button
+                id="pick-show-btn"
+                class="inline-flex items-center gap-2 px-6 py-3 bg-white/20 hover:bg-white/30 text-white font-black rounded-2xl transition-all active:scale-95 text-sm uppercase tracking-wider cursor-pointer backdrop-blur-sm"
+              >
+                Pick a Show
+              </button>
+            </div>
           </div>
         </section>
       )}
@@ -307,7 +401,7 @@ function skeletonWide() {
   )}
 </Base>
 
-<script define:vars={{ token, watchRegion, hasProfileData, topMovieGenres, topShowGenres, userServices }}>
+<script define:vars={{ token, watchRegion, hasProfileData, topMovieGenres, topShowGenres, userServices, canPick }}>
   function esc(str) {
     if (str == null) return '';
     return String(str)
@@ -455,6 +549,166 @@ function skeletonWide() {
     loadSection('fallback-show-0',  `/media/streaming?provider_id=8&type=series&watch_region=${encodeURIComponent(watchRegion)}`, 'backdrop');
     loadSection('fallback-movie-1', `/media/streaming?provider_id=9&type=movie&watch_region=${encodeURIComponent(watchRegion)}`);
     loadSection('fallback-show-1',  `/media/streaming?provider_id=337&type=series&watch_region=${encodeURIComponent(watchRegion)}`, 'backdrop');
+  }
+
+  // ── Pick for me ──────────────────────────────────────────────────────────────
+  if (canPick) {
+    const PHRASES = [
+      { emoji: '🔮', text: 'Consulting the crystal ball…' },
+      { emoji: '🎩', text: 'Pulling something out of the hat…' },
+      { emoji: '🧝', text: 'Assembling Santa\'s elves…' },
+      { emoji: '🌌', text: 'Scanning the multiverse for options…' },
+      { emoji: '🎲', text: 'Rolling the cosmic dice…' },
+      { emoji: '📚', text: 'Arguing with the film critics…' },
+      { emoji: '🍿', text: 'Asking the popcorn oracle…' },
+      { emoji: '🤖', text: 'Bribing the recommendation algorithm…' },
+      { emoji: '🦉', text: 'Consulting a very wise owl…' },
+      { emoji: '🗺️', text: 'Mapping the cinematic universe…' },
+      { emoji: '🌟', text: 'Aligning the stars for you…' },
+      { emoji: '🧙', text: 'Checking the Tome of Great Films…' },
+    ];
+
+    const modal = document.getElementById('pick-modal');
+    const backdrop = document.getElementById('pick-modal-backdrop');
+    const closeBtn = document.getElementById('pick-modal-close');
+    const loadingEl = document.getElementById('pick-loading');
+    const resultEl = document.getElementById('pick-result');
+    const errorEl = document.getElementById('pick-error');
+    const emojiEl = document.getElementById('pick-emoji');
+    const phraseEl = document.getElementById('pick-phrase');
+    const errorMsgEl = document.getElementById('pick-error-msg');
+    const pickAgainBtn = document.getElementById('pick-again-btn');
+    const pickErrorRetry = document.getElementById('pick-error-retry');
+    const movieBtn = document.getElementById('pick-movie-btn');
+    const showBtn = document.getElementById('pick-show-btn');
+
+    let phraseInterval = null;
+    let currentType = 'movie';
+
+    function openModal() {
+      modal.classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeModal() {
+      modal.classList.add('hidden');
+      document.body.style.overflow = '';
+      if (phraseInterval) { clearInterval(phraseInterval); phraseInterval = null; }
+    }
+
+    function showLoading() {
+      loadingEl.classList.remove('hidden');
+      loadingEl.classList.add('flex');
+      resultEl.classList.remove('flex');
+      resultEl.classList.add('hidden');
+      errorEl.classList.remove('flex');
+      errorEl.classList.add('hidden');
+
+      let idx = Math.floor(Math.random() * PHRASES.length);
+      emojiEl.textContent = PHRASES[idx].emoji;
+      phraseEl.textContent = PHRASES[idx].text;
+      if (phraseInterval) clearInterval(phraseInterval);
+      phraseInterval = setInterval(() => {
+        idx = (idx + 1) % PHRASES.length;
+        emojiEl.textContent = PHRASES[idx].emoji;
+        phraseEl.textContent = PHRASES[idx].text;
+      }, 1800);
+    }
+
+    function showError(msg) {
+      if (phraseInterval) { clearInterval(phraseInterval); phraseInterval = null; }
+      loadingEl.classList.add('hidden');
+      loadingEl.classList.remove('flex');
+      resultEl.classList.add('hidden');
+      resultEl.classList.remove('flex');
+      errorEl.classList.remove('hidden');
+      errorEl.classList.add('flex');
+      errorMsgEl.textContent = msg || 'Nothing found. Try adjusting your profile preferences.';
+    }
+
+    function sourceLabel(src) {
+      const icons = { plex: '🟡', jellyfin: '🟣', emby: '🟢' };
+      const names = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby' };
+      if (src.type === 'media_server') {
+        const icon = icons[src.name] || '💾';
+        return `<span class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded-lg text-sm font-medium text-zinc-200">${icon} Watch on ${names[src.name] || src.name}</span>`;
+      }
+      return `<span class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded-lg text-sm font-medium text-zinc-200">▶ ${esc(src.name)}</span>`;
+    }
+
+    function showResult(data) {
+      if (phraseInterval) { clearInterval(phraseInterval); phraseInterval = null; }
+      loadingEl.classList.add('hidden');
+      loadingEl.classList.remove('flex');
+      errorEl.classList.add('hidden');
+      errorEl.classList.remove('flex');
+      resultEl.classList.remove('hidden');
+      resultEl.classList.add('flex');
+
+      const backdropImg = document.getElementById('pick-backdrop-img');
+      const backdropWrap = document.getElementById('pick-backdrop-wrap');
+      if (data.backdrop_path) {
+        backdropImg.src = data.backdrop_path;
+        backdropImg.alt = data.title || '';
+        backdropWrap.classList.remove('hidden');
+      } else if (data.poster_path) {
+        backdropImg.src = data.poster_path;
+        backdropImg.alt = data.title || '';
+        backdropWrap.classList.remove('hidden');
+      } else {
+        backdropWrap.classList.add('hidden');
+      }
+
+      document.getElementById('pick-title').textContent = data.title || '';
+
+      const year = data.release_date ? data.release_date.slice(0, 4) : '';
+      const rating = data.tmdb_rating ? '★ ' + Number(data.tmdb_rating).toFixed(1) : '';
+      const metaParts = [year, rating].filter(Boolean);
+      document.getElementById('pick-meta').textContent = metaParts.join(' · ');
+
+      document.getElementById('pick-overview').textContent = data.overview || '';
+
+      const sourcesEl = document.getElementById('pick-sources');
+      const sources = data.sources || [];
+      sourcesEl.innerHTML = sources.length
+        ? sources.map(sourceLabel).join('')
+        : '<span class="text-sm text-zinc-500">No streaming source found</span>';
+
+      const viewLink = document.getElementById('pick-view-link');
+      if (data.type === 'series') {
+        viewLink.href = '/show/' + data.tmdb_id;
+      } else {
+        viewLink.href = '/media/movie/' + data.tmdb_id;
+      }
+    }
+
+    async function doPick(type) {
+      currentType = type;
+      openModal();
+      showLoading();
+      try {
+        const res = await fetch(`/api/proxy/media/pick?type=${type}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.status === 404) {
+          showError('No unwatched titles found. Watch something first, or adjust your profile.');
+          return;
+        }
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        showResult(data);
+      } catch {
+        showError('Something went wrong. Please try again.');
+      }
+    }
+
+    movieBtn?.addEventListener('click', () => doPick('movie'));
+    showBtn?.addEventListener('click', () => doPick('series'));
+    pickAgainBtn?.addEventListener('click', () => doPick(currentType));
+    pickErrorRetry?.addEventListener('click', () => doPick(currentType));
+    closeBtn?.addEventListener('click', closeModal);
+    backdrop?.addEventListener('click', closeModal);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
   }
 
   window.addEventListener('pageshow', (e) => { if (e.persisted) location.replace(location.href); });
