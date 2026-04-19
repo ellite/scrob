@@ -7,6 +7,7 @@ from sqlalchemy import select, func, cast as sa_cast, Text, or_, and_
 from models.events import WatchEvent
 from models.collection import Collection, CollectionFile
 from models.ratings import Rating
+from models.lists import List as UserList, ListItem
 
 from db import get_db
 from models.media import Media
@@ -522,6 +523,26 @@ async def get_show_season(
                 )
                 episode_ratings = {r[0]: r[1] for r in ep_ratings_q.all()}
 
+            # Fetch list membership per episode
+            episode_in_lists: dict[int, list[int]] = {}
+            if local_media_ids:
+                user_lists_q = await db.execute(
+                    select(UserList.id).where(UserList.user_id == current_user.id)
+                )
+                user_list_ids = [r[0] for r in user_lists_q.all()]
+                if user_list_ids:
+                    ep_lists_q = await db.execute(
+                        select(Media.tmdb_id, ListItem.list_id)
+                        .join(ListItem, ListItem.media_id == Media.id)
+                        .where(
+                            Media.id.in_(local_media_ids),
+                            ListItem.list_id.in_(user_list_ids),
+                        )
+                        .distinct()
+                    )
+                    for ep_tmdb_id, list_id in ep_lists_q.all():
+                        episode_in_lists.setdefault(ep_tmdb_id, []).append(list_id)
+
             # Merge local library status
             local_map = {ep.episode_number: ep for ep in local_episodes}
 
@@ -586,6 +607,7 @@ async def get_show_season(
                         "runtime": ep.get("runtime"),
                         "watched": local_media_id in watched_ep_ids if local_media_id else False,
                         "user_rating": episode_ratings.get(local_media_id) if local_media_id else None,
+                        "in_lists": episode_in_lists.get(ep.get("id"), []),
                     }
                 )
 

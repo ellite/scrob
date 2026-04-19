@@ -135,12 +135,13 @@ const show = season?.show;
                 tmdbId={Number(id)}
                 mediaType="series"
                 watched={season.season_watched ?? false}
-                inLists={season.show_in_lists ?? []}
+                inLists={[]}
                 inLibrary={season.season_in_library ?? season.show_in_library ?? false}
                 collectionPct={season.season_collection_pct ?? season.show_collection_pct ?? 0}
                 seasonNumber={Number(season_number)}
                 isMonitored={season.show_is_monitored ?? false}
                 requestEnabled={season.show_request_enabled ?? false}
+                hideLists={true}
                 userRating={season.season_user_rating ?? null}
               />
             </div>
@@ -248,14 +249,13 @@ const show = season?.show;
                     tmdbId={ep.tmdb_id}
                     mediaType="episode"
                     watched={ep.watched}
-                    inLists={[]}
+                    inLists={ep.in_lists ?? []}
                     inLibrary={ep.in_library}
                     collectionPct={ep.in_library ? 100 : 0}
                     showTmdbId={Number(id)}
                     seasonNumber={Number(season_number)}
                     episodeNumber={ep.episode_number}
                     hideRequest={true}
-                    hideLists={true}
                     userRating={ep.user_rating}
                   />
                 </div>
