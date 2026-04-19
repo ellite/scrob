@@ -101,7 +101,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       : null;
     return (
       <section class="relative -mt-8 mb-16">
-        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-screen overflow-hidden" style="height: 100%;">
+        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-screen overflow-hidden pointer-events-none" style="height: 100%;">
           {heroBackdrop ? (
             <img
               src={heroBackdrop}

@@ -722,11 +722,13 @@ const bottomNavItem = (active: boolean) =>
 
     // ── Main event delegation ──────────────────────────────────────────────────
     document.addEventListener('click', async (e) => {
-      const btn = (e.target as Element).closest<HTMLElement>('[data-action]');
+      const target = e.target as Element;
+
+      const btn = target.closest<HTMLElement>('[data-action]');
       if (!btn) return;
 
       const card = btn.closest<HTMLElement>('[data-card]');
-      if (!card) return; // Not a media card action, let other listeners handle it
+      if (!card) return;
 
       const action = btn.dataset.action;
       const mediaActions = ['watched', 'list', 'collected', 'request', 'rate'];
@@ -1049,20 +1051,31 @@ const bottomNavItem = (active: boolean) =>
     // ── Grab and Drag Scrolling ────────────────────────────────────────────────
     function initDragScroll() {
       const sliders = document.querySelectorAll<HTMLElement>('.scrollbar-none');
-      
+
       sliders.forEach(slider => {
+        if (slider.dataset.dragInit) return;
+        slider.dataset.dragInit = '1';
         let isDown = false;
         let startX: number;
         let scrollLeft: number;
         let hasMoved = false;
+        let preventClickRef: ((e: MouseEvent) => void) | null = null;
 
         slider.addEventListener('mousedown', (e) => {
           // Only trigger on primary mouse button (left click)
           if (e.button !== 0) return;
-          
+
+          // Clear any pending preventClick from a previous drag so a fresh click is never blocked
+          if (preventClickRef) {
+            slider.removeEventListener('click', preventClickRef, true);
+            preventClickRef = null;
+          }
+
           isDown = true;
           hasMoved = false;
-          slider.classList.add('is-dragging');
+          // Do NOT add is-dragging yet — adding it here sets pointer-events:none on all
+          // children, which shifts the mouseup target and breaks click events on cards.
+          // is-dragging is added below only once actual movement is detected.
           startX = e.pageX - slider.offsetLeft;
           scrollLeft = slider.scrollLeft;
         });
@@ -1080,12 +1093,13 @@ const bottomNavItem = (active: boolean) =>
           
           // If we moved, prevent the next click event from firing on child elements
           if (hasMoved) {
-            const preventClick = (event: MouseEvent) => {
+            preventClickRef = (event: MouseEvent) => {
               event.stopImmediatePropagation();
               event.preventDefault();
-              slider.removeEventListener('click', preventClick, true);
+              slider.removeEventListener('click', preventClickRef!, true);
+              preventClickRef = null;
             };
-            slider.addEventListener('click', preventClick, true);
+            slider.addEventListener('click', preventClickRef, true);
           }
         });
 
@@ -1095,8 +1109,9 @@ const bottomNavItem = (active: boolean) =>
           const x = e.pageX - slider.offsetLeft;
           const walk = (x - startX) * 1.5; // multiplier for speed
           
-          if (Math.abs(walk) > 5) {
+          if (Math.abs(walk) > 16) {
             hasMoved = true;
+            slider.classList.add('is-dragging');
             e.preventDefault();
             slider.scrollLeft = scrollLeft - walk;
           }
