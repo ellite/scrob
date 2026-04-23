@@ -43,6 +43,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks you
 - **Social**: Follow other users and see their activity.
 - **TMDB integration**: Rich metadata for every title — posters, backdrops, cast, crew, trailers, collections, and more.
 - **Search**: Search TMDB across movies, shows, people, and collections, merged with your local library data.
+- **Pick a Movie / Pick a Show**: Get a suggestion on what to watch next from your library or your streaming services based on your preferences.
 - **Trending & Airing Today**: Daily trending movies and shows from TMDB, plus episodes airing today filtered to your collection.
 - **Continue Watching & Next Up**: Dashboard cards showing in-progress items and the next episode to watch in each series.
 - **Season & episode tracking**: Detailed season views with per-episode watched state and progress.
