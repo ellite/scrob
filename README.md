@@ -27,6 +27,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks you
 - [Development](#development)
 - [Webhooks](#webhooks-real-time-scrobbling)
 - [OIDC / Single Sign-On](#oidc--single-sign-on)
+- [Email Validation & SMTP](#email-validation--smtp)
 - [Contributing](#contributing)
 - [Contributors](#contributors)
 - [License](#license)
