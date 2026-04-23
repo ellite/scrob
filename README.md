@@ -287,6 +287,32 @@ OIDC_AUTO_CREATE_USERS: "true"
 
 Register Scrob as a client in your provider with redirect URI: `https://scrob.yourdomain.com/oidc-callback`
 
+## Email Validation & SMTP
+
+Scrob can require new users to verify their email address before logging in. Providing SMTP settings also enables the **forgot password** link on the login page.
+
+```yaml
+REQUIRE_EMAIL_VALIDATION: "true"
+SERVER_URL: "https://scrob.yourdomain.com"
+SMTP_ADDRESS: "smtp.gmail.com"
+SMTP_PORT: "587"
+SMTP_ENCRYPTION: "tls"
+SMTP_USERNAME: "myemail@gmail.com"
+SMTP_PASSWORD: "your-app-password"
+FROM_EMAIL: "myemail@gmail.com"
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `REQUIRE_EMAIL_VALIDATION` | `false` | Require new users to verify their email before logging in. |
+| `SERVER_URL` | — | Public URL of your Scrob instance, used to build the validation link in emails. |
+| `SMTP_ADDRESS` | — | SMTP server hostname. |
+| `SMTP_PORT` | `587` | SMTP server port. |
+| `SMTP_ENCRYPTION` | `tls` | Encryption method — `tls` or `ssl`. |
+| `SMTP_USERNAME` | — | SMTP login username. |
+| `SMTP_PASSWORD` | — | SMTP login password (use an app password if using Gmail). |
+| `FROM_EMAIL` | — | Address emails are sent from. |
+
 ## Contributing
 
 Contributions are welcome — whether it's a bug report, a feature request, or a pull request.
