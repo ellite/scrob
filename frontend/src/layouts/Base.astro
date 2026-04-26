@@ -33,7 +33,6 @@ const bottomNavItem = (active: boolean) =>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-  <meta name="apple-mobile-web-app-title" content="Scrob" />
   <link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials" />
   <!-- theme-color: dark default, overridden when light class is applied via JS -->
   <meta name="theme-color" content="#09090b" id="theme-color-meta" />
@@ -72,7 +71,7 @@ const bottomNavItem = (active: boolean) =>
   {!hideNav && (
     <nav class="px-4 md:px-6 py-3 md:py-4 text-sm relative z-30 bg-zinc-950 md:bg-transparent">
       <!-- Default bar -->
-      <div id="nav-default" class="flex items-center justify-between gap-3">
+      <div id="nav-default" class="flex items-center justify-between gap-3 safe-area-top">
         <!-- Left: logo + desktop links -->
         <div class="flex items-center gap-6 min-w-0">
           <a href="/" class="flex items-center gap-2 text-zinc-100 font-bold text-lg tracking-tight shrink-0 group active:opacity-70 transition-opacity">
@@ -142,7 +141,7 @@ const bottomNavItem = (active: boolean) =>
       </div>
 
       <!-- Mobile search bar (hidden by default, shown when search icon tapped) -->
-      <div id="nav-search" class="hidden items-center gap-2">
+      <div id="nav-search" class="hidden items-center gap-2 safe-area-top">
         <button id="mobile-search-close" class="p-2 text-zinc-400 hover:text-zinc-100 transition-colors shrink-0" aria-label="Close search">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
         </button>
@@ -163,6 +162,7 @@ const bottomNavItem = (active: boolean) =>
   <div id="now-playing-section"></div>
 
   <main class="px-6 md:px-6 py-6 md:py-8 max-w-screen-xl mx-auto pb-24 md:pb-8">
+    {hideNav && <div class="safe-area-top" />}
     <slot />
   </main>
 

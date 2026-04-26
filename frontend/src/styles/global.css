@@ -136,6 +136,15 @@ img, a {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+.safe-area-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.sticky-top-safe {
+  position: sticky;
+  top: env(safe-area-inset-top);
+}
+
 /* ── Mobile input improvements ─────────────────────────────────────────────
    16px font-size prevents iOS Safari from auto-zooming into inputs.
    min-height ensures comfortable touch targets. */
