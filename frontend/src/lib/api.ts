@@ -414,6 +414,7 @@ export interface MediaItem {
   tagline?: string | null;
   status?: string | null;
   original_language?: string | null;
+  age_rating?: string | null;
   show_title?: string | null;
   show_tmdb_id?: number | null;
   show_poster_path?: string | null;
@@ -518,6 +519,7 @@ export interface Show {
   tagline: string | null;
   status: string | null;
   original_language?: string | null;
+  age_rating?: string | null;
   user_rating?: number | null;
   first_air_date: string | null;
   last_air_date: string | null;

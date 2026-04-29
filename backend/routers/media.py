@@ -479,6 +479,25 @@ def check_tmdb_key(api_key: str | None) -> bool:
     return bool(getattr(tmdb.settings, "tmdb_api_key", None))
 
 
+def _extract_movie_certification(data: dict, country: str = "US") -> str | None:
+    for entry in data.get("release_dates", {}).get("results", []):
+        if entry.get("iso_3166_1") == country:
+            for rd in entry.get("release_dates", []):
+                cert = rd.get("certification", "").strip()
+                if cert:
+                    return cert
+    return None
+
+
+def _extract_show_content_rating(data: dict, country: str = "US") -> str | None:
+    for entry in data.get("content_ratings", {}).get("results", []):
+        if entry.get("iso_3166_1") == country:
+            rating = entry.get("rating", "").strip()
+            if rating:
+                return rating
+    return None
+
+
 def format_media(media: Media) -> dict:
     cast = []
     raw_cast = (media.tmdb_data or {}).get("cast", [])
@@ -2615,6 +2634,7 @@ async def get_media_details(
             "status": data.get("status"),
             "genres": [g["name"] for g in data.get("genres", [])],
             "original_language": data.get("original_language"),
+            "age_rating": _extract_movie_certification(data),
             "collection": collection,
             "production_companies": production_companies,
             "cast": [

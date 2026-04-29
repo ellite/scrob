@@ -126,6 +126,11 @@ const refreshUrl = isEpisode
                     {item.runtime} min
                   </span>
                 )}
+                {item.age_rating && (
+                  <span class="px-2 py-0.5 border border-zinc-600 rounded text-[10px] font-black text-zinc-400 tracking-widest">
+                    {item.age_rating}
+                  </span>
+                )}
                 {item.status && (
                   <span class="capitalize px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-black text-zinc-400 tracking-widest">
                     {item.status}

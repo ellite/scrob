@@ -107,6 +107,11 @@ const originalLanguage = show?.original_language
                   </span>
                 )}
                 <span class="font-medium text-zinc-400">{show.seasons_meta?.length || seasons.length} Seasons</span>
+                {show.age_rating && (
+                  <span class="px-2 py-0.5 border border-zinc-600 rounded text-[10px] font-black text-zinc-400 tracking-widest">
+                    {show.age_rating}
+                  </span>
+                )}
                 {show.status && (
                   <span class="capitalize px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-black text-zinc-400 tracking-widest">
                     {show.status}

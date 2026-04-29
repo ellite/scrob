@@ -15,7 +15,7 @@ from models.collection import Collection, CollectionFile
 from models.base import MediaType
 from models.show import Show as ShowModel
 from models.users import User, UserSettings
-from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data
+from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating
 
 from dependencies import get_current_user
 from core import tmdb
@@ -302,6 +302,7 @@ async def get_show(
             **format_show(show),
             "seasons_meta": enhanced_seasons_meta,
             "original_language": (show.tmdb_data or {}).get("original_language") or (tmdb_extra or {}).get("original_language"),
+            "age_rating": _extract_show_content_rating(tmdb_extra) if tmdb_extra else None,
             "in_library": state_item.get("collection_pct", 0) > 0 if state_item else False,
             "watched": state_item.get("watched", False) if state_item else False,
             "in_lists": state_item.get("in_lists", []),
@@ -365,6 +366,7 @@ async def get_show(
             "last_air_date": data.get("last_air_date"),
             "genres": [g["name"] for g in data.get("genres", [])],
             "original_language": data.get("original_language"),
+            "age_rating": _extract_show_content_rating(data),
             "in_library": state_item_tmdb.get("collection_pct", 0) > 0,
             "watched": state_item_tmdb.get("watched", False),
             "in_lists": state_item_tmdb.get("in_lists", []),
