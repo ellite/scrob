@@ -2648,6 +2648,7 @@ async def get_media_details(
             "genres": [g["name"] for g in data.get("genres", [])],
             "original_language": data.get("original_language"),
             "age_rating": _extract_movie_certification(data),
+            "imdb_id": data.get("imdb_id"),
             "adult": data.get("adult", False),
             "collection": collection,
             "production_companies": production_companies,

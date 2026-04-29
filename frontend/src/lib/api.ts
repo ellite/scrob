@@ -416,6 +416,7 @@ export interface MediaItem {
   status?: string | null;
   original_language?: string | null;
   age_rating?: string | null;
+  imdb_id?: string | null;
   adult?: boolean;
   show_title?: string | null;
   show_tmdb_id?: number | null;
@@ -522,6 +523,7 @@ export interface Show {
   status: string | null;
   original_language?: string | null;
   age_rating?: string | null;
+  imdb_id?: string | null;
   adult?: boolean;
   user_rating?: number | null;
   first_air_date: string | null;

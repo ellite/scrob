@@ -131,6 +131,11 @@ const refreshUrl = isEpisode
                     {item.age_rating}
                   </span>
                 )}
+                {item.imdb_id && (
+                  <a href={`https://www.imdb.com/title/${item.imdb_id}/`} target="_blank" rel="noopener noreferrer" class="px-2 py-0.5 bg-[#f5c518] rounded text-[10px] font-black text-black tracking-widest hover:bg-[#e6b800] transition-colors">
+                    IMDb
+                  </a>
+                )}
                 {item.status && (
                   <span class="capitalize px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-black text-zinc-400 tracking-widest">
                     {item.status}
