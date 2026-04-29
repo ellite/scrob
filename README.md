@@ -35,6 +35,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks you
 ## Features
 
 - **Multi-source sync**: Import your full library, watch history, and ratings from Jellyfin, Plex, and Emby. Incremental syncs keep everything up to date.
+- **Keep all servers in sync**: Keep your watched status in sync between all your servers. Supports multiple instances.
 - **Real-time scrobbling**: Webhooks from Jellyfin, Plex, and Emby update your watch state as you play — no manual sync needed.
 - **Trakt integration**: Sync your watched history and ratings from Trakt, and push Scrob activity back to Trakt automatically.
 - **Watch history & ratings**: Track every movie and episode you've watched. Rate them on a 10-point scale with optional reviews.
