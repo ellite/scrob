@@ -239,6 +239,9 @@ async def get_show(
             select(Media).where(Media.tmdb_id == series_tmdb_id, Media.media_type == MediaType.series)
         )
         show_media = show_media_q.scalar_one_or_none()
+        if show_media and not show_media.adult and (tmdb_extra or {}).get("adult", False):
+            show_media.adult = True
+            await db.commit()
         season_ratings: dict = {}
         if show_media:
             ratings_q = await db.execute(

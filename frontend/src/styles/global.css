@@ -277,7 +277,7 @@ html.blur-explicit [data-adult="true"]:hover img {
   filter: blur(18px);
 }
 /* Overlay hint — shown only when blurred */
-html.blur-explicit [data-adult="true"]::after {
+html.blur-explicit [data-adult="true"]:not([data-no-label])::after {
   content: 'Tap to reveal';
   position: absolute;
   inset: 0;

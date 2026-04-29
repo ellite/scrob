@@ -536,7 +536,7 @@ def format_media(media: Media) -> dict:
         "genres": (media.tmdb_data or {}).get("genres", []),
         "cast": cast[:12],
         "collection": (media.tmdb_data or {}).get("collection"),
-        "adult": (media.tmdb_data or {}).get("adult", False),
+        "adult": media.adult,
     }
 
 
@@ -2558,6 +2558,9 @@ async def get_media_details(
         if media:
             local_info["in_library"] = True
             local_info["id"] = media.id
+            if not media.adult and data.get("adult", False):
+                media.adult = True
+                await db.commit()
             coll_q = (
                 select(CollectionFile)
                 .join(Collection, Collection.id == CollectionFile.collection_id)

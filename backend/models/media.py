@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, func, Index
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, func, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, MediaType
@@ -28,6 +28,7 @@ class Media(Base):
     tagline        : Mapped[Optional[str]]   = mapped_column(Text)
     status         : Mapped[Optional[str]]   = mapped_column(String(100))
     tmdb_data      : Mapped[Optional[dict]]  = mapped_column(JSON)
+    adult          : Mapped[bool]            = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     # Episodes only ↓
     show_id        : Mapped[Optional[int]]   = mapped_column(ForeignKey("shows.id", ondelete="SET NULL"))
     season_number  : Mapped[Optional[int]]   = mapped_column(Integer)

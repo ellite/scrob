@@ -30,6 +30,7 @@ async def enrich_media(media: Media, api_key: str = None, series_tmdb_id: int = 
                 "status": data.get("status"),
                 "adult": data.get("adult", False),
             }
+            media.adult = data.get("adult", False)
 
         elif media.media_type == MediaType.series:
             if not media.tmdb_id:
@@ -52,6 +53,7 @@ async def enrich_media(media: Media, api_key: str = None, series_tmdb_id: int = 
                 "status": data.get("status"),
                 "adult": data.get("adult", False),
             }
+            media.adult = data.get("adult", False)
 
         elif media.media_type == MediaType.episode:
             if media.season_number is None or media.episode_number is None:

@@ -7,7 +7,7 @@ interface Props {
   description: string | null;
   privacy_level: PrivacyLevel;
   item_count: number;
-  preview_posters: string[];
+  preview_posters: { url: string; adult: boolean }[];
   username?: string; // for public/community lists
 }
 
@@ -33,18 +33,18 @@ const p = preview_posters;
       </div>
     )}
     {p.length >= 3 && (
-      <div class="absolute inset-0 rounded-xl overflow-hidden bg-zinc-800 origin-bottom rotate-[8deg] opacity-50">
-        <img src={posterSrc(p[2])} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
+      <div class="absolute inset-0 rounded-xl overflow-hidden bg-zinc-800 origin-bottom rotate-[8deg] opacity-50" data-adult={p[2].adult ? "true" : undefined} data-no-label="true">
+        <img src={posterSrc(p[2].url)} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
       </div>
     )}
     {p.length >= 2 && (
-      <div class="absolute inset-0 rounded-xl overflow-hidden bg-zinc-800 origin-bottom rotate-[4deg] opacity-75">
-        <img src={posterSrc(p[1])} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
+      <div class="absolute inset-0 rounded-xl overflow-hidden bg-zinc-800 origin-bottom rotate-[4deg] opacity-75" data-adult={p[1].adult ? "true" : undefined} data-no-label="true">
+        <img src={posterSrc(p[1].url)} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
       </div>
     )}
     {p.length >= 1 && (
-      <div class="absolute inset-0 rounded-xl overflow-hidden bg-zinc-800 shadow-lg">
-        <img src={posterSrc(p[0])} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
+      <div class="absolute inset-0 rounded-xl overflow-hidden bg-zinc-800 shadow-lg" data-adult={p[0].adult ? "true" : undefined} data-no-label="true">
+        <img src={posterSrc(p[0].url)} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
       </div>
     )}
   </div>

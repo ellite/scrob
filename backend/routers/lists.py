@@ -35,7 +35,7 @@ class ListItemAdd(BaseModel):
 
 
 def _format_list(lst: ListModel) -> dict:
-    preview_posters: list[str] = []
+    preview_posters: list[dict] = []
     for item in sorted(lst.items, key=lambda x: (x.sort_order, x.added_at)):
         if len(preview_posters) >= 3:
             break
@@ -44,7 +44,7 @@ def _format_list(lst: ListModel) -> dict:
             if not poster and item.media.show:
                 poster = item.media.show.poster_path
             if poster:
-                preview_posters.append(poster)
+                preview_posters.append({"url": poster, "adult": item.media.adult})
         except Exception:
             pass
     return {
@@ -78,6 +78,7 @@ def _format_item(item: ListItem) -> dict:
             "tmdb_rating": media.tmdb_rating,
             "season_number": media.season_number,
             "episode_number": media.episode_number,
+            "adult": media.adult,
             "library": None,
             "in_library": False,
         },
@@ -284,11 +285,12 @@ async def add_list_item(
     )
     media = media_result.scalar_one_or_none()
 
-    if not media:
-        from routers.media import get_user_tmdb_key
-        from core import tmdb
+    from routers.media import get_user_tmdb_key
+    from core import tmdb
 
-        api_key = await get_user_tmdb_key(db, current_user.id)
+    api_key = await get_user_tmdb_key(db, current_user.id)
+
+    if not media:
         try:
             if body.media_type == MediaType.movie:
                 data = await tmdb.get_movie(body.tmdb_id, api_key=api_key)
@@ -301,6 +303,7 @@ async def add_list_item(
                     release_date=data.get("release_date"),
                     tmdb_rating=data.get("vote_average"),
                     overview=data.get("overview"),
+                    adult=data.get("adult", False),
                 )
             elif body.media_type == MediaType.person:
                 data = await tmdb.get_person(body.tmdb_id, api_key=api_key)
@@ -322,11 +325,23 @@ async def add_list_item(
                     release_date=data.get("first_air_date"),
                     tmdb_rating=data.get("vote_average"),
                     overview=data.get("overview"),
+                    adult=data.get("adult", False),
                 )
             db.add(media)
             await db.flush()
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"Media not found: {e}")
+    elif not media.adult and body.media_type in (MediaType.movie, MediaType.series):
+        # Existing record may pre-date the adult flag — refresh from TMDB
+        try:
+            if body.media_type == MediaType.movie:
+                data = await tmdb.get_movie(body.tmdb_id, api_key=api_key)
+            else:
+                data = await tmdb.get_show(body.tmdb_id, api_key=api_key)
+            if data.get("adult", False):
+                media.adult = True
+        except Exception:
+            pass
 
     existing = await db.execute(
         select(ListItem).where(ListItem.list_id == list_id, ListItem.media_id == media.id)

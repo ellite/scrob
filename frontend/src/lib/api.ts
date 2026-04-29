@@ -232,7 +232,7 @@ export interface UserList {
   item_count: number;
   created_at: string;
   updated_at: string;
-  preview_posters: string[];
+  preview_posters: { url: string; adult: boolean }[];
 }
 
 export interface PublicList extends UserList {
@@ -581,7 +581,7 @@ export interface ProfileListItem {
   privacy_level: PrivacyLevel;
   item_count: number;
   updated_at: string;
-  preview_posters: string[];
+  preview_posters: { url: string; adult: boolean }[];
 }
 
 export interface ProfileCommentItem {
