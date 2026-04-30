@@ -302,6 +302,8 @@ async def run_trakt_sync(user_id: int, job_id: int):
             sync_ratings = settings.trakt_sync_ratings
 
             stats = {"movies": 0, "episodes": 0, "ratings": 0, "skipped": 0, "errors": 0}
+            _new_watched: set[int] = set()
+            _new_ratings: dict[int, float] = {}
 
             # ── Watched Movies ────────────────────────────────────────────────
             if sync_watched:
@@ -345,6 +347,7 @@ async def run_trakt_sync(user_id: int, job_id: int):
                                     play_count=item.get("plays", 1),
                                 ))
                                 existing_watched.add(media.id)
+                                _new_watched.add(media.id)
                                 stats["movies"] += 1
                             else:
                                 stats["skipped"] += 1
@@ -416,6 +419,7 @@ async def run_trakt_sync(user_id: int, job_id: int):
                                                     play_count=ep_entry.get("plays", 1),
                                                 ))
                                                 existing_watched.add(media.id)
+                                                _new_watched.add(media.id)
                                                 stats["episodes"] += 1
                                             else:
                                                 stats["skipped"] += 1
@@ -458,6 +462,7 @@ async def run_trakt_sync(user_id: int, job_id: int):
                                     rating=float(item.get("rating", 0)),
                                 ))
                                 existing_rated.add(media.id)
+                                _new_ratings[media.id] = float(item.get("rating", 0))
                                 stats["ratings"] += 1
                     except Exception as exc:
                         logger.warning("Error processing Trakt movie rating tmdb=%s: %s", tmdb_id, exc)
@@ -489,6 +494,7 @@ async def run_trakt_sync(user_id: int, job_id: int):
                                     rating=float(item.get("rating", 0)),
                                 ))
                                 existing_rated.add(media.id)
+                                _new_ratings[media.id] = float(item.get("rating", 0))
                                 stats["ratings"] += 1
                     except Exception as exc:
                         logger.warning("Error processing Trakt show rating tmdb=%s: %s", tmdb_id, exc)
@@ -497,6 +503,8 @@ async def run_trakt_sync(user_id: int, job_id: int):
                 await db.commit()
 
             logger.info("Trakt sync job %s completed. Stats: %s", job_id, stats)
+            from routers.sync import _fan_out_changes_to_other_connections
+            await _fan_out_changes_to_other_connections(db, user_id, None, _new_watched, _new_ratings, settings=settings)
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed,

@@ -5,6 +5,7 @@ from sqlalchemy import DateTime, Enum, ForeignKey, Integer, JSON, String, Unique
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, CollectionSource
+from .connections import MediaServerConnection
 
 
 class Collection(Base):
@@ -34,6 +35,7 @@ class CollectionFile(Base):
 
     id                 : Mapped[int]               = mapped_column(Integer, primary_key=True)
     collection_id      : Mapped[int]               = mapped_column(ForeignKey("collections.id", ondelete="CASCADE"), nullable=False)
+    connection_id      : Mapped[Optional[int]]     = mapped_column(ForeignKey("media_server_connections.id", ondelete="SET NULL"), nullable=True)
     source             : Mapped[CollectionSource]  = mapped_column(Enum(CollectionSource), nullable=False)
     source_id          : Mapped[Optional[str]]     = mapped_column(String(255))
     resolution         : Mapped[Optional[str]]     = mapped_column(String(50))
@@ -49,4 +51,5 @@ class CollectionFile(Base):
         UniqueConstraint("collection_id", "source", "source_id", name="uq_collection_file_source"),
     )
 
-    collection : Mapped["Collection"] = relationship(back_populates="files")
+    collection : Mapped["Collection"]              = relationship(back_populates="files")
+    connection : Mapped[Optional["MediaServerConnection"]] = relationship()

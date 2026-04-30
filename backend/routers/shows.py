@@ -15,7 +15,7 @@ from models.collection import Collection, CollectionFile
 from models.base import MediaType
 from models.show import Show as ShowModel
 from models.users import User, UserSettings
-from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating
+from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch
 
 from dependencies import get_current_user
 from core import tmdb
@@ -303,6 +303,10 @@ async def get_show(
             for s in base_seasons_meta
         ]
 
+        where_to_watch = await get_where_to_watch(
+            db, current_user.id, series_tmdb_id, MediaType.series, show=show, tmdb_key=api_key
+        )
+
         return {
             **format_show(show),
             "seasons_meta": enhanced_seasons_meta,
@@ -321,6 +325,7 @@ async def get_show(
             "seasons": {f"season_{k}": v for k, v in sorted(seasons.items())},
             "cast": cast,
             "networks": networks,
+            "where_to_watch": where_to_watch,
         }
 
     # 2. If not local, fetch from TMDB
@@ -357,6 +362,10 @@ async def get_show(
 
         state_item_tmdb: dict = {"tmdb_id": series_tmdb_id, "type": "series"}
         await enrich_with_state(db, current_user.id, [state_item_tmdb])
+
+        where_to_watch = await get_where_to_watch(
+            db, current_user.id, series_tmdb_id, MediaType.series, tmdb_key=api_key
+        )
 
         return {
             "id": None,
@@ -399,6 +408,7 @@ async def get_show(
             ],
             "seasons": {},
             "season_states": {},
+            "where_to_watch": where_to_watch,
         }
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"TMDB Show not found: {e}")

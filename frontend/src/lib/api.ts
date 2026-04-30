@@ -439,6 +439,7 @@ export interface MediaItem {
     audio_languages: string[];
     subtitle_languages: string[];
   } | null;
+  where_to_watch?: { type: string; name: string; logo: string | null }[];
   collection?: {
     id: number;
     name: string;
@@ -528,6 +529,7 @@ export interface Show {
   user_rating?: number | null;
   first_air_date: string | null;
   last_air_date: string | null;
+  where_to_watch?: { type: string; name: string; logo: string | null }[];
 }
 
 export interface ProfileWatchedItem {

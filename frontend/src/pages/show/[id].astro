@@ -185,6 +185,27 @@ const originalLanguage = show?.original_language
                 ))}
               </div>
             )}
+
+            <!-- Where to Watch -->
+            {show.where_to_watch && show.where_to_watch.length > 0 && (
+              <div class="mb-8">
+                <h2 class="text-sm font-black text-zinc-500 mb-3 uppercase tracking-widest">Where to Watch</h2>
+                <div class="flex flex-wrap gap-2">
+                  {show.where_to_watch.map(s => (
+                    <div class="flex items-center gap-2 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg">
+                      {s.logo ? (
+                        <img src={s.logo} alt={s.name} class="w-5 h-5 rounded object-cover" />
+                      ) : (
+                        <span class="text-zinc-400 text-xs">
+                          {s.type === "plex" ? "🟡" : s.type === "jellyfin" ? "🟣" : s.type === "emby" ? "🟢" : "▶"}
+                        </span>
+                      )}
+                      <span class="text-zinc-300 text-xs font-semibold">{s.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

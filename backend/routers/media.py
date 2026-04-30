@@ -8,10 +8,12 @@ from sqlalchemy.orm import joinedload
 from db import get_db
 from models.media import Media
 from models.collection import Collection, CollectionFile
+from models.connections import MediaServerConnection
 from models.events import WatchEvent
 from models.ratings import Rating
 from models.base import MediaType, CollectionSource
 from models.lists import List as UserList, ListItem
+from models.profile import UserProfileData
 from core import tmdb
 from dependencies import get_current_user
 from models.users import User, UserSettings
@@ -2445,6 +2447,84 @@ async def refresh_movie_metadata(
     return {"message": "Metadata refreshed successfully"}
 
 
+async def get_where_to_watch(
+    db: AsyncSession,
+    user_id: int,
+    tmdb_id: int,
+    media_type: MediaType,
+    media: "Media | None" = None,
+    show: "ShowModel | None" = None,
+    tmdb_key: str | None = None,
+) -> list[dict]:
+    """Return a deduplicated list of local servers and streaming services where this title is available."""
+    sources: list[dict] = []
+    seen_names: set[str] = set()
+
+    def _add(entry: dict) -> None:
+        key = (entry["type"], entry["name"])
+        if key not in seen_names:
+            seen_names.add(key)
+            sources.append(entry)
+
+    # ── Local media servers ───────────────────────────────────────────────────
+    if media_type == MediaType.movie and media:
+        files_q = await db.execute(
+            select(CollectionFile, MediaServerConnection)
+            .join(Collection, Collection.id == CollectionFile.collection_id)
+            .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
+            .where(Collection.media_id == media.id, Collection.user_id == user_id)
+        )
+        for cf, conn in files_q.all():
+            name = conn.name if conn else cf.source.value.title()
+            _add({"type": cf.source.value, "name": name, "logo": None})
+
+    elif media_type == MediaType.series and show:
+        files_q = await db.execute(
+            select(CollectionFile.connection_id, CollectionFile.source, MediaServerConnection.name)
+            .distinct()
+            .join(Collection, Collection.id == CollectionFile.collection_id)
+            .join(Media, Media.id == Collection.media_id)
+            .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
+            .where(
+                Media.show_id == show.id,
+                Collection.user_id == user_id,
+                Media.media_type == MediaType.episode,
+            )
+        )
+        for _cid, src, conn_name in files_q.all():
+            name = conn_name if conn_name else src.value.title()
+            _add({"type": src.value, "name": name, "logo": None})
+
+    # ── TMDB streaming providers ──────────────────────────────────────────────
+    if tmdb_key and check_tmdb_key(tmdb_key):
+        try:
+            profile_q = await db.execute(
+                select(UserProfileData).where(UserProfileData.user_id == user_id)
+            )
+            profile = profile_q.scalar_one_or_none()
+            country = (profile.country if profile and profile.country else None) or "US"
+            user_streaming_ids = (
+                {int(s) for s in (profile.streaming_services or [])} if profile else set()
+            )
+
+            if media_type == MediaType.movie:
+                providers_data = await tmdb.get_movie_watch_providers(tmdb_id, api_key=tmdb_key)
+            else:
+                providers_data = await tmdb.get_show_watch_providers(tmdb_id, api_key=tmdb_key)
+
+            country_data = (providers_data.get("results") or {}).get(country, {})
+            for p in country_data.get("flatrate", []):
+                pid = p.get("provider_id")
+                if user_streaming_ids and pid not in user_streaming_ids:
+                    continue
+                logo = tmdb.poster_url(p.get("logo_path"), size="w92") if p.get("logo_path") else None
+                _add({"type": "streaming", "name": p.get("provider_name"), "logo": logo})
+        except Exception:
+            pass
+
+    return sources
+
+
 @router.get("/{type}/{tmdb_id}")
 async def get_media_details(
     type: MediaType,
@@ -2625,6 +2705,10 @@ async def get_media_details(
         if collection and collection.get("parts"):
             await enrich_with_state(db, current_user.id, collection["parts"])
 
+        where_to_watch = await get_where_to_watch(
+            db, current_user.id, tmdb_id, MediaType.movie, media=media, tmdb_key=tmdb_key
+        )
+
         return {
             **local_info,
             "tmdb_id": tmdb_id,
@@ -2664,6 +2748,7 @@ async def get_media_details(
                 }
                 for c in data.get("credits", {}).get("cast", [])[:12]
             ],
+            "where_to_watch": where_to_watch,
         }
     except Exception as e:
         if isinstance(e, HTTPException):
