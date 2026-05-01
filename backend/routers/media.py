@@ -3675,10 +3675,38 @@ async def pick_for_me(
             pass
 
     if pick.get("in_library"):
-        seen_conn_types: set[str] = set()
-        for c in connections:
-            if c.type not in seen_conn_types:
-                seen_conn_types.add(c.type)
+        if type == "movie":
+            cf_conn_q = await db.execute(
+                select(MediaServerConnection)
+                .join(CollectionFile, CollectionFile.connection_id == MediaServerConnection.id)
+                .join(Collection, Collection.id == CollectionFile.collection_id)
+                .join(Media, Media.id == Collection.media_id)
+                .where(
+                    Media.tmdb_id == pick["tmdb_id"],
+                    Media.media_type == MediaType.movie,
+                    Collection.user_id == current_user.id,
+                    CollectionFile.connection_id.isnot(None),
+                )
+                .distinct()
+            )
+        else:
+            cf_conn_q = await db.execute(
+                select(MediaServerConnection)
+                .join(CollectionFile, CollectionFile.connection_id == MediaServerConnection.id)
+                .join(Collection, Collection.id == CollectionFile.collection_id)
+                .join(Media, Media.id == Collection.media_id)
+                .join(ShowModel, ShowModel.id == Media.show_id)
+                .where(
+                    ShowModel.tmdb_id == pick["tmdb_id"],
+                    Collection.user_id == current_user.id,
+                    CollectionFile.connection_id.isnot(None),
+                )
+                .distinct()
+            )
+        seen_conn_ids: set[int] = set()
+        for c in cf_conn_q.scalars().all():
+            if c.id not in seen_conn_ids:
+                seen_conn_ids.add(c.id)
                 sources.append({"type": c.type, "name": c.name or c.type.title(), "logo": None})
 
     pick["sources"] = sources
