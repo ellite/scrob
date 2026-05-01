@@ -153,6 +153,7 @@ async def create_list(
         "item_count": 0,
         "created_at": lst.created_at.isoformat(),
         "updated_at": lst.updated_at.isoformat(),
+        "preview_posters": [],
     }
 
 

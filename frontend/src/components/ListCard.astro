@@ -11,9 +11,11 @@ interface Props {
   username?: string; // for public/community lists
 }
 
-const { id, name, description, privacy_level, item_count, preview_posters, username } = Astro.props;
+const { id, name, description, privacy_level, item_count, preview_posters = [], username } = Astro.props;
 
 function posterSrc(path: string): string {
+  if (!path) return "";
+  if (typeof path !== "string") return "";
   if (path.startsWith("http")) return path;
   return `https://image.tmdb.org/t/p/w185${path}`;
 }

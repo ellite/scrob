@@ -567,7 +567,7 @@ async def get_public_profile(
     list_ids = [row.id for row in lists_rows]
 
     # Fetch up to 3 preview posters per list using ROW_NUMBER
-    posters_by_list: dict[int, list[str]] = {}
+    posters_by_list: dict[int, list[dict]] = {}
     if list_ids:
         ShowAlias = aliased(ShowModel)
         rn = func.row_number().over(
@@ -579,18 +579,18 @@ async def get_public_profile(
             else_=ShowAlias.poster_path,
         ).label("poster")
         inner = (
-            select(ListItem.list_id, poster_col, rn)
+            select(ListItem.list_id, poster_col, Media.adult, rn)
             .join(Media, ListItem.media_id == Media.id)
             .outerjoin(ShowAlias, ShowAlias.tmdb_id == Media.tmdb_id)
             .where(ListItem.list_id.in_(list_ids))
         ).subquery()
         posters_q = await db.execute(
-            select(inner.c.list_id, inner.c.poster)
+            select(inner.c.list_id, inner.c.poster, inner.c.adult)
             .where(inner.c.rn <= 3)
             .where(inner.c.poster.isnot(None))
         )
         for row in posters_q.all():
-            posters_by_list.setdefault(row.list_id, []).append(row.poster)
+            posters_by_list.setdefault(row.list_id, []).append({"url": row.poster, "adult": row.adult})
 
     user_lists = [
         {
