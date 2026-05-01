@@ -2289,19 +2289,26 @@ async def request_media(
         raise HTTPException(status_code=400, detail="Can only request movies or series")
 
 
-async def refresh_technical_data(db: AsyncSession, media_ids: list[int], settings: UserSettings) -> None:
+async def refresh_technical_data(db: AsyncSession, media_ids: list[int], user_id: int) -> None:
     """For every CollectionFile the user has for the given media IDs, fetch fresh
-    technical data (resolution, codecs, languages) from Plex or Jellyfin.
-    Manual entries are upgraded to plex/jellyfin by searching for the item."""
+    technical data (resolution, codecs, languages) from Plex, Jellyfin, or Emby.
+    Manual entries are upgraded to the real source by searching all connections."""
     import core.plex as plex_client
     import core.jellyfin as jellyfin_client
     import core.emby as emby_client
     from models.show import Show as ShowModel
 
-    has_plex = bool(settings.plex_url and settings.plex_token)
-    has_jellyfin = bool(settings.jellyfin_url and settings.jellyfin_token)
-    has_emby = bool(settings.emby_url and settings.emby_token and settings.emby_user_id)
-    if not has_plex and not has_jellyfin and not has_emby:
+    # Load all connections for this user, grouped by type
+    conns_result = await db.execute(
+        select(MediaServerConnection).where(MediaServerConnection.user_id == user_id)
+    )
+    all_conns = conns_result.scalars().all()
+    conns_by_id: dict[int, MediaServerConnection] = {c.id: c for c in all_conns}
+    plex_conns    = [c for c in all_conns if c.type == "plex"]
+    jellyfin_conns = [c for c in all_conns if c.type == "jellyfin"]
+    emby_conns    = [c for c in all_conns if c.type == "emby"]
+
+    if not all_conns:
         return
 
     files_result = await db.execute(
@@ -2309,7 +2316,7 @@ async def refresh_technical_data(db: AsyncSession, media_ids: list[int], setting
         .join(Collection, Collection.id == CollectionFile.collection_id)
         .join(Media, Media.id == Collection.media_id)
         .where(
-            Collection.user_id == settings.user_id,
+            Collection.user_id == user_id,
             Collection.media_id.in_(media_ids),
         )
     )
@@ -2329,87 +2336,98 @@ async def refresh_technical_data(db: AsyncSession, media_ids: list[int], setting
         quality: dict = {}
         new_source: Optional[CollectionSource] = None
         new_source_id: Optional[str] = None
+        new_connection_id: Optional[int] = None
 
-        if cf.source == CollectionSource.plex and has_plex and cf.source_id:
-            item = await plex_client.get_item(settings.plex_url, settings.plex_token, cf.source_id)
+        # Resolve the connection for this file (non-manual sources have connection_id set)
+        conn = conns_by_id.get(cf.connection_id) if cf.connection_id else None
+
+        if cf.source == CollectionSource.plex and conn and cf.source_id:
+            item = await plex_client.get_item(conn.url, conn.token, cf.source_id)
             if item:
                 quality = plex_client.extract_quality(item.get("Media", []))
 
-        elif cf.source == CollectionSource.jellyfin and has_jellyfin and cf.source_id:
-            item = await jellyfin_client.get_item(settings.jellyfin_url, settings.jellyfin_token, cf.source_id)
+        elif cf.source in (CollectionSource.jellyfin, CollectionSource.emby) and conn and cf.source_id:
+            client_mod = jellyfin_client if cf.source == CollectionSource.jellyfin else emby_client
+            item = await client_mod.get_item(conn.url, conn.token, cf.source_id, user_id=conn.server_user_id)
             if item:
-                quality = jellyfin_client.extract_quality(item.get("MediaStreams", []))
-                if not quality.get("file_path") and item.get("Path"):
-                    quality["file_path"] = item["Path"]
-
-        elif cf.source == CollectionSource.emby and has_emby and cf.source_id:
-            item = await emby_client.get_item(settings.emby_url, settings.emby_token, cf.source_id)
-            if item:
-                quality = emby_client.extract_quality(item.get("MediaStreams", []))
+                quality = client_mod.extract_quality(item.get("MediaStreams", []))
                 if not quality.get("file_path") and item.get("Path"):
                     quality["file_path"] = item["Path"]
 
         elif cf.source == CollectionSource.manual and media.tmdb_id:
-            # Try to find the item on Plex or Jellyfin by TMDB metadata
+            # Try to find the item across all connections by TMDB metadata
             item = None
             if media.media_type == MediaType.movie:
-                if has_plex:
-                    item = await plex_client.find_movie_by_tmdb_id(settings.plex_url, settings.plex_token, media.tmdb_id)
+                for c in plex_conns:
+                    item = await plex_client.find_movie_by_tmdb_id(c.url, c.token, media.tmdb_id)
                     if item:
                         new_source = CollectionSource.plex
                         new_source_id = str(item.get("ratingKey", ""))
+                        new_connection_id = c.id
                         quality = plex_client.extract_quality(item.get("Media", []))
-                if not item and has_jellyfin:
-                    item = await jellyfin_client.find_movie_by_tmdb_id(settings.jellyfin_url, settings.jellyfin_token, media.tmdb_id)
-                    if item:
-                        new_source = CollectionSource.jellyfin
-                        new_source_id = item.get("Id", "")
-                        quality = jellyfin_client.extract_quality(item.get("MediaStreams", []))
-                        if not quality.get("file_path") and item.get("Path"):
-                            quality["file_path"] = item["Path"]
-                if not item and has_emby:
-                    item = await emby_client.find_movie_by_tmdb_id(settings.emby_url, settings.emby_token, media.tmdb_id)
-                    if item:
-                        new_source = CollectionSource.emby
-                        new_source_id = item.get("Id", "")
-                        quality = emby_client.extract_quality(item.get("MediaStreams", []))
-                        if not quality.get("file_path") and item.get("Path"):
-                            quality["file_path"] = item["Path"]
+                        break
+                if not item:
+                    for c in jellyfin_conns:
+                        item = await jellyfin_client.find_movie_by_tmdb_id(c.url, c.token, media.tmdb_id)
+                        if item:
+                            new_source = CollectionSource.jellyfin
+                            new_source_id = item.get("Id", "")
+                            new_connection_id = c.id
+                            quality = jellyfin_client.extract_quality(item.get("MediaStreams", []))
+                            if not quality.get("file_path") and item.get("Path"):
+                                quality["file_path"] = item["Path"]
+                            break
+                if not item:
+                    for c in emby_conns:
+                        item = await emby_client.find_movie_by_tmdb_id(c.url, c.token, media.tmdb_id)
+                        if item:
+                            new_source = CollectionSource.emby
+                            new_source_id = item.get("Id", "")
+                            new_connection_id = c.id
+                            quality = emby_client.extract_quality(item.get("MediaStreams", []))
+                            if not quality.get("file_path") and item.get("Path"):
+                                quality["file_path"] = item["Path"]
+                            break
 
             elif media.media_type == MediaType.episode and media.season_number is not None and media.episode_number is not None:
                 series_tmdb_id = show_tmdb_map.get(media.show_id) if media.show_id else None
                 if series_tmdb_id:
-                    if has_plex:
+                    for c in plex_conns:
                         item = await plex_client.find_episode_by_ids(
-                            settings.plex_url, settings.plex_token,
-                            series_tmdb_id, media.season_number, media.episode_number,
+                            c.url, c.token, series_tmdb_id, media.season_number, media.episode_number,
                         )
                         if item:
                             new_source = CollectionSource.plex
                             new_source_id = str(item.get("ratingKey", ""))
+                            new_connection_id = c.id
                             quality = plex_client.extract_quality(item.get("Media", []))
-                    if not item and has_jellyfin:
-                        item = await jellyfin_client.find_episode_by_ids(
-                            settings.jellyfin_url, settings.jellyfin_token,
-                            series_tmdb_id, media.season_number, media.episode_number,
-                        )
-                        if item:
-                            new_source = CollectionSource.jellyfin
-                            new_source_id = item.get("Id", "")
-                            quality = jellyfin_client.extract_quality(item.get("MediaStreams", []))
-                            if not quality.get("file_path") and item.get("Path"):
-                                quality["file_path"] = item["Path"]
-                    if not item and has_emby:
-                        item = await emby_client.find_episode_by_ids(
-                            settings.emby_url, settings.emby_token,
-                            series_tmdb_id, media.season_number, media.episode_number,
-                        )
-                        if item:
-                            new_source = CollectionSource.emby
-                            new_source_id = item.get("Id", "")
-                            quality = emby_client.extract_quality(item.get("MediaStreams", []))
-                            if not quality.get("file_path") and item.get("Path"):
-                                quality["file_path"] = item["Path"]
+                            break
+                    if not item:
+                        for c in jellyfin_conns:
+                            item = await jellyfin_client.find_episode_by_ids(
+                                c.url, c.token, series_tmdb_id, media.season_number, media.episode_number,
+                            )
+                            if item:
+                                new_source = CollectionSource.jellyfin
+                                new_source_id = item.get("Id", "")
+                                new_connection_id = c.id
+                                quality = jellyfin_client.extract_quality(item.get("MediaStreams", []))
+                                if not quality.get("file_path") and item.get("Path"):
+                                    quality["file_path"] = item["Path"]
+                                break
+                    if not item:
+                        for c in emby_conns:
+                            item = await emby_client.find_episode_by_ids(
+                                c.url, c.token, series_tmdb_id, media.season_number, media.episode_number,
+                            )
+                            if item:
+                                new_source = CollectionSource.emby
+                                new_source_id = item.get("Id", "")
+                                new_connection_id = c.id
+                                quality = emby_client.extract_quality(item.get("MediaStreams", []))
+                                if not quality.get("file_path") and item.get("Path"):
+                                    quality["file_path"] = item["Path"]
+                                break
 
         if not quality.get("resolution"):
             continue
@@ -2418,6 +2436,8 @@ async def refresh_technical_data(db: AsyncSession, media_ids: list[int], setting
         if new_source and new_source_id:
             cf.source = new_source
             cf.source_id = new_source_id
+        if new_connection_id:
+            cf.connection_id = new_connection_id
 
         if quality.get("resolution"):    cf.resolution         = quality["resolution"]
         if quality.get("video_codec"):   cf.video_codec        = quality["video_codec"]
@@ -2453,10 +2473,7 @@ async def refresh_movie_metadata(
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     await enrich_media(media, api_key=tmdb_key)
 
-    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
-    settings = settings_result.scalar_one_or_none()
-    if settings:
-        await refresh_technical_data(db, [media.id], settings)
+    await refresh_technical_data(db, [media.id], current_user.id)
 
     await db.commit()
     return {"message": "Metadata refreshed successfully"}
@@ -3464,12 +3481,12 @@ async def pick_for_me(
     profile_q = await db.execute(select(UserProfileData).where(UserProfileData.user_id == current_user.id))
     profile = profile_q.scalar_one_or_none()
 
-    settings_q = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
-    settings = settings_q.scalar_one_or_none()
+    conns_q = await db.execute(select(MediaServerConnection).where(MediaServerConnection.user_id == current_user.id))
+    connections = conns_q.scalars().all()
 
     streaming_ids = [int(s) for s in (profile.streaming_services or [])] if profile else []
     region = (profile.country if profile and profile.country else None) or "US"
-    has_media_server = bool(settings and (settings.plex_url or settings.jellyfin_url or settings.emby_url))
+    has_media_server = bool(connections)
 
     if not streaming_ids and not has_media_server:
         raise HTTPException(status_code=400, detail="no_sources")
@@ -3657,13 +3674,12 @@ async def pick_for_me(
         except Exception:
             pass
 
-    if pick.get("in_library") and settings:
-        if settings.plex_url:
-            sources.append({"type": "plex", "name": "Plex", "logo": None})
-        if settings.jellyfin_url:
-            sources.append({"type": "jellyfin", "name": "Jellyfin", "logo": None})
-        if settings.emby_url:
-            sources.append({"type": "emby", "name": "Emby", "logo": None})
+    if pick.get("in_library"):
+        seen_conn_types: set[str] = set()
+        for c in connections:
+            if c.type not in seen_conn_types:
+                seen_conn_types.add(c.type)
+                sources.append({"type": c.type, "name": c.name or c.type.title(), "logo": None})
 
     pick["sources"] = sources
     return pick

@@ -14,7 +14,7 @@ from models.media import Media
 from models.collection import Collection, CollectionFile
 from models.base import MediaType
 from models.show import Show as ShowModel
-from models.users import User, UserSettings
+from models.users import User
 from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch
 
 from dependencies import get_current_user
@@ -1022,11 +1022,8 @@ async def refresh_show_metadata(
         if ep:
             apply_episode_data(media, ep)
 
-    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
-    settings = settings_result.scalar_one_or_none()
-    if settings:
-        all_media_ids = [ep.id for ep in episodes] + [ep.id for ep in orphans]
-        await refresh_technical_data(db, all_media_ids, settings)
+    all_media_ids = [ep.id for ep in episodes] + [ep.id for ep in orphans]
+    await refresh_technical_data(db, all_media_ids, current_user.id)
 
     await db.commit()
     return {"message": "Metadata refreshed successfully"}
