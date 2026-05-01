@@ -11,10 +11,13 @@ async def _get(url: str, token: str, path: str, params: Optional[Dict] = None) -
         r.raise_for_status()
         return r.json()
 
-async def get_item(url: str, token: str, item_id: str) -> Optional[Dict]:
+async def get_item(url: str, token: str, item_id: str, user_id: Optional[str] = None) -> Optional[Dict]:
     """Fetch full metadata for a single item by ID, including MediaStreams."""
     try:
-        data = await _get(url, token, f"Items/{item_id}", params={"Fields": "MediaStreams,Path"})
+        # Use the user-scoped endpoint when a user_id is available — the admin
+        # Items/{id} endpoint may omit MediaStreams for non-admin tokens.
+        path = f"Users/{user_id}/Items/{item_id}" if user_id else f"Items/{item_id}"
+        data = await _get(url, token, path, params={"Fields": "MediaStreams,Path"})
         return data
     except Exception:
         return None

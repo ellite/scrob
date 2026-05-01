@@ -3,6 +3,7 @@ import Base from "../../../layouts/Base.astro";
 import MediaRow from "../../../components/MediaRow.astro";
 import ActionBar from "../../../components/ActionBar.astro";
 import CommentsSection from "../../../components/CommentsSection.astro";
+import VideoPlayer from "../../../components/VideoPlayer.astro";
 import { api, type MediaItem } from "../../../lib/api";
 export const prerender = false;
 
@@ -171,20 +172,31 @@ const refreshUrl = isEpisode
               />
             </div>
 
-            {showRefreshBtn && (
-              <div class="mb-4">
-                <button
-                  id="refresh-metadata-btn"
-                  class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 hover:text-zinc-100 bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 rounded-xl transition-all duration-200 cursor-pointer"
-                >
-                  <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
-                    <path d="M21 3v5h-5"/>
-                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
-                    <path d="M8 16H3v5"/>
-                  </svg>
-                  <span id="refresh-label">Refresh Metadata</span>
-                </button>
+            {(showRefreshBtn || ((item.type === "movie" || item.type === "episode") && item.in_library)) && (
+              <div class="mb-4 flex flex-wrap gap-2">
+                {showRefreshBtn && (
+                  <button
+                    id="refresh-metadata-btn"
+                    class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 hover:text-zinc-100 bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 rounded-xl transition-all duration-200 cursor-pointer"
+                  >
+                    <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                      <path d="M21 3v5h-5"/>
+                      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                      <path d="M8 16H3v5"/>
+                    </svg>
+                    <span id="refresh-label">Refresh Metadata</span>
+                  </button>
+                )}
+                {(item.type === "movie" || item.type === "episode") && (
+                  <VideoPlayer
+                    tmdbId={item.tmdb_id}
+                    mediaType={item.type}
+                    inLibrary={item.in_library ?? false}
+                    title={item.title}
+                    token={token}
+                  />
+                )}
               </div>
             )}
 
@@ -369,4 +381,5 @@ const refreshUrl = isEpisode
       });
     }
   }
+
 </script>

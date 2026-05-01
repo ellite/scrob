@@ -1,6 +1,13 @@
 import asyncio
+import httpx
+import re
+import urllib.parse
+import uuid
 from typing import Optional
-from fastapi import APIRouter, Depends, Query, HTTPException
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
+from fastapi.responses import StreamingResponse, Response
+from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, and_, func, cast as sa_cast, Text
 from sqlalchemy.orm import joinedload
@@ -20,6 +27,14 @@ from models.users import User, UserSettings
 from models.show import Show as ShowModel
 
 router = APIRouter()
+
+
+class SessionReportRequest(BaseModel):
+    connection_id: int
+    state: str  # "playing" | "progress" | "paused" | "stopped"
+    position_ms: int = 0
+    duration_ms: int = 0
+
 
 # Simple TTL cache for the /for-you endpoint — keyed by user_id
 import time as _time
@@ -2523,6 +2538,633 @@ async def get_where_to_watch(
             pass
 
     return sources
+
+
+def _srt_to_vtt(srt: str) -> str:
+    vtt = re.sub(r"(\d{2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", srt)
+    return "WEBVTT\n\n" + vtt.strip()
+
+
+@router.get("/playback/{type}/{tmdb_id}")
+async def get_playback_sources(
+    type: MediaType,
+    tmdb_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return available local-server playback sources for a movie or episode."""
+    if type not in (MediaType.movie, MediaType.episode):
+        raise HTTPException(400, "Only movie/episode streaming supported")
+
+    media_q = await db.execute(
+        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+    )
+    media = media_q.scalars().first()
+    if not media:
+        return []
+
+    files_q = await db.execute(
+        select(CollectionFile, MediaServerConnection)
+        .join(Collection, Collection.id == CollectionFile.collection_id)
+        .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
+        .where(
+            Collection.media_id == media.id,
+            Collection.user_id == current_user.id,
+            CollectionFile.source.in_([CollectionSource.jellyfin, CollectionSource.emby, CollectionSource.plex]),
+            CollectionFile.connection_id.isnot(None),
+            CollectionFile.source_id.isnot(None),
+        )
+    )
+
+    from core import jellyfin as jellyfin_core
+    from core import plex as plex_core
+
+    sources = []
+    for cf, conn in files_q.all():
+        if not conn:
+            continue
+        resolution = cf.resolution
+        subtitles: list[dict] = []
+        audio_tracks: list[dict] = []
+
+        if cf.source.value in ("jellyfin", "emby") and cf.source_id:
+            try:
+                item = await jellyfin_core.get_item(conn.url, conn.token, cf.source_id, user_id=conn.server_user_id)
+                if item:
+                    if resolution is None:
+                        q = jellyfin_core.extract_quality(item.get("MediaStreams", []))
+                        resolution = q.get("resolution")
+                    for stream in item.get("MediaStreams", []):
+                        if stream.get("Type") == "Subtitle":
+                            codec = (stream.get("Codec") or "").lower()
+                            # Skip image-based subtitle formats — they cannot be served as VTT
+                            if codec in {"hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvbsub", "dvb_subtitle"}:
+                                continue
+                            lang = stream.get("Language") or None
+                            label = stream.get("DisplayTitle") or stream.get("Title") or lang or "Subtitle"
+                            subtitles.append({
+                                "index": stream.get("Index"),
+                                "language": lang,
+                                "label": label,
+                                "codec": codec,
+                            })
+                        elif stream.get("Type") == "Audio":
+                            lang = stream.get("Language") or None
+                            label = stream.get("DisplayTitle") or stream.get("Title") or lang or "Audio"
+                            audio_tracks.append({
+                                "index": stream.get("Index"),
+                                "language": lang,
+                                "label": label,
+                                "codec": stream.get("Codec"),
+                            })
+            except Exception:
+                pass
+
+        elif cf.source.value == "plex" and cf.source_id:
+            _plex_image_codecs = {"pgssub", "vobsub", "dvd_subtitle", "dvbsub"}
+            try:
+                item = await plex_core.get_item(conn.url, conn.token, cf.source_id)
+                if item:
+                    media_list = item.get("Media", [])
+                    if media_list and media_list[0].get("Part"):
+                        for stream in media_list[0]["Part"][0].get("Stream", []):
+                            stype = stream.get("streamType")
+                            if stype == 3 and stream.get("key"):
+                                codec = (stream.get("codec") or "").lower()
+                                if codec in _plex_image_codecs:
+                                    continue
+                                lang = stream.get("languageCode") or stream.get("languageTag") or None
+                                label = stream.get("displayTitle") or stream.get("title") or lang or "Subtitle"
+                                subtitles.append({
+                                    "index": stream.get("id"),
+                                    "language": lang,
+                                    "label": label,
+                                    "codec": codec,
+                                })
+                            elif stype == 2:
+                                lang = stream.get("languageCode") or stream.get("languageTag") or None
+                                label = stream.get("displayTitle") or stream.get("title") or lang or "Audio"
+                                audio_tracks.append({
+                                    "index": stream.get("id"),
+                                    "language": lang,
+                                    "label": label,
+                                    "codec": stream.get("codec"),
+                                })
+            except Exception:
+                pass
+
+        sources.append({
+            "connection_id": cf.connection_id,
+            "source": cf.source.value,
+            "name": conn.name or cf.source.value.title(),
+            "resolution": resolution,
+            "subtitles": subtitles,
+            "audio_tracks": audio_tracks,
+        })
+
+    return sources
+
+
+@router.get("/subtitles/{type}/{tmdb_id}")
+async def get_subtitle(
+    type: MediaType,
+    tmdb_id: int,
+    connection_id: int,
+    stream_index: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy a subtitle track as WebVTT from a Jellyfin, Emby, or Plex server."""
+    if type not in (MediaType.movie, MediaType.episode):
+        raise HTTPException(400, "Only movie/episode subtitles supported")
+
+    media_q = await db.execute(
+        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+    )
+    media = media_q.scalars().first()
+    if not media:
+        raise HTTPException(404, "Not in library")
+
+    cf_q = await db.execute(
+        select(CollectionFile, MediaServerConnection)
+        .join(Collection, Collection.id == CollectionFile.collection_id)
+        .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
+        .where(
+            Collection.media_id == media.id,
+            Collection.user_id == current_user.id,
+            CollectionFile.connection_id == connection_id,
+        )
+    )
+    row = cf_q.first()
+    if not row:
+        raise HTTPException(404, "Source not found")
+
+    cf, conn = row
+    if not conn or not cf.source_id:
+        raise HTTPException(400, "No valid connection configured")
+
+    cache_headers = {"Cache-Control": "private, max-age=3600"}
+
+    if cf.source.value in ("jellyfin", "emby"):
+        sub_url = (
+            f"{conn.url.rstrip('/')}/Videos/{cf.source_id}"
+            f"/{cf.source_id}/Subtitles/{stream_index}/0/Stream.vtt"
+        )
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            res = await client.get(sub_url, headers={"X-Emby-Token": conn.token})
+        if res.status_code >= 400:
+            raise HTTPException(502, "Subtitle not available")
+        return Response(content=res.content, media_type="text/vtt", headers=cache_headers)
+
+    elif cf.source.value == "plex":
+        from core import plex as plex_core
+        item = await plex_core.get_item(conn.url, conn.token, cf.source_id)
+        if not item:
+            raise HTTPException(502, "Could not fetch item from Plex")
+        sub_key = None
+        sub_codec = ""
+        media_list = item.get("Media", [])
+        if media_list and media_list[0].get("Part"):
+            for stream in media_list[0]["Part"][0].get("Stream", []):
+                if stream.get("streamType") == 3 and stream.get("id") == stream_index:
+                    sub_key = stream.get("key")
+                    sub_codec = (stream.get("codec") or "").lower()
+                    break
+        if not sub_key:
+            raise HTTPException(404, "Subtitle track not found")
+        sub_url = f"{conn.url.rstrip('/')}{sub_key}"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            res = await client.get(sub_url, headers={"X-Plex-Token": conn.token})
+        if res.status_code >= 400:
+            raise HTTPException(502, "Subtitle not available from Plex")
+        content = res.text
+        if sub_codec in ("subrip", "srt") or not content.strip().startswith("WEBVTT"):
+            content = _srt_to_vtt(content)
+        return Response(content=content.encode("utf-8"), media_type="text/vtt", headers=cache_headers)
+
+    else:
+        raise HTTPException(400, f"Subtitles not supported for source: {cf.source.value}")
+
+
+@router.get("/stream/{type}/{tmdb_id}")
+async def stream_media(
+    type: MediaType,
+    tmdb_id: int,
+    connection_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy a direct video stream from a Plex server (Jellyfin/Emby use the HLS endpoint)."""
+    if type not in (MediaType.movie, MediaType.episode):
+        raise HTTPException(400, "Only movie/episode streaming supported")
+
+    media_q = await db.execute(
+        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+    )
+    media = media_q.scalars().first()
+    if not media:
+        raise HTTPException(404, "Not in library")
+
+    cf_q = await db.execute(
+        select(CollectionFile, MediaServerConnection)
+        .join(Collection, Collection.id == CollectionFile.collection_id)
+        .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
+        .where(
+            Collection.media_id == media.id,
+            Collection.user_id == current_user.id,
+            CollectionFile.connection_id == connection_id,
+        )
+    )
+    row = cf_q.first()
+    if not row:
+        raise HTTPException(404, "Source not found")
+
+    cf, conn = row
+    if not conn or not cf.source_id:
+        raise HTTPException(400, "No valid connection configured")
+
+    upstream_headers: dict[str, str] = {}
+    range_header = request.headers.get("Range")
+    if range_header:
+        upstream_headers["Range"] = range_header
+
+    if cf.source.value in ("jellyfin", "emby"):
+        upstream_headers["X-Emby-Token"] = conn.token
+        stream_url = f"{conn.url.rstrip('/')}/Videos/{cf.source_id}/stream"
+        params: dict = {"Static": "true"}
+    elif cf.source.value == "plex":
+        from core import plex as plex_core
+        item = await plex_core.get_item(conn.url, conn.token, cf.source_id)
+        if not item:
+            raise HTTPException(502, "Could not fetch item from Plex")
+        media_list = item.get("Media", [])
+        if not media_list or not media_list[0].get("Part"):
+            raise HTTPException(502, "No media part found in Plex")
+        part_key = media_list[0]["Part"][0]["key"]
+        stream_url = f"{conn.url.rstrip('/')}{part_key}"
+        upstream_headers["X-Plex-Token"] = conn.token
+        params = {}
+    else:
+        raise HTTPException(400, f"Streaming not supported for source: {cf.source.value}")
+
+    try:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(None))
+        upstream_req = client.build_request("GET", stream_url, headers=upstream_headers, params=params)
+        upstream_res = await client.send(upstream_req, stream=True)
+    except Exception as e:
+        raise HTTPException(502, f"Could not connect to media server: {e}")
+
+    res_headers: dict[str, str] = {"Accept-Ranges": "bytes"}
+    for h in ("Content-Type", "Content-Length", "Content-Range"):
+        v = upstream_res.headers.get(h.lower())
+        if v:
+            res_headers[h] = v
+
+    async def cleanup() -> None:
+        await upstream_res.aclose()
+        await client.aclose()
+
+    return StreamingResponse(
+        upstream_res.aiter_bytes(65536),
+        status_code=upstream_res.status_code,
+        headers=res_headers,
+        background=BackgroundTask(cleanup),
+    )
+
+
+def _rewrite_m3u8_urls(content: str, connection_id: int, request_path: str, inherit_qs: str = "") -> str:
+    """Rewrite every URL line in an M3U8 manifest to route through our HLS segment proxy.
+
+    inherit_qs: raw query string from the parent manifest URL (e.g. "DeviceId=scrob&PlaySessionId=...&api_key=...").
+    Jellyfin variant playlists use bare relative paths like "0.ts" with no query params; Jellyfin
+    still needs DeviceId and PlaySessionId on those requests to locate the active transcoding job.
+    Inheriting the parent query string restores them.
+    """
+    base_dir = request_path.rsplit("/", 1)[0] if "/" in request_path else ""
+    lines = content.splitlines()
+    out = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            out.append(line)
+            continue
+        # Resolve absolute vs relative path
+        if stripped.startswith("http://") or stripped.startswith("https://"):
+            parsed = urllib.parse.urlparse(stripped)
+            path_qs = parsed.path + ("?" + parsed.query if parsed.query else "")
+        elif stripped.startswith("/"):
+            path_qs = stripped
+        else:
+            # Relative — resolve against the directory of the current manifest and
+            # inherit the parent manifest's session query params (DeviceId, PlaySessionId, api_key).
+            path_qs = base_dir + "/" + stripped
+            if inherit_qs and "?" not in path_qs:
+                path_qs += "?" + inherit_qs
+        encoded = urllib.parse.quote(path_qs, safe="")
+        out.append(f"/api/proxy/media/hls-segment?connection_id={connection_id}&path={encoded}")
+    return "\n".join(out)
+
+
+async def _get_conn_for_user(connection_id: int, user_id: int, db: AsyncSession) -> MediaServerConnection:
+    """Fetch a MediaServerConnection and verify it belongs to the given user."""
+    result = await db.execute(
+        select(MediaServerConnection).where(
+            MediaServerConnection.id == connection_id,
+            MediaServerConnection.user_id == user_id,
+        )
+    )
+    conn = result.scalars().first()
+    if not conn:
+        raise HTTPException(404, "Connection not found")
+    return conn
+
+
+@router.get("/hls/{type}/{tmdb_id}")
+async def hls_master_manifest(
+    type: MediaType,
+    tmdb_id: int,
+    connection_id: int,
+    audio_stream_index: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch and rewrite an HLS master M3U8 from Emby/Jellyfin so all segment URLs
+    are proxied through this server. Creates a proper transcoding session on the server."""
+    if type not in (MediaType.movie, MediaType.episode):
+        raise HTTPException(400, "Only movie/episode HLS supported")
+
+    media_q = await db.execute(
+        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+    )
+    media = media_q.scalars().first()
+    if not media:
+        raise HTTPException(404, "Not in library")
+
+    cf_q = await db.execute(
+        select(CollectionFile, MediaServerConnection)
+        .join(Collection, Collection.id == CollectionFile.collection_id)
+        .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
+        .where(
+            Collection.media_id == media.id,
+            Collection.user_id == current_user.id,
+            CollectionFile.connection_id == connection_id,
+        )
+    )
+    row = cf_q.first()
+    if not row:
+        raise HTTPException(404, "Source not found")
+
+    cf, conn = row
+    if not conn or not cf.source_id:
+        raise HTTPException(400, "No valid connection configured")
+    if cf.source.value not in ("jellyfin", "emby"):
+        raise HTTPException(400, "HLS streaming is only supported for Jellyfin/Emby sources")
+
+    manifest_path = f"/Videos/{cf.source_id}/master.m3u8"
+    manifest_url = f"{conn.url.rstrip('/')}{manifest_path}"
+
+    # Generate a PlaySessionId so Emby/Jellyfin can track the transcoding session.
+    # Emby requires POST /PlaybackInfo with this ID to initialise the session before
+    # the first segment is requested; without it Emby throws "Value cannot be null (key)".
+    play_session_id = uuid.uuid4().hex
+    tag = ""
+    media_source_id = cf.source_id
+    try:
+        info_url = f"{conn.url.rstrip('/')}/Items/{cf.source_id}/PlaybackInfo"
+        common_headers = {"X-Emby-Token": conn.token, "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=10) as info_client:
+            if conn.type == "emby":
+                # Emby requires POST to initialise the transcoding session and bind PlaySessionId
+                info_body: dict = {
+                    "DeviceId": "scrob",
+                    "PlaySessionId": play_session_id,
+                    "MaxStreamingBitrate": 140_000_000,
+                }
+                if conn.server_user_id:
+                    info_body["UserId"] = conn.server_user_id
+                info_res = await info_client.post(info_url, json=info_body, headers=common_headers)
+            else:
+                # Jellyfin accepts GET; POST also works but GET is simpler
+                info_params: dict = {}
+                if conn.server_user_id:
+                    info_params["UserId"] = conn.server_user_id
+                info_res = await info_client.get(info_url, params=info_params, headers=common_headers)
+        info_data = info_res.json()
+        # Server may echo back or generate a session ID — use whichever is set
+        play_session_id = info_data.get("PlaySessionId") or play_session_id
+        media_sources = info_data.get("MediaSources", [])
+        source_meta = next((s for s in media_sources if s.get("Id") == cf.source_id), None)
+        if source_meta is None and media_sources:
+            source_meta = media_sources[0]
+        if source_meta:
+            tag = source_meta.get("ETag", "")
+            media_source_id = source_meta.get("Id", cf.source_id)
+    except Exception:
+        pass  # proceed without Tag; non-Emby servers may not require it
+
+    params: dict[str, str] = {
+        "VideoCodec": "copy",
+        "MediaSourceId": media_source_id,
+        "DeviceId": "scrob",
+        "PlaySessionId": play_session_id,
+        "api_key": conn.token,
+    }
+    if audio_stream_index is not None:
+        params["AudioStreamIndex"] = str(audio_stream_index)
+    if tag:
+        params["Tag"] = tag
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.get(
+                manifest_url,
+                params=params,
+                headers={"X-Emby-Token": conn.token},
+            )
+        if res.status_code != 200:
+            raise HTTPException(502, f"Media server returned {res.status_code} for HLS manifest — body: {res.text[:300]}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Could not fetch HLS manifest: {e}")
+
+    rewritten = _rewrite_m3u8_urls(res.text, connection_id, manifest_path)
+    return Response(
+        content=rewritten,
+        media_type="application/vnd.apple.mpegurl",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/hls-segment")
+async def hls_segment_proxy(
+    connection_id: int,
+    path: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy HLS sub-manifests and TS segments from Emby/Jellyfin.
+    For M3U8 responses, rewrites embedded URLs before returning."""
+    conn = await _get_conn_for_user(connection_id, current_user.id, db)
+
+    # path is the decoded absolute path (+ query string) on the media server.
+    # Emby/Jellyfin HLS sub-playlists often use relative segment paths with no auth
+    # query params. Always inject api_key so the session lookup on the server succeeds.
+    segment_url = f"{conn.url.rstrip('/')}{path}"
+    if conn.type in ("jellyfin", "emby") and "api_key=" not in path:
+        sep = "&" if "?" in path else "?"
+        segment_url += f"{sep}api_key={conn.token}"
+    try:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(None))
+        upstream_req = client.build_request(
+            "GET", segment_url, headers={"X-Emby-Token": conn.token}
+        )
+        upstream_res = await client.send(upstream_req, stream=True)
+    except Exception as e:
+        raise HTTPException(502, f"Could not fetch HLS segment: {e}")
+
+    content_type = upstream_res.headers.get("content-type", "")
+    is_manifest = "mpegurl" in content_type or path.split("?")[0].endswith(".m3u8")
+
+    if is_manifest:
+        # Read the full body, rewrite URLs, return as text
+        body = await upstream_res.aread()
+        await upstream_res.aclose()
+        await client.aclose()
+        # Strip query string for path resolution, but pass it as inherit_qs so that
+        # bare relative segment paths (e.g. "0.ts") get DeviceId/PlaySessionId/api_key appended.
+        base_path = path.split("?")[0]
+        inherit_qs = path.split("?", 1)[1] if "?" in path else ""
+        rewritten = _rewrite_m3u8_urls(body.decode("utf-8"), connection_id, base_path, inherit_qs)
+        return Response(
+            content=rewritten,
+            media_type="application/vnd.apple.mpegurl",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    # Binary segment (TS/fMP4) — stream through
+    res_headers: dict[str, str] = {}
+    for h in ("Content-Type", "Content-Length"):
+        v = upstream_res.headers.get(h.lower())
+        if v:
+            res_headers[h] = v
+
+    async def cleanup() -> None:
+        await upstream_res.aclose()
+        await client.aclose()
+
+    return StreamingResponse(
+        upstream_res.aiter_bytes(65536),
+        status_code=upstream_res.status_code,
+        headers=res_headers,
+        background=BackgroundTask(cleanup),
+    )
+
+
+@router.post("/session/report/{type}/{tmdb_id}")
+async def report_session(
+    type: MediaType,
+    tmdb_id: int,
+    body: SessionReportRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Report playback state to the media server so the session appears in its Now Playing dashboard."""
+    if type not in (MediaType.movie, MediaType.episode):
+        return {"ok": False}
+
+    media_q = await db.execute(
+        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+    )
+    media = media_q.scalars().first()
+    if not media:
+        return {"ok": False}
+
+    cf_q = await db.execute(
+        select(CollectionFile, MediaServerConnection)
+        .join(Collection, Collection.id == CollectionFile.collection_id)
+        .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
+        .where(
+            Collection.media_id == media.id,
+            Collection.user_id == current_user.id,
+            CollectionFile.connection_id == body.connection_id,
+        )
+    )
+    row = cf_q.first()
+    if not row:
+        return {"ok": False}
+
+    cf, conn = row
+    if not conn or not cf.source_id:
+        return {"ok": False}
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            if cf.source.value in ("jellyfin", "emby"):
+                pos_ticks = body.position_ms * 10_000  # Jellyfin uses 100-nanosecond ticks
+                # X-Emby-Authorization is required for Jellyfin/Emby to associate the
+                # playback report with a client session and show it in "Now Playing".
+                device_id = f"scrob-{current_user.id}"
+                auth_header = (
+                    f'MediaBrowser Token="{conn.token}", Device="Scrob",'
+                    f' DeviceId="{device_id}", Version="1.0.0"'
+                )
+                headers = {
+                    "X-Emby-Token": conn.token,
+                    "X-Emby-Authorization": auth_header,
+                    "Content-Type": "application/json",
+                }
+                base = conn.url.rstrip("/")
+                if body.state == "playing":
+                    await client.post(
+                        f"{base}/Sessions/Playing",
+                        json={
+                            "ItemId": cf.source_id,
+                            "PositionTicks": pos_ticks,
+                            "CanSeek": True,
+                            "IsPaused": False,
+                            "IsMuted": False,
+                            "PlayMethod": "DirectPlay",
+                        },
+                        headers=headers,
+                    )
+                elif body.state in ("progress", "paused"):
+                    await client.post(
+                        f"{base}/Sessions/Playing/Progress",
+                        json={
+                            "ItemId": cf.source_id,
+                            "PositionTicks": pos_ticks,
+                            "IsPaused": body.state == "paused",
+                            "IsMuted": False,
+                        },
+                        headers=headers,
+                    )
+                elif body.state == "stopped":
+                    await client.post(
+                        f"{base}/Sessions/Playing/Stopped",
+                        json={"ItemId": cf.source_id, "PositionTicks": pos_ticks},
+                        headers=headers,
+                    )
+            elif cf.source.value == "plex":
+                plex_state = "stopped" if body.state == "stopped" else ("paused" if body.state == "paused" else "playing")
+                await client.get(
+                    f"{conn.url.rstrip('/')}/:/timeline",
+                    params={
+                        "ratingKey": cf.source_id,
+                        "key": f"/library/metadata/{cf.source_id}",
+                        "state": plex_state,
+                        "time": str(body.position_ms),
+                        "duration": str(body.duration_ms),
+                        "identifier": "tv.plex.providers.library",
+                        "X-Plex-Token": conn.token,
+                    },
+                    headers={"Accept": "application/json"},
+                )
+    except Exception:
+        pass  # Best-effort; non-critical
+
+    return {"ok": True}
 
 
 @router.get("/{type}/{tmdb_id}")

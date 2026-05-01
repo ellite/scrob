@@ -2,6 +2,7 @@
 import Base from "../../../../../layouts/Base.astro";
 import ActionBar from "../../../../../components/ActionBar.astro";
 import CommentsSection from "../../../../../components/CommentsSection.astro";
+import VideoPlayer from "../../../../../components/VideoPlayer.astro";
 import { api, type EpisodeDetail } from "../../../../../lib/api";
 
 export const prerender = false;
@@ -173,7 +174,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
             </div>
 
             {episode.in_library && (
-              <div class="mb-4">
+              <div class="mb-4 flex flex-wrap gap-2">
                 <button
                   id="refresh-metadata-btn"
                   class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 hover:text-zinc-100 bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 rounded-xl transition-all duration-200 cursor-pointer"
@@ -186,6 +187,14 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
                   </svg>
                   <span id="refresh-label">Refresh Metadata</span>
                 </button>
+
+                <VideoPlayer
+                  tmdbId={episode.tmdb_id}
+                  mediaType="episode"
+                  inLibrary={episode.in_library ?? false}
+                  title={`${show?.title} — ${episode.title}`}
+                  token={token}
+                />
               </div>
             )}
 
@@ -299,6 +308,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
       </div>
     </div>
   )}
+
 </Base>
 
 <script define:vars={{ showId: id, token: Astro.locals.token }}>

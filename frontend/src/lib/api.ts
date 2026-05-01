@@ -451,6 +451,21 @@ export interface MediaItem {
   recommendations?: MediaItem[];
 }
 
+export interface SubtitleTrack {
+  index: number;
+  language: string | null;
+  label: string | null;
+  codec: string | null;
+}
+
+export interface PlaybackSource {
+  connection_id: number;
+  source: string;
+  name: string;
+  resolution: string | null;
+  subtitles: SubtitleTrack[];
+}
+
 export interface NowPlayingMedia {
   id: number;
   tmdb_id: number;
@@ -805,6 +820,9 @@ export const api = {
 
     refreshMovie: (tmdbId: number, token: string) =>
       post<{ message: string }>(`/media/movie/${tmdbId}/refresh`, undefined, token),
+
+    playbackSources: (type: string, tmdbId: number, token: string) =>
+      get<PlaybackSource[]>(`/media/playback/${type}/${tmdbId}`, undefined, token),
   },
 
   shows: {

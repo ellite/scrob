@@ -1,0 +1,192 @@
+---
+interface Props {
+  tmdbId: number;
+  mediaType: string; // "movie" | "episode"
+  inLibrary: boolean;
+  title: string;
+  token: string;
+}
+
+const { tmdbId, mediaType, inLibrary, title, token } = Astro.props;
+---
+
+{inLibrary && (
+  <>
+    <button
+      id="play-btn"
+      class="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-all duration-200 cursor-pointer shadow-lg shadow-blue-900/30"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+      Play
+    </button>
+
+    <dialog
+      id="player-dialog"
+      data-tmdb-id={tmdbId}
+      data-media-type={mediaType}
+      data-title={title}
+      data-token={token}
+      class="fixed inset-0 z-50 w-full max-w-5xl mx-auto my-auto bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl p-0 backdrop:bg-black/70"
+    >
+      <div class="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
+        <span id="player-title" class="text-sm font-bold text-zinc-100 truncate"></span>
+        <button id="player-close" class="text-zinc-400 hover:text-zinc-100 transition p-1 rounded-lg hover:bg-zinc-800 cursor-pointer">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 6 6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="bg-black relative">
+        <video id="player-video" controls class="w-full max-h-[72vh] outline-none" preload="metadata"></video>
+      </div>
+      <div id="player-sources" class="px-5 py-3 flex flex-wrap gap-2 border-t border-zinc-800 min-h-[52px] items-center"></div>
+    </dialog>
+  </>
+)}
+
+<script>
+  function esc(str: string | null | undefined): string {
+    if (str == null) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  const dialog = document.getElementById('player-dialog') as HTMLDialogElement | null;
+  if (dialog) {
+    const tmdbId    = dialog.dataset.tmdbId!;
+    const mediaType = dialog.dataset.mediaType!;
+    const title     = dialog.dataset.title!;
+    const token     = dialog.dataset.token!;
+
+    const playBtn   = document.getElementById('play-btn') as HTMLButtonElement | null;
+    const video     = document.getElementById('player-video') as HTMLVideoElement;
+    const titleEl   = document.getElementById('player-title') as HTMLSpanElement;
+    const sourcesEl = document.getElementById('player-sources') as HTMLDivElement;
+    const closeBtn  = document.getElementById('player-close') as HTMLButtonElement | null;
+
+    let currentConnectionId: string | null = null;
+    let currentSubtitles: { index: number; language: string; label: string }[] = [];
+    let sessionTimer: ReturnType<typeof setInterval> | null = null;
+
+    function stopSession(): void {
+      if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
+    }
+
+    function attachSubtitles(connectionId: string, subtitles: typeof currentSubtitles): void {
+      Array.from(video.querySelectorAll('track')).forEach(t => t.remove());
+      subtitles.forEach(sub => {
+        const track = document.createElement('track');
+        track.kind = 'subtitles';
+        track.src = `/api/proxy/media/subtitles/${mediaType}/${tmdbId}?connection_id=${connectionId}&stream_index=${sub.index}`;
+        track.srclang = sub.language || '';
+        track.label = sub.label || sub.language || 'Subtitle';
+        video.appendChild(track);
+      });
+    }
+
+    async function reportSession(state: string): Promise<void> {
+      if (!currentConnectionId) return;
+      try {
+        await fetch(`/api/proxy/media/session/report/${mediaType}/${tmdbId}`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            connection_id: parseInt(currentConnectionId),
+            state,
+            position_ms: Math.round(video.currentTime * 1000),
+            duration_ms: Math.round((video.duration || 0) * 1000),
+          }),
+        });
+      } catch {}
+    }
+
+    function loadSource(
+      connectionId: string,
+      subtitles: typeof currentSubtitles,
+    ): void {
+      stopSession();
+      currentConnectionId = connectionId;
+      currentSubtitles = subtitles;
+      attachSubtitles(connectionId, subtitles);
+
+      video.src = `/api/proxy/media/stream/${mediaType}/${tmdbId}?connection_id=${connectionId}`;
+      video.load();
+      video.play().catch(() => {});
+      reportSession('playing');
+      sessionTimer = setInterval(() => {
+        if (!video.paused && !video.ended) reportSession('progress');
+      }, 10_000);
+    }
+
+    video.addEventListener('pause', () => { reportSession('paused'); });
+    video.addEventListener('play',  () => { reportSession('playing'); });
+
+    function renderSources(sources: {
+      connection_id: string;
+      source: string;
+      name: string;
+      resolution?: string;
+      subtitles: { index: number; language: string; label: string }[];
+    }[]): void {
+      if (sources.length === 0) {
+        sourcesEl.innerHTML = '<span class="text-xs text-zinc-500">No playback source found.</span>';
+        return;
+      }
+      sourcesEl.innerHTML = sources.map((s, i) =>
+        `<button
+          class="source-btn px-3 py-1.5 text-xs font-bold rounded-lg border transition-all cursor-pointer ${i === 0 ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-900 border-zinc-700 text-zinc-300 hover:border-zinc-500'}"
+          data-connection-id="${s.connection_id}"
+          data-subtitles="${esc(JSON.stringify(s.subtitles || []))}"
+        >
+          ${esc(s.name)}${s.resolution ? ` <span class="opacity-60 font-mono">${esc(s.resolution)}</span>` : ''}
+        </button>`
+      ).join('');
+
+      sourcesEl.querySelectorAll<HTMLButtonElement>('.source-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          sourcesEl.querySelectorAll('.source-btn').forEach(b => {
+            b.classList.remove('bg-blue-600', 'border-blue-500', 'text-white');
+            b.classList.add('bg-zinc-900', 'border-zinc-700', 'text-zinc-300');
+          });
+          btn.classList.add('bg-blue-600', 'border-blue-500', 'text-white');
+          btn.classList.remove('bg-zinc-900', 'border-zinc-700', 'text-zinc-300');
+          loadSource(btn.dataset.connectionId!, JSON.parse(btn.dataset.subtitles || '[]'));
+        });
+      });
+    }
+
+    function closePlayer(): void {
+      reportSession('stopped');
+      stopSession();
+      video.pause();
+      video.src = '';
+      dialog.close();
+    }
+
+    playBtn?.addEventListener('click', async () => {
+      titleEl.textContent = title;
+      sourcesEl.innerHTML = '<span class="text-xs text-zinc-400">Loading sources…</span>';
+      dialog.showModal();
+
+      try {
+        const res = await fetch(`/api/proxy/media/playback/${mediaType}/${tmdbId}`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        const sources = res.ok ? await res.json() : [];
+        renderSources(sources);
+        if (sources.length > 0) {
+          loadSource(sources[0].connection_id, sources[0].subtitles || []);
+        }
+      } catch {
+        sourcesEl.innerHTML = '<span class="text-xs text-red-400">Failed to load sources.</span>';
+      }
+    });
+
+    closeBtn?.addEventListener('click', closePlayer);
+    dialog.addEventListener('click', (e) => { if (e.target === dialog) closePlayer(); });
+  }
+</script>
