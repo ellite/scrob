@@ -1832,7 +1832,8 @@ async def for_you(
     random.shuffle(combined)
 
     await enrich_with_state(db, current_user.id, combined)
-    result = {"results": combined[:20]}
+    unwatched = [item for item in combined if not item.get("watched")]
+    result = {"results": unwatched[:20]}
     _FOR_YOU_CACHE[current_user.id] = (_time.monotonic(), result)
     return result
 
