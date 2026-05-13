@@ -156,7 +156,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   })()}
 
   {continueWatching.length > 0 && (
-    <section class="mb-16">
+    <section id="continue-watching-section" class="mb-16">
       <div class="flex items-center justify-between mb-8">
         <h2 class="text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-3">
           <span class="w-1 h-6 bg-blue-600 rounded-full"></span>
@@ -455,4 +455,28 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
         loadSection('/api/proxy/media/trending/movies', 'grid-trending-movies', mediaCardHtml, 12);
         loadSection('/api/proxy/media/trending/shows', 'grid-trending-shows', mediaCardHtml, 12);
         loadSection('/api/proxy/media/airing-today/collected', 'grid-airing-today', episodeCardHtml, 12);
+
+        // Continue watching dismiss
+        document.addEventListener('click', async (e) => {
+          const btn = e.target.closest('.dismiss-cw');
+          if (!btn) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const mediaId = btn.dataset.mediaId;
+          const card = btn.closest('.flex-shrink-0');
+          if (card) card.style.opacity = '0.4';
+          try {
+            await fetch(`/api/proxy/history/continue-watching?media_id=${mediaId}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${token}` },
+            });
+            card?.remove();
+            const section = document.getElementById('continue-watching-section');
+            if (section && section.querySelectorAll('.dismiss-cw').length === 0) {
+              section.remove();
+            }
+          } catch {
+            if (card) card.style.opacity = '';
+          }
+        });
 </script>

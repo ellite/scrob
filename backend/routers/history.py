@@ -272,6 +272,23 @@ async def get_continue_watching(
     return {"continue_watching": items}
 
 
+@router.delete("/continue-watching")
+async def dismiss_continue_watching(
+    media_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove a single item from the continue-watching list."""
+    await db.execute(
+        delete(PlaybackProgress).where(
+            PlaybackProgress.user_id == current_user.id,
+            PlaybackProgress.media_id == media_id,
+        )
+    )
+    await db.commit()
+    return {"status": "ok"}
+
+
 def _format_media_item(media: Media) -> dict:
     data = {
         "id": media.id,
