@@ -112,7 +112,7 @@ const href =
 
   <!-- Dismiss button -->
   <button
-    class="dismiss-cw absolute top-1.5 right-1.5 z-10 p-1 rounded-full bg-black/60 text-white/50 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer"
+    class="dismiss-cw absolute top-1.5 right-1.5 z-10 p-1 rounded-full bg-black/60 text-white/50 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-all duration-200 cursor-pointer"
     data-media-id={item.media.id}
     aria-label="Remove from continue watching"
   >
