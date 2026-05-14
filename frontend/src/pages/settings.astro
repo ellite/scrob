@@ -2799,13 +2799,11 @@ if (me.totp_enabled) {
             <p class="text-xs text-zinc-500 mb-2">Items that couldn't be matched to TMDB:</p>
             ${unmatchedWarnings.map((w: any) => `
               <div class="flex flex-col gap-0.5 py-1.5 border-b border-zinc-800/60 last:border-0">
-                <div class="flex items-start gap-3">
-                  <div class="flex-1 min-w-0">
-                    <span class="text-sm text-zinc-200 font-medium">${escapeHtml(w.title)}</span>
-                    ${w.media_type ? `<span class="ml-2 text-xs text-zinc-600">${escapeHtml(w.media_type)}</span>` : ''}
-                  </div>
-                  <span class="text-xs text-zinc-500 shrink-0">${escapeHtml(w.reason ?? 'unknown reason')}</span>
+                <div class="min-w-0">
+                  <span class="text-sm text-zinc-200 font-medium">${escapeHtml(w.title)}</span>
+                  ${w.media_type ? `<span class="ml-2 text-xs text-zinc-600">${escapeHtml(w.media_type)}</span>` : ''}
                 </div>
+                <span class="text-xs text-zinc-500">${escapeHtml(w.reason ?? 'unknown reason')}</span>
                 ${w.plex_guids?.length ? `<p class="text-xs text-zinc-600 font-mono">${w.plex_guids.map((g: string) => escapeHtml(g)).join(' · ')}</p>` : ''}
               </div>
             `).join('')}
