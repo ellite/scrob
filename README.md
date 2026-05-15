@@ -1,7 +1,7 @@
 <div align="center">
   <img src="frontend/public/scrob.png" alt="Scrob Logo" width="120" />
   <h1>Scrob</h1>
-  <p>Open-source, self-hosted media tracking — your personal Letterboxd + Trakt.</p>
+  <p>Open-source, self-hosted media tracking - your personal Letterboxd + Trakt.</p>
 
   [![GitHub Stars](https://img.shields.io/github/stars/ellite/scrob?style=flat-square)](https://github.com/ellite/scrob/stargazers)
   [![Docker Pulls](https://img.shields.io/docker/pulls/bellamy/scrob?style=flat-square)](https://hub.docker.com/r/bellamy/scrob)
@@ -40,14 +40,14 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks you
 
 - **Multi-source sync**: Import your full library, watch history, and ratings from Jellyfin, Plex, and Emby. Incremental syncs keep everything up to date.
 - **Keep all servers in sync**: Keep your watched status in sync between all your servers. Supports multiple instances.
-- **Real-time scrobbling**: Webhooks from Jellyfin, Plex, Emby, and Kodi update your watch state as you play — no manual sync needed.
+- **Real-time scrobbling**: Webhooks from Jellyfin, Plex, Emby, and Kodi update your watch state as you play - no manual sync needed.
 - **Trakt integration**: Sync your watched history and ratings from Trakt, and push Scrob activity back to Trakt automatically.
 - **Watch history & ratings**: Track every movie and episode you've watched. Rate them on a 10-point scale with optional reviews.
 - **Season ratings**: Rate individual seasons separately from the overall show.
 - **Personal lists**: Create and curate lists of movies and shows. Mark them public to share with other users on the same instance.
 - **Comments**: Leave comments on movies, shows, seasons, and episodes.
 - **Social**: Follow other users and see their activity.
-- **TMDB integration**: Rich metadata for every title — posters, backdrops, cast, crew, trailers, collections, and more.
+- **TMDB integration**: Rich metadata for every title - posters, backdrops, cast, crew, trailers, collections, and more.
 - **Search**: Search TMDB across movies, shows, people, and collections, merged with your local library data.
 - **Pick a Movie / Pick a Show**: Get a suggestion on what to watch next from your library or your streaming services based on your preferences.
 - **Trending & Airing Today**: Daily trending movies and shows from TMDB, plus episodes airing today filtered to your collection.
@@ -57,13 +57,15 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks you
 - **Radarr & Sonarr integration**: Add movies and shows to Radarr/Sonarr directly from the Scrob UI.
 - **Two-Factor Authentication**: TOTP-based 2FA with backup codes, managed from the settings page.
 - **OIDC / SSO**: Authenticate with any OpenID Connect provider (Authelia, Authentik, Keycloak, etc.).
-- **Progressive Web App**: Install Scrob on any device — Android, iOS, or desktop — for a native app feel.
+- **Progressive Web App**: Install Scrob on any device - Android, iOS, or desktop - for a native app feel.
 - **Single container**: Frontend and backend ship as one image on one port. No separate services to manage.
 
 ## Screenshots
 
+<img src="docs/screenshots/scrobss.png" alt="Scrob" width="800">
+
 <details>
-<summary>View screenshots</summary>
+<summary>View more screenshots</summary>
 
 **Dashboard**
 <img src="docs/screenshots/scrob-dashboard-dark.png" alt="Dashboard" width="800" />
@@ -103,7 +105,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks you
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
-- A [TMDB API key](https://www.themoviedb.org/settings/api) (free) — used for metadata, search, and images
+- A [TMDB API key](https://www.themoviedb.org/settings/api) (free) - used for metadata, search, and images
 
 ### Docker Compose
 
@@ -203,14 +205,14 @@ docker run -d \
 docker compose pull && docker compose up -d
 ```
 
-Database migrations run automatically on startup — no manual steps required.
+Database migrations run automatically on startup - no manual steps required.
 
 ## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `SECRET_KEY` | — | **Required.** JWT signing key. Generate with `openssl rand -hex 32`. |
-| `DATABASE_URL` | — | **Required.** PostgreSQL connection string (`postgresql+asyncpg://...`). |
+| `SECRET_KEY` | - | **Required.** JWT signing key. Generate with `openssl rand -hex 32`. |
+| `DATABASE_URL` | - | **Required.** PostgreSQL connection string (`postgresql+asyncpg://...`). |
 | `ENABLE_REGISTRATIONS` | `true` | Allow new users to register. The first user can always register regardless of this setting. |
 | `REGISTRATION_MAX_ALLOWED_USERS` | `0` | Maximum number of registered users. `0` = unlimited. |
 | `TZ` | `UTC` | Container timezone (e.g. `Europe/Lisbon`). |
@@ -224,7 +226,7 @@ See `docker-compose.yaml` for the full list of OIDC variables and other variable
 
 ### Reverse proxy
 
-Scrob listens on port `7330`. Place a reverse proxy (Caddy, Nginx, Traefik) in front for HTTPS — required for the PWA install prompt on non-localhost addresses.
+Scrob listens on port `7330`. Place a reverse proxy (Caddy, Nginx, Traefik) in front for HTTPS - required for the PWA install prompt on non-localhost addresses.
 
 ```
 # Caddyfile
@@ -246,10 +248,10 @@ DATABASE_URL: postgresql+asyncpg://user:password@your-db-host:5432/scrob
 Webhooks update your watch history and Continue Watching in real time. Each user's webhook URL is shown in **Settings** next to the relevant integration.
 
 ```
-# Jellyfin, Plex, Emby — connection_id is shown in Settings next to each server
+# Jellyfin, Plex, Emby - connection_id is shown in Settings next to each server
 https://your-scrob-url/api/proxy/webhooks/{jellyfin|plex|emby}/{connection_id}?api_key=YOUR_API_KEY
 
-# Kodi — no connection, just the API key
+# Kodi - no connection, just the API key
 https://your-scrob-url/api/proxy/webhooks/kodi?api_key=YOUR_API_KEY
 ```
 
@@ -262,7 +264,7 @@ https://your-scrob-url/api/proxy/webhooks/kodi?api_key=YOUR_API_KEY
 5. Enable item types: `Movies` and `Episodes`.
 6. **Leave the Template field blank** and check **"Send all properties (ignore templates)"**.
 
-> Do not use a custom template — Jellyfin's template engine produces invalid JSON. "Send all properties" sends a well-formed payload that Scrob parses correctly.
+> Do not use a custom template - Jellyfin's template engine produces invalid JSON. "Send all properties" sends a well-formed payload that Scrob parses correctly.
 
 ### Plex
 
@@ -280,7 +282,7 @@ Plex webhooks require a **Plex Pass** subscription.
 
 ### Kodi
 
-Kodi scrobbling uses the **[scrob-kodi](https://github.com/ellite/scrob-kodi)** add-on — no manual webhook configuration needed.
+Kodi scrobbling uses the **[scrob-kodi](https://github.com/ellite/scrob-kodi)** add-on - no manual webhook configuration needed.
 
 1. Install the **scrob-kodi** add-on from the [scrob-kodi repository](https://github.com/ellite/scrob-kodi).
 2. In the add-on settings, enter your Scrob URL and your API key (found in **Settings → Account**).
@@ -323,22 +325,22 @@ FROM_EMAIL: "myemail@gmail.com"
 | Variable | Default | Description |
 |---|---|---|
 | `REQUIRE_EMAIL_VALIDATION` | `false` | Require new users to verify their email before logging in. |
-| `SERVER_URL` | — | Public URL of your Scrob instance, used to build the validation link in emails. |
-| `SMTP_ADDRESS` | — | SMTP server hostname. |
+| `SERVER_URL` | - | Public URL of your Scrob instance, used to build the validation link in emails. |
+| `SMTP_ADDRESS` | - | SMTP server hostname. |
 | `SMTP_PORT` | `587` | SMTP server port. |
-| `SMTP_ENCRYPTION` | `tls` | Encryption method — `tls` or `ssl`. |
-| `SMTP_USERNAME` | — | SMTP login username. |
-| `SMTP_PASSWORD` | — | SMTP login password (use an app password if using Gmail). |
-| `FROM_EMAIL` | — | Address emails are sent from. |
+| `SMTP_ENCRYPTION` | `tls` | Encryption method - `tls` or `ssl`. |
+| `SMTP_USERNAME` | - | SMTP login username. |
+| `SMTP_PASSWORD` | - | SMTP login password (use an app password if using Gmail). |
+| `FROM_EMAIL` | - | Address emails are sent from. |
 
 ## Contributing
 
-Contributions are welcome — whether it's a bug report, a feature request, or a pull request.
+Contributions are welcome - whether it's a bug report, a feature request, or a pull request.
 
 - **Issues**: Open an issue for bugs, questions, or feature ideas.
 - **Pull Requests**: Fork the repo, create a branch, and submit a PR. Please follow the existing code style (Astro components for UI, FastAPI for backend) and make sure all browser-initiated API calls go through `/api/proxy/`.
 
-Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) — `feat:`, `fix:`, `chore:` — as releases and changelogs are generated automatically from them.
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) - `feat:`, `fix:`, `chore:` - as releases and changelogs are generated automatically from them.
 
 ## Contributors
 
@@ -368,7 +370,7 @@ docker compose -f docker-compose-test-db.yaml up -d
 
 # Copy and fill in the environment file
 cp .env.exanple .env
-# Edit .env — set POSTGRES_* and SECRET_KEY at minimum
+# Edit .env - set POSTGRES_* and SECRET_KEY at minimum
 ```
 
 ### Backend
