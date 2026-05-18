@@ -206,6 +206,12 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
                   <span id="refresh-label">Refresh Metadata</span>
                 </button>
 
+                {!!episode.play_count && (
+                  <span class="flex items-center px-4 py-2 bg-zinc-900/60 border border-zinc-800 text-zinc-400 text-sm font-bold rounded-xl">
+                    {episode.play_count} {episode.play_count === 1 ? 'Play' : 'Plays'}
+                  </span>
+                )}
+
                 <VideoPlayer
                   tmdbId={episode.tmdb_id}
                   mediaType="episode"

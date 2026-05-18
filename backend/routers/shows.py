@@ -910,6 +910,7 @@ async def get_episode_detail(
             "in_lists": ep_state.get("in_lists", []),
             "collection_pct": ep_state.get("collection_pct", 100 if local_ep else 0),
             "user_rating": ep_state.get("user_rating"),
+            "play_count": ep_state.get("play_count", 0),
             "episode_number": episode_number,
             "season_number": season_number,
             "title": ep_data.get("name"),

@@ -208,6 +208,11 @@ const refreshUrl = isEpisode
                     <span id="refresh-label">Refresh Metadata</span>
                   </button>
                 )}
+                {!!item.play_count && (
+                  <span class="flex items-center px-4 py-2 bg-zinc-900/60 border border-zinc-800 text-zinc-400 text-sm font-bold rounded-xl">
+                    {item.play_count} {item.play_count === 1 ? 'Play' : 'Plays'}
+                  </span>
+                )}
                 {(item.type === "movie" || item.type === "episode") && (
                   <VideoPlayer
                     tmdbId={item.tmdb_id}

@@ -167,6 +167,7 @@ export interface EpisodeDetail {
   in_lists: number[];
   collection_pct: number;
   user_rating?: number | null;
+  play_count?: number;
   cast: CastMember[];
   guest_stars: CastMember[];
   episodes: EpisodeItem[];
@@ -494,6 +495,7 @@ export interface MediaItem {
   is_monitored?: boolean;
   request_enabled?: boolean;
   user_rating?: number | null;
+  play_count?: number;
   library: {
     resolution: string;
     video_codec: string;

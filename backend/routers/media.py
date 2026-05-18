@@ -450,6 +450,25 @@ async def enrich_with_state(
         for tmdb_id, media_type, rating_val in ratings_q.all():
             user_ratings[(tmdb_id, media_type.value)] = rating_val
 
+    # --- Play count (detail view only) ---
+    play_count_map: dict[int, int] = {}
+    if len(items) == 1:
+        item0 = items[0]
+        tid0 = item0.get("tmdb_id")
+        t0 = item0.get("type")
+        if tid0 and t0 in ("movie", "episode"):
+            mt0 = MediaType.movie if t0 == "movie" else MediaType.episode
+            pc_q = await db.execute(
+                select(func.count(WatchEvent.id))
+                .join(Media, Media.id == WatchEvent.media_id)
+                .where(
+                    WatchEvent.user_id == user_id,
+                    Media.tmdb_id == tid0,
+                    Media.media_type == mt0,
+                )
+            )
+            play_count_map[tid0] = pc_q.scalar() or 0
+
     # --- Apply to items ---
     for item in items:
         tid = item.get("tmdb_id")
@@ -478,6 +497,7 @@ async def enrich_with_state(
         item["is_monitored"] = monitored_status.get(tid, False)
         item["request_enabled"] = request_enabled_map.get(tid, False)
         item["user_rating"] = user_ratings.get((tid, t))
+        item["play_count"] = play_count_map.get(tid, 0)
 
     return items
 
@@ -3513,6 +3533,7 @@ async def get_media_details(
                 "watched": ep_state.get("watched", False),
                 "in_lists": ep_state.get("in_lists", []),
                 "user_rating": ep_state.get("user_rating"),
+                "play_count": ep_state.get("play_count", 0),
                 "library": library_info,
             }
         else:
@@ -3607,6 +3628,7 @@ async def get_media_details(
             "watched": state_item.get("watched", False),
             "in_lists": state_item.get("in_lists", []),
             "user_rating": state_item.get("user_rating"),
+            "play_count": state_item.get("play_count", 0),
             "in_library": state_item.get("in_library", local_info["in_library"]),
             "collection_pct": state_item.get("collection_pct", 100 if local_info["in_library"] else 0),
             "is_monitored": state_item.get("is_monitored", False),
