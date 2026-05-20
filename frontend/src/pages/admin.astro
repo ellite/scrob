@@ -624,6 +624,80 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     }
   });
 
+  // ── Auto connection check on page load ──
+  async function checkConnections() {
+    const radarrUrl = (document.getElementById('radarr_url') as HTMLInputElement | null)?.value.trim();
+    const radarrToken = (document.getElementById('radarr_token') as HTMLInputElement | null)?.value.trim();
+    const sonarrUrl = (document.getElementById('sonarr_url') as HTMLInputElement | null)?.value.trim();
+    const sonarrToken = (document.getElementById('sonarr_token') as HTMLInputElement | null)?.value.trim();
+
+    const checks: Promise<void>[] = [];
+
+    if (radarrUrl && radarrToken) {
+      setConnStatus('radarr-conn-status', 'checking');
+      checks.push((async () => {
+        try {
+          const testRes = await fetch(`/api/proxy/auth/test-radarr?url=${encodeURIComponent(radarrUrl)}&token=${encodeURIComponent(radarrToken)}`, {
+            method: 'POST', headers: { 'Authorization': `Bearer ${token}` },
+          });
+          if (!testRes.ok) { setConnStatus('radarr-conn-status', 'disconnected'); return; }
+          const profRes = await fetch(`/api/proxy/auth/radarr/profiles?url=${encodeURIComponent(radarrUrl)}&token=${encodeURIComponent(radarrToken)}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          const profData = await profRes.json();
+          const rootSelect = document.getElementById('radarr_root_folder') as HTMLSelectElement;
+          const qualSelect = document.getElementById('radarr_quality_profile') as HTMLSelectElement;
+          const currentFolder = rootSelect.value;
+          const currentProfile = qualSelect.value;
+          rootSelect.innerHTML = '<option value="">-- Select Folder --</option>' +
+            profData.root_folders.map((f: { path: string; freeSpace: number }) =>
+              `<option value="${esc(f.path)}" ${f.path === currentFolder ? 'selected' : ''}>${esc(f.path)} (${(f.freeSpace / 1024**3).toFixed(1)}GB free)</option>`).join('');
+          qualSelect.innerHTML = '<option value="">-- Select Profile --</option>' +
+            profData.quality_profiles.map((p: { id: number; name: string }) =>
+              `<option value="${esc(String(p.id))}" ${String(p.id) === currentProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+          const tagContainer = document.getElementById('radarr_tags_list')!;
+          const selectedTags = Array.from(tagContainer.querySelectorAll<HTMLInputElement>('input[name="radarr_tags"]')).map(i => parseInt(i.value));
+          renderTags('radarr_tags_list', profData.tags, selectedTags, 'radarr');
+          setConnStatus('radarr-conn-status', 'connected');
+        } catch { setConnStatus('radarr-conn-status', 'disconnected'); }
+      })());
+    }
+
+    if (sonarrUrl && sonarrToken) {
+      setConnStatus('sonarr-conn-status', 'checking');
+      checks.push((async () => {
+        try {
+          const testRes = await fetch(`/api/proxy/auth/test-sonarr?url=${encodeURIComponent(sonarrUrl)}&token=${encodeURIComponent(sonarrToken)}`, {
+            method: 'POST', headers: { 'Authorization': `Bearer ${token}` },
+          });
+          if (!testRes.ok) { setConnStatus('sonarr-conn-status', 'disconnected'); return; }
+          const profRes = await fetch(`/api/proxy/auth/sonarr/profiles?url=${encodeURIComponent(sonarrUrl)}&token=${encodeURIComponent(sonarrToken)}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          const profData = await profRes.json();
+          const rootSelect = document.getElementById('sonarr_root_folder') as HTMLSelectElement;
+          const qualSelect = document.getElementById('sonarr_quality_profile') as HTMLSelectElement;
+          const currentFolder = rootSelect.value;
+          const currentProfile = qualSelect.value;
+          rootSelect.innerHTML = '<option value="">-- Select Folder --</option>' +
+            profData.root_folders.map((f: { path: string; freeSpace: number }) =>
+              `<option value="${esc(f.path)}" ${f.path === currentFolder ? 'selected' : ''}>${esc(f.path)} (${(f.freeSpace / 1024**3).toFixed(1)}GB free)</option>`).join('');
+          qualSelect.innerHTML = '<option value="">-- Select Profile --</option>' +
+            profData.quality_profiles.map((p: { id: number; name: string }) =>
+              `<option value="${esc(String(p.id))}" ${String(p.id) === currentProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+          const tagContainer = document.getElementById('sonarr_tags_list')!;
+          const selectedTags = Array.from(tagContainer.querySelectorAll<HTMLInputElement>('input[name="sonarr_tags"]')).map(i => parseInt(i.value));
+          renderTags('sonarr_tags_list', profData.tags, selectedTags, 'sonarr');
+          setConnStatus('sonarr-conn-status', 'connected');
+        } catch { setConnStatus('sonarr-conn-status', 'disconnected'); }
+      })());
+    }
+
+    await Promise.all(checks);
+  }
+
+  checkConnections();
+
   // ── Global settings form ──
   document.getElementById('global-settings-form')!.addEventListener('submit', async (e) => {
     e.preventDefault();
