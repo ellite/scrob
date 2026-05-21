@@ -1,0 +1,410 @@
+---
+import Base from "../../../layouts/Base.astro";
+import ActionBar from "../../../components/ActionBar.astro";
+import CommentsSection from "../../../components/CommentsSection.astro";
+import { api, type TvdbShow } from "../../../lib/api";
+export const prerender = false;
+
+const { id } = Astro.params;
+const { token } = Astro.locals;
+Astro.response.headers.set("Cache-Control", "no-store");
+
+let show: TvdbShow | null = null;
+let error = "";
+
+try {
+  show = await api.shows.getTvdb(Number(id), token);
+} catch (e: any) {
+  error = e.message;
+}
+
+if (!show && !error) {
+  return Astro.redirect("/404");
+}
+
+const seasons = (show?.seasons_meta ?? []).filter((s) => (s.season_number ?? 0) > 0);
+const year = show?.first_air_date?.slice(0, 4) ?? null;
+const langNames = new Intl.DisplayNames(["en"], { type: "language" });
+const originalLanguage = show?.original_language
+  ? langNames.of(show.original_language) ?? show.original_language
+  : null;
+---
+
+<Base title={show?.title || "Show Details"}>
+  {error && !show && (
+    <div class="max-w-md mx-auto mt-20 text-center">
+      <div class="bg-red-500/10 border border-red-500/20 text-red-500 p-6 rounded-2xl mb-6">
+        <p class="font-bold text-lg mb-2">Oops!</p>
+        <p class="text-sm opacity-80">{error}</p>
+      </div>
+      <a href="/" class="text-blue-500 hover:underline">Return to Dashboard</a>
+    </div>
+  )}
+
+  {show && (
+    <div class="relative">
+      <!-- Backdrop -->
+      {show.backdrop_path && (
+        <div class="absolute -top-8 left-1/2 -translate-x-1/2 w-screen h-[600px] overflow-hidden">
+          <div class="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/40 to-transparent z-10"></div>
+          <img
+            src={show.backdrop_path}
+            alt=""
+            class="w-full h-full object-cover opacity-50 blur-[1px]"
+            loading="eager"
+            decoding="async"
+          />
+        </div>
+      )}
+
+      <div class="relative z-20">
+        <nav class="flex items-center gap-2 text-sm text-zinc-400 mb-8 overflow-hidden whitespace-nowrap">
+          <a href="/shows" class="hover:text-zinc-100 transition shrink-0">Shows</a>
+          <span class="text-zinc-700">/</span>
+          <span class="text-zinc-100 font-bold truncate">{show.title}</span>
+        </nav>
+
+        <div class="flex flex-col md:flex-row gap-8 lg:gap-12">
+          <!-- Poster -->
+          <div class="w-64 shrink-0 mx-auto md:mx-0">
+            <div class="aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 bg-zinc-900 ring-1 ring-white/10 relative">
+              {show.poster_path ? (
+                <button id="poster-zoom-btn" class="w-full h-full group/poster block cursor-zoom-in" aria-label={`Enlarge poster for ${show.title}`}>
+                  <img
+                    src={show.poster_path}
+                    alt={show.title}
+                    class="w-full h-full object-cover transition-transform duration-300 group-hover/poster:scale-105"
+                    loading="eager"
+                    decoding="async"
+                  />
+                  <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover/poster:opacity-100 transition-opacity duration-200 bg-black/30">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8 text-white drop-shadow-lg">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607ZM10.5 7.5v6m3-3h-6" />
+                    </svg>
+                  </div>
+                </button>
+              ) : (
+                <div class="w-full h-full flex flex-col items-center justify-center text-zinc-400 p-4 text-center">
+                  <span class="text-4xl mb-2">📺</span>
+                  <span class="text-sm font-medium">No Poster Available</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <!-- Info -->
+          <div class="flex-1 min-w-0 pt-4">
+            <h1 class="text-4xl md:text-6xl font-black text-zinc-100 mb-3 tracking-tight leading-none">{show.title}</h1>
+
+            <div class="flex flex-wrap items-center gap-3 mb-10">
+              <div class="flex flex-wrap items-center gap-4 text-zinc-300 text-sm bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm">
+                {year && <span class="font-bold">{year}</span>}
+                <span class="font-medium text-zinc-400">{seasons.length} Season{seasons.length !== 1 ? "s" : ""}</span>
+                {show.age_rating && (
+                  <span class="px-2 py-0.5 border border-zinc-600 rounded text-[10px] font-black text-zinc-400 tracking-widest">
+                    {show.age_rating}
+                  </span>
+                )}
+                {show.imdb_id && (
+                  <a href={`https://www.imdb.com/title/${show.imdb_id}/`} target="_blank" rel="noopener noreferrer" class="px-2 py-0.5 bg-[#f5c518] rounded text-[10px] font-black text-black tracking-widest hover:bg-[#e6b800] transition-colors">
+                    IMDb
+                  </a>
+                )}
+                {show.status && (
+                  <span class="capitalize px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-black text-zinc-400 tracking-widest">
+                    {show.status}
+                  </span>
+                )}
+                {originalLanguage && (
+                  <span class="flex items-center gap-1.5 font-medium text-zinc-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4 text-zinc-500">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="m10.5 21 5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 0 1 6-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 0 1-3.827-5.802" />
+                    </svg>
+                    {originalLanguage}
+                  </span>
+                )}
+              </div>
+              {show.network && (
+                <div class="bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm flex items-center">
+                  <span class="text-zinc-400 text-xs font-semibold">{show.network}</span>
+                </div>
+              )}
+            </div>
+
+            <div class="mb-6">
+              <ActionBar
+                tmdbId={show.tvdb_id}
+                mediaType="series"
+                watched={show.watched}
+                inLists={show.in_lists}
+                inLibrary={show.in_library}
+                collectionPct={show.collection_pct}
+                showTmdbId={show.tvdb_id}
+                isMonitored={show.is_monitored}
+                requestEnabled={show.request_enabled}
+                requestStatus={show.request_status}
+                userRating={show.user_rating}
+              />
+            </div>
+
+            {show.id && (
+              <div class="mb-8">
+                <button
+                  id="refresh-metadata-btn"
+                  class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 hover:text-zinc-100 bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 rounded-xl transition-all duration-200 cursor-pointer"
+                >
+                  <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                    <path d="M21 3v5h-5"/>
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                    <path d="M8 16H3v5"/>
+                  </svg>
+                  <span id="refresh-label">Refresh Metadata</span>
+                </button>
+              </div>
+            )}
+
+            <div class="mb-12">
+              <h2 class="text-xl font-black text-zinc-100 mb-4 flex items-center gap-2 uppercase tracking-tight">
+                <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
+                Overview
+              </h2>
+              <p class="text-zinc-300 leading-relaxed text-lg max-w-4xl font-medium opacity-90">
+                {show.overview}
+              </p>
+            </div>
+
+            {show.genres?.length > 0 && (
+              <div class="flex flex-wrap gap-2 mb-12">
+                {show.genres.map(g => (
+                  <span class="px-4 py-1.5 bg-zinc-900/80 border border-zinc-800 hover:border-zinc-700 transition-colors text-zinc-400 text-xs rounded-full font-bold uppercase tracking-widest">
+                    {g}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <!-- Where to Watch -->
+            {show.where_to_watch && show.where_to_watch.length > 0 && (
+              <div class="mb-8">
+                <h2 class="text-sm font-black text-zinc-500 mb-3 uppercase tracking-widest">Where to Watch</h2>
+                <div class="flex flex-wrap gap-2">
+                  {show.where_to_watch.map(s => (
+                    <div class="flex items-center gap-2 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg">
+                      {s.logo ? (
+                        <img src={s.logo} alt={s.name} class="w-5 h-5 rounded object-cover" />
+                      ) : (s.type === "plex" || s.type === "jellyfin" || s.type === "emby") ? (
+                        <img src={`/icons/${s.type}.svg`} alt={s.name} class="w-5 h-5 rounded object-cover" />
+                      ) : (
+                        <span class="text-zinc-400 text-xs">▶</span>
+                      )}
+                      <span class="text-zinc-300 text-xs font-semibold">{s.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <!-- Seasons -->
+        <div class="mt-24">
+          <div class="flex items-center justify-between mb-10 border-b border-zinc-900 pb-6">
+            <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase">Seasons</h2>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {seasons.map((s) => {
+              const seasonNum = s.season_number;
+              const poster = s.poster_path || show!.poster_path;
+              const seasonState = show!.season_states?.[seasonNum] ?? { watched: false, in_library: false, collection_pct: 0, user_rating: null };
+
+              return (
+                <div class="group/season bg-zinc-900/50 border border-zinc-800 rounded-3xl p-5 hover:bg-zinc-800/60 hover:border-blue-500/50 transition-all duration-300 hover:shadow-2xl hover:shadow-blue-900/10">
+                  <a href={`/show/tvdb/${show!.tvdb_id}/season/${seasonNum}`} class="flex gap-6 block mb-4 active:opacity-70 transition-opacity duration-100">
+                    <div class="w-28 shrink-0">
+                      <div class="aspect-[2/3] rounded-2xl overflow-hidden border border-zinc-800 shadow-lg group-hover/season:ring-2 group-hover/season:ring-blue-500/50 transition-all duration-500">
+                        {poster ? (
+                          <img src={poster} alt={s.name} class="w-full h-full object-cover group-hover/season:scale-110 transition-transform duration-700" />
+                        ) : (
+                          <div class="w-full h-full bg-zinc-900 flex flex-col items-center justify-center text-zinc-500 gap-1">
+                            <span class="text-3xl">📺</span>
+                            <span class="text-[10px] font-bold uppercase tracking-widest">No Poster</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div class="flex-1 py-2">
+                      <h3 class="text-xl font-black text-zinc-100 group-hover/season:text-blue-400 transition-colors mb-1">{s.name || `Season ${seasonNum}`}</h3>
+                      <div class="flex items-center gap-2 mb-3">
+                        <span class="text-[10px] font-black text-zinc-500 uppercase tracking-widest bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
+                          {s.episode_count} Episodes
+                        </span>
+                      </div>
+                      <p class="text-xs text-zinc-400 line-clamp-3 leading-relaxed opacity-80">{s.overview || "No overview available."}</p>
+                    </div>
+                  </a>
+                  <ActionBar
+                    tmdbId={show!.tvdb_id}
+                    mediaType="series"
+                    watched={seasonState.watched}
+                    inLists={[]}
+                    inLibrary={seasonState.in_library}
+                    collectionPct={seasonState.collection_pct}
+                    seasonNumber={seasonNum}
+                    hideRequest={true}
+                    hideLists={true}
+                    userRating={seasonState.user_rating ?? null}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <!-- Cast -->
+        {show.cast?.length > 0 && (
+          <div class="mt-24 border-zinc-900 pt-16">
+            <div class="flex items-center justify-between mb-10">
+              <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase">Top Cast</h2>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
+              {show.cast.slice(0, 12).map((person) => (
+                person.person_id ? (
+                  <a
+                    href={`https://www.thetvdb.com/people/${person.person_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="group/cast bg-zinc-900/20 border border-zinc-800/40 p-4 rounded-3xl hover:border-zinc-700/60 transition-colors block"
+                  >
+                    <div class="aspect-square w-full rounded-2xl overflow-hidden mb-5 ring-2 ring-zinc-800/50 shadow-lg">
+                      {person.profile_path ? (
+                        <img src={person.profile_path} alt={person.name} class="w-full h-full object-cover group-hover/cast:scale-105 transition-transform duration-300" loading="lazy" decoding="async" />
+                      ) : (
+                        <div class="w-full h-full bg-zinc-800 flex items-center justify-center text-zinc-400 text-4xl">👤</div>
+                      )}
+                    </div>
+                    <div class="space-y-1.5 text-center">
+                      <p class="text-sm font-black text-zinc-100 line-clamp-1 leading-tight group-hover/cast:text-blue-400 transition-colors">{person.name}</p>
+                      <p class="text-[11px] text-zinc-500 font-bold uppercase tracking-wider line-clamp-1 opacity-80">{person.character}</p>
+                    </div>
+                  </a>
+                ) : (
+                  <div class="group/cast bg-zinc-900/20 border border-zinc-800/40 p-4 rounded-3xl">
+                    <div class="aspect-square w-full rounded-2xl overflow-hidden mb-5 ring-2 ring-zinc-800/50 shadow-lg">
+                      {person.profile_path ? (
+                        <img src={person.profile_path} alt={person.name} class="w-full h-full object-cover" loading="lazy" decoding="async" />
+                      ) : (
+                        <div class="w-full h-full bg-zinc-800 flex items-center justify-center text-zinc-400 text-4xl">👤</div>
+                      )}
+                    </div>
+                    <div class="space-y-1.5 text-center">
+                      <p class="text-sm font-black text-zinc-100 line-clamp-1 leading-tight">{person.name}</p>
+                      <p class="text-[11px] text-zinc-500 font-bold uppercase tracking-wider line-clamp-1 opacity-80">{person.character}</p>
+                    </div>
+                  </div>
+                )
+              ))}
+            </div>
+          </div>
+        )}
+
+        <CommentsSection
+          mediaType="series"
+          tmdbId={show.tvdb_id}
+        />
+
+        {show.tmdb_id_cross && (
+          <div id="recommendations-container" data-type="series" data-id={show.tmdb_id_cross}></div>
+        )}
+      </div>
+    </div>
+  )}
+</Base>
+
+{show?.poster_path && (
+  <div id="poster-modal" class="fixed inset-0 z-[999] flex items-center justify-center hidden" role="dialog" aria-modal="true">
+    <div id="poster-modal-backdrop" class="absolute inset-0 bg-black/90 backdrop-blur-sm cursor-pointer"></div>
+    <img
+      src={show.poster_path}
+      alt={show.title}
+      class="relative max-h-[90vh] max-w-[85vw] md:max-w-[50vw] object-contain rounded-2xl shadow-2xl ring-1 ring-white/10"
+    />
+    <button
+      id="poster-modal-close"
+      class="absolute top-4 right-4 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white/70 hover:text-white transition-all duration-200 cursor-pointer"
+      aria-label="Close"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-5 h-5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+      </svg>
+    </button>
+  </div>
+)}
+
+<script>
+  const zoomBtn = document.getElementById('poster-zoom-btn');
+  const modal = document.getElementById('poster-modal');
+  const backdrop = document.getElementById('poster-modal-backdrop');
+  const closeBtn = document.getElementById('poster-modal-close');
+  if (zoomBtn && modal) {
+    function openModal() { modal.classList.remove('hidden'); document.body.style.overflow = 'hidden'; }
+    function closeModal() { modal.classList.add('hidden'); document.body.style.overflow = ''; }
+    zoomBtn.addEventListener('click', openModal);
+    backdrop?.addEventListener('click', closeModal);
+    closeBtn?.addEventListener('click', closeModal);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+  }
+</script>
+
+<script define:vars={{ tvdbId: id, token: Astro.locals.token, hasLocalShow: !!show?.id }}>
+  const btn = document.getElementById('refresh-metadata-btn');
+  if (btn && hasLocalShow) {
+    btn.addEventListener('click', async () => {
+      const icon = document.getElementById('refresh-icon');
+      const label = document.getElementById('refresh-label');
+      if (!label || !icon) return;
+
+      btn.setAttribute('disabled', 'true');
+      btn.classList.add('opacity-60', 'cursor-not-allowed');
+      icon.classList.add('animate-spin');
+      label.textContent = 'Refreshing...';
+
+      try {
+        const res = await fetch(`/api/proxy/shows/tvdb/${tvdbId}/refresh`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || 'Refresh failed');
+        }
+        label.textContent = 'Done!';
+        icon.classList.remove('animate-spin');
+        setTimeout(() => { window.location.reload(); }, 800);
+      } catch (err) {
+        icon.classList.remove('animate-spin');
+        label.textContent = 'Refresh failed';
+        btn.removeAttribute('disabled');
+        btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        setTimeout(() => { label.textContent = 'Refresh Metadata'; }, 3000);
+      }
+    });
+  }
+</script>
+
+<script>
+  const container = document.getElementById('recommendations-container');
+  if (container) {
+    const { type, id } = container.dataset;
+    fetch(`/partials/recommendations?type=${type}&id=${id}`)
+      .then(res => {
+        if (res.status === 200) return res.text();
+        return null;
+      })
+      .then(html => {
+        if (html) container.innerHTML = html;
+      })
+      .catch(err => console.error('Failed to load recommendations', err));
+  }
+</script>

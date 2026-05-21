@@ -22,15 +22,21 @@ const href = isPerson
   ? `/person/${item.tmdb_id}`
   : isCollection
     ? `/collection/${item.tmdb_id}`
+    : isSeries && item.tvdb_id && !item.tmdb_id
+    ? `/show/tvdb/${item.tvdb_id}`
     : isSeries && item.tmdb_id
     ? `/show/${item.tmdb_id}`
     : isEpisode && item.show_tmdb_id && item.season_number != null && item.episode_number != null
       ? `/show/${item.show_tmdb_id}/season/${item.season_number}/${item.episode_number}`
-      : isEpisode && item.show_tmdb_id
-        ? `/show/${item.show_tmdb_id}`
-        : item.tmdb_id
-          ? `/media/${item.type}/${item.tmdb_id}`
-          : null;
+      : isEpisode && item.show_tvdb_id && item.season_number != null && item.episode_number != null
+        ? `/show/tvdb/${item.show_tvdb_id}/season/${item.season_number}/${item.episode_number}`
+        : isEpisode && item.show_tmdb_id
+          ? `/show/${item.show_tmdb_id}`
+          : isEpisode && item.show_tvdb_id
+            ? `/show/tvdb/${item.show_tvdb_id}`
+            : item.tmdb_id
+              ? `/media/${item.type}/${item.tmdb_id}`
+              : null;
 
 const posterPath = isEpisode && item.show_poster_path
   ? (item.show_poster_path.startsWith('http') ? item.show_poster_path : `https://image.tmdb.org/t/p/w500${item.show_poster_path}`)

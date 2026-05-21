@@ -29,12 +29,11 @@ const posterSrc =
       : null;
 
 const href =
-  isEpisode &&
-  media.show_tmdb_id &&
-  media.season_number != null &&
-  media.episode_number != null
+  isEpisode && media.show_tmdb_id && media.season_number != null && media.episode_number != null
     ? `/show/${media.show_tmdb_id}/season/${media.season_number}/${media.episode_number}`
-    : `/media/${media.type}/${media.tmdb_id}`;
+    : isEpisode && media.show_tvdb_id && media.season_number != null && media.episode_number != null
+      ? `/show/tvdb/${media.show_tvdb_id}/season/${media.season_number}/${media.episode_number}`
+      : `/media/${media.type}/${media.tmdb_id}`;
 ---
 
 <div

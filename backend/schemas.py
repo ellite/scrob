@@ -74,6 +74,11 @@ class UserSettings(BaseModel):
     has_effective_tmdb_key: bool = False
     has_global_tmdb_key: bool = False
 
+    # TVDB
+    tvdb_api_key: Optional[str] = None
+    has_global_tvdb_key: bool = False
+    has_effective_tvdb_key: bool = False
+
     # Radarr integration
     radarr_url: Optional[str] = None
     radarr_token: Optional[str] = None
@@ -206,7 +211,8 @@ class WatchEventCreate(BaseModel):
 
 
 class ManualSessionStart(BaseModel):
-    tmdb_id: int
+    tmdb_id: Optional[int] = None
+    media_id: Optional[int] = None      # local DB id, preferred over tmdb_id for TVDB-only episodes
     media_type: MediaType
     title: Optional[str] = None
     runtime: Optional[int] = None       # minutes, used if Media.runtime is null
@@ -283,6 +289,7 @@ class PublicProfileResponse(BaseModel):
 
 class GlobalSettings(BaseModel):
     tmdb_api_key           : Optional[str] = None
+    tvdb_api_key           : Optional[str] = None
     radarr_url             : Optional[str] = None
     radarr_token           : Optional[str] = None
     radarr_root_folder     : Optional[str] = None

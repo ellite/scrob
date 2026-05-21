@@ -168,6 +168,7 @@ def format_event(event: WatchEvent | PlaybackProgress, media: Media) -> dict:
         data["media"]["show_title"] = media.show.title
         data["media"]["show_poster_path"] = media.show.poster_path
         data["media"]["show_tmdb_id"] = media.show.tmdb_id
+        data["media"]["show_tvdb_id"] = media.show.tvdb_id
 
     return data
 
@@ -267,6 +268,7 @@ async def get_now_playing(
             if show:
                 item["media"]["show_title"] = show.title
                 item["media"]["show_tmdb_id"] = show.tmdb_id
+                item["media"]["show_tvdb_id"] = show.tvdb_id
                 item["media"]["show_poster_path"] = show.poster_path
                 item["media"]["show_backdrop_path"] = show.backdrop_path
         elif media.media_type == MediaType.episode:
@@ -338,6 +340,7 @@ def _format_media_item(media: Media) -> dict:
         data["show_poster_path"] = media.show.poster_path
         data["show_backdrop_path"] = media.show.backdrop_path
         data["show_tmdb_id"] = media.show.tmdb_id
+        data["show_tvdb_id"] = media.show.tvdb_id
     return data
 
 
@@ -866,16 +869,26 @@ async def _get_or_create_media_for_session(
     body: schemas.ManualSessionStart,
     user_id: int,
 ) -> Media:
-    result = await db.execute(
-        select(Media).where(Media.tmdb_id == body.tmdb_id, Media.media_type == body.media_type)
-    )
-    media = result.scalar_one_or_none()
-    if media:
-        return media
+    # Prefer direct media_id lookup (used for TVDB-only episodes with no tmdb_id)
+    if body.media_id:
+        result = await db.execute(select(Media).where(Media.id == body.media_id))
+        media = result.scalar_one_or_none()
+        if media:
+            return media
+
+    if body.tmdb_id:
+        result = await db.execute(
+            select(Media).where(Media.tmdb_id == body.tmdb_id, Media.media_type == body.media_type)
+        )
+        media = result.scalar_one_or_none()
+        if media:
+            return media
 
     api_key = await get_user_tmdb_key(db, user_id)
 
     if body.media_type == MediaType.movie:
+        if not body.tmdb_id:
+            raise HTTPException(status_code=400, detail="tmdb_id required for movies")
         if not check_tmdb_key(api_key):
             raise HTTPException(status_code=404, detail="Movie not in library and TMDB key not configured")
         try:

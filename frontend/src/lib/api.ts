@@ -492,7 +492,8 @@ export interface ConnectionStatus {
 
 export interface MediaItem {
   id: number | null;
-  tmdb_id: number;
+  tmdb_id: number | null;
+  tvdb_id?: number | null;
   type: MediaType;
   title: string;
   original_title?: string | null;
@@ -514,6 +515,7 @@ export interface MediaItem {
   adult?: boolean;
   show_title?: string | null;
   show_tmdb_id?: number | null;
+  show_tvdb_id?: number | null;
   show_poster_path?: string | null;
   show_backdrop_path?: string | null;
   known_for_department?: string | null;
@@ -573,6 +575,7 @@ export interface NowPlayingMedia {
   runtime: number | null;
   show_title?: string;
   show_tmdb_id?: number;
+  show_tvdb_id?: number | null;
   show_poster_path?: string | null;
 }
 
@@ -606,6 +609,121 @@ export interface CollectionDetail {
   genres: string[];
   cast: { tmdb_id: number; name: string; profile_path: string | null; appearances: number }[];
   parts: MediaItem[];
+}
+
+export interface TvdbEpisode {
+  tvdb_id: number | null;
+  season_number: number;
+  episode_number: number;
+  name: string | null;
+  overview: string | null;
+  air_date: string | null;
+  runtime: number | null;
+  image_url: string | null;
+  id: number | null;
+  in_library: boolean;
+  watched: boolean;
+  user_rating: number | null;
+  in_lists: number[];
+}
+
+export interface TvdbEpisodeDetail {
+  tvdb_id: number | null;
+  season_number: number;
+  episode_number: number;
+  name: string | null;
+  overview: string | null;
+  air_date: string | null;
+  runtime: number | null;
+  image_url: string | null;
+  id: number | null;
+  in_library: boolean;
+  watched: boolean;
+  user_rating: number | null;
+  play_count: number;
+  in_lists: number[];
+  library: {
+    resolution: string | null;
+    video_codec: string | null;
+    audio_codec: string | null;
+    audio_channels: string | null;
+    audio_languages: string[] | null;
+    subtitle_languages: string[] | null;
+  } | null;
+  cast: { tmdb_id: null; person_id: number | null; name: string; character: string; profile_path: string | null }[];
+  episodes: { episode_number: number; name: string | null }[];
+  show: { id: number | null; tvdb_id: number; title: string; poster_path: string | null; backdrop_path: string | null };
+  season: { name: string; season_number: number; poster_path: string | null };
+}
+
+export interface TvdbSeason {
+  tvdb_id: number;
+  season_number: number;
+  name: string;
+  overview: string | null;
+  poster_path: string | null;
+  backdrop_path: string | null;
+  air_date: string | null;
+  episodes: TvdbEpisode[];
+  season_in_library: boolean;
+  season_watched: boolean;
+  season_collection_pct: number;
+  season_user_rating: number | null;
+  show_in_library: boolean;
+  show: {
+    id: number | null;
+    tvdb_id: number;
+    title: string;
+    poster_path: string | null;
+    backdrop_path: string | null;
+    seasons_meta: TvdbSeasonMeta[];
+  };
+}
+
+export interface TvdbSeasonMeta {
+  season_number: number;
+  name: string;
+  overview: string | null;
+  poster_path: string | null;
+  episode_count: number;
+  air_date: string | null;
+}
+
+export interface TvdbShow {
+  id: number | null;
+  tvdb_id: number;
+  tmdb_id: null;
+  type: string;
+  title: string;
+  original_title: string | null;
+  overview: string | null;
+  poster_path: string | null;
+  backdrop_path: string | null;
+  first_air_date: string | null;
+  last_air_date: string | null;
+  status: string | null;
+  tagline: null;
+  tmdb_rating: null;
+  age_rating: string | null;
+  original_language: string | null;
+  imdb_id: string | null;
+  tmdb_id_cross: number | null;
+  genres: string[];
+  network: string | null;
+  networks: { id: null; name: string; logo_path: null; origin_country: null }[];
+  seasons: TvdbSeasonMeta[];
+  seasons_meta: TvdbSeasonMeta[];
+  cast: { tmdb_id: null; person_id: number | null; name: string; character: string; profile_path: string | null }[];
+  in_library: boolean;
+  watched: boolean;
+  in_lists: number[];
+  collection_pct: number;
+  is_monitored: boolean;
+  request_enabled: boolean;
+  request_status: string | null;
+  user_rating: number | null;
+  season_states: Record<number, SeasonState>;
+  where_to_watch: { type: string; name: string; logo: string | null }[];
 }
 
 export interface Show {
@@ -894,6 +1012,9 @@ export const api = {
     search: (q: string, type?: string, page: number = 1, year?: number, token?: string, inLibrary?: boolean) =>
       get<{ results: MediaItem[]; page: number; total_pages: number; total_results: number }>("/media/search", { q, ...(type ? { type } : {}), page, ...(year ? { year } : {}), ...(inLibrary ? { in_library: true } : {}) }, token),
 
+    searchTvdb: (q: string, token?: string) =>
+      get<{ tvdb_id: number; title: string; overview: string | null; year: string | null; image_url: string | null; status: string | null; network: string | null }[]>("/media/search-tvdb", { q }, token),
+
     recentlyAdded: (type?: string, token?: string) =>
       get<{ results: MediaItem[] }>("/media/recently-added", type ? { type } : {}, token),
 
@@ -961,6 +1082,15 @@ export const api = {
 
     refreshMetadata: (seriesTmdbId: number, token: string) =>
       post<{ message: string }>(`/shows/${seriesTmdbId}/refresh`, undefined, token),
+
+    getTvdb: (tvdbId: number, token?: string) =>
+      get<TvdbShow>(`/shows/tvdb/${tvdbId}`, undefined, token),
+
+    getTvdbSeason: (tvdbId: number, seasonNumber: number, token?: string) =>
+      get<TvdbSeason>(`/shows/tvdb/${tvdbId}/season/${seasonNumber}`, undefined, token),
+
+    getTvdbEpisode: (tvdbId: number, seasonNumber: number, episodeNumber: number, token?: string) =>
+      get<TvdbEpisodeDetail>(`/shows/tvdb/${tvdbId}/season/${seasonNumber}/episode/${episodeNumber}`, undefined, token),
   },
 
   history: {

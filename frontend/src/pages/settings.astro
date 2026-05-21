@@ -79,6 +79,41 @@ if (me.totp_enabled) {
                 <p class="text-xs text-zinc-500">Required for fetching metadata and posters. Will be validated before saving.</p>
               )}
             </div>
+
+            <!-- TVDB key -->
+            <div class="space-y-2">
+              <label for="tvdb_api_key" class="block text-sm font-medium text-zinc-400">TVDB API Key</label>
+              <div class="relative group/field">
+                <input
+                  type="password"
+                  name="tvdb_api_key"
+                  id="tvdb_api_key"
+                  value={settings.tvdb_api_key || ""}
+                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                />
+                <button
+                  type="button"
+                  class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
+                  aria-label="Toggle password visibility"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                  </svg>
+                </button>
+              </div>
+              {settings.has_global_tvdb_key && !settings.tvdb_api_key ? (
+                <p class="text-xs text-blue-400">A server-wide TVDB key is configured by your admin.</p>
+              ) : settings.has_global_tvdb_key && settings.tvdb_api_key ? (
+                <p class="text-xs text-blue-400">A server-wide TVDB key is configured, but you are using your own key.</p>
+              ) : (
+                <p class="text-xs text-zinc-500">Required for TVDB-sourced shows (shows not on TMDB). Get your key at thetvdb.com.</p>
+              )}
+            </div>
           </div>
 
           <!-- ======== SYNC SECTION ======== -->
@@ -1365,12 +1400,12 @@ if (me.totp_enabled) {
     </div>
   </div>
 
-  <!-- Season remap modal -->
+  <!-- Season remap / unmatched show match modal -->
   <div id="season-remap-modal" class="fixed inset-0 bg-zinc-950/80 backdrop-blur-sm z-[100] hidden items-center justify-center p-4">
     <div class="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
       <div class="flex items-center justify-between px-6 py-5 border-b border-zinc-800 shrink-0">
         <div>
-          <h2 class="text-lg font-bold text-zinc-100">Remap Season</h2>
+          <h2 id="remap-modal-title" class="text-lg font-bold text-zinc-100">Remap Season</h2>
           <p id="remap-source-label" class="text-sm text-zinc-400 mt-0.5"></p>
         </div>
         <button type="button" id="remap-close" class="text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer p-1">
@@ -1378,14 +1413,23 @@ if (me.totp_enabled) {
         </button>
       </div>
       <div class="px-6 py-5 overflow-y-auto flex-1 space-y-5">
-        <!-- Show search -->
-        <div>
+        <!-- TMDB title search (remap mode) -->
+        <div id="remap-tmdb-section">
           <label class="block text-sm font-medium text-zinc-400 mb-2">Search for the correct TMDB show</label>
           <div class="flex gap-2">
             <input type="text" id="remap-search-input" placeholder="Show title…" class="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-zinc-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
             <button type="button" id="remap-search-btn" class="px-4 py-2.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-100 text-sm font-medium rounded-lg transition-colors cursor-pointer shrink-0">Search</button>
           </div>
           <div id="remap-search-results" class="mt-2 space-y-1 max-h-48 overflow-y-auto"></div>
+        </div>
+        <!-- TVDB title search (match mode) -->
+        <div id="remap-tvdb-section" class="hidden">
+          <label class="block text-sm font-medium text-zinc-400 mb-2">Search for the show on TVDB</label>
+          <div class="flex gap-2">
+            <input type="text" id="remap-tvdb-input" placeholder="Show title…" class="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-zinc-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+            <button type="button" id="remap-tvdb-search-btn" class="px-4 py-2.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-100 text-sm font-medium rounded-lg transition-colors cursor-pointer shrink-0">Search</button>
+          </div>
+          <div id="remap-tvdb-results" class="mt-2 space-y-1 max-h-48 overflow-y-auto"></div>
         </div>
         <!-- Selected show + season input -->
         <div id="remap-selected-area" class="hidden">
@@ -1397,9 +1441,11 @@ if (me.totp_enabled) {
             </div>
             <button type="button" id="remap-clear-selection" class="text-zinc-500 hover:text-zinc-300 cursor-pointer text-xs shrink-0">Change</button>
           </div>
-          <label class="block text-sm font-medium text-zinc-400 mb-2">Select the target season</label>
-          <div id="remap-seasons-list" class="space-y-1 overflow-y-auto" style="max-height: calc(var(--spacing) * 49)"></div>
-          <p id="remap-seasons-loading" class="text-xs text-zinc-500 py-1 hidden">Loading seasons…</p>
+          <div id="remap-seasons-area">
+            <label id="remap-seasons-label" class="block text-sm font-medium text-zinc-400 mb-2">Select the target season</label>
+            <div id="remap-seasons-list" class="space-y-1 overflow-y-auto" style="max-height: calc(var(--spacing) * 49)"></div>
+            <p id="remap-seasons-loading" class="text-xs text-zinc-500 py-1 hidden">Loading seasons…</p>
+          </div>
         </div>
         <p id="remap-error" class="text-sm text-red-400 hidden"></p>
       </div>
@@ -3066,6 +3112,7 @@ if (me.totp_enabled) {
         const formData = new FormData(form);
         const settings = {
           tmdb_api_key: formData.get('tmdb_api_key') || null,
+          tvdb_api_key: formData.get('tvdb_api_key') || null,
 
           radarr_url: formData.get('radarr_url') || null,
           radarr_token: formData.get('radarr_token') || null,
@@ -3490,44 +3537,107 @@ if (me.totp_enabled) {
         ` : '';
 
         // Group episode warnings by series_name to avoid N identical rows for the same show.
-        // Non-episode warnings and episodes without a series_name are rendered individually.
-        const groupedEpisodeWarnings: Map<string, {count: number, reason: string}> = new Map();
+        // Series-level warnings for the same show are merged in (to carry their GUIDs) rather
+        // than rendered as a separate row. Matched state is read directly from warning entries.
+        type GroupEntry = {count: number, reason: string, plex_guids: string[], matched: boolean, matched_tvdb_id?: number, matched_show_id?: number, matched_show_title?: string};
+        const groupedEpisodeWarnings: Map<string, GroupEntry> = new Map();
         const standaloneUnmatched: any[] = [];
         for (const w of unmatchedWarnings) {
           if (w.media_type === 'episode' && w.series_name) {
             const existing = groupedEpisodeWarnings.get(w.series_name);
             if (existing) {
               existing.count++;
+              if (w.matched && !existing.matched) {
+                existing.matched = true;
+                existing.matched_tvdb_id = w.matched_tvdb_id;
+                existing.matched_show_id = w.matched_show_id;
+                existing.matched_show_title = w.matched_show_title;
+              }
             } else {
-              groupedEpisodeWarnings.set(w.series_name, { count: 1, reason: w.reason ?? 'unknown reason' });
+              groupedEpisodeWarnings.set(w.series_name, {
+                count: 1,
+                reason: w.reason ?? 'unknown reason',
+                plex_guids: w.plex_guids ?? [],
+                matched: !!w.matched,
+                matched_tvdb_id: w.matched_tvdb_id,
+                matched_show_id: w.matched_show_id,
+                matched_show_title: w.matched_show_title,
+              });
             }
           } else {
             standaloneUnmatched.push(w);
           }
         }
 
-        const renderUnmatched = unmatchedWarnings.length > 0 ? `
+        // Merge series-level standalone warnings into grouped episode entries where the title
+        // matches, absorbing their GUIDs. Suppress the standalone row to avoid duplication.
+        const trueStandaloneUnmatched = standaloneUnmatched.filter((w: any) => {
+          const grouped = groupedEpisodeWarnings.get(w.title);
+          if (grouped) {
+            if (w.plex_guids?.length && !grouped.plex_guids.length) {
+              grouped.plex_guids = w.plex_guids;
+            }
+            return false; // suppress — already shown in grouped section
+          }
+          return true;
+        });
+
+        const hasUnmatched = groupedEpisodeWarnings.size > 0 || trueStandaloneUnmatched.length > 0;
+        const renderUnmatched = hasUnmatched ? `
           <div class="space-y-1 ${enrichmentWarnings.length > 0 ? 'mt-4 pt-4 border-t border-zinc-800/60' : ''}">
             <p class="text-xs text-zinc-500 mb-2">Items that couldn't be matched to TMDB:</p>
-            ${[...groupedEpisodeWarnings.entries()].map(([seriesName, {count, reason}]) => `
-              <div class="flex flex-col gap-0.5 py-1.5 border-b border-zinc-800/60 last:border-0">
-                <div class="min-w-0">
+            ${[...groupedEpisodeWarnings.entries()].map(([seriesName, {count, reason, plex_guids, matched, matched_tvdb_id, matched_show_id, matched_show_title}]) => {
+              const isMatched = matched;
+              const matchedTitle = matched_show_title ?? '';
+              const matchHref = matched_tvdb_id ? `/show/tvdb/${matched_tvdb_id}` : (matched_show_id ? `/show/${matched_show_id}` : '');
+              return `
+              <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
+                <div class="flex-1 min-w-0">
                   <span class="text-sm text-zinc-200 font-medium">${escapeHtml(seriesName)}</span>
-                  <span class="ml-2 text-xs text-zinc-600">${count} unmatched episode${count !== 1 ? 's' : ''}</span>
+                  <span class="ml-2 text-xs text-zinc-600">${count} episode${count !== 1 ? 's' : ''}</span>
+                  ${isMatched
+                    ? `<span class="ml-2 text-xs text-green-500">→ matched${matchedTitle && matchedTitle.toLowerCase() !== seriesName.toLowerCase() ? ` as "${escapeHtml(matchedTitle)}"` : ''}</span>`
+                    : `<p class="text-xs text-zinc-500 mt-0.5">${escapeHtml(reason)}</p>`
+                  }
+                  ${plex_guids.length ? `<p class="text-xs text-zinc-600 font-mono mt-0.5">${plex_guids.map((g: string) => escapeHtml(g)).join(' · ')}</p>` : ''}
                 </div>
-                <span class="text-xs text-zinc-500">${escapeHtml(reason)}</span>
-              </div>
-            `).join('')}
-            ${standaloneUnmatched.map((w: any) => `
-              <div class="flex flex-col gap-0.5 py-1.5 border-b border-zinc-800/60 last:border-0">
-                <div class="min-w-0">
+                <div class="flex items-center gap-1.5 shrink-0">
+                  ${isMatched && matchHref ? `<a href="${escapeHtml(matchHref)}" class="text-xs px-2.5 py-1 rounded-lg border border-green-700/40 text-green-400 hover:bg-green-900/20 transition-colors">View</a>` : ''}
+                  ${isMatched
+                    ? `<button type="button" class="unmatch-show-btn text-xs px-2.5 py-1 rounded-lg border border-zinc-700 text-zinc-400 hover:bg-zinc-800 cursor-pointer transition-colors"
+                        data-series-name="${escapeHtml(seriesName)}">Unmatch</button>`
+                    : `<button type="button" class="match-show-btn text-xs px-2.5 py-1 rounded-lg border bg-amber-500/15 border-amber-500/40 text-amber-500 hover:bg-amber-500/25 hover:border-amber-500/60 cursor-pointer transition-colors"
+                        data-series-name="${escapeHtml(seriesName)}">Match</button>`
+                  }
+                </div>
+              </div>`;
+            }).join('')}
+            ${trueStandaloneUnmatched.map((w: any) => {
+              const wMatched = !!w.matched;
+              const wMatchedTitle = w.matched_show_title ?? '';
+              const wMatchHref = w.matched_tvdb_id ? `/show/tvdb/${w.matched_tvdb_id}` : (w.matched_show_id ? `/show/${w.matched_show_id}` : '');
+              return `
+              <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
+                <div class="flex-1 min-w-0">
                   <span class="text-sm text-zinc-200 font-medium">${escapeHtml(w.title)}</span>
                   ${w.media_type ? `<span class="ml-2 text-xs text-zinc-600">${escapeHtml(w.media_type)}</span>` : ''}
+                  ${wMatched
+                    ? `<span class="ml-2 text-xs text-green-500">→ matched${wMatchedTitle && wMatchedTitle.toLowerCase() !== (w.title ?? '').toLowerCase() ? ` as "${escapeHtml(wMatchedTitle)}"` : ''}</span>`
+                    : `<p class="text-xs text-zinc-500 mt-0.5">${escapeHtml(w.reason ?? 'unknown reason')}</p>`
+                  }
+                  ${w.plex_guids?.length ? `<p class="text-xs text-zinc-600 font-mono mt-0.5">${w.plex_guids.map((g: string) => escapeHtml(g)).join(' · ')}</p>` : ''}
                 </div>
-                <span class="text-xs text-zinc-500">${escapeHtml(w.reason ?? 'unknown reason')}</span>
-                ${w.plex_guids?.length ? `<p class="text-xs text-zinc-600 font-mono">${w.plex_guids.map((g: string) => escapeHtml(g)).join(' · ')}</p>` : ''}
-              </div>
-            `).join('')}
+                <div class="flex items-center gap-1.5 shrink-0">
+                  ${wMatched && wMatchHref ? `<a href="${escapeHtml(wMatchHref)}" class="text-xs px-2.5 py-1 rounded-lg border border-green-700/40 text-green-400 hover:bg-green-900/20 transition-colors">View</a>` : ''}
+                  ${wMatched
+                    ? `<button type="button" class="unmatch-show-btn text-xs px-2.5 py-1 rounded-lg border border-zinc-700 text-zinc-400 hover:bg-zinc-800 cursor-pointer transition-colors"
+                        data-series-name="${escapeHtml(w.title)}">Unmatch</button>`
+                    : `<button type="button" class="match-show-btn text-xs px-2.5 py-1 rounded-lg border bg-amber-500/15 border-amber-500/40 text-amber-500 hover:bg-amber-500/25 hover:border-amber-500/60 cursor-pointer transition-colors shrink-0"
+                        data-series-name="${escapeHtml(w.title)}">Match</button>`
+                  }
+                </div>
+              </div>`;
+            }).join('')}
           </div>
         ` : '';
 
@@ -3571,6 +3681,36 @@ if (me.totp_enabled) {
             );
           });
         });
+
+        container.querySelectorAll('.match-show-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const el = btn as HTMLElement;
+            (window as any).openMatchModal(el.dataset.seriesName ?? '');
+          });
+        });
+
+        container.querySelectorAll('.unmatch-show-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const el = btn as HTMLButtonElement;
+            const seriesName = el.dataset.seriesName ?? '';
+            if (!seriesName) return;
+            el.disabled = true;
+            el.textContent = 'Removing…';
+            try {
+              const res = await fetch('/api/proxy/sync/unmatch-show', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ show_title: seriesName }),
+              });
+              if (!res.ok) throw new Error(await res.text());
+              loadSyncWarnings();
+            } catch (e: any) {
+              el.disabled = false;
+              el.textContent = 'Unmatch';
+              alert(`Failed to unmatch: ${e.message ?? 'Unknown error'}`);
+            }
+          });
+        });
       });
     } catch (_) { /* non-critical */ }
   }
@@ -3586,19 +3726,27 @@ if (me.totp_enabled) {
     let srcTmdbId = 0;
     let srcSeason = 0;
     let targetTmdbId = 0;
+    let targetTvdbId = 0;
     let targetSeasonNumber = 0;
+    let modalMode: 'remap' | 'match' = 'remap';
+    let matchSeriesName = '';
 
     const closeModal = () => {
       modal.classList.add('hidden');
       modal.classList.remove('flex');
       (document.getElementById('remap-search-input') as HTMLInputElement).value = '';
+      (document.getElementById('remap-tvdb-input') as HTMLInputElement).value = '';
       (document.getElementById('remap-search-results') as HTMLElement).innerHTML = '';
+      (document.getElementById('remap-tvdb-results') as HTMLElement).innerHTML = '';
       (document.getElementById('remap-seasons-list') as HTMLElement).innerHTML = '';
       (document.getElementById('remap-selected-area') as HTMLElement).classList.add('hidden');
       (document.getElementById('remap-save') as HTMLButtonElement).disabled = true;
       (document.getElementById('remap-error') as HTMLElement).classList.add('hidden');
       targetTmdbId = 0;
+      targetTvdbId = 0;
       targetSeasonNumber = 0;
+      modalMode = 'remap';
+      matchSeriesName = '';
     };
 
     document.getElementById('remap-close')?.addEventListener('click', closeModal);
@@ -3610,11 +3758,105 @@ if (me.totp_enabled) {
       (document.getElementById('remap-seasons-list') as HTMLElement).innerHTML = '';
       (document.getElementById('remap-save') as HTMLButtonElement).disabled = true;
       targetTmdbId = 0;
+      targetTvdbId = 0;
       targetSeasonNumber = 0;
     });
 
     const searchInput = document.getElementById('remap-search-input') as HTMLInputElement;
     const searchBtn = document.getElementById('remap-search-btn') as HTMLButtonElement;
+
+    const renderSearchResult = (r: any, resultsEl: HTMLElement) => {
+      resultsEl.innerHTML = '';
+      const year = String(r.first_air_date ?? r.release_date ?? '').slice(0, 4);
+      resultsEl.innerHTML = `
+        <button type="button" class="remap-result w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer text-left"
+          data-tmdb="${r.tmdb_id}" data-title="${escapeHtml(r.title ?? '')}" data-year="${escapeHtml(year)}" data-poster="${escapeHtml(r.poster_path ?? '')}">
+          <img src="${escapeHtml(r.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" onerror="this.style.display='none'" />
+          <div class="flex-1 min-w-0">
+            <p class="text-sm text-zinc-100 truncate">${escapeHtml(r.title ?? '')}</p>
+            <p class="text-xs text-zinc-500">${escapeHtml(year)}</p>
+          </div>
+        </button>`;
+      resultsEl.querySelectorAll('.remap-result').forEach(btn => wireResultClick(btn as HTMLElement));
+    };
+
+    const wireResultClick = (btn: HTMLElement) => {
+      btn.addEventListener('click', async () => {
+        const tmdbId = parseInt(btn.dataset.tmdb ?? '0');
+        const tvdbId = parseInt(btn.dataset.tvdb ?? '0');
+        if (tvdbId) {
+          targetTvdbId = tvdbId;
+          targetTmdbId = 0;
+        } else {
+          targetTmdbId = tmdbId;
+          targetTvdbId = 0;
+        }
+        targetSeasonNumber = 0;
+        (document.getElementById('remap-selected-poster') as HTMLImageElement).src = btn.dataset.poster ?? '';
+        (document.getElementById('remap-selected-title') as HTMLElement).textContent = btn.dataset.title ?? '';
+        (document.getElementById('remap-selected-year') as HTMLElement).textContent = btn.dataset.year ?? '';
+        (document.getElementById('remap-selected-area') as HTMLElement).classList.remove('hidden');
+        (document.getElementById('remap-search-results') as HTMLElement).innerHTML = '';
+        (document.getElementById('remap-tvdb-results') as HTMLElement).innerHTML = '';
+        searchInput.value = '';
+
+        const saveBtn = document.getElementById('remap-save') as HTMLButtonElement;
+        const seasonsArea = document.getElementById('remap-seasons-area') as HTMLElement;
+
+        if (modalMode === 'match') {
+          // In match mode we don't need a season selection — enable save immediately
+          seasonsArea.classList.add('hidden');
+          saveBtn.disabled = false;
+          return;
+        }
+
+        // Remap mode: fetch and render season list
+        saveBtn.disabled = true;
+        seasonsArea.classList.remove('hidden');
+        const seasonsList = document.getElementById('remap-seasons-list') as HTMLElement;
+        const seasonsLoading = document.getElementById('remap-seasons-loading') as HTMLElement;
+        seasonsList.innerHTML = '';
+        seasonsLoading.classList.remove('hidden');
+        try {
+          const showRes = await fetch(`/api/proxy/shows/${tmdbId}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          const showData = showRes.ok ? await showRes.json() : null;
+          const seasons: any[] = (showData?.seasons_meta ?? []).filter((s: any) => s.season_number > 0);
+          seasonsLoading.classList.add('hidden');
+          if (!seasons.length) {
+            seasonsList.innerHTML = '<p class="text-xs text-zinc-500 py-1">No seasons found.</p>';
+            return;
+          }
+          seasons.forEach((s: any) => {
+            const seasonBtn = document.createElement('button');
+            seasonBtn.type = 'button';
+            seasonBtn.className = 'remap-season-pick w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-transparent hover:border-blue-600/50 hover:bg-blue-600/10 transition-colors cursor-pointer text-left';
+            seasonBtn.dataset.season = String(s.season_number);
+            seasonBtn.innerHTML = `
+              <img src="${escapeHtml(s.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" onerror="this.style.display='none'" />
+              <div class="flex-1 min-w-0">
+                <p class="text-sm text-zinc-100">${escapeHtml(s.name ?? `Season ${s.season_number}`)}</p>
+                <p class="text-xs text-zinc-500">Season ${s.season_number}${s.episode_count ? ` · ${s.episode_count} eps` : ''}</p>
+              </div>`;
+            seasonBtn.addEventListener('click', () => {
+              targetSeasonNumber = s.season_number;
+              seasonsList.querySelectorAll('.remap-season-pick').forEach(b => {
+                b.classList.remove('border-blue-600/50', 'bg-blue-600/10');
+                b.classList.add('border-transparent');
+              });
+              seasonBtn.classList.add('border-blue-600/50', 'bg-blue-600/10');
+              seasonBtn.classList.remove('border-transparent');
+              saveBtn.disabled = false;
+            });
+            seasonsList.appendChild(seasonBtn);
+          });
+        } catch (_) {
+          seasonsLoading.classList.add('hidden');
+          seasonsList.innerHTML = '<p class="text-xs text-red-400 py-1">Could not load seasons.</p>';
+        }
+      });
+    };
 
     const doSearch = async () => {
       const q = searchInput.value.trim();
@@ -3632,92 +3874,104 @@ if (me.totp_enabled) {
           resultsEl.innerHTML = '<p class="text-xs text-zinc-500 py-2">No results.</p>';
           return;
         }
-        resultsEl.innerHTML = results.map((r: any) => `
+        resultsEl.innerHTML = results.map((r: any) => {
+          const year = escapeHtml(String(r.release_date ?? r.first_air_date ?? '').slice(0, 4));
+          return `
           <button type="button" class="remap-result w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer text-left"
-            data-tmdb="${r.tmdb_id}" data-title="${escapeHtml(r.title ?? '')}" data-year="${escapeHtml(String(r.release_date ?? r.first_air_date ?? '').slice(0,4))}" data-poster="${escapeHtml(r.poster_path ?? '')}">
+            data-tmdb="${r.tmdb_id}" data-title="${escapeHtml(r.title ?? '')}" data-year="${year}" data-poster="${escapeHtml(r.poster_path ?? '')}">
             <img src="${escapeHtml(r.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" onerror="this.style.display='none'" />
             <div class="flex-1 min-w-0">
               <p class="text-sm text-zinc-100 truncate">${escapeHtml(r.title ?? '')}</p>
-              <p class="text-xs text-zinc-500">${escapeHtml(String(r.release_date ?? r.first_air_date ?? '').slice(0,4))}</p>
+              <p class="text-xs text-zinc-500">${year}</p>
             </div>
-          </button>
-        `).join('');
-
-        resultsEl.querySelectorAll('.remap-result').forEach((btn) => {
-          btn.addEventListener('click', async () => {
-            const el = btn as HTMLElement;
-            const tmdbId = parseInt(el.dataset.tmdb ?? '0');
-            targetTmdbId = tmdbId;
-            targetSeasonNumber = 0;
-            (document.getElementById('remap-selected-poster') as HTMLImageElement).src = el.dataset.poster ?? '';
-            (document.getElementById('remap-selected-title') as HTMLElement).textContent = el.dataset.title ?? '';
-            (document.getElementById('remap-selected-year') as HTMLElement).textContent = el.dataset.year ?? '';
-            (document.getElementById('remap-selected-area') as HTMLElement).classList.remove('hidden');
-            (document.getElementById('remap-save') as HTMLButtonElement).disabled = true;
-            resultsEl.innerHTML = '';
-            searchInput.value = '';
-
-            // Fetch and render seasons
-            const seasonsList = document.getElementById('remap-seasons-list') as HTMLElement;
-            const seasonsLoading = document.getElementById('remap-seasons-loading') as HTMLElement;
-            seasonsList.innerHTML = '';
-            seasonsLoading.classList.remove('hidden');
-            try {
-              const showRes = await fetch(`/api/proxy/shows/${tmdbId}`, {
-                headers: { 'Authorization': `Bearer ${token}` },
-              });
-              const showData = showRes.ok ? await showRes.json() : null;
-              const seasons: any[] = (showData?.seasons_meta ?? []).filter((s: any) => s.season_number > 0);
-              seasonsLoading.classList.add('hidden');
-              if (!seasons.length) {
-                seasonsList.innerHTML = '<p class="text-xs text-zinc-500 py-1">No seasons found.</p>';
-                return;
-              }
-              seasons.forEach((s: any) => {
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'remap-season-pick w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-transparent hover:border-blue-600/50 hover:bg-blue-600/10 transition-colors cursor-pointer text-left';
-                btn.dataset.season = String(s.season_number);
-                btn.innerHTML = `
-                  <img src="${escapeHtml(s.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" onerror="this.style.display='none'" />
-                  <div class="flex-1 min-w-0">
-                    <p class="text-sm text-zinc-100">${escapeHtml(s.name ?? `Season ${s.season_number}`)}</p>
-                    <p class="text-xs text-zinc-500">Season ${s.season_number}${s.episode_count ? ` · ${s.episode_count} eps` : ''}</p>
-                  </div>`;
-                btn.addEventListener('click', () => {
-                  targetSeasonNumber = s.season_number;
-                  seasonsList.querySelectorAll('.remap-season-pick').forEach(b => {
-                    b.classList.remove('border-blue-600/50', 'bg-blue-600/10');
-                    b.classList.add('border-transparent');
-                  });
-                  btn.classList.add('border-blue-600/50', 'bg-blue-600/10');
-                  btn.classList.remove('border-transparent');
-                  (document.getElementById('remap-save') as HTMLButtonElement).disabled = false;
-                });
-                seasonsList.appendChild(btn);
-              });
-            } catch (_) {
-              seasonsLoading.classList.add('hidden');
-              seasonsList.innerHTML = '<p class="text-xs text-red-400 py-1">Could not load seasons.</p>';
-            }
-          });
-        });
+          </button>`;
+        }).join('');
+        resultsEl.querySelectorAll('.remap-result').forEach(btn => wireResultClick(btn as HTMLElement));
       } catch (_) {
         resultsEl.innerHTML = '<p class="text-xs text-red-400 py-2">Search failed.</p>';
       }
     };
 
+    const doTvdbSearch = async () => {
+      const q = (document.getElementById('remap-tvdb-input') as HTMLInputElement).value.trim();
+      if (!q) return;
+      const resultsEl = document.getElementById('remap-tvdb-results') as HTMLElement;
+      resultsEl.innerHTML = '<p class="text-xs text-zinc-500 py-2">Searching…</p>';
+      try {
+        const res = await fetch(`/api/proxy/media/search-tvdb?q=${encodeURIComponent(q)}`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          const detail: string = err.detail ?? 'Search failed';
+          if (detail.toLowerCase().includes('api key')) {
+            resultsEl.innerHTML = `<div class="py-2 space-y-1">
+              <p class="text-xs text-amber-400">A TVDB API key is required to search. Set one in <a href="/settings" class="underline hover:text-amber-300">Settings</a> or ask your admin to configure a global key.</p>
+            </div>`;
+          } else {
+            resultsEl.innerHTML = `<p class="text-xs text-red-400 py-2">${escapeHtml(detail)}</p>`;
+          }
+          return;
+        }
+        const results: any[] = await res.json();
+        if (!results.length) {
+          resultsEl.innerHTML = '<p class="text-xs text-zinc-500 py-2">No results found on TVDB.</p>';
+          return;
+        }
+        resultsEl.innerHTML = results.slice(0, 8).map((r: any) => `
+          <button type="button" class="remap-result w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer text-left"
+            data-tvdb="${r.tvdb_id}" data-title="${escapeHtml(r.title ?? '')}" data-year="${escapeHtml(String(r.year ?? ''))}" data-poster="${escapeHtml(r.image_url ?? '')}">
+            <img src="${escapeHtml(r.image_url ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" onerror="this.style.display='none'" />
+            <div class="flex-1 min-w-0">
+              <p class="text-sm text-zinc-100 truncate">${escapeHtml(r.title ?? '')}</p>
+              <p class="text-xs text-zinc-500">${escapeHtml(String(r.year ?? ''))}${r.network ? ` · ${escapeHtml(r.network)}` : ''}</p>
+            </div>
+          </button>`).join('');
+        resultsEl.querySelectorAll('.remap-result').forEach(btn => wireResultClick(btn as HTMLElement));
+      } catch (e: any) {
+        resultsEl.innerHTML = `<p class="text-xs text-red-400 py-2">Search failed: ${escapeHtml(e.message ?? '')}</p>`;
+      }
+    };
+
     searchBtn.addEventListener('click', doSearch);
     searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+    document.getElementById('remap-tvdb-search-btn')?.addEventListener('click', doTvdbSearch);
+    (document.getElementById('remap-tvdb-input') as HTMLInputElement)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doTvdbSearch(); });
 
     document.getElementById('remap-save')?.addEventListener('click', async () => {
-      if (!targetTmdbId || !targetSeasonNumber) return;
       const saveBtn = document.getElementById('remap-save') as HTMLButtonElement;
       const errEl = document.getElementById('remap-error') as HTMLElement;
       errEl.classList.add('hidden');
       saveBtn.disabled = true;
-      saveBtn.textContent = 'Saving…';
 
+      if (modalMode === 'match') {
+        if (!targetTvdbId && !targetTmdbId) return;
+        saveBtn.textContent = 'Matching…';
+        try {
+          const body: any = { show_title: matchSeriesName };
+          if (targetTvdbId) body.tvdb_id = targetTvdbId;
+          else body.tmdb_id = targetTmdbId;
+          const res = await fetch('/api/proxy/sync/match-unmatched-show', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) throw new Error(await res.text());
+          const result = await res.json();
+          closeModal();
+          loadSyncWarnings();
+        } catch (e: any) {
+          errEl.textContent = `Error: ${e.message ?? 'Unknown error'}`;
+          errEl.classList.remove('hidden');
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Match & Apply';
+        }
+        return;
+      }
+
+      // Remap mode
+      if (!targetTmdbId || !targetSeasonNumber) return;
+      saveBtn.textContent = 'Saving…';
       try {
         const createRes = await fetch('/api/proxy/sync/season-overrides', {
           method: 'POST',
@@ -3740,7 +3994,7 @@ if (me.totp_enabled) {
         if (!applyRes.ok) throw new Error(await applyRes.text());
 
         closeModal();
-        loadSyncWarnings(); // Refresh the warnings panel
+        loadSyncWarnings();
       } catch (e: any) {
         errEl.textContent = `Error: ${e.message ?? 'Unknown error'}`;
         errEl.classList.remove('hidden');
@@ -3750,13 +4004,36 @@ if (me.totp_enabled) {
     });
 
     (window as any).openRemapModal = (tmdbId: number, season: number, title: string) => {
+      modalMode = 'remap';
       srcTmdbId = tmdbId;
       srcSeason = season;
-      const label = document.getElementById('remap-source-label') as HTMLElement;
-      label.textContent = `"${title}" — Season ${season}`;
+      (document.getElementById('remap-modal-title') as HTMLElement).textContent = 'Remap Season';
+      (document.getElementById('remap-source-label') as HTMLElement).textContent = `"${title}" — Season ${season}`;
+      (document.getElementById('remap-tmdb-section') as HTMLElement).classList.remove('hidden');
+      (document.getElementById('remap-tvdb-section') as HTMLElement).classList.add('hidden');
+      (document.getElementById('remap-seasons-area') as HTMLElement).classList.remove('hidden');
+      (document.getElementById('remap-save') as HTMLButtonElement).textContent = 'Save & Apply';
       modal.classList.remove('hidden');
       modal.classList.add('flex');
       searchInput.focus();
+    };
+
+    (window as any).openMatchModal = (seriesName: string) => {
+      modalMode = 'match';
+      matchSeriesName = seriesName;
+      (document.getElementById('remap-modal-title') as HTMLElement).textContent = 'Match Show on TVDB';
+      (document.getElementById('remap-source-label') as HTMLElement).textContent = `"${seriesName}"`;
+      (document.getElementById('remap-tmdb-section') as HTMLElement).classList.add('hidden');
+      (document.getElementById('remap-tvdb-section') as HTMLElement).classList.remove('hidden');
+      (document.getElementById('remap-seasons-area') as HTMLElement).classList.add('hidden');
+      (document.getElementById('remap-save') as HTMLButtonElement).textContent = 'Match & Apply';
+      const tvdbInput = document.getElementById('remap-tvdb-input') as HTMLInputElement;
+      tvdbInput.value = seriesName;
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      tvdbInput.focus();
+      // Auto-search so the user sees results (or the no-key message) immediately
+      doTvdbSearch();
     };
   }
 </script>

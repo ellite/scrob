@@ -445,7 +445,9 @@ const bottomNavItem = (active: boolean) =>
         const href = isEpisode
           ? (m.show_tmdb_id && m.season_number && m.episode_number
               ? `/show/${m.show_tmdb_id}/season/${m.season_number}/${m.episode_number}`
-              : m.show_tmdb_id ? `/show/${m.show_tmdb_id}` : null)
+              : m.show_tvdb_id && m.season_number && m.episode_number
+                ? `/show/tvdb/${m.show_tvdb_id}/season/${m.season_number}/${m.episode_number}`
+                : m.show_tmdb_id ? `/show/${m.show_tmdb_id}` : m.show_tvdb_id ? `/show/tvdb/${m.show_tvdb_id}` : null)
           : (m.tmdb_id ? `/media/movie/${m.tmdb_id}` : null);
         const isPaused = session.state === 'paused';
         const sourceLabels = { plex: 'Plex', emby: 'Emby', kodi: 'Kodi', jellyfin: 'Jellyfin', manual: 'Scrob' };

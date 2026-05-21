@@ -88,6 +88,9 @@ class UserSettings(Base):
     trakt_push_lists         : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     trakt_watchlist_split    : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
+    # TVDB API key (optional personal override)
+    tvdb_api_key             : Mapped[Optional[str]]  = mapped_column(String(255))
+
     # Simkl OAuth credentials (PIN flow — client_id only, no secret needed)
     simkl_client_id          : Mapped[Optional[str]]  = mapped_column(String(255))
 

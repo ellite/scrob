@@ -18,13 +18,17 @@ const isSeries = item.type === "series";
 const href =
   item.show_tmdb_id && item.season_number != null && item.episode_number != null
     ? `/show/${item.show_tmdb_id}/season/${item.season_number}/${item.episode_number}`
-    : item.show_tmdb_id
-      ? `/show/${item.show_tmdb_id}`
-      : isSeries && item.tmdb_id
-        ? `/show/${item.tmdb_id}`
-        : item.tmdb_id && item.season_number != null
-          ? `/media/${item.type}/${item.tmdb_id}`
-          : null;
+    : item.show_tvdb_id && item.season_number != null && item.episode_number != null
+      ? `/show/tvdb/${item.show_tvdb_id}/season/${item.season_number}/${item.episode_number}`
+      : item.show_tmdb_id
+        ? `/show/${item.show_tmdb_id}`
+        : item.show_tvdb_id
+          ? `/show/tvdb/${item.show_tvdb_id}`
+          : isSeries && item.tmdb_id
+            ? `/show/${item.tmdb_id}`
+            : item.tmdb_id && item.season_number != null
+              ? `/media/${item.type}/${item.tmdb_id}`
+              : null;
 
 // Episodes: use episode still, fall back to show backdrop then show poster.
 const rawImage = isSeries

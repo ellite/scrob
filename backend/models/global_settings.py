@@ -25,3 +25,4 @@ class GlobalSettings(Base):
     sonarr_season_folder         : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="true")
     radarr_require_approval      : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
     sonarr_require_approval      : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
+    tvdb_api_key                 : Mapped[Optional[str]] = mapped_column(String(255))

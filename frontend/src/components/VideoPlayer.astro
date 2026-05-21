@@ -6,9 +6,10 @@ interface Props {
   title: string;
   token: string;
   secondary?: boolean;
+  mediaId?: number | null;
 }
 
-const { tmdbId, mediaType, inLibrary, title, token, secondary = false } = Astro.props;
+const { tmdbId, mediaType, inLibrary, title, token, secondary = false, mediaId } = Astro.props;
 ---
 
 {inLibrary && (
@@ -28,6 +29,7 @@ const { tmdbId, mediaType, inLibrary, title, token, secondary = false } = Astro.
     <dialog
       id="player-dialog"
       data-tmdb-id={tmdbId}
+      data-media-id={mediaId ?? 0}
       data-media-type={mediaType}
       data-title={title}
       data-token={token}
@@ -58,9 +60,11 @@ const { tmdbId, mediaType, inLibrary, title, token, secondary = false } = Astro.
   const dialog = document.getElementById('player-dialog') as HTMLDialogElement | null;
   if (dialog) {
     const tmdbId    = dialog.dataset.tmdbId!;
+    const mediaId   = parseInt(dialog.dataset.mediaId ?? '0', 10) || null;
     const mediaType = dialog.dataset.mediaType!;
     const title     = dialog.dataset.title!;
     const token     = dialog.dataset.token!;
+    const mediaIdParam = mediaId ? `&media_id=${mediaId}` : '';
 
     const playBtn   = document.getElementById('play-btn') as HTMLButtonElement | null;
     const video     = document.getElementById('player-video') as HTMLVideoElement;
@@ -81,7 +85,7 @@ const { tmdbId, mediaType, inLibrary, title, token, secondary = false } = Astro.
       subtitles.forEach(sub => {
         const track = document.createElement('track');
         track.kind = 'subtitles';
-        track.src = `/api/proxy/media/subtitles/${mediaType}/${tmdbId}?connection_id=${connectionId}&stream_index=${sub.index}`;
+        track.src = `/api/proxy/media/subtitles/${mediaType}/${tmdbId}?connection_id=${connectionId}&stream_index=${sub.index}${mediaIdParam}`;
         track.srclang = sub.language || '';
         track.label = sub.label || sub.language || 'Subtitle';
         video.appendChild(track);
@@ -91,7 +95,7 @@ const { tmdbId, mediaType, inLibrary, title, token, secondary = false } = Astro.
     async function reportSession(state: string): Promise<void> {
       if (!currentConnectionId) return;
       try {
-        await fetch(`/api/proxy/media/session/report/${mediaType}/${tmdbId}`, {
+        await fetch(`/api/proxy/media/session/report/${mediaType}/${tmdbId}${mediaIdParam}`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -116,7 +120,7 @@ const { tmdbId, mediaType, inLibrary, title, token, secondary = false } = Astro.
       currentSubtitles = subtitles;
       attachSubtitles(connectionId, subtitles);
 
-      video.src = `/api/proxy/media/stream/${mediaType}/${tmdbId}?connection_id=${connectionId}`;
+      video.src = `/api/proxy/media/stream/${mediaType}/${tmdbId}?connection_id=${connectionId}${mediaIdParam}`;
       video.load();
       video.play().catch(() => {});
       reportSession('playing');
@@ -178,7 +182,7 @@ const { tmdbId, mediaType, inLibrary, title, token, secondary = false } = Astro.
       dialog.showModal();
 
       try {
-        const res = await fetch(`/api/proxy/media/playback/${mediaType}/${tmdbId}`, {
+        const res = await fetch(`/api/proxy/media/playback/${mediaType}/${tmdbId}${mediaId ? `?media_id=${mediaId}` : ''}`, {
           headers: { 'Authorization': `Bearer ${token}` },
         });
         const sources = res.ok ? await res.json() : [];

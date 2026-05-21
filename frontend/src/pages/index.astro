@@ -91,7 +91,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
     const rest = nextUp.slice(1);
     const heroHref = hero.show_tmdb_id && hero.season_number != null && hero.episode_number != null
       ? `/show/${hero.show_tmdb_id}/season/${hero.season_number}/${hero.episode_number}`
-      : `/media/${hero.type}/${hero.tmdb_id}`;
+      : hero.show_tvdb_id && hero.season_number != null && hero.episode_number != null
+        ? `/show/tvdb/${hero.show_tvdb_id}/season/${hero.season_number}/${hero.episode_number}`
+        : `/media/${hero.type}/${hero.tmdb_id}`;
     const episodeLabel = hero.season_number != null && hero.episode_number != null
       ? `S${hero.season_number} E${hero.episode_number}`
       : null;
@@ -402,9 +404,11 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
           const isSeries = item.type === 'series';
           const href = item.show_tmdb_id && item.season_number != null && item.episode_number != null
             ? `/show/${item.show_tmdb_id}/season/${item.season_number}/${item.episode_number}`
-            : isSeries
-              ? `/show/${item.tmdb_id}`
-              : `/media/${item.type}/${item.tmdb_id}`;
+            : item.show_tvdb_id && item.season_number != null && item.episode_number != null
+              ? `/show/tvdb/${item.show_tvdb_id}/season/${item.season_number}/${item.episode_number}`
+              : isSeries
+                ? `/show/${item.tmdb_id}`
+                : `/media/${item.type}/${item.tmdb_id}`;
           const raw = isSeries ? (item.backdrop_path ?? item.poster_path) : item.poster_path;
           const imageUrl = raw
             ? (raw.startsWith('http') ? raw : `https://image.tmdb.org/t/p/w780${raw}`)

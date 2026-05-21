@@ -658,6 +658,7 @@ def format_media(media: Media) -> dict:
         "episode_number": media.episode_number,
         "show_title": media.show.title if media.show else None,
         "show_tmdb_id": media.show.tmdb_id if media.show else None,
+        "show_tvdb_id": media.show.tvdb_id if media.show else None,
         "show_poster_path": media.show.poster_path if media.show else None,
         "show_backdrop_path": media.show.backdrop_path if media.show else None,
         "genres": (media.tmdb_data or {}).get("genres", []),
@@ -736,6 +737,54 @@ async def list_media(
         "total_pages": total_pages,
         "results": results,
     }
+
+
+@router.get("/find-by-imdb")
+async def find_by_imdb(
+    imdb_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Resolve an IMDB ID to a TMDB TV show via the TMDB /find endpoint."""
+    imdb_id = imdb_id.strip()
+    if not imdb_id.startswith("tt"):
+        raise HTTPException(status_code=400, detail="Invalid IMDB ID — must start with 'tt'")
+    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if not check_tmdb_key(tmdb_key):
+        raise HTTPException(status_code=400, detail="TMDB API key required")
+    try:
+        data = await tmdb.find_by_external_id(imdb_id, "imdb_id", api_key=tmdb_key)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"TMDB lookup failed: {e}")
+    return [
+        {
+            "tmdb_id": r["id"],
+            "title": r.get("name") or r.get("original_name"),
+            "first_air_date": r.get("first_air_date"),
+            "poster_path": tmdb.poster_url(r.get("poster_path")),
+        }
+        for r in data.get("tv_results", [])
+    ]
+
+
+@router.get("/search-tvdb")
+async def search_tvdb(
+    q: str = Query(..., min_length=2),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from routers.shows import get_user_tvdb_key
+    from core import tvdb as tvdb_client
+
+    api_key = await get_user_tvdb_key(db, current_user.id)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="TVDB API key not configured")
+
+    try:
+        results = await tvdb_client.search_series(q, api_key)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"TVDB search failed: {e}")
+    return results
 
 
 @router.get("/search")
@@ -3016,14 +3065,18 @@ async def get_playback_sources(
     tmdb_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    media_id: int | None = Query(None),
 ):
     """Return available local-server playback sources for a movie or episode."""
     if type not in (MediaType.movie, MediaType.episode):
         raise HTTPException(400, "Only movie/episode streaming supported")
 
-    media_q = await db.execute(
-        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
-    )
+    if media_id:
+        media_q = await db.execute(select(Media).where(Media.id == media_id))
+    else:
+        media_q = await db.execute(
+            select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+        )
     media = media_q.scalars().first()
     if not media:
         return []
@@ -3138,14 +3191,18 @@ async def get_subtitle(
     stream_index: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    media_id: int | None = Query(None),
 ):
     """Proxy a subtitle track as WebVTT from a Jellyfin, Emby, or Plex server."""
     if type not in (MediaType.movie, MediaType.episode):
         raise HTTPException(400, "Only movie/episode subtitles supported")
 
-    media_q = await db.execute(
-        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
-    )
+    if media_id:
+        media_q = await db.execute(select(Media).where(Media.id == media_id))
+    else:
+        media_q = await db.execute(
+            select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+        )
     media = media_q.scalars().first()
     if not media:
         raise HTTPException(404, "Not in library")
@@ -3219,14 +3276,18 @@ async def stream_media(
     request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    media_id: int | None = Query(None),
 ):
     """Proxy a direct video stream from a Plex server (Jellyfin/Emby use the HLS endpoint)."""
     if type not in (MediaType.movie, MediaType.episode):
         raise HTTPException(400, "Only movie/episode streaming supported")
 
-    media_q = await db.execute(
-        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
-    )
+    if media_id:
+        media_q = await db.execute(select(Media).where(Media.id == media_id))
+    else:
+        media_q = await db.execute(
+            select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+        )
     media = media_q.scalars().first()
     if not media:
         raise HTTPException(404, "Not in library")
@@ -3534,14 +3595,18 @@ async def report_session(
     body: SessionReportRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    media_id: int | None = Query(None),
 ):
     """Report playback state to the media server so the session appears in its Now Playing dashboard."""
     if type not in (MediaType.movie, MediaType.episode):
         return {"ok": False}
 
-    media_q = await db.execute(
-        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
-    )
+    if media_id:
+        media_q = await db.execute(select(Media).where(Media.id == media_id))
+    else:
+        media_q = await db.execute(
+            select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+        )
     media = media_q.scalars().first()
     if not media:
         return {"ok": False}

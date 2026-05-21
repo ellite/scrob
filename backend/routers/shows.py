@@ -14,19 +14,32 @@ from models.media import Media
 from models.collection import Collection, CollectionFile
 from models.base import MediaType
 from models.show import Show as ShowModel
-from models.users import User
-from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch
+from models.users import User, UserSettings
+from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch, _effective_sonarr, _get_global_settings
 
 from dependencies import get_current_user
 from core import tmdb
+from core import tvdb as tvdb_client
 
 router = APIRouter()
+
+
+async def get_user_tvdb_key(db: AsyncSession, user_id: int) -> str | None:
+    from models.global_settings import GlobalSettings
+    result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+    s = result.scalar_one_or_none()
+    if s and s.tvdb_api_key:
+        return s.tvdb_api_key
+    gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
+    gs = gs_result.scalar_one_or_none()
+    return gs.tvdb_api_key if gs else None
 
 
 def format_show(show: ShowModel) -> dict:
     return {
         "id": show.id,
         "tmdb_id": show.tmdb_id,
+        "tvdb_id": show.tvdb_id,
         "type": "series",
         "title": show.title,
         "original_title": show.original_title,
@@ -1055,5 +1068,430 @@ async def refresh_show_metadata(
     all_media_ids = [ep.id for ep in episodes] + [ep.id for ep in orphans]
     await refresh_technical_data(db, all_media_ids, current_user.id)
 
+    await db.commit()
+    return {"message": "Metadata refreshed successfully"}
+
+
+# ── TVDB Show Endpoints ─────────────────────────────────────────────────────
+
+
+@router.get("/tvdb/{tvdb_id}")
+async def get_tvdb_show(
+    tvdb_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    api_key = await get_user_tvdb_key(db, current_user.id)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="TVDB API key not configured")
+
+    try:
+        raw = await tvdb_client.get_series(tvdb_id, api_key)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"TVDB fetch failed: {e}")
+
+    show_data = tvdb_client.format_series(raw)
+    cast = tvdb_client.format_cast(raw)
+
+    # Look up local Show row by tvdb_id
+    show_result = await db.execute(select(ShowModel).where(ShowModel.tvdb_id == tvdb_id))
+    show = show_result.scalar_one_or_none()
+
+    # Collect per-season library state if we have a local show
+    season_states: dict = {}
+    if show:
+        coll_per_season_q = await db.execute(
+            select(Media.season_number, func.count(func.distinct(Media.episode_number)))
+            .join(Collection, Collection.media_id == Media.id)
+            .where(
+                Media.show_id == show.id,
+                Collection.user_id == current_user.id,
+                Media.media_type == MediaType.episode,
+                Media.season_number.isnot(None),
+                Media.episode_number.isnot(None),
+            )
+            .group_by(Media.season_number)
+        )
+        coll_per_season: dict = dict(coll_per_season_q.all())
+
+        watched_per_season_q = await db.execute(
+            select(Media.season_number, func.count(func.distinct(Media.episode_number)))
+            .join(WatchEvent, WatchEvent.media_id == Media.id)
+            .where(
+                Media.show_id == show.id,
+                WatchEvent.user_id == current_user.id,
+                Media.media_type == MediaType.episode,
+                Media.season_number.isnot(None),
+                Media.episode_number.isnot(None),
+            )
+            .group_by(Media.season_number)
+        )
+        watched_per_season: dict = dict(watched_per_season_q.all())
+
+        season_ep_counts = {s["season_number"]: s.get("episode_count", 0) for s in show_data["seasons"]}
+
+        for sn in set(list(coll_per_season.keys()) + list(season_ep_counts.keys())):
+            collected = coll_per_season.get(sn, 0)
+            watched = watched_per_season.get(sn, 0)
+            total = season_ep_counts.get(sn, 0)
+            # When TVDB reports 0 episodes (common for web series), use collected count as denominator
+            effective_total = total if total > 0 else collected
+            season_states[sn] = {
+                "in_library": collected > 0,
+                "collection_pct": min(100, int((collected / effective_total) * 100)) if effective_total > 0 else 0,
+                "watched": watched >= effective_total if effective_total > 0 else False,
+                "user_rating": None,
+            }
+
+    in_library = bool(season_states and any(v["in_library"] for v in season_states.values()))
+
+    # Derive overall watched / collection_pct from season states (skip season 0 specials)
+    lib_seasons = [v for sn, v in season_states.items() if sn != 0 and v["in_library"]]
+    watched_overall = bool(lib_seasons) and all(v["watched"] for v in lib_seasons)
+    total_pct = sum(v["collection_pct"] for sn, v in season_states.items() if sn != 0)
+    non_special_seasons = len([sn for sn in season_states if sn != 0])
+    collection_pct = int(total_pct / non_special_seasons) if non_special_seasons else 0
+
+    # Sonarr state
+    gs = await _get_global_settings(db)
+    settings_q = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
+    settings = settings_q.scalar_one_or_none()
+    sonarr_cfg = _effective_sonarr(settings, gs)
+    is_monitored = False
+    request_enabled = sonarr_cfg is not None
+    if sonarr_cfg:
+        try:
+            import httpx as _httpx
+            url = sonarr_cfg.sonarr_url.rstrip("/")
+            async with _httpx.AsyncClient(timeout=5.0) as client:
+                res = await client.get(
+                    f"{url}/api/v3/series/lookup",
+                    params={"apiKey": sonarr_cfg.sonarr_token, "term": f"tvdb:{tvdb_id}"},
+                )
+                if res.status_code == 200:
+                    for entry in res.json():
+                        if entry.get("id"):
+                            is_monitored = True
+                            break
+        except Exception:
+            pass
+
+    # Where to watch (local media servers only; no TMDB streaming for TVDB-only shows)
+    where_to_watch = await get_where_to_watch(db, current_user.id, tvdb_id, MediaType.series, show=show) if show else []
+
+    # Networks (name only; TVDB doesn't provide logos)
+    networks = [{"id": None, "name": n.get("name"), "logo_path": None, "origin_country": None}
+                for n in (raw.get("networks") or []) if n.get("name")]
+
+    return {
+        **show_data,
+        "id": show.id if show else None,
+        "tmdb_id": None,
+        "type": "series",
+        "tagline": None,
+        "tmdb_rating": None,
+        "imdb_id": show_data.get("imdb_id"),
+        "tmdb_id_cross": show_data.get("tmdb_id_cross"),
+        "adult": False,
+        "in_library": in_library,
+        "watched": watched_overall,
+        "in_lists": [],
+        "collection_pct": collection_pct,
+        "is_monitored": is_monitored,
+        "request_enabled": request_enabled,
+        "request_status": None,
+        "user_rating": None,
+        "season_states": season_states,
+        "seasons": {},
+        "seasons_meta": show_data["seasons"],
+        "cast": cast,
+        "networks": networks,
+        "where_to_watch": where_to_watch,
+    }
+
+
+@router.get("/tvdb/{tvdb_id}/season/{season_number}")
+async def get_tvdb_season(
+    tvdb_id: int,
+    season_number: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    api_key = await get_user_tvdb_key(db, current_user.id)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="TVDB API key not configured")
+
+    try:
+        raw_series, raw_episodes = await asyncio.gather(
+            tvdb_client.get_series(tvdb_id, api_key),
+            tvdb_client.get_series_episodes(tvdb_id, season_number, api_key),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"TVDB fetch failed: {e}")
+
+    show_data = tvdb_client.format_series(raw_series)
+    eps = [tvdb_client.format_episode(e) for e in raw_episodes]
+
+    # Look up local Show row and episode states
+    show_result = await db.execute(select(ShowModel).where(ShowModel.tvdb_id == tvdb_id))
+    show = show_result.scalar_one_or_none()
+
+    watched_ep_ids: set = set()
+    episode_ratings: dict = {}
+    user_collected_eps: set = set()
+
+    if show:
+        ep_result = await db.execute(
+            select(Media)
+            .where(
+                Media.show_id == show.id,
+                Media.media_type == MediaType.episode,
+                Media.season_number == season_number,
+            )
+        )
+        local_eps = ep_result.scalars().all()
+        local_media_ids = [m.id for m in local_eps]
+
+        if local_media_ids:
+            watched_q = await db.execute(
+                select(WatchEvent.media_id)
+                .where(WatchEvent.user_id == current_user.id, WatchEvent.media_id.in_(local_media_ids))
+                .distinct()
+            )
+            watched_ep_ids = {r[0] for r in watched_q.all()}
+
+            ep_ratings_q = await db.execute(
+                select(Rating.media_id, Rating.rating)
+                .where(
+                    Rating.user_id == current_user.id,
+                    Rating.media_id.in_(local_media_ids),
+                    Rating.season_number.is_(None),
+                )
+            )
+            episode_ratings = {r[0]: r[1] for r in ep_ratings_q.all()}
+
+            coll_q = await db.execute(
+                select(Media.episode_number)
+                .join(Collection, Collection.media_id == Media.id)
+                .where(
+                    Media.show_id == show.id,
+                    Media.season_number == season_number,
+                    Collection.user_id == current_user.id,
+                    Media.media_type == MediaType.episode,
+                    Media.episode_number.isnot(None),
+                )
+                .distinct()
+            )
+            user_collected_eps = {r[0] for r in coll_q.all()}
+
+        # Build episode_number → local Media map
+        local_ep_map = {m.episode_number: m for m in local_eps}
+    else:
+        local_ep_map = {}
+
+    enriched_eps = []
+    for ep in eps:
+        ep_num = ep.get("episode_number")
+        local_m = local_ep_map.get(ep_num)
+        enriched_eps.append({
+            **ep,
+            "id": local_m.id if local_m else None,
+            "in_library": ep_num in user_collected_eps,
+            "watched": local_m.id in watched_ep_ids if local_m else False,
+            "user_rating": episode_ratings.get(local_m.id) if local_m else None,
+            "in_lists": [],
+        })
+
+    season_meta = next((s for s in show_data["seasons"] if s["season_number"] == season_number), {})
+
+    # Compute season-level stats
+    season_in_library = bool(user_collected_eps)
+    total_eps = len(eps)
+    effective_total = total_eps if total_eps > 0 else len(user_collected_eps)
+    season_collection_pct = min(100, int((len(user_collected_eps) / effective_total) * 100)) if effective_total > 0 else 0
+    season_watched = bool(local_eps) and len(watched_ep_ids) >= len(local_eps) if show else False
+
+    return {
+        "tvdb_id": tvdb_id,
+        "season_number": season_number,
+        "name": season_meta.get("name") or f"Season {season_number}",
+        "overview": season_meta.get("overview"),
+        "poster_path": season_meta.get("poster_path"),
+        "backdrop_path": show_data["backdrop_path"],
+        "air_date": season_meta.get("air_date"),
+        "episodes": enriched_eps,
+        "season_in_library": season_in_library,
+        "season_watched": season_watched,
+        "season_collection_pct": season_collection_pct,
+        "season_user_rating": None,
+        "show_in_library": show is not None,
+        "show": {
+            "id": show.id if show else None,
+            "tvdb_id": tvdb_id,
+            "title": show_data["title"],
+            "poster_path": show_data["poster_path"],
+            "backdrop_path": show_data["backdrop_path"],
+            "seasons_meta": show_data["seasons"],
+        },
+    }
+
+
+@router.get("/tvdb/{tvdb_id}/season/{season_number}/episode/{episode_number}")
+async def get_tvdb_episode(
+    tvdb_id: int,
+    season_number: int,
+    episode_number: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    api_key = await get_user_tvdb_key(db, current_user.id)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="TVDB API key not configured")
+
+    try:
+        raw_series, raw_episodes = await asyncio.gather(
+            tvdb_client.get_series(tvdb_id, api_key),
+            tvdb_client.get_series_episodes(tvdb_id, season_number, api_key),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"TVDB fetch failed: {e}")
+
+    show_data = tvdb_client.format_series(raw_series)
+    eps = [tvdb_client.format_episode(e) for e in raw_episodes]
+    ep_data = next((e for e in eps if e.get("episode_number") == episode_number), None)
+    if not ep_data:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    show_result = await db.execute(select(ShowModel).where(ShowModel.tvdb_id == tvdb_id))
+    show = show_result.scalar_one_or_none()
+
+    in_library = False
+    watched = False
+    user_rating = None
+    local_ep_id = None
+    library_info = None
+    play_count = 0
+
+    if show:
+        local_ep_q = await db.execute(
+            select(Media).where(
+                Media.show_id == show.id,
+                Media.media_type == MediaType.episode,
+                Media.season_number == season_number,
+                Media.episode_number == episode_number,
+            )
+        )
+        local_ep = local_ep_q.scalar_one_or_none()
+        if local_ep:
+            local_ep_id = local_ep.id
+            coll_q = await db.execute(
+                select(func.count()).select_from(Collection).where(
+                    Collection.media_id == local_ep.id,
+                    Collection.user_id == current_user.id,
+                )
+            )
+            in_library = coll_q.scalar_one() > 0
+            watched_q = await db.execute(
+                select(func.count()).select_from(WatchEvent).where(
+                    WatchEvent.media_id == local_ep.id,
+                    WatchEvent.user_id == current_user.id,
+                )
+            )
+            play_count = watched_q.scalar_one()
+            watched = play_count > 0
+            rating_q = await db.execute(
+                select(Rating.rating).where(
+                    Rating.media_id == local_ep.id,
+                    Rating.user_id == current_user.id,
+                    Rating.season_number.is_(None),
+                )
+            )
+            user_rating = rating_q.scalar_one_or_none()
+
+            if in_library:
+                coll_file_q = await db.execute(
+                    select(CollectionFile)
+                    .join(Collection, Collection.id == CollectionFile.collection_id)
+                    .where(
+                        Collection.media_id == local_ep.id,
+                        Collection.user_id == current_user.id,
+                    )
+                    .order_by(CollectionFile.added_at.desc())
+                )
+                coll_file = coll_file_q.scalars().first()
+                if coll_file:
+                    library_info = {
+                        "resolution": coll_file.resolution,
+                        "video_codec": coll_file.video_codec,
+                        "audio_codec": coll_file.audio_codec,
+                        "audio_channels": coll_file.audio_channels,
+                        "audio_languages": coll_file.audio_languages,
+                        "subtitle_languages": coll_file.subtitle_languages,
+                    }
+
+    cast = tvdb_client.format_cast(raw_series)
+    season_meta = next((s for s in show_data["seasons"] if s["season_number"] == season_number), {})
+
+    return {
+        **ep_data,
+        "id": local_ep_id,
+        "in_library": in_library,
+        "watched": watched,
+        "user_rating": user_rating,
+        "play_count": play_count,
+        "in_lists": [],
+        "library": library_info,
+        "cast": cast,
+        "episodes": [{"episode_number": e["episode_number"], "name": e["name"]} for e in eps],
+        "show": {
+            "id": show.id if show else None,
+            "tvdb_id": tvdb_id,
+            "title": show_data["title"],
+            "poster_path": show_data["poster_path"],
+            "backdrop_path": show_data["backdrop_path"],
+        },
+        "season": {
+            "name": season_meta.get("name") or f"Season {season_number}",
+            "season_number": season_number,
+            "poster_path": season_meta.get("poster_path"),
+        },
+    }
+
+
+@router.post("/tvdb/{tvdb_id}/refresh")
+async def refresh_tvdb_show_metadata(
+    tvdb_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    api_key = await get_user_tvdb_key(db, current_user.id)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="TVDB API key not configured")
+
+    show_result = await db.execute(select(ShowModel).where(ShowModel.tvdb_id == tvdb_id))
+    show = show_result.scalar_one_or_none()
+    if not show:
+        raise HTTPException(status_code=404, detail="Show not found in local library")
+
+    try:
+        raw = await tvdb_client.get_series(tvdb_id, api_key)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"TVDB fetch failed: {e}")
+
+    show_fmt = tvdb_client.format_series(raw)
+    show.title = show_fmt["title"] or show.title
+    show.original_title = show_fmt.get("original_title")
+    show.overview = show_fmt.get("overview")
+    show.poster_path = show_fmt.get("poster_path")
+    show.backdrop_path = show_fmt.get("backdrop_path")
+    show.status = show_fmt.get("status")
+    show.first_air_date = show_fmt.get("first_air_date")
+    show.last_air_date = show_fmt.get("last_air_date")
+    show.tmdb_data = {
+        **(show.tmdb_data or {}),
+        "seasons": show_fmt.get("seasons", []),
+        "genres": show_fmt.get("genres", []),
+        "source": "tvdb",
+    }
     await db.commit()
     return {"message": "Metadata refreshed successfully"}

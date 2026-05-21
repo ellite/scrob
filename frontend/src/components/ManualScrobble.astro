@@ -7,14 +7,16 @@ interface Props {
   showTmdbId?: number | null;
   seasonNumber?: number | null;
   episodeNumber?: number | null;
+  mediaId?: number | null;
 }
-const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumber } = Astro.props;
+const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumber, mediaId } = Astro.props;
 ---
 
-{tmdbId && (
+{(tmdbId || mediaId) && (
   <div
     id="manual-scrobble"
-    data-tmdb-id={tmdbId}
+    data-tmdb-id={tmdbId ?? 0}
+    data-media-id={mediaId ?? 0}
     data-media-type={mediaType}
     data-runtime={runtime ?? 0}
     data-title={title ?? ''}
@@ -41,7 +43,8 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
   const TOKEN = () => (window as any).__AUTH_TOKEN__ ?? '';
   const API = '/api/proxy';
 
-  const tmdbId    = parseInt(container.dataset.tmdbId ?? '0', 10);
+  const tmdbId    = parseInt(container.dataset.tmdbId ?? '0', 10) || null;
+  const mediaId   = parseInt(container.dataset.mediaId ?? '0', 10) || null;
   const mediaType = container.dataset.mediaType ?? '';
   const runtime   = parseInt(container.dataset.runtime ?? '0', 10);   // minutes
   const title     = container.dataset.title ?? '';
@@ -49,7 +52,7 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
   const seasonNumber = parseInt(container.dataset.season ?? '0', 10) || null;
   const episodeNumber = parseInt(container.dataset.episode ?? '0', 10) || null;
 
-  if (!tmdbId || !mediaType) return;
+  if (!tmdbId && !mediaId) return;
 
   // ── State ─────────────────────────────────────────────────────────────────
   let sessionKey: string | null = null;
@@ -180,6 +183,7 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
         headers: { 'Authorization': `Bearer ${TOKEN()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tmdb_id: tmdbId,
+          media_id: mediaId,
           media_type: mediaType,
           title,
           runtime: runtime || null,
@@ -267,9 +271,11 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
       });
       if (!res.ok) { renderIdle(); return; }
       const data = await res.json();
-      const existing = (data.now_playing ?? []).find(
-        (s: any) => s.source === 'manual' && s.media?.tmdb_id === tmdbId && s.media?.type === mediaType
-      );
+      const existing = (data.now_playing ?? []).find((s: any) => {
+        if (s.source !== 'manual') return false;
+        if (mediaId && s.media?.id === mediaId) return true;
+        return tmdbId && s.media?.tmdb_id === tmdbId && s.media?.type === mediaType;
+      });
       if (existing) {
         sessionKey = existing.session_key;
         state = existing.state as 'playing' | 'paused';

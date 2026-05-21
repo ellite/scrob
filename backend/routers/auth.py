@@ -329,6 +329,8 @@ async def _settings_response(settings: UserSettings, db: AsyncSession) -> schema
     gs = gs_result.scalar_one_or_none()
     data.has_global_tmdb_key = bool(gs and gs.tmdb_api_key)
     data.has_effective_tmdb_key = bool(settings.tmdb_api_key) or data.has_global_tmdb_key
+    data.has_global_tvdb_key = bool(gs and gs.tvdb_api_key)
+    data.has_effective_tvdb_key = bool(settings.tvdb_api_key) or data.has_global_tvdb_key
     return data
 
 
@@ -366,14 +368,20 @@ async def update_user_settings(
         settings = UserSettings(user_id=current_user.id)
         db.add(settings)
 
-    # trakt_connected is a read-only computed field; never write it back
-    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected"}
+    # Computed read-only fields; never write them back
+    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected", "has_global_tmdb_key", "has_effective_tmdb_key", "has_global_tvdb_key", "has_effective_tvdb_key"}
     update_data = {k: v for k, v in settings_in.model_dump(exclude_unset=True).items() if k not in READ_ONLY_FIELDS}
 
     if "tmdb_api_key" in update_data and update_data["tmdb_api_key"]:
         success = await tmdb.validate_api_key(update_data["tmdb_api_key"])
         if not success:
             raise HTTPException(status_code=400, detail="Invalid TMDB API Key")
+
+    if "tvdb_api_key" in update_data and update_data["tvdb_api_key"]:
+        from core import tvdb
+        success = await tvdb.validate_api_key(update_data["tvdb_api_key"])
+        if not success:
+            raise HTTPException(status_code=400, detail="Invalid TVDB API Key")
 
     url_fields = {"radarr_url": "Radarr URL", "sonarr_url": "Sonarr URL"}
     for field, label in url_fields.items():

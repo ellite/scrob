@@ -1,0 +1,329 @@
+---
+import Base from "../../../../../layouts/Base.astro";
+import ActionBar from "../../../../../components/ActionBar.astro";
+import CommentsSection from "../../../../../components/CommentsSection.astro";
+import { api, type TvdbSeason } from "../../../../../lib/api";
+export const prerender = false;
+
+const { id, season_number } = Astro.params;
+const { token } = Astro.locals;
+Astro.response.headers.set("Cache-Control", "no-store");
+
+let season: TvdbSeason | null = null;
+let error = "";
+
+try {
+  season = await api.shows.getTvdbSeason(Number(id), Number(season_number), token);
+} catch (e: any) {
+  error = e.message;
+}
+
+if (!season && !error) {
+  return Astro.redirect("/404");
+}
+
+const show = season?.show;
+---
+
+<Base title={season ? `${show?.title} — ${season.name}` : "Season Details"}>
+  {error && !season && (
+    <div class="max-w-md mx-auto mt-20 text-center">
+      <div class="bg-red-500/10 border border-red-500/20 text-red-500 p-6 rounded-2xl mb-6">
+        <p class="font-bold text-lg mb-2">Oops!</p>
+        <p class="text-sm opacity-80">{error}</p>
+      </div>
+      <a href="/" class="text-blue-500 hover:underline">Return to Dashboard</a>
+    </div>
+  )}
+
+  {season && (
+    <div class="relative">
+      <!-- Backdrop -->
+      {(season.backdrop_path || show?.backdrop_path) && (
+        <div class="absolute -top-8 left-1/2 -translate-x-1/2 w-screen h-[500px] overflow-hidden">
+          <div class="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/80 to-transparent z-10"></div>
+          <img src={season.backdrop_path || show?.backdrop_path} alt="" class="w-full h-full object-cover opacity-30 blur-[1px]" />
+        </div>
+      )}
+
+      <div class="relative z-20">
+        <nav class="flex items-center gap-2 text-sm text-zinc-400 mb-8 overflow-hidden whitespace-nowrap">
+          <a href="/shows" class="hover:text-zinc-100 transition">Shows</a>
+          <span class="text-zinc-700">/</span>
+          <a href={`/show/tvdb/${id}`} class="hover:text-zinc-100 transition truncate">{show?.title}</a>
+          <span class="text-zinc-700">/</span>
+          <span class="text-zinc-100 font-bold">{season.name}</span>
+        </nav>
+
+        <div class="flex flex-col md:flex-row gap-8 lg:gap-12 mb-16">
+          <div class="w-56 shrink-0 mx-auto md:mx-0">
+            <div class="aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 bg-zinc-900 ring-1 ring-white/10 relative">
+              {(season.poster_path || show?.poster_path) ? (
+                <button id="poster-zoom-btn" class="w-full h-full group/poster block cursor-zoom-in" aria-label={`Enlarge poster for ${season.name}`}>
+                  <img src={season.poster_path ?? show?.poster_path ?? ""} alt={season.name} class="w-full h-full object-cover transition-transform duration-300 group-hover/poster:scale-105" />
+                  <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover/poster:opacity-100 transition-opacity duration-200 bg-black/30">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8 text-white drop-shadow-lg">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607ZM10.5 7.5v6m3-3h-6" />
+                    </svg>
+                  </div>
+                </button>
+              ) : (
+                <div class="w-full h-full flex flex-col items-center justify-center text-zinc-400 p-4 text-center">
+                  <span class="text-4xl mb-2">📺</span>
+                  <span class="text-sm font-medium">No Poster Available</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div class="flex-1 pt-4 text-center md:text-left">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-2">
+              <h1 class="text-4xl md:text-5xl font-black text-zinc-100 tracking-tight">{season.name}</h1>
+
+              {show?.seasons_meta && show.seasons_meta.length > 1 && (
+                <div class="flex items-center gap-2 shrink-0">
+                  {(() => {
+                    const currentSeason = Number(season_number);
+                    const validSeasons = show.seasons_meta
+                      .filter((s) => s.season_number > 0)
+                      .sort((a, b) => a.season_number - b.season_number);
+                    const currentIndex = validSeasons.findIndex((s) => s.season_number === currentSeason);
+                    const prevSeason = currentIndex > 0 ? validSeasons[currentIndex - 1] : null;
+                    const nextSeason = currentIndex < validSeasons.length - 1 ? validSeasons[currentIndex + 1] : null;
+
+                    return (
+                      <>
+                        {prevSeason && (
+                          <a href={`/show/tvdb/${id}/season/${prevSeason.season_number}`} class="flex items-center gap-1.5 px-3 py-2 bg-zinc-900/60 border border-zinc-800/50 rounded-xl text-zinc-400 hover:text-zinc-100 hover:border-blue-500/50 hover:bg-zinc-800/60 active:scale-95 active:opacity-70 transition-all text-sm font-bold">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5 8.25 12 15.75 4.5" />
+                            </svg>
+                            <span class="hidden sm:inline">S{prevSeason.season_number}</span>
+                          </a>
+                        )}
+                        <span class="px-3 py-2 bg-blue-600/20 border border-blue-500/30 rounded-xl text-blue-400 text-sm font-black">
+                          S{currentSeason}
+                        </span>
+                        {nextSeason && (
+                          <a href={`/show/tvdb/${id}/season/${nextSeason.season_number}`} class="flex items-center gap-1.5 px-3 py-2 bg-zinc-900/60 border border-zinc-800/50 rounded-xl text-zinc-400 hover:text-zinc-100 hover:border-blue-500/50 hover:bg-zinc-800/60 active:scale-95 active:opacity-70 transition-all text-sm font-bold">
+                            <span class="hidden sm:inline">S{nextSeason.season_number}</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                            </svg>
+                          </a>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+
+            <p class="text-lg text-blue-400 font-bold mb-6 tracking-wide uppercase">{show?.title}</p>
+
+            <div class="flex flex-wrap justify-center md:justify-start items-center gap-4 text-zinc-400 text-sm mb-8 bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm inline-flex">
+              <span class="font-bold text-zinc-300">{season.episodes?.length || 0} Episodes</span>
+              {season.air_date && (
+                <span>Premiered {new Date(season.air_date).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}</span>
+              )}
+            </div>
+
+            <div class="mb-6">
+              <ActionBar
+                tmdbId={Number(id)}
+                mediaType="series"
+                watched={season.season_watched}
+                inLists={[]}
+                inLibrary={season.season_in_library}
+                collectionPct={season.season_collection_pct}
+                seasonNumber={Number(season_number)}
+                requestEnabled={false}
+                hideLists={true}
+                userRating={season.season_user_rating}
+              />
+            </div>
+
+            {season.show_in_library && (
+              <div class="mb-6">
+                <button
+                  id="refresh-metadata-btn"
+                  class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 hover:text-zinc-100 bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 rounded-xl transition-all duration-200 cursor-pointer"
+                >
+                  <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                    <path d="M21 3v5h-5"/>
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                    <path d="M8 16H3v5"/>
+                  </svg>
+                  <span id="refresh-label">Refresh Metadata</span>
+                </button>
+              </div>
+            )}
+
+            {season.overview && (
+              <div class="max-w-3xl">
+                <h2 class="text-sm font-black text-zinc-500 uppercase tracking-[0.2em] mb-3">Season Overview</h2>
+                <p class="text-zinc-300 leading-relaxed text-lg opacity-90">{season.overview}</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <CommentsSection
+          mediaType="series"
+          tmdbId={Number(id)}
+          seasonNumber={Number(season_number)}
+        />
+
+        <div class="space-y-4">
+          <h2 class="text-2xl font-black text-zinc-100 tracking-tighter uppercase mb-8 flex items-center gap-3">
+            <span class="w-1.5 h-6 bg-blue-600 rounded-full"></span>
+            Episodes
+          </h2>
+
+          <div class="grid gap-4">
+            {season.episodes?.map((ep) => (
+              <div class="group relative bg-zinc-900/50 border border-zinc-800 rounded-3xl overflow-hidden hover:bg-zinc-800/60 hover:border-blue-500/50 transition-all duration-300 hover:shadow-2xl hover:shadow-blue-900/10">
+                <a href={`/show/tvdb/${id}/season/${season_number}/${ep.episode_number}`} class="flex flex-col md:flex-row gap-6 p-5 block active:opacity-70 transition-opacity duration-100">
+                  <!-- Episode Thumbnail -->
+                  <div class="w-full md:w-64 shrink-0">
+                    <div class="aspect-video rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-800/50 relative shadow-lg group-hover:border-blue-500/30 transition-colors">
+                      {ep.image_url ? (
+                        <img src={ep.image_url} alt={ep.name ?? ""} class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" loading="lazy" />
+                      ) : (
+                        <div class="w-full h-full flex items-center justify-center text-zinc-800 text-4xl font-black">
+                          {ep.episode_number}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <!-- Episode Info -->
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-start justify-between gap-4 mb-2">
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-3 mb-1">
+                          <span class="text-blue-500 font-black text-xs px-2 py-0.5 bg-blue-500/10 rounded-lg">EP {ep.episode_number}</span>
+                          <h3 class="text-xl font-black text-zinc-100 truncate tracking-tight">{ep.name ?? `Episode ${ep.episode_number}`}</h3>
+                        </div>
+                        {ep.air_date && (
+                          <p class="text-xs font-bold text-zinc-500 uppercase tracking-widest">
+                            {new Date(ep.air_date).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <p class="text-zinc-400 text-sm leading-relaxed line-clamp-3 mb-4 opacity-80">
+                      {ep.overview || "No overview available for this episode."}
+                    </p>
+
+                    <div class="flex items-center gap-4">
+                      <span class="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 group-hover:text-blue-400 transition-colors">
+                        View Details
+                      </span>
+                      {ep.runtime && (
+                        <span class="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-700 flex items-center gap-1.5">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="3" stroke="currentColor" class="w-3 h-3">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                          </svg>
+                          {ep.runtime} MIN
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </a>
+                <div class="px-5 pb-5">
+                  <ActionBar
+                    tmdbId={ep.tvdb_id ?? Number(id)}
+                    mediaType="episode"
+                    watched={ep.watched}
+                    inLists={ep.in_lists}
+                    inLibrary={ep.in_library}
+                    collectionPct={ep.in_library ? 100 : 0}
+                    showTmdbId={Number(id)}
+                    seasonNumber={Number(season_number)}
+                    episodeNumber={ep.episode_number}
+                    hideRequest={true}
+                    userRating={ep.user_rating}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )}
+</Base>
+
+{(season?.poster_path || show?.poster_path) && (
+  <div id="poster-modal" class="fixed inset-0 z-[999] flex items-center justify-center hidden" role="dialog" aria-modal="true">
+    <div id="poster-modal-backdrop" class="absolute inset-0 bg-black/90 backdrop-blur-sm cursor-pointer"></div>
+    <img
+      src={season?.poster_path ?? show?.poster_path ?? ""}
+      alt={season?.name ?? ""}
+      class="relative max-h-[90vh] max-w-[85vw] md:max-w-[50vw] object-contain rounded-2xl shadow-2xl ring-1 ring-white/10"
+    />
+    <button
+      id="poster-modal-close"
+      class="absolute top-4 right-4 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white/70 hover:text-white transition-all duration-200 cursor-pointer"
+      aria-label="Close"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-5 h-5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+      </svg>
+    </button>
+  </div>
+)}
+
+<script>
+  const zoomBtn = document.getElementById('poster-zoom-btn');
+  const modal = document.getElementById('poster-modal');
+  const backdrop = document.getElementById('poster-modal-backdrop');
+  const closeBtn = document.getElementById('poster-modal-close');
+  if (zoomBtn && modal) {
+    function openModal() { modal.classList.remove('hidden'); document.body.style.overflow = 'hidden'; }
+    function closeModal() { modal.classList.add('hidden'); document.body.style.overflow = ''; }
+    zoomBtn.addEventListener('click', openModal);
+    backdrop?.addEventListener('click', closeModal);
+    closeBtn?.addEventListener('click', closeModal);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+  }
+</script>
+
+<script define:vars={{ tvdbId: id, token: Astro.locals.token }}>
+  const btn = document.getElementById('refresh-metadata-btn');
+  if (btn) {
+    btn.addEventListener('click', async () => {
+      const icon = document.getElementById('refresh-icon');
+      const label = document.getElementById('refresh-label');
+      if (!label || !icon) return;
+
+      btn.setAttribute('disabled', 'true');
+      btn.classList.add('opacity-60', 'cursor-not-allowed');
+      icon.classList.add('animate-spin');
+      label.textContent = 'Refreshing...';
+
+      try {
+        const res = await fetch(`/api/proxy/shows/tvdb/${tvdbId}/refresh`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || 'Refresh failed');
+        }
+        label.textContent = 'Done!';
+        icon.classList.remove('animate-spin');
+        setTimeout(() => { window.location.reload(); }, 800);
+      } catch (err) {
+        icon.classList.remove('animate-spin');
+        label.textContent = 'Refresh failed';
+        btn.removeAttribute('disabled');
+        btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        setTimeout(() => { label.textContent = 'Refresh Metadata'; }, 3000);
+      }
+    });
+  }
+</script>
