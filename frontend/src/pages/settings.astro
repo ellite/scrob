@@ -1433,7 +1433,7 @@ if (me.totp_enabled) {
       <div class="px-6 py-5 overflow-y-auto flex-1 space-y-5">
         <!-- TMDB title search (remap mode) -->
         <div id="remap-tmdb-section">
-          <label class="block text-sm font-medium text-zinc-400 mb-2">Search for the correct TMDB show</label>
+          <label id="remap-tmdb-label" class="block text-sm font-medium text-zinc-400 mb-2">Search for the correct TMDB show</label>
           <div class="flex gap-2">
             <input type="text" id="remap-search-input" placeholder="Show title…" class="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-zinc-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
             <button type="button" id="remap-search-btn" class="px-4 py-2.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-100 text-sm font-medium rounded-lg transition-colors cursor-pointer shrink-0">Search</button>
@@ -3604,6 +3604,7 @@ if (me.totp_enabled) {
         });
 
         const hasUnmatched = groupedEpisodeWarnings.size > 0 || trueStandaloneUnmatched.length > 0;
+        const displayCount = enrichmentWarnings.length + groupedEpisodeWarnings.size + trueStandaloneUnmatched.length;
         const renderUnmatched = hasUnmatched ? `
           <div class="space-y-1 ${enrichmentWarnings.length > 0 ? 'mt-4 pt-4 border-t border-zinc-800/60' : ''}">
             <p class="text-xs text-zinc-500 mb-2">Items that couldn't be matched to TMDB:</p>
@@ -3635,8 +3636,10 @@ if (me.totp_enabled) {
             }).join('')}
             ${trueStandaloneUnmatched.map((w: any) => {
               const wMatched = !!w.matched;
-              const wMatchedTitle = w.matched_show_title ?? '';
-              const wMatchHref = w.matched_tvdb_id ? `/show/tvdb/${w.matched_tvdb_id}` : (w.matched_show_id ? `/show/${w.matched_show_id}` : '');
+              const wMatchedTitle = w.matched_movie_title ?? w.matched_show_title ?? '';
+              const wMatchHref = w.media_type === 'movie' && w.matched_tmdb_id
+                ? `/movie/${w.matched_tmdb_id}`
+                : (w.matched_tvdb_id ? `/show/tvdb/${w.matched_tvdb_id}` : (w.matched_show_id ? `/show/${w.matched_show_id}` : ''));
               return `
               <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
                 <div class="flex-1 min-w-0">
@@ -3652,9 +3655,9 @@ if (me.totp_enabled) {
                   ${wMatched && wMatchHref ? `<a href="${escapeHtml(wMatchHref)}" class="text-xs px-2.5 py-1 rounded-lg border border-green-700/40 text-green-400 hover:bg-green-900/20 transition-colors">View</a>` : ''}
                   ${wMatched
                     ? `<button type="button" class="unmatch-show-btn text-xs px-2.5 py-1 rounded-lg border border-zinc-700 text-zinc-400 hover:bg-zinc-800 cursor-pointer transition-colors"
-                        data-series-name="${escapeHtml(w.title)}">Unmatch</button>`
+                        data-series-name="${escapeHtml(w.title)}" data-media-type="${escapeHtml(w.media_type ?? '')}">Unmatch</button>`
                     : `<button type="button" class="match-show-btn text-xs px-2.5 py-1 rounded-lg border bg-amber-500/15 border-amber-500/40 text-amber-500 hover:bg-amber-500/25 hover:border-amber-500/60 cursor-pointer transition-colors shrink-0"
-                        data-series-name="${escapeHtml(w.title)}">Match</button>`
+                        data-series-name="${escapeHtml(w.title)}" data-media-type="${escapeHtml(w.media_type ?? '')}">Match</button>`
                   }
                 </div>
               </div>`;
@@ -3672,7 +3675,7 @@ if (me.totp_enabled) {
             >
               <div class="flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-400 shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-                <span class="text-xs font-semibold uppercase tracking-wider text-amber-400">${warnings.length} item${warnings.length > 1 ? 's' : ''} couldn't be fully synced</span>
+                <span class="text-xs font-semibold uppercase tracking-wider text-amber-400">${displayCount} item${displayCount > 1 ? 's' : ''} couldn't be fully synced</span>
                 <span class="text-xs text-zinc-500">· ${escapeHtml(date)}</span>
               </div>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="warn-chevron w-4 h-4 text-amber-500/60 transition-transform shrink-0">
@@ -3706,7 +3709,12 @@ if (me.totp_enabled) {
         container.querySelectorAll('.match-show-btn').forEach((btn) => {
           btn.addEventListener('click', () => {
             const el = btn as HTMLElement;
-            (window as any).openMatchModal(el.dataset.seriesName ?? '');
+            const mediaType = el.dataset.mediaType ?? '';
+            if (mediaType === 'movie') {
+              (window as any).openMatchMovieModal(el.dataset.seriesName ?? '');
+            } else {
+              (window as any).openMatchModal(el.dataset.seriesName ?? '');
+            }
           });
         });
 
@@ -3714,14 +3722,16 @@ if (me.totp_enabled) {
           btn.addEventListener('click', async () => {
             const el = btn as HTMLButtonElement;
             const seriesName = el.dataset.seriesName ?? '';
+            const mediaType = el.dataset.mediaType ?? '';
             if (!seriesName) return;
             el.disabled = true;
             el.textContent = 'Removing…';
             try {
-              const res = await fetch('/api/proxy/sync/unmatch-show', {
+              const isMovie = mediaType === 'movie';
+              const res = await fetch(`/api/proxy/sync/${isMovie ? 'unmatch-movie' : 'unmatch-show'}`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ show_title: seriesName }),
+                body: JSON.stringify(isMovie ? { movie_title: seriesName } : { show_title: seriesName }),
               });
               if (!res.ok) throw new Error(await res.text());
               loadSyncWarnings();
@@ -3749,8 +3759,9 @@ if (me.totp_enabled) {
     let targetTmdbId = 0;
     let targetTvdbId = 0;
     let targetSeasonNumber = 0;
-    let modalMode: 'remap' | 'match' = 'remap';
+    let modalMode: 'remap' | 'match' | 'match-movie' = 'remap';
     let matchSeriesName = '';
+    let matchMovieTitle = '';
 
     const closeModal = () => {
       modal.classList.add('hidden');
@@ -3768,6 +3779,7 @@ if (me.totp_enabled) {
       targetSeasonNumber = 0;
       modalMode = 'remap';
       matchSeriesName = '';
+      matchMovieTitle = '';
     };
 
     document.getElementById('remap-close')?.addEventListener('click', closeModal);
@@ -3824,8 +3836,8 @@ if (me.totp_enabled) {
         const saveBtn = document.getElementById('remap-save') as HTMLButtonElement;
         const seasonsArea = document.getElementById('remap-seasons-area') as HTMLElement;
 
-        if (modalMode === 'match') {
-          // In match mode we don't need a season selection — enable save immediately
+        if (modalMode === 'match' || modalMode === 'match-movie') {
+          // No season selection needed for show/movie matching — enable save immediately
           seasonsArea.classList.add('hidden');
           saveBtn.disabled = false;
           return;
@@ -3885,7 +3897,8 @@ if (me.totp_enabled) {
       const resultsEl = document.getElementById('remap-search-results') as HTMLElement;
       resultsEl.innerHTML = '<p class="text-xs text-zinc-500 py-2">Searching…</p>';
       try {
-        const res = await fetch(`/api/proxy/media/search?q=${encodeURIComponent(q)}&type=series`, {
+        const searchType = modalMode === 'match-movie' ? 'movie' : 'series';
+        const res = await fetch(`/api/proxy/media/search?q=${encodeURIComponent(q)}&type=${searchType}`, {
           headers: { 'Authorization': `Bearer ${token}` },
         });
         if (!res.ok) throw new Error('Search failed');
@@ -3978,7 +3991,27 @@ if (me.totp_enabled) {
             body: JSON.stringify(body),
           });
           if (!res.ok) throw new Error(await res.text());
-          const result = await res.json();
+          closeModal();
+          loadSyncWarnings();
+        } catch (e: any) {
+          errEl.textContent = `Error: ${e.message ?? 'Unknown error'}`;
+          errEl.classList.remove('hidden');
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Match & Apply';
+        }
+        return;
+      }
+
+      if (modalMode === 'match-movie') {
+        if (!targetTmdbId) return;
+        saveBtn.textContent = 'Matching…';
+        try {
+          const res = await fetch('/api/proxy/sync/match-unmatched-movie', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ movie_title: matchMovieTitle, tmdb_id: targetTmdbId }),
+          });
+          if (!res.ok) throw new Error(await res.text());
           closeModal();
           loadSyncWarnings();
         } catch (e: any) {
@@ -4030,6 +4063,7 @@ if (me.totp_enabled) {
       srcSeason = season;
       (document.getElementById('remap-modal-title') as HTMLElement).textContent = 'Remap Season';
       (document.getElementById('remap-source-label') as HTMLElement).textContent = `"${title}" — Season ${season}`;
+      (document.getElementById('remap-tmdb-label') as HTMLElement).textContent = 'Search for the correct TMDB show';
       (document.getElementById('remap-tmdb-section') as HTMLElement).classList.remove('hidden');
       (document.getElementById('remap-tvdb-section') as HTMLElement).classList.add('hidden');
       (document.getElementById('remap-seasons-area') as HTMLElement).classList.remove('hidden');
@@ -4055,6 +4089,24 @@ if (me.totp_enabled) {
       tvdbInput.focus();
       // Auto-search so the user sees results (or the no-key message) immediately
       doTvdbSearch();
+    };
+
+    (window as any).openMatchMovieModal = (movieTitle: string) => {
+      modalMode = 'match-movie';
+      matchMovieTitle = movieTitle;
+      (document.getElementById('remap-modal-title') as HTMLElement).textContent = 'Match Movie on TMDB';
+      (document.getElementById('remap-source-label') as HTMLElement).textContent = `"${movieTitle}"`;
+      (document.getElementById('remap-tmdb-label') as HTMLElement).textContent = 'Search for the correct TMDB movie';
+      (document.getElementById('remap-tmdb-section') as HTMLElement).classList.remove('hidden');
+      (document.getElementById('remap-tvdb-section') as HTMLElement).classList.add('hidden');
+      (document.getElementById('remap-seasons-area') as HTMLElement).classList.add('hidden');
+      (document.getElementById('remap-save') as HTMLButtonElement).textContent = 'Match & Apply';
+      searchInput.value = movieTitle;
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      searchInput.focus();
+      // Auto-search immediately so results appear right away
+      doSearch();
     };
   }
 </script>

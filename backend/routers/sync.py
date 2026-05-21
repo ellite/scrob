@@ -716,11 +716,16 @@ async def sync_items(
                                 # Episodes with no TMDB show match but with a known series name,
                                 # season, and episode number are stored as stubs so the user can
                                 # later match them to TVDB from the Settings warnings panel.
+                                # Movies with no TMDB match are stored as stubs so the user can
+                                # later match them from the Settings warnings panel.
                                 can_store_stub = (
                                     media_type == MediaType.episode
                                     and series_name
                                     and season_num is not None
                                     and episode_num is not None
+                                ) or (
+                                    media_type == MediaType.movie
+                                    and bool(name)
                                 )
 
                                 if not (show_id or can_store_stub):
@@ -734,8 +739,8 @@ async def sync_items(
                                     stats["skipped"] += 1
                                     raise Exception("Skip this item (unmatched)") # Triggers rollback of the nested transaction
 
-                                # Stub episode: add a warning (for the settings panel) and let the
-                                # Media row be created below with tmdb_data["show_title"] set.
+                                # Stub episode/movie: add a warning (for the settings panel) and let the
+                                # Media row be created below so the user can match it later.
                                 if can_store_stub and not show_id:
                                     plex_guids = [
                                         g["id"] for g in (item.get("Guid") or [])
@@ -745,7 +750,7 @@ async def sync_items(
                                         "title": name,
                                         "media_type": media_type.value,
                                         "source_id": source_id,
-                                        "series_name": series_name,
+                                        **({"series_name": series_name} if series_name else {}),
                                         **({"plex_guids": plex_guids} if plex_guids else {}),
                                         "reason": "Unmatched on source — no TMDB ID available",
                                     })
@@ -763,7 +768,7 @@ async def sync_items(
                             new_media = media  # Cache updated after savepoint commits below
 
                             # Tag stub episodes so the match-unmatched-show endpoint can find them
-                            if can_store_stub and not show_id and media.tmdb_data is None:
+                            if can_store_stub and not show_id and media.tmdb_data is None and media_type == MediaType.episode:
                                 media.tmdb_data = {
                                     "show_title": series_name,
                                     **({"plex_guids": plex_guids} if plex_guids else {}),
@@ -2842,3 +2847,158 @@ async def unmatch_show(
     await db.commit()
 
     return {"status": "ok", "unmatched": len(episodes)}
+
+
+# ── Unmatched movie matching ──────────────────────────────────────────────────
+
+class MatchUnmatchedMovieBody(BaseModel):
+    movie_title: str
+    tmdb_id: int
+
+
+@router.post("/match-unmatched-movie")
+async def match_unmatched_movie(
+    body: MatchUnmatchedMovieBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Link unmatched local movies (no tmdb_id) to a TMDB movie."""
+    from sqlalchemy import func as sa_func
+
+    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
+    settings = settings_result.scalar_one_or_none()
+    tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+    if not tmdb_api_key:
+        raise HTTPException(status_code=400, detail="TMDB API key required")
+
+    movie_result = await db.execute(
+        select(Media)
+        .join(Collection, Collection.media_id == Media.id)
+        .where(
+            Collection.user_id == current_user.id,
+            Media.tmdb_id.is_(None),
+            Media.media_type == MediaType.movie,
+            sa_func.lower(Media.title) == body.movie_title.lower(),
+        )
+        .distinct()
+    )
+    movies = movie_result.scalars().all()
+    if not movies:
+        raise HTTPException(status_code=404, detail="No unmatched movies found for this title")
+
+    # Fetch TMDB metadata once to get the canonical title
+    try:
+        movie_data = await tmdb.get_movie(body.tmdb_id, api_key=tmdb_api_key)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch movie from TMDB: {e}")
+
+    matched_title = movie_data.get("title") or body.movie_title
+    for media in movies:
+        media.tmdb_id = body.tmdb_id
+        await enrich_media(media, api_key=tmdb_api_key)
+
+    # Stamp the matched state into all relevant SyncJob warnings
+    title_lower = body.movie_title.lower()
+    jobs_res = await db.execute(
+        select(SyncJob).where(
+            SyncJob.user_id == current_user.id,
+            SyncJob.status == SyncStatus.completed,
+            SyncJob.warnings.isnot(None),
+        )
+    )
+    for job in jobs_res.scalars().all():
+        if not job.warnings:
+            continue
+        new_warnings = []
+        changed = False
+        for w in job.warnings:
+            if (
+                w.get("media_type") == "movie"
+                and not w.get("matched")
+                and (w.get("title") or "").lower() == title_lower
+            ):
+                new_warnings.append({
+                    **w,
+                    "matched": True,
+                    "matched_tmdb_id": body.tmdb_id,
+                    "matched_movie_title": matched_title,
+                })
+                changed = True
+            else:
+                new_warnings.append(w)
+        if changed:
+            job.warnings = new_warnings
+            flag_modified(job, "warnings")
+
+    await db.commit()
+    return {"status": "ok", "matched": len(movies), "tmdb_id": body.tmdb_id}
+
+
+class UnmatchMovieBody(BaseModel):
+    movie_title: str
+
+
+@router.post("/unmatch-movie")
+async def unmatch_movie(
+    body: UnmatchMovieBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Clear TMDB link from locally-matched movies so they can be re-matched."""
+    from sqlalchemy import func as sa_func
+
+    movie_result = await db.execute(
+        select(Media)
+        .join(Collection, Collection.media_id == Media.id)
+        .where(
+            Collection.user_id == current_user.id,
+            Media.media_type == MediaType.movie,
+            Media.tmdb_id.isnot(None),
+            sa_func.lower(Media.title) == body.movie_title.lower(),
+        )
+        .distinct()
+    )
+    movies = movie_result.scalars().all()
+    if not movies:
+        raise HTTPException(status_code=404, detail="No matched movies found for this title")
+
+    for media in movies:
+        media.tmdb_id = None
+        media.overview = None
+        media.poster_path = None
+        media.backdrop_path = None
+        media.release_date = None
+        media.tmdb_rating = None
+        media.tmdb_data = None
+
+    # Clear matched stamps from SyncJob warnings
+    title_lower = body.movie_title.lower()
+    jobs_res = await db.execute(
+        select(SyncJob).where(
+            SyncJob.user_id == current_user.id,
+            SyncJob.status == SyncStatus.completed,
+            SyncJob.warnings.isnot(None),
+        )
+    )
+    for job in jobs_res.scalars().all():
+        if not job.warnings:
+            continue
+        new_warnings = []
+        changed = False
+        for w in job.warnings:
+            if (
+                w.get("matched")
+                and w.get("media_type") == "movie"
+                and (w.get("title") or "").lower() == title_lower
+            ):
+                cleared = {k: v for k, v in w.items() if not k.startswith("matched")}
+                new_warnings.append(cleared)
+                changed = True
+            else:
+                new_warnings.append(w)
+        if changed:
+            job.warnings = new_warnings
+            flag_modified(job, "warnings")
+
+    await db.commit()
+    return {"status": "ok", "unmatched": len(movies)}
