@@ -48,6 +48,7 @@ const showActionBar = !isPerson && !isCollection;
 const watched = item.watched ?? false;
 const inLists = item.in_lists ?? [];
 const collectionPct = item.collection_pct ?? (item.in_library ? 100 : 0);
+const watchPct = item.watch_pct ?? (item.watched ? 100 : 0);
 const inLibrary = item.in_library ?? false;
 ---
 
@@ -128,6 +129,7 @@ const inLibrary = item.in_library ?? false;
       inLists={inLists}
       inLibrary={inLibrary}
       collectionPct={collectionPct}
+      watchPct={watchPct}
       isSeries={isSeries}
     />
   )}

@@ -986,9 +986,24 @@ const bottomNavItem = (active: boolean) =>
           const updateButtonUI = (targetBtn, watched) => {
             targetBtn.dataset.watched = String(watched);
             targetBtn.dataset.state = watched ? 'active' : 'inactive';
-            targetBtn.title = watched ? 'Mark as unwatched' : 'Mark as watched';
-            
+
+            const card = targetBtn.closest('[data-card]');
+            const isSeries = card?.dataset.mediaType === 'series';
             const isCard = targetBtn.parentElement?.classList.contains('grid');
+
+            if (isSeries) {
+              const newPct = watched ? 100 : 0;
+              targetBtn.dataset.watchPct = String(newPct);
+              targetBtn.title = `${newPct}% watched`;
+              targetBtn.style.background = '';
+              const labelEl = targetBtn.querySelector('span');
+              if (labelEl) labelEl.textContent = `${newPct}%`;
+              const smLabelEl = targetBtn.querySelectorAll('span')[1];
+              if (smLabelEl) smLabelEl.textContent = `${newPct}%`;
+            } else {
+              targetBtn.title = watched ? 'Mark as unwatched' : 'Mark as watched';
+            }
+
             if (watched) {
               targetBtn.classList.remove('bg-zinc-800', 'bg-zinc-900', 'text-zinc-500', 'text-zinc-400', 'hover:bg-green-500/10', 'hover:text-green-400', 'hover:text-green-500');
               if (isCard) {

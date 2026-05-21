@@ -145,6 +145,7 @@ const show = season?.show;
                 inLists={[]}
                 inLibrary={season.season_in_library ?? season.show_in_library ?? false}
                 collectionPct={season.season_collection_pct ?? season.show_collection_pct ?? 0}
+                watchPct={season.season_watch_pct ?? 0}
                 seasonNumber={Number(season_number)}
                 isMonitored={season.show_is_monitored ?? false}
                 requestEnabled={false}

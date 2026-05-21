@@ -335,6 +335,10 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
           const inLists = item.in_lists ?? [];
           const inLibrary = item.in_library ?? false;
           const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
+          const watchPct = item.watch_pct ?? (watched ? 100 : 0);
+          const watchStyle = isSeries && watchPct > 0 && !watched
+            ? `background: linear-gradient(to right, rgba(34,197,94,0.2) ${watchPct}%, transparent ${watchPct}%)`
+            : '';
           const collectStyle = isSeries && collectionPct > 0
             ? `background: linear-gradient(to right, rgba(168,85,247,0.2) ${collectionPct}%, transparent ${collectionPct}%)`
             : '';
@@ -360,12 +364,14 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
               </div>
             </a>
             <div class="grid grid-cols-3 flex-shrink-0">
-              <button data-action="watched" data-watched="${watched}" data-state="${watched ? 'active' : 'inactive'}" title="${watched ? 'Mark as unwatched' : 'Mark as watched'}"
-                class="flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer border-r border-zinc-800/60 hover:brightness-125 ${watched ? 'bg-green-500/20 text-green-400' : 'bg-zinc-900 text-zinc-400 hover:bg-green-500/10 hover:text-green-500'}">
+              <button data-action="watched" data-watched="${watched}" data-watch-pct="${watchPct}" data-state="${watched ? 'active' : 'inactive'}"
+                title="${isSeries ? `${watchPct}% watched` : (watched ? 'Mark as unwatched' : 'Mark as watched')}"
+                style="${esc(watchStyle)}"
+                class="relative flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer border-r border-zinc-800/60 hover:brightness-125 overflow-hidden ${watched ? 'bg-green-500/20 text-green-400' : 'bg-zinc-900 text-zinc-400 hover:bg-green-500/10 hover:text-green-500'}">
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3" fill="${watchedFill}"/>
                 </svg>
-                <span class="text-[8px] font-bold uppercase tracking-wider leading-none">Watched</span>
+                <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isSeries ? `${watchPct}%` : 'Watched'}</span>
               </button>
               <button data-action="list" data-in-lists="${esc(JSON.stringify(inLists))}" data-state="${inLists.length > 0 ? 'active' : 'inactive'}" title="Add to list"
                 class="flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer border-r border-zinc-800/60 hover:brightness-125 ${inLists.length > 0 ? 'bg-sky-500/20 text-sky-400' : 'bg-zinc-900 text-zinc-400 hover:bg-sky-500/10 hover:text-sky-400'}">

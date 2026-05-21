@@ -548,6 +548,9 @@ async def enrich_with_state(
             pct = show_pct.get(tid, 0)
             item["collection_pct"] = pct
             item["in_library"] = pct > 0
+            _w = show_watched_count_map.get(tid, 0)
+            _a = show_aired_count.get(tid, 0)
+            item["watch_pct"] = min(100, int((_w / _a) * 100)) if _a > 0 else 0
         elif t == "episode":
             item["watched"] = tid in watched_episodes
             in_lib = tid in collected_ep_ids
@@ -2996,16 +2999,29 @@ async def get_where_to_watch(
             sources.append(entry)
 
     # ── Local media servers ───────────────────────────────────────────────────
-    if media_type == MediaType.movie and media:
-        files_q = await db.execute(
-            select(CollectionFile, MediaServerConnection)
-            .join(Collection, Collection.id == CollectionFile.collection_id)
-            .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
-            .where(Collection.media_id == media.id, Collection.user_id == user_id)
+    if media_type == MediaType.movie:
+        # Query across ALL Media rows for this tmdb_id so that a manually-matched
+        # movie whose CollectionFile lives on a different row is still found.
+        all_media_ids_q = await db.execute(
+            select(Media.id)
+            .join(Collection, Collection.media_id == Media.id)
+            .where(
+                Media.tmdb_id == tmdb_id,
+                Media.media_type == MediaType.movie,
+                Collection.user_id == user_id,
+            )
         )
-        for cf, conn in files_q.all():
-            name = conn.name if conn else cf.source.value.title()
-            _add({"type": cf.source.value, "name": name, "logo": None})
+        all_media_ids = [r[0] for r in all_media_ids_q.all()]
+        if all_media_ids:
+            files_q = await db.execute(
+                select(CollectionFile, MediaServerConnection)
+                .join(Collection, Collection.id == CollectionFile.collection_id)
+                .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
+                .where(Collection.media_id.in_(all_media_ids), Collection.user_id == user_id)
+            )
+            for cf, conn in files_q.all():
+                name = conn.name if conn else cf.source.value.title()
+                _add({"type": cf.source.value, "name": name, "logo": None})
 
     elif media_type == MediaType.series and show:
         files_q = await db.execute(
@@ -3072,13 +3088,16 @@ async def get_playback_sources(
         raise HTTPException(400, "Only movie/episode streaming supported")
 
     if media_id:
-        media_q = await db.execute(select(Media).where(Media.id == media_id))
+        media_q = await db.execute(select(Media.id).where(Media.id == media_id))
+        media_ids = [r[0] for r in media_q.all()]
     else:
+        # Collect ALL Media rows for this tmdb_id — a manually-matched movie may
+        # have its CollectionFile on a different row than the one .first() would pick.
         media_q = await db.execute(
-            select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+            select(Media.id).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
         )
-    media = media_q.scalars().first()
-    if not media:
+        media_ids = [r[0] for r in media_q.all()]
+    if not media_ids:
         return []
 
     files_q = await db.execute(
@@ -3086,7 +3105,7 @@ async def get_playback_sources(
         .join(Collection, Collection.id == CollectionFile.collection_id)
         .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
         .where(
-            Collection.media_id == media.id,
+            Collection.media_id.in_(media_ids),
             Collection.user_id == current_user.id,
             CollectionFile.source.in_([CollectionSource.jellyfin, CollectionSource.emby, CollectionSource.plex]),
             CollectionFile.connection_id.isnot(None),
@@ -3198,13 +3217,13 @@ async def get_subtitle(
         raise HTTPException(400, "Only movie/episode subtitles supported")
 
     if media_id:
-        media_q = await db.execute(select(Media).where(Media.id == media_id))
+        media_ids = [media_id]
     else:
-        media_q = await db.execute(
-            select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+        media_id_q = await db.execute(
+            select(Media.id).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
         )
-    media = media_q.scalars().first()
-    if not media:
+        media_ids = [r[0] for r in media_id_q.all()]
+    if not media_ids:
         raise HTTPException(404, "Not in library")
 
     cf_q = await db.execute(
@@ -3212,7 +3231,7 @@ async def get_subtitle(
         .join(Collection, Collection.id == CollectionFile.collection_id)
         .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
         .where(
-            Collection.media_id == media.id,
+            Collection.media_id.in_(media_ids),
             Collection.user_id == current_user.id,
             CollectionFile.connection_id == connection_id,
         )
@@ -3283,13 +3302,13 @@ async def stream_media(
         raise HTTPException(400, "Only movie/episode streaming supported")
 
     if media_id:
-        media_q = await db.execute(select(Media).where(Media.id == media_id))
+        media_ids = [media_id]
     else:
-        media_q = await db.execute(
-            select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+        media_id_q = await db.execute(
+            select(Media.id).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
         )
-    media = media_q.scalars().first()
-    if not media:
+        media_ids = [r[0] for r in media_id_q.all()]
+    if not media_ids:
         raise HTTPException(404, "Not in library")
 
     cf_q = await db.execute(
@@ -3297,7 +3316,7 @@ async def stream_media(
         .join(Collection, Collection.id == CollectionFile.collection_id)
         .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
         .where(
-            Collection.media_id == media.id,
+            Collection.media_id.in_(media_ids),
             Collection.user_id == current_user.id,
             CollectionFile.connection_id == connection_id,
         )
@@ -3420,11 +3439,11 @@ async def hls_master_manifest(
     if type not in (MediaType.movie, MediaType.episode):
         raise HTTPException(400, "Only movie/episode HLS supported")
 
-    media_q = await db.execute(
-        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+    media_id_q = await db.execute(
+        select(Media.id).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
     )
-    media = media_q.scalars().first()
-    if not media:
+    media_ids = [r[0] for r in media_id_q.all()]
+    if not media_ids:
         raise HTTPException(404, "Not in library")
 
     cf_q = await db.execute(
@@ -3432,7 +3451,7 @@ async def hls_master_manifest(
         .join(Collection, Collection.id == CollectionFile.collection_id)
         .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
         .where(
-            Collection.media_id == media.id,
+            Collection.media_id.in_(media_ids),
             Collection.user_id == current_user.id,
             CollectionFile.connection_id == connection_id,
         )
@@ -3602,13 +3621,13 @@ async def report_session(
         return {"ok": False}
 
     if media_id:
-        media_q = await db.execute(select(Media).where(Media.id == media_id))
+        media_ids = [media_id]
     else:
-        media_q = await db.execute(
-            select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
+        media_id_q = await db.execute(
+            select(Media.id).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
         )
-    media = media_q.scalars().first()
-    if not media:
+        media_ids = [r[0] for r in media_id_q.all()]
+    if not media_ids:
         return {"ok": False}
 
     cf_q = await db.execute(
@@ -3616,7 +3635,7 @@ async def report_session(
         .join(Collection, Collection.id == CollectionFile.collection_id)
         .outerjoin(MediaServerConnection, MediaServerConnection.id == CollectionFile.connection_id)
         .where(
-            Collection.media_id == media.id,
+            Collection.media_id.in_(media_ids),
             Collection.user_id == current_user.id,
             CollectionFile.connection_id == body.connection_id,
         )
@@ -3802,22 +3821,31 @@ async def get_media_details(
                 status_code=400, detail="Use /shows/{tmdb_id} for series"
             )
 
-        # 2. Check local info
+        # 2. Check local info — aggregate across ALL Media rows for this tmdb_id so
+        # that a manually-matched movie whose CollectionFile lives on a different row
+        # (e.g. Emby stub vs Trakt row) is still surfaced correctly.
         query = select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == type)
         result = await db.execute(query)
-        media = result.scalars().first()
+        all_media = result.scalars().all()
+        media = all_media[0] if all_media else None
+        all_media_ids = [m.id for m in all_media]
 
         local_info = {"in_library": False, "library": None, "id": None}
-        if media:
+        if all_media:
             local_info["in_library"] = True
             local_info["id"] = media.id
-            if not media.adult and data.get("adult", False):
-                media.adult = True
-                await db.commit()
+            if data.get("adult", False):
+                needs_commit = False
+                for m in all_media:
+                    if not m.adult:
+                        m.adult = True
+                        needs_commit = True
+                if needs_commit:
+                    await db.commit()
             coll_q = (
                 select(CollectionFile)
                 .join(Collection, Collection.id == CollectionFile.collection_id)
-                .where(Collection.media_id == media.id, Collection.user_id == current_user.id)
+                .where(Collection.media_id.in_(all_media_ids), Collection.user_id == current_user.id)
                 .order_by(CollectionFile.added_at.desc())
             )
             coll_res = await db.execute(coll_q)

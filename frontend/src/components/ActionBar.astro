@@ -6,6 +6,7 @@ interface Props {
   inLists: number[];
   inLibrary: boolean;
   collectionPct: number;
+  watchPct?: number;
   showTmdbId?: number;
   seasonNumber?: number;
   episodeNumber?: number;
@@ -26,6 +27,7 @@ const {
   inLists,
   inLibrary,
   collectionPct,
+  watchPct = 0,
   showTmdbId,
   seasonNumber,
   episodeNumber,
@@ -54,6 +56,9 @@ const label = "hidden md:block text-[10px] font-bold uppercase tracking-wider le
 const watchedCls  = watched
   ? "bg-green-500/50  text-green-300  hover:bg-green-400/50"
   : "bg-zinc-800 text-zinc-500 hover:bg-green-400/50 hover:text-green-400";
+const watchStyle = isSeries && watchPct > 0 && !watched
+  ? `background: linear-gradient(to right, rgba(34,197,94,0.2) ${watchPct}%, transparent ${watchPct}%)`
+  : '';
 
 const listsCls    = inLists.length > 0
   ? "bg-sky-500/50 text-sky-300 hover:bg-sky-400/50"
@@ -97,15 +102,18 @@ const requestTitle = isMonitored
       <button
         data-action="watched"
         data-watched={String(watched)}
+        data-watch-pct={String(watchPct)}
         data-state={watched ? "active" : "inactive"}
-        title={watched ? "Mark as unwatched" : "Mark as watched"}
-        class={`${btn} ${btnW} border-r border-zinc-800/60 ${watchedCls}`}
+        title={isSeries ? `${watchPct}% watched` : (watched ? "Mark as unwatched" : "Mark as watched")}
+        style={watchStyle}
+        class={`${btn} ${btnW} border-r border-zinc-800/60 relative overflow-hidden ${watchedCls}`}
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
           <circle cx="12" cy="12" r="3" fill={watched ? "currentColor" : "none"}/>
         </svg>
-        <span class={label}>Watched</span>
+        <span class={label}>{isSeries ? `${watchPct}%` : "Watched"}</span>
+        {isSeries && <span class="md:hidden text-[9px] font-bold leading-none">{watchPct}%</span>}
       </button>
     )}
 

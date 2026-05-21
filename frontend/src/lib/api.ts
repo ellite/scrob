@@ -101,6 +101,7 @@ export interface SeasonState {
   watched: boolean;
   in_library: boolean;
   collection_pct: number;
+  watch_pct: number;
   user_rating: number | null;
 }
 
@@ -140,6 +141,7 @@ export interface Season {
   season_number: number;
   show_watched: boolean;
   season_watched: boolean;
+  season_watch_pct: number;
   season_in_library: boolean;
   season_collection_pct: number;
   season_user_rating: number | null;
@@ -524,6 +526,7 @@ export interface MediaItem {
   watched?: boolean;
   in_lists?: number[];
   collection_pct?: number;
+  watch_pct?: number;
   is_monitored?: boolean;
   request_enabled?: boolean;
   user_rating?: number | null;
