@@ -173,7 +173,10 @@ const show = season?.show;
 
             {season.overview && (
               <div class="max-w-3xl">
-                <h2 class="text-sm font-black text-zinc-500 uppercase tracking-[0.2em] mb-3">Season Overview</h2>
+                <h2 class="text-xl font-black text-zinc-100 mb-3 flex items-center gap-2 uppercase tracking-tight">
+                  <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
+                  Season Overview
+                </h2>
                 <p class="text-zinc-300 leading-relaxed text-lg opacity-90">{season.overview}</p>
               </div>
             )}
@@ -187,10 +190,7 @@ const show = season?.show;
         />
 
         <div class="space-y-4">
-          <h2 class="text-2xl font-black text-zinc-100 tracking-tighter uppercase mb-8 flex items-center gap-3">
-            <span class="w-1.5 h-6 bg-blue-600 rounded-full"></span>
-            Episodes
-          </h2>
+          <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase mb-8">Episodes</h2>
           
           <div class="grid gap-4">
             {season.episodes?.map((ep) => (

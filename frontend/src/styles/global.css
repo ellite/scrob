@@ -292,6 +292,29 @@ html.blur-explicit [data-adult-backdrop="true"] img {
   pointer-events: none;
 }
 
+/* ── Typography ─────────────────────────────────────────────────────────── */
+.page-title {
+  @apply text-3xl font-bold text-zinc-100 tracking-tight;
+}
+
+.section-headline {
+  @apply text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-3;
+}
+
+.section-headline::before {
+  content: '';
+  @apply block w-1 h-6 bg-blue-600 rounded-full shrink-0;
+}
+
+.group-label {
+  @apply text-xs font-black text-zinc-500 uppercase tracking-[0.2em] flex items-center gap-2;
+}
+
+.group-label::before {
+  content: '';
+  @apply block w-1 h-3.5 bg-blue-600 rounded-full shrink-0;
+}
+
 /* ── TMDB image fallback ────────────────────────────────────────────────── */
 .tmdb-img-fallback {
   position: absolute;

@@ -271,7 +271,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
         <!-- Cast -->
         {episode.cast?.length > 0 && (
           <div class="mt-8 border-t border-zinc-900 pt-16">
-            <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase mb-10">Cast</h2>
+            <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase mb-10">Top Cast</h2>
             <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
               {episode.cast.map((person) => (
                 <a href={`/person/${person.tmdb_id}`} class="group/cast bg-zinc-900/20 border border-zinc-800/40 p-4 rounded-3xl hover:bg-zinc-800/40 hover:border-blue-500/50 transition-all duration-500 hover:shadow-2xl hover:shadow-blue-900/10 active:scale-95 active:opacity-70">

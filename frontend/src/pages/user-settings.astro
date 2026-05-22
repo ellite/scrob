@@ -97,7 +97,7 @@ const COUNTRIES = [
 <Base title="Profile">
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
   <div class="max-w-4xl mx-auto">
-    <h1 class="text-3xl font-bold text-zinc-100 mb-8">Profile</h1>
+    <h1 class="page-title mb-8">Profile</h1>
 
     <div id="js-message" class="hidden p-4 rounded-lg mb-8"></div>
 
@@ -106,7 +106,7 @@ const COUNTRIES = [
       <!-- Identity -->
       <section>
         <div class="flex items-center justify-between mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="text-xl font-semibold text-zinc-100">Identity</h2>
+          <h2 class="section-headline">Identity</h2>
         </div>
 
         <!-- Avatar -->
@@ -167,7 +167,7 @@ const COUNTRIES = [
       <!-- Privacy -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="text-xl font-semibold text-zinc-100">Privacy</h2>
+          <h2 class="section-headline">Privacy</h2>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           {PRIVACY_LEVELS.map(([value, label, desc]) => (
@@ -191,7 +191,7 @@ const COUNTRIES = [
       <!-- Region -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="text-xl font-semibold text-zinc-100">Region</h2>
+          <h2 class="section-headline">Region</h2>
         </div>
         <div class="space-y-2 max-w-xs">
           <label for="country" class="block text-sm font-medium text-zinc-400">Country</label>
@@ -214,7 +214,7 @@ const COUNTRIES = [
       <!-- Content Language -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="text-xl font-semibold text-zinc-100">Content Language</h2>
+          <h2 class="section-headline">Content Language</h2>
         </div>
         <div class="space-y-2 max-w-xs">
           <label for="content_language" class="block text-sm font-medium text-zinc-400">Preferred Language</label>
@@ -237,7 +237,7 @@ const COUNTRIES = [
       <!-- Streaming Services -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="text-xl font-semibold text-zinc-100">Streaming Services</h2>
+          <h2 class="section-headline">Streaming Services</h2>
         </div>
         <p class="text-sm text-zinc-400 mb-4">
           Select the services you subscribe to. The Discover page will highlight content available on your services.
@@ -262,7 +262,7 @@ const COUNTRIES = [
       <!-- Favourite Movie Genres -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="text-xl font-semibold text-zinc-100">Favourite Movie Genres</h2>
+          <h2 class="section-headline">Favourite Movie Genres</h2>
         </div>
         <p class="text-sm text-zinc-400 mb-4">
           Pick the genres you enjoy most. The Discover page will show dedicated rows for your favourites.
@@ -287,7 +287,7 @@ const COUNTRIES = [
       <!-- Favourite Show Genres -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="text-xl font-semibold text-zinc-100">Favourite Show Genres</h2>
+          <h2 class="section-headline">Favourite Show Genres</h2>
         </div>
         <p class="text-sm text-zinc-400 mb-4">
           Pick the genres you enjoy most. The Discover page will show dedicated rows for your favourites.
@@ -312,7 +312,7 @@ const COUNTRIES = [
       <!-- Disliked Genres -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="text-xl font-semibold text-zinc-100">Disliked Genres</h2>
+          <h2 class="section-headline">Disliked Genres</h2>
         </div>
         <p class="text-sm text-zinc-400 mb-4">
           Genres you want to avoid. Items that <em>only</em> have disliked genres are filtered out of recommendations and picks. Mixed items (some liked, some disliked) can still appear. A genre can't be in both lists — selecting one here removes it from your favourites.

@@ -1394,7 +1394,7 @@ async def get_tvdb_episode(
                 Media.episode_number == episode_number,
             )
         )
-        local_ep = local_ep_q.scalar_one_or_none()
+        local_ep = local_ep_q.scalars().first()
         if local_ep:
             local_ep_id = local_ep.id
             coll_q = await db.execute(

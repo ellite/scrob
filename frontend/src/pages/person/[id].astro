@@ -73,7 +73,7 @@ const totalPages = Math.ceil(person.total_credits / person.page_size);
     <!-- Main Content -->
     <div class="flex-1 min-w-0">
       <div class="flex flex-wrap items-center justify-between gap-4 mb-8">
-        <h1 class="text-5xl font-extrabold text-zinc-100 tracking-tight">{person.name}</h1>
+        <h1 class="page-title">{person.name}</h1>
         <ActionBar
           tmdbId={person.tmdb_id}
           mediaType="person"
@@ -87,13 +87,13 @@ const totalPages = Math.ceil(person.total_credits / person.page_size);
 
       {person.biography && (
         <div class="mb-12">
-          <h2 class="text-xl font-bold text-zinc-100 mb-4">Biography</h2>
+          <h2 class="section-headline mb-4">Biography</h2>
           <p class="text-zinc-400 leading-relaxed text-lg whitespace-pre-wrap">{person.biography}</p>
         </div>
       )}
 
       <div>
-        <h2 class="text-xl font-bold text-zinc-100 mb-6">Known For</h2>
+        <h2 class="section-headline mb-6">Known For</h2>
         <div id="credits-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
           {credits.map((item) => (
             <div class="flex flex-col gap-1">

@@ -28,7 +28,7 @@ if (me.totp_enabled) {
 <Base title="Settings">
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
   <div class="max-w-4xl mx-auto">
-    <h1 class="text-3xl font-bold text-zinc-100 mb-8">Settings</h1>
+    <h1 class="page-title mb-8">Settings</h1>
 
     <div id="js-message" class="hidden p-4 rounded-lg mb-8"></div>
 
@@ -36,7 +36,7 @@ if (me.totp_enabled) {
       <!-- General Settings -->
       <section>
         <div class="flex items-center justify-between mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="text-xl font-semibold text-zinc-100">General</h2>
+          <h2 class="section-headline">General</h2>
         </div>
         <form id="settings-form" class="space-y-6">
           <div class="space-y-6 max-w-xl">
@@ -136,7 +136,7 @@ if (me.totp_enabled) {
 
           <!-- ======== SYNC SECTION ======== -->
           <div class="space-y-3 mt-8">
-            <h2 class="text-xl font-semibold text-zinc-100 border-b border-zinc-800 pb-2">Media Server Connections</h2>
+            <h2 class="section-headline border-b border-zinc-800 pb-2">Media Server Connections</h2>
 
             <!-- Connections list (server-side rendered, managed client-side) -->
             <div id="connections-list" class="space-y-3">
@@ -428,7 +428,7 @@ if (me.totp_enabled) {
 
           <!-- ======== SCROBBLE-ONLY CONNECTIONS SECTION ======== -->
           <div class="space-y-3 mt-8">
-            <h2 class="text-xl font-semibold text-zinc-100 border-b border-zinc-800 pb-2">Scrobble-only Connections</h2>
+            <h2 class="section-headline border-b border-zinc-800 pb-2">Scrobble-only Connections</h2>
             <p class="text-sm text-zinc-500">Webhook-only connections for scrobbling. No URL or token needed — just pick your server type and enter your username or user ID so events can be attributed to you.</p>
 
             <div id="scrobble-connections-list" class="space-y-2">
@@ -546,7 +546,7 @@ if (me.totp_enabled) {
 
           <!-- ======== CONNECTIONS SECTION ======== -->
           <div class="space-y-3 mt-8">
-            <h2 class="text-xl font-semibold text-zinc-100 border-b border-zinc-800 pb-2">Connections</h2>
+            <h2 class="section-headline border-b border-zinc-800 pb-2">Connections</h2>
 
             <!-- Trakt collapsible row -->
             <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
@@ -949,7 +949,7 @@ if (me.totp_enabled) {
 
       <!-- Appearance -->
       <section>
-        <h2 class="text-xl font-semibold text-zinc-100 mb-4 border-b border-zinc-800 pb-2">Appearance</h2>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Appearance</h2>
         <div class="space-y-6">
           <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
             <div>
@@ -1011,7 +1011,7 @@ if (me.totp_enabled) {
 
       <!-- Maintenance -->
       <section>
-        <h2 class="text-xl font-semibold text-zinc-100 mb-4 border-b border-zinc-800 pb-2">Maintenance</h2>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Maintenance</h2>
         <div class="space-y-3 max-w-xl">
           <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
             <div class="flex items-center justify-between px-5 py-4">
@@ -1063,7 +1063,7 @@ if (me.totp_enabled) {
 
       <!-- API Key -->
       <section>
-        <h2 class="text-xl font-semibold text-zinc-100 mb-4 border-b border-zinc-800 pb-2">API Key</h2>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">API Key</h2>
         <div class="space-y-4 max-w-xl">
           <p class="text-sm text-zinc-400">Use this key to authenticate requests to the Scrob API. Keep it secret — if it leaks, regenerate it immediately.</p>
           <div class="space-y-2">
@@ -1115,7 +1115,7 @@ if (me.totp_enabled) {
 
       <!-- Security -->
       <section id="2fa-section">
-        <h2 class="text-xl font-semibold text-zinc-100 mb-4 border-b border-zinc-800 pb-2">Security</h2>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Security</h2>
         <h3 class="text-base font-semibold text-zinc-300 mb-3">Two-Factor Authentication</h3>
 
         {!me.totp_enabled ? (
@@ -1352,7 +1352,7 @@ if (me.totp_enabled) {
 
       <!-- Data Management -->
       <section>
-        <h2 class="text-xl font-semibold text-zinc-100 mb-4 border-b border-zinc-800 pb-2">Data Management</h2>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Data Management</h2>
         <div class="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6">
           <div>
             <h3 class="text-lg font-bold text-zinc-100 mb-1">Clear Watch History</h3>
@@ -1370,7 +1370,7 @@ if (me.totp_enabled) {
 
       <!-- Danger Zone -->
       <section>
-        <h2 class="text-xl font-semibold text-red-500 mb-4 border-b border-red-500/20 pb-2">Danger Zone</h2>
+        <h2 class="text-2xl font-black text-red-500 tracking-tight mb-4 border-b border-red-500/20 pb-2">Danger Zone</h2>
         <div class="bg-red-500/5 border border-red-500/10 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6">
           <div>
             <h3 class="text-lg font-bold text-zinc-100 mb-1">Delete Account</h3>

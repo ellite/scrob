@@ -35,10 +35,7 @@ const baseUrl = `/history${type ? `?type=${type}` : ""}`;
 
 <Base title="Watch History">
   <div>
-    <h1 class="text-3xl font-bold text-zinc-100 mb-8 tracking-tight flex items-center gap-3">
-      <span class="w-1.5 h-8 bg-blue-600 rounded-full"></span>
-      Watch History
-    </h1>
+    <h1 class="page-title mb-8">Watch History</h1>
 
     <div class="flex gap-3 mb-8">
       <a
@@ -70,7 +67,7 @@ const baseUrl = `/history${type ? `?type=${type}` : ""}`;
       <div class="space-y-10">
         {dates.map((date) => (
           <div class="relative">
-            <h2 class="text-lg font-bold text-zinc-100 mb-4 sticky-top-safe py-2 bg-zinc-950/80 backdrop-blur-md z-10 flex items-center gap-3 border-b border-zinc-800/50">
+            <h2 class="group-label mb-4 sticky-top-safe py-2 z-10 border-b border-zinc-800/50">
               {date}
             </h2>
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">

@@ -28,13 +28,13 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   </div>
 
   <div class="max-w-4xl mx-auto px-4 py-8 space-y-10">
-    <h1 class="text-2xl font-bold text-zinc-100">Admin Panel</h1>
+    <h1 class="page-title">Admin Panel</h1>
 
     <div id="js-message" class="hidden"></div>
 
     <!-- ── Global Server Settings ── -->
     <section>
-      <h2 class="text-xl font-semibold text-zinc-100 border-b border-zinc-800 pb-2 mb-6">Global Server Settings</h2>
+      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">Global Server Settings</h2>
       <p class="text-zinc-400 text-sm mb-6">These settings apply to all users. A user's own settings always take priority if configured on their profile.</p>
 
       <form id="global-settings-form" class="space-y-3">
@@ -277,7 +277,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
     <!-- ── Users ── -->
     <section>
-      <h2 class="text-xl font-semibold text-zinc-100 border-b border-zinc-800 pb-2 mb-6">Users</h2>
+      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">Users</h2>
 
       <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
         <table class="w-full text-sm">
@@ -369,7 +369,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
     <!-- ── Maintenance ── -->
     <section>
-      <h2 class="text-xl font-semibold text-zinc-100 border-b border-zinc-800 pb-2 mb-6">Maintenance</h2>
+      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">Maintenance</h2>
       <p class="text-zinc-400 text-sm mb-6">Server-wide operations that run across all users' collections.</p>
 
       <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
@@ -400,7 +400,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
     <!-- ── Database ── -->
     <section>
-      <h2 class="text-xl font-semibold text-zinc-100 border-b border-zinc-800 pb-2 mb-6">Database</h2>
+      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">Database</h2>
 
       <div class="grid md:grid-cols-2 gap-6">
         <!-- Backup -->

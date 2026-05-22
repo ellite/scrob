@@ -121,10 +121,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
 
         <div class="relative aspect-[16/9] sm:aspect-[21/8] md:aspect-[21/5] flex flex-col">
           <div class="flex items-center justify-between pt-8 pb-0">
-            <h2 class="text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-3">
-              <span class="w-1 h-6 bg-blue-600 rounded-full"></span>
-              Next Up
-            </h2>
+            <h2 class="section-headline">Next Up</h2>
             <a href="/next-up" class="text-sm font-bold uppercase tracking-widest text-zinc-400 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
               See All
               <span class="group-hover/all:translate-x-1 transition-transform">→</span>
@@ -160,10 +157,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   {continueWatching.length > 0 && (
     <section id="continue-watching-section" class="mb-16">
       <div class="flex items-center justify-between mb-8">
-        <h2 class="text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-3">
-          <span class="w-1 h-6 bg-blue-600 rounded-full"></span>
-          Continue Watching
-        </h2>
+        <h2 class="section-headline">Continue Watching</h2>
       </div>
       <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
         {continueWatching.slice(0, 12).map((item) => (
@@ -176,10 +170,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   {recentMovies.results?.length > 0 && (
     <section class="mb-16">
       <div class="flex items-center justify-between mb-8">
-        <h2 class="text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-3">
-          <span class="w-1 h-6 bg-blue-600 rounded-full"></span>
-          Recently Added Movies
-        </h2>
+        <h2 class="section-headline">Recently Added Movies</h2>
         <a href="/collection/movies?sort=created_at" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
           See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
         </a>
@@ -195,10 +186,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   {recentShows.results?.length > 0 && (
     <section class="mb-16">
       <div class="flex items-center justify-between mb-8">
-        <h2 class="text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-3">
-          <span class="w-1 h-6 bg-blue-600 rounded-full"></span>
-          Recently Added Episodes
-        </h2>
+        <h2 class="section-headline">Recently Added Episodes</h2>
         <a href="/collection/shows?sort=created_at" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
           See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
         </a>
@@ -237,10 +225,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       <!-- Trending Movies -->
       <section class="mb-16" id="section-trending-movies">
         <div class="flex items-center justify-between mb-8">
-          <h2 class="text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-3">
-            <span class="w-1 h-6 bg-blue-600 rounded-full"></span>
-            Trending Movies
-          </h2>
+          <h2 class="section-headline">Trending Movies</h2>
           <a href="/trending/movies" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
             See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
           </a>
@@ -261,10 +246,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       <!-- Trending Shows -->
       <section class="mb-16" id="section-trending-shows">
         <div class="flex items-center justify-between mb-8">
-          <h2 class="text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-3">
-            <span class="w-1 h-6 bg-blue-600 rounded-full"></span>
-            Trending Shows
-          </h2>
+          <h2 class="section-headline">Trending Shows</h2>
           <a href="/trending/shows" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
             See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
           </a>
@@ -285,10 +267,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       <!-- Airing Today -->
       <section class="mb-16" id="section-airing-today">
         <div class="flex items-center justify-between mb-8">
-          <h2 class="text-2xl font-black text-zinc-100 tracking-tight flex items-center gap-3">
-            <span class="w-1 h-6 bg-blue-600 rounded-full"></span>
-            Airing Today
-          </h2>
+          <h2 class="section-headline">Airing Today</h2>
           <a href="/airing-today" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
             See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
           </a>
