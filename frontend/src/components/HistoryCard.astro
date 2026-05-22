@@ -30,39 +30,61 @@ const href = isEpisode
   : `/media/movie/${media.tmdb_id}`;
 ---
 
-<div class="relative group/card" data-event-id={event.id}>
-  <a href={href} class="flex gap-5 p-4 bg-zinc-900/40 hover:bg-zinc-800/60 border border-zinc-800/50 hover:border-blue-500/30 rounded-2xl transition-all duration-300 group shadow-sm hover:shadow-xl hover:shadow-blue-900/10 active:opacity-70">
-    <!-- Poster -->
-    <div class="w-20 shrink-0 aspect-[2/3] rounded-xl overflow-hidden bg-zinc-950 shadow-2xl ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
-      {posterPath ? (
-        <img
-          src={posterPath}
-          alt={showOrMovieTitle}
-          class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-          loading="lazy"
-          decoding="async"
-        />
-      ) : (
-        <div class="w-full h-full flex flex-col items-center justify-center text-xs text-zinc-700 p-2 text-center bg-zinc-900">
-          <span class="text-xl mb-1 opacity-20">🎬</span>
-          <span class="font-bold uppercase tracking-tighter truncate w-full">{showOrMovieTitle}</span>
-        </div>
-      )}
+<div
+  class="flex gap-5 p-4 bg-zinc-900/40 hover:bg-zinc-800/60 border border-zinc-800/50 hover:border-blue-500/30 rounded-2xl transition-all duration-300 shadow-sm hover:shadow-xl hover:shadow-blue-900/10 cursor-pointer group/card"
+  data-href={href}
+  data-event-id={event.id}
+>
+  <!-- Poster -->
+  <div class="w-20 shrink-0 aspect-[2/3] rounded-xl overflow-hidden bg-zinc-950 shadow-2xl ring-1 ring-white/5 group-hover/card:ring-blue-500/30 transition-all duration-300">
+    {posterPath ? (
+      <img
+        src={posterPath}
+        alt={showOrMovieTitle}
+        class="w-full h-full object-cover group-hover/card:scale-110 transition-transform duration-500"
+        loading="lazy"
+        decoding="async"
+      />
+    ) : (
+      <div class="w-full h-full flex flex-col items-center justify-center text-xs text-zinc-700 p-2 text-center bg-zinc-900">
+        <span class="text-xl mb-1 opacity-20">🎬</span>
+        <span class="font-bold uppercase tracking-tighter truncate w-full">{showOrMovieTitle}</span>
+      </div>
+    )}
+  </div>
+
+  <!-- Content -->
+  <div class="flex flex-col min-w-0 flex-1">
+    <!-- Row 1: timestamp + rating (if any) + delete button -->
+    <div class="flex items-center justify-between gap-3">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="text-xs font-bold text-zinc-400 bg-zinc-950/50 border border-zinc-800 px-2 py-1 rounded-lg uppercase tracking-wider shrink-0">
+          {timeString}
+        </span>
+        {media.user_rating != null && (
+          <span class="flex items-center gap-0.5 text-xs font-bold text-amber-400">
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            {media.user_rating % 1 === 0 ? media.user_rating : media.user_rating.toFixed(1)}
+          </span>
+        )}
+      </div>
+      <button
+        class="delete-history-event w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-zinc-950/50 border border-zinc-800 text-zinc-500 hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/10 transition-all duration-200 cursor-pointer"
+        title="Delete this entry"
+        aria-label="Delete history entry"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+        </svg>
+      </button>
     </div>
 
-    <!-- Content -->
-    <div class="flex flex-col justify-center min-w-0 flex-1 py-1 gap-1.5">
-      <!-- Row 1: timestamp (delete button sits absolute top-right) -->
-      <p class="text-xs font-bold text-zinc-500 uppercase tracking-widest pr-9">
-        {timeString}
-      </p>
-
-      <!-- Row 2: show / movie title -->
-      <p class="text-lg font-black text-zinc-100 group-hover:text-blue-400 transition-colors truncate tracking-tight leading-tight">
+    <!-- Rows 2 + 3 grouped, centered in the remaining vertical space -->
+    <div class="flex-1 flex flex-col justify-center gap-1.5 min-w-0">
+      <p class="text-lg font-black text-zinc-100 group-hover/card:text-blue-400 transition-colors truncate tracking-tight leading-tight">
         {showOrMovieTitle}
       </p>
 
-      <!-- Row 3: episode number + name, or movie year -->
       {isEpisode ? (
         <p class="text-xs font-bold text-zinc-400 flex items-center gap-2">
           <span class="text-blue-500 tracking-tighter uppercase bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20 shrink-0">
@@ -76,27 +98,22 @@ const href = isEpisode
         </p>
       )}
     </div>
-  </a>
-
-  <!-- Delete button — top-right, aligned with timestamp row -->
-  <button
-    class="delete-history-event absolute top-4 right-4 w-7 h-7 rounded-lg flex items-center justify-center bg-zinc-900/80 border border-zinc-700/50 text-zinc-500 hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/10 transition-all duration-200 cursor-pointer"
-    title="Delete this entry"
-    aria-label="Delete history entry"
-  >
-    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-      <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-    </svg>
-  </button>
+  </div>
 </div>
 
 <script>
   document.querySelectorAll<HTMLElement>('[data-event-id]').forEach(card => {
     const btn = card.querySelector<HTMLButtonElement>('.delete-history-event');
+
+    card.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('.delete-history-event')) return;
+      const href = card.dataset.href;
+      if (href) window.location.href = href;
+    });
+
     if (!btn) return;
 
     btn.addEventListener('click', async (e) => {
-      e.preventDefault();
       e.stopPropagation();
 
       const eventId = card.dataset.eventId;
