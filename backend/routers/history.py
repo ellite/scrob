@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, or_, select, desc, func, delete
 from sqlalchemy.orm import selectinload
@@ -509,6 +509,45 @@ async def mark_as_watched(
         await _push_watch_state(db, current_user.id, [media.id], watched=True)
 
     return {"status": "ok", "message": f"Marked {media.title} as watched"}
+
+
+@router.delete("/event/{event_id}")
+async def delete_single_event(
+    event_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a single watch event by its ID."""
+    result = await db.execute(
+        select(WatchEvent).where(
+            WatchEvent.id == event_id,
+            WatchEvent.user_id == current_user.id,
+        )
+    )
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    media_id = event.media_id
+    await db.execute(
+        delete(WatchEvent).where(
+            WatchEvent.id == event_id,
+            WatchEvent.user_id == current_user.id,
+        )
+    )
+    await db.commit()
+
+    # Only push "unwatched" to connected services if no events remain for this media
+    remaining = await db.execute(
+        select(func.count()).where(
+            WatchEvent.user_id == current_user.id,
+            WatchEvent.media_id == media_id,
+        )
+    )
+    if remaining.scalar() == 0:
+        await _push_watch_state(db, current_user.id, [media_id], watched=False)
+
+    return {"status": "ok"}
 
 
 @router.delete("")

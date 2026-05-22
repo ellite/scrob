@@ -31,71 +31,119 @@ const href = isEpisode
   : `/media/movie/${media.tmdb_id}`;
 ---
 
-<a href={href} class="flex gap-5 p-4 bg-zinc-900/40 hover:bg-zinc-800/60 border border-zinc-800/50 hover:border-blue-500/30 rounded-2xl transition-all duration-300 group shadow-sm hover:shadow-xl hover:shadow-blue-900/10 active:opacity-70">
-  <!-- Poster -->
-  <div class="w-20 shrink-0 aspect-[2/3] rounded-xl overflow-hidden bg-zinc-950 shadow-2xl ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
-    {posterPath ? (
-      <img 
-        src={posterPath} 
-        alt={title} 
-        class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-        loading="lazy"
-        decoding="async"
-      />
-    ) : (
-      <div class="w-full h-full flex flex-col items-center justify-center text-xs text-zinc-700 p-2 text-center bg-zinc-900">
-        <span class="text-xl mb-1 opacity-20">🎬</span>
-        <span class="font-bold uppercase tracking-tighter truncate w-full">{title}</span>
-      </div>
-    )}
-  </div>
-
-  <!-- Content -->
-  <div class="flex flex-col justify-center min-w-0 flex-1 py-1">
-    <div class="flex items-start justify-between gap-4">
-      <div class="min-w-0 flex-1">
-        <p class="text-lg font-black text-zinc-100 group-hover:text-blue-400 transition-colors truncate tracking-tight leading-tight mb-1">
-          {title}
-        </p>
-        
-        {isEpisode ? (
-          <p class="text-xs font-bold text-zinc-400 flex items-center gap-2">
-            <span class="text-blue-500 tracking-tighter uppercase bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
-              S{media.season_number?.toString().padStart(2, '0')}E{media.episode_number?.toString().padStart(2, '0')}
-            </span>
-            <span class="truncate font-medium text-zinc-500">{media.title}</span>
-          </p>
-        ) : (
-          <p class="text-xs font-bold text-zinc-500 uppercase tracking-widest">
-            {year}
-          </p>
-        )}
-      </div>
-      
-      <div class="text-xs font-bold text-zinc-400 bg-zinc-950/50 border border-zinc-800 px-2 py-1 rounded-lg shrink-0 uppercase tracking-wider">
-        {timeString}
-      </div>
+<div class="relative group/card" data-event-id={event.id}>
+  <a href={href} class="flex gap-5 p-4 bg-zinc-900/40 hover:bg-zinc-800/60 border border-zinc-800/50 hover:border-blue-500/30 rounded-2xl transition-all duration-300 group shadow-sm hover:shadow-xl hover:shadow-blue-900/10 active:opacity-70">
+    <!-- Poster -->
+    <div class="w-20 shrink-0 aspect-[2/3] rounded-xl overflow-hidden bg-zinc-950 shadow-2xl ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
+      {posterPath ? (
+        <img
+          src={posterPath}
+          alt={title}
+          class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+          loading="lazy"
+          decoding="async"
+        />
+      ) : (
+        <div class="w-full h-full flex flex-col items-center justify-center text-xs text-zinc-700 p-2 text-center bg-zinc-900">
+          <span class="text-xl mb-1 opacity-20">🎬</span>
+          <span class="font-bold uppercase tracking-tighter truncate w-full">{title}</span>
+        </div>
+      )}
     </div>
-    
-    <!-- Progress bar if not completed -->
-    {!event.completed && event.progress_percent > 0 ? (
-      <div class="mt-4">
-        <div class="flex items-center justify-between text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1.5">
-          <span>Watching</span>
-          <span>{Math.round(event.progress_percent * 100)}%</span>
+
+    <!-- Content -->
+    <div class="flex flex-col justify-center min-w-0 flex-1 py-1">
+      <div class="flex items-start justify-between gap-4">
+        <div class="min-w-0 flex-1">
+          <p class="text-lg font-black text-zinc-100 group-hover:text-blue-400 transition-colors truncate tracking-tight leading-tight mb-1">
+            {title}
+          </p>
+
+          {isEpisode ? (
+            <p class="text-xs font-bold text-zinc-400 flex items-center gap-2">
+              <span class="text-blue-500 tracking-tighter uppercase bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
+                S{media.season_number?.toString().padStart(2, '0')}E{media.episode_number?.toString().padStart(2, '0')}
+              </span>
+              <span class="truncate font-medium text-zinc-500">{media.title}</span>
+            </p>
+          ) : (
+            <p class="text-xs font-bold text-zinc-500 uppercase tracking-widest">
+              {year}
+            </p>
+          )}
         </div>
-        <div class="w-full bg-zinc-950 h-1.5 rounded-full overflow-hidden border border-zinc-800/50">
-          <div 
-            class="bg-blue-600 h-full rounded-full shadow-[0_0_8px_rgba(37,99,235,0.4)]" 
-            style={`width: ${event.progress_percent * 100}%`}
-          ></div>
+
+        <div class="text-xs font-bold text-zinc-400 bg-zinc-950/50 border border-zinc-800 px-2 py-1 rounded-lg shrink-0 uppercase tracking-wider">
+          {timeString}
         </div>
       </div>
-    ) : (
-      <div class="mt-4 flex items-center gap-1.5">
-        <span class="w-1.5 h-1.5 bg-green-500 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.4)]"></span>
-        <span class="text-xs font-bold text-zinc-400 uppercase tracking-widest">Completed</span>
-      </div>
-    )}
-  </div>
-</a>
+
+      <!-- Progress bar if not completed -->
+      {!event.completed && event.progress_percent > 0 ? (
+        <div class="mt-4">
+          <div class="flex items-center justify-between text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1.5">
+            <span>Watching</span>
+            <span>{Math.round(event.progress_percent * 100)}%</span>
+          </div>
+          <div class="w-full bg-zinc-950 h-1.5 rounded-full overflow-hidden border border-zinc-800/50">
+            <div
+              class="bg-blue-600 h-full rounded-full shadow-[0_0_8px_rgba(37,99,235,0.4)]"
+              style={`width: ${event.progress_percent * 100}%`}
+            ></div>
+          </div>
+        </div>
+      ) : (
+        <div class="mt-4 flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 bg-green-500 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.4)]"></span>
+          <span class="text-xs font-bold text-zinc-400 uppercase tracking-widest">Completed</span>
+        </div>
+      )}
+    </div>
+  </a>
+
+  <!-- Delete button — visible on card hover -->
+  <button
+    class="delete-history-event absolute bottom-2 right-2 w-7 h-7 rounded-lg flex items-center justify-center bg-zinc-900/80 border border-zinc-700/50 text-zinc-500 hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/10 transition-all duration-200 cursor-pointer"
+    title="Delete this entry"
+    aria-label="Delete history entry"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+    </svg>
+  </button>
+</div>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-event-id]').forEach(card => {
+    const btn = card.querySelector<HTMLButtonElement>('.delete-history-event');
+    if (!btn) return;
+
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const eventId = card.dataset.eventId;
+      const token = (window as any).__AUTH_TOKEN__ ?? '';
+
+      btn.disabled = true;
+      btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="animate-spin"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" /></svg>`;
+
+      try {
+        const res = await fetch(`/api/proxy/history/event/${eventId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error('Failed');
+        card.style.transition = 'opacity 0.25s, transform 0.25s';
+        card.style.opacity = '0';
+        card.style.transform = 'scale(0.97)';
+        setTimeout(() => card.remove(), 250);
+      } catch {
+        btn.disabled = false;
+        btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
+        btn.classList.add('text-red-400', 'border-red-500/40');
+        setTimeout(() => btn.classList.remove('text-red-400', 'border-red-500/40'), 1500);
+      }
+    });
+  });
+</script>
