@@ -1205,12 +1205,24 @@ async def on_air_today(
 
 @router.get("/airing-today/collected")
 async def airing_today_collected(
-    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
+    timezone: str = Query(default="UTC"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Return shows airing today on TMDB that the user has in their collection."""
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        user_tz = ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, KeyError):
+        user_tz = ZoneInfo("UTC")
+
+    today = datetime.now(user_tz).date().isoformat()
 
     # Collect the user's show TMDB IDs in one query
     collected_q = await db.execute(
@@ -1231,7 +1243,7 @@ async def airing_today_collected(
     except Exception as e:
         print(f"Error fetching airing-today from TMDB: {e}")
         return {"results": []}
-    total_pages = min(first.get("total_pages", 1), 20)  # cap at 20 pages (400 shows)
+    total_pages = min(first.get("total_pages", 1), 20)
     all_shows = list(first.get("results", []))
 
     if total_pages > 1:
@@ -1244,18 +1256,14 @@ async def airing_today_collected(
                 continue
             all_shows.extend(page_data.get("results", []))
 
-    # Keep only shows in the user's collection
     collected_shows = [s for s in all_shows if s.get("id") in collected_tmdb_ids]
 
     if not collected_shows:
         return {"results": []}
 
-    # Fetch show details in parallel to get today's episode (last/next_episode_to_air)
-    from datetime import date
-    today = date.today().isoformat()
     semaphore = asyncio.Semaphore(10)
 
-    async def fetch_episode(show: dict) -> dict:
+    async def fetch_episode(show: dict) -> dict | None:
         async with semaphore:
             try:
                 detail = await tmdb.get_show_light(show["id"], api_key=tmdb_key)

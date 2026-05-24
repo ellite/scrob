@@ -440,7 +440,8 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
 
         loadSection('/api/proxy/media/trending/movies', 'grid-trending-movies', mediaCardHtml, 12);
         loadSection('/api/proxy/media/trending/shows', 'grid-trending-shows', mediaCardHtml, 12);
-        loadSection('/api/proxy/media/airing-today/collected', 'grid-airing-today', episodeCardHtml, 12);
+        const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        loadSection(`/api/proxy/media/airing-today/collected?timezone=${encodeURIComponent(userTimezone)}`, 'grid-airing-today', episodeCardHtml, 12);
 
         // Continue watching dismiss
         document.addEventListener('click', async (e) => {

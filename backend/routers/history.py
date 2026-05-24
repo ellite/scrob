@@ -507,6 +507,13 @@ async def mark_as_watched(
         progress_percent=1.0 if event_in.completed else 0.0,
     )
     db.add(event)
+    if event_in.completed:
+        await db.execute(
+            delete(PlaybackProgress).where(
+                PlaybackProgress.user_id == current_user.id,
+                PlaybackProgress.media_id == media.id,
+            )
+        )
     await db.commit()
 
     # 4. Push to media servers if outbound push is enabled
@@ -737,6 +744,13 @@ async def mark_season_watched(
             ))
             newly_watched.append(ep.id)
             
+    if newly_watched:
+        await db.execute(
+            delete(PlaybackProgress).where(
+                PlaybackProgress.user_id == current_user.id,
+                PlaybackProgress.media_id.in_(newly_watched),
+            )
+        )
     await db.commit()
     await _push_watch_state(db, current_user.id, newly_watched, watched=True)
     return {"status": "ok", "count": len(newly_watched)}
@@ -903,6 +917,13 @@ async def mark_show_watched(
                 ))
                 all_newly_watched_ids.append(ep.id)
 
+    if all_newly_watched_ids:
+        await db.execute(
+            delete(PlaybackProgress).where(
+                PlaybackProgress.user_id == current_user.id,
+                PlaybackProgress.media_id.in_(all_newly_watched_ids),
+            )
+        )
     await db.commit()
     await _push_watch_state(db, current_user.id, all_newly_watched_ids, watched=True)
     return {"status": "ok", "count": len(all_newly_watched_ids)}

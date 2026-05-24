@@ -95,8 +95,8 @@ async def get_show_light(tmdb_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/tv/{tmdb_id}", headers=get_headers(api_key))
 
 
-async def get_on_air_today(page: int = 1, api_key: str = None) -> dict:
-    return await _get(f"{TMDB_BASE}/tv/airing_today", headers=get_headers(api_key), params={"page": page})
+async def get_on_air_today(page: int = 1, api_key: str = None, timezone: str = "UTC") -> dict:
+    return await _get(f"{TMDB_BASE}/tv/airing_today", headers=get_headers(api_key), params={"page": page, "timezone": timezone})
 
 
 async def get_popular_movies(page: int = 1, api_key: str = None) -> dict:
