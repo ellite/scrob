@@ -347,6 +347,7 @@ def _format_media_item(media: Media) -> dict:
         "genres": (media.tmdb_data or {}).get("genres", []),
         "library": None,
         "in_library": False,
+        "show_id": media.show_id,
     }
     if media.media_type == MediaType.episode and media.show:
         data["show_title"] = media.show.title
@@ -362,6 +363,7 @@ async def get_next_up(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     limit: int | None = None,
+    include_hidden: bool = Query(False),
 ):
     """Next unwatched episode for each show the user is actively watching."""
     # Step 1: Find the last watched / significantly-viewed episode per show,
@@ -431,12 +433,21 @@ async def get_next_up(
     )
     completed_ids = {row[0] for row in completed_result.all()}
 
-    next_up = [m for m in next_per_show.values() if m.id not in completed_ids]
+    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
+    settings = settings_result.scalar_one_or_none()
+    hidden_set = set(settings.next_up_hidden_shows or []) if settings else set()
+
+    next_up = [
+        m for m in next_per_show.values()
+        if m.id not in completed_ids and (include_hidden or m.show_id not in hidden_set)
+    ]
     next_up.sort(key=lambda m: last_watched_at.get(m.show_id) or datetime.min, reverse=True)
     if limit is not None:
         next_up = next_up[:limit]
-    
+
     items = [_format_media_item(m) for m in next_up]
+    for item in items:
+        item["next_up_hidden"] = item.get("show_id") in hidden_set
     if items:
         await enrich_with_state(db, current_user.id, items)
 
@@ -449,6 +460,48 @@ from core.enrichment import enrich_media
 from datetime import datetime
 from fastapi import HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm.attributes import flag_modified
+
+
+class NextUpHideRequest(BaseModel):
+    show_id: int
+
+
+@router.post("/next-up/hide")
+async def hide_next_up_show(
+    body: NextUpHideRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
+    settings = settings_result.scalar_one_or_none()
+    if not settings:
+        raise HTTPException(status_code=404, detail="Settings not found")
+    hidden = list(settings.next_up_hidden_shows or [])
+    if body.show_id not in hidden:
+        hidden.append(body.show_id)
+        settings.next_up_hidden_shows = hidden
+        flag_modified(settings, "next_up_hidden_shows")
+        await db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/next-up/hide")
+async def unhide_next_up_show(
+    show_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
+    settings = settings_result.scalar_one_or_none()
+    if settings:
+        hidden = list(settings.next_up_hidden_shows or [])
+        if show_id in hidden:
+            hidden.remove(show_id)
+            settings.next_up_hidden_shows = hidden
+            flag_modified(settings, "next_up_hidden_shows")
+            await db.commit()
+    return {"status": "ok"}
 
 
 class SeasonWatchRequest(BaseModel):

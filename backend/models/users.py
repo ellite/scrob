@@ -110,6 +110,7 @@ class UserSettings(Base):
     preferences    : Mapped[Optional[dict]] = mapped_column(JSONB)
     blur_explicit   : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     time_format_24h : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    next_up_hidden_shows : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="'[]'")
 
     user : Mapped["User"] = relationship(back_populates="settings")
 

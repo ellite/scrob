@@ -1,48 +1,231 @@
 ---
 import Base from "../layouts/Base.astro";
-import MediaCard from "../components/MediaCard.astro";
-import { api, type MediaItem } from "../lib/api";
 export const prerender = false;
 
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
-
-let nextUp: MediaItem[] = [];
-let error = "";
-
-try {
-  const data = await api.history.nextUp(token);
-  nextUp = data?.next_up ?? [];
-} catch (e: any) {
-  error = e.message;
-}
 ---
 
 <Base title="Next Up">
-  <div class="mb-8">
-    <h1 class="page-title mb-2">Next Up</h1>
-    <p class="text-zinc-500">Continue where you left off</p>
+  <div class="mb-8 flex items-center justify-between gap-4">
+    <div>
+      <h1 class="page-title mb-2">Next Up</h1>
+      <p class="text-zinc-500">Continue where you left off</p>
+    </div>
+    <button
+      id="toggle-hidden-btn"
+      class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer shrink-0"
+    >
+      <svg id="toggle-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/>
+        <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>
+      </svg>
+      <span id="toggle-label">Show hidden</span>
+    </button>
   </div>
 
-  {error && (
-    <div class="bg-red-500/10 border border-red-500 text-red-500 p-4 rounded-lg mb-8">
-      {error}
-    </div>
-  )}
-
-  {nextUp.length === 0 && !error && (
-    <div class="text-center py-20 text-zinc-500">
-      <p class="text-lg">Nothing to watch next.</p>
-      <p class="text-sm mt-2">Start watching a show to see your next episodes here.</p>
-    </div>
-  )}
-
-  <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-    {nextUp.map((item) => (
-      <MediaCard item={item} />
+  <div id="loading-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
+    {Array.from({ length: 12 }).map(() => (
+      <div class="animate-pulse rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800">
+        <div class="aspect-[2/3] bg-zinc-800"></div>
+        <div class="p-3 space-y-2">
+          <div class="h-3 bg-zinc-800 rounded w-3/4"></div>
+          <div class="h-2 bg-zinc-800 rounded w-1/2"></div>
+        </div>
+      </div>
     ))}
+  </div>
+
+  <div id="next-up-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 hidden"></div>
+
+  <div id="empty-state" class="hidden text-center py-20 text-zinc-500">
+    <p class="text-lg">Nothing to watch next.</p>
+    <p class="text-sm mt-2">Start watching a show to see your next episodes here.</p>
   </div>
 </Base>
 
-<script>
+<script define:vars={{ token }}>
+  function esc(str) {
+    if (str == null) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  const EYE_SLASH = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>`;
+  const EYE    = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  const SPIN   = `<svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>`;
+
+  let showingHidden = false;
+
+  function buildCard(item) {
+    const isHidden = item.next_up_hidden === true;
+    const href = item.show_tmdb_id && item.season_number != null && item.episode_number != null
+      ? `/show/${item.show_tmdb_id}/season/${item.season_number}/${item.episode_number}`
+      : item.show_tvdb_id && item.season_number != null && item.episode_number != null
+        ? `/show/tvdb/${item.show_tvdb_id}/season/${item.season_number}/${item.episode_number}`
+        : item.show_tmdb_id ? `/show/${item.show_tmdb_id}`
+        : item.show_tvdb_id ? `/show/tvdb/${item.show_tvdb_id}`
+        : item.tmdb_id ? `/media/${item.type}/${item.tmdb_id}` : '#';
+
+    const posterSrc = item.show_poster_path
+      ? (item.show_poster_path.startsWith('http') ? item.show_poster_path : `https://image.tmdb.org/t/p/w500${item.show_poster_path}`)
+      : item.poster_path
+        ? (item.poster_path.startsWith('http') ? item.poster_path : `https://image.tmdb.org/t/p/w500${item.poster_path}`)
+        : null;
+
+    const rating = item.tmdb_rating ? Number(item.tmdb_rating).toFixed(1) : null;
+    const sxe = item.season_number != null && item.episode_number != null
+      ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`
+      : null;
+
+    const hideBtn = item.show_id != null ? `
+      <button
+        class="nextup-hide-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 cursor-pointer ${isHidden ? 'bg-amber-900/60 border border-amber-600 text-amber-300 hover:bg-amber-700 hover:border-amber-500 hover:text-white' : 'bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-rose-200 hover:border-rose-700 hover:bg-rose-900'}"
+        data-show-id="${esc(String(item.show_id))}"
+        title="${isHidden ? 'Restore to Next Up' : 'Hide from Next Up'}"
+      >${isHidden ? EYE : EYE_SLASH}</button>
+    ` : '';
+
+    // Hidden cards: rendered as opacity-50 + hidden (show/hide toggled by JS)
+    const wrapperClass = isHidden ? 'opacity-50 hidden' : '';
+
+    return `
+      <div class="${wrapperClass}" data-next-up-hidden="${isHidden ? 'true' : 'false'}">
+        <div class="group relative flex flex-col rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-blue-500/50 hover:shadow-2xl hover:shadow-blue-900/20 transition-all duration-300 transform hover:-translate-y-1">
+          <a href="${esc(href)}" class="block active:scale-95 active:opacity-70 transition-all duration-100">
+            <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
+              ${posterSrc
+                ? `<img src="${esc(posterSrc)}" alt="${esc(item.show_title ?? item.title)}" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" loading="lazy" decoding="async" />`
+                : `<div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center"><span class="text-3xl mb-2 opacity-30">📺</span><span class="text-xs font-bold uppercase tracking-widest">${esc(item.show_title ?? item.title)}</span></div>`
+              }
+              <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              ${rating ? `<div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1"><span class="text-xs leading-none">★</span> ${esc(rating)}</div>` : ''}
+            </div>
+          </a>
+          ${hideBtn}
+          <a href="${esc(href)}" class="block p-3 bg-gradient-to-b from-zinc-900 to-zinc-950 flex-1">
+            ${item.show_title ? `<h3 class="text-xs font-medium text-zinc-400 truncate mb-0.5">${esc(item.show_title)}</h3>` : ''}
+            <h3 class="text-sm font-bold text-zinc-100 group-hover:text-blue-400 truncate transition-colors leading-tight mb-1">${esc(item.title)}</h3>
+            ${sxe ? `<p class="text-[11px] font-bold text-blue-400 tracking-wide">${esc(sxe)}</p>` : ''}
+          </a>
+        </div>
+      </div>
+    `;
+  }
+
+  function updateEmptyState() {
+    const grid = document.getElementById('next-up-grid');
+    const empty = document.getElementById('empty-state');
+    const visibleCards = grid.querySelectorAll('[data-next-up-hidden="false"]');
+    const anyVisible = visibleCards.length > 0;
+    const anyHidden  = grid.querySelectorAll('[data-next-up-hidden="true"]').length > 0;
+    const isEmpty = !anyVisible && (!showingHidden || !anyHidden);
+    empty.classList.toggle('hidden', !isEmpty);
+    grid.classList.toggle('hidden', isEmpty);
+  }
+
+  async function loadNextUp() {
+    const grid    = document.getElementById('next-up-grid');
+    const loading = document.getElementById('loading-grid');
+    const empty   = document.getElementById('empty-state');
+
+    try {
+      const res = await fetch('/api/proxy/history/next-up?include_hidden=true', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Failed');
+      const data = await res.json();
+      const items = data.next_up ?? [];
+
+      loading.classList.add('hidden');
+
+      if (items.length === 0) {
+        empty.classList.remove('hidden');
+        return;
+      }
+
+      grid.innerHTML = items.map(buildCard).join('');
+      grid.classList.remove('hidden');
+      updateEmptyState();
+      bindHideButtons();
+    } catch {
+      loading.classList.add('hidden');
+      empty.classList.remove('hidden');
+    }
+  }
+
+  function bindHideButtons() {
+    document.querySelectorAll('.nextup-hide-btn').forEach(btn => {
+      if (btn.dataset.bound) return;
+      btn.dataset.bound = 'true';
+
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const showId  = parseInt(btn.dataset.showId, 10);
+        const wrapper = btn.closest('[data-next-up-hidden]');
+        const isHidden = wrapper.dataset.nextUpHidden === 'true';
+
+        btn.disabled = true;
+        btn.innerHTML = SPIN;
+
+        try {
+          if (isHidden) {
+            await fetch(`/api/proxy/history/next-up/hide?show_id=${showId}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${token}` },
+            });
+            // Restore
+            wrapper.dataset.nextUpHidden = 'false';
+            wrapper.classList.remove('opacity-50', 'hidden');
+            btn.classList.remove('bg-amber-900/60', 'border-amber-600', 'text-amber-300', 'hover:bg-amber-700', 'hover:border-amber-500', 'hover:text-white');
+            btn.classList.add('bg-zinc-950/80', 'border-zinc-800', 'text-zinc-500', 'hover:text-white', 'hover:border-red-600', 'hover:bg-red-700');
+            btn.title = 'Hide from Next Up';
+            btn.innerHTML = EYE_SLASH;
+          } else {
+            await fetch('/api/proxy/history/next-up/hide', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ show_id: showId }),
+            });
+            // Hide
+            wrapper.dataset.nextUpHidden = 'true';
+            wrapper.classList.add('opacity-50');
+            if (!showingHidden) {
+              wrapper.classList.add('hidden');
+            }
+            btn.classList.remove('bg-zinc-950/80', 'border-zinc-800', 'text-zinc-500', 'hover:text-white', 'hover:border-red-600', 'hover:bg-red-700');
+            btn.classList.add('bg-amber-900/60', 'border-amber-600', 'text-amber-300', 'hover:bg-amber-700', 'hover:border-amber-500', 'hover:text-white');
+            btn.title = 'Restore to Next Up';
+            btn.innerHTML = EYE;
+          }
+          btn.disabled = false;
+          updateEmptyState();
+        } catch {
+          btn.disabled = false;
+          btn.innerHTML = isHidden ? EYE : EYE_SLASH;
+        }
+      });
+    });
+  }
+
+  // Toggle: show/hide hidden items in-place, no refetch
+  document.getElementById('toggle-hidden-btn').addEventListener('click', () => {
+    showingHidden = !showingHidden;
+
+    document.getElementById('toggle-label').textContent = showingHidden ? 'Hide hidden' : 'Show hidden';
+
+    // Swap the icon between eye-slash (show) and eye (hide)
+    document.getElementById('toggle-icon').innerHTML = showingHidden
+      ? `<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>`
+      : `<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>`;
+
+    document.querySelectorAll('[data-next-up-hidden="true"]').forEach(card => {
+      card.classList.toggle('hidden', !showingHidden);
+    });
+
+    updateEmptyState();
+  });
+
+  loadNextUp();
 </script>

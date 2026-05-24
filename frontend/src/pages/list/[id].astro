@@ -225,7 +225,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
                 <MediaCard item={entry.media}>
                   {list.is_owner && (
                     <button
-                      class="remove-item-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/10 transition-all duration-200 cursor-pointer"
+                      class="remove-item-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-rose-200 hover:border-rose-700 hover:bg-rose-900 transition-all duration-200 cursor-pointer"
                       data-item-id={entry.id}
                       aria-label="Remove from list"
                     >
@@ -603,7 +603,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
       </div>` : '';
 
     const removeBtn = removeItemId != null
-      ? `<button class="remove-item-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/10 transition-all duration-200 cursor-pointer" data-item-id="${esc(String(removeItemId))}" aria-label="Remove from list">${TRASH_SVG}</button>`
+      ? `<button class="remove-item-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-rose-200 hover:border-rose-700 hover:bg-rose-900 transition-all duration-200 cursor-pointer" data-item-id="${esc(String(removeItemId))}" aria-label="Remove from list">${TRASH_SVG}</button>`
       : '';
 
     return `
@@ -622,7 +622,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
               : `<div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center"><span class="text-3xl mb-2 opacity-30">🎬</span><span class="text-xs font-bold uppercase tracking-widest">${esc(media.title)}</span></div>`
             }
             <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-            ${rating ? `<div class="absolute top-2 right-2 bg-black/80 backdrop-blur-md text-yellow-400 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1"><span class="text-xs leading-none">★</span> ${esc(rating)}</div>` : ''}
+            ${rating ? `<div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1"><span class="text-xs leading-none">★</span> ${esc(rating)}</div>` : ''}
           </div>
         </a>
         ${actionBar}

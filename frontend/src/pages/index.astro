@@ -337,7 +337,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
                   : `<div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center"><span class="text-3xl mb-2 opacity-30">🎬</span><span class="text-xs font-bold uppercase tracking-widest">${esc(item.title)}</span></div>`
                 }
                 <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                ${rating ? `<div class="absolute top-2 right-2 bg-black/80 backdrop-blur-md text-yellow-400 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1"><span class="text-xs leading-none">★</span> ${esc(rating)}</div>` : ''}
+                ${rating ? `<div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1"><span class="text-xs leading-none">★</span> ${esc(rating)}</div>` : ''}
               </div>
             </a>
             <div class="grid grid-cols-3 flex-shrink-0">
