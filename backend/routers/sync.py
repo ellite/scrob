@@ -124,7 +124,15 @@ async def sync_shows_batch(
             existing_shows[s.tmdb_id] = s
 
     missing = [tid for tid in all_tmdb_ids if tid not in existing_shows]
-    print(f"    {len(existing_shows)} shows in DB, fetching {len(missing)} from TMDB in parallel...")
+
+    # Also re-fetch active shows so new seasons added to TMDB appear without a manual refresh.
+    ACTIVE_STATUSES = {"Returning Series", "In Production", "Planned"}
+    stale = [
+        tid for tid in all_tmdb_ids
+        if tid in existing_shows and existing_shows[tid].status in ACTIVE_STATUSES
+    ]
+    to_fetch = list({*missing, *stale})
+    print(f"    {len(existing_shows)} shows in DB, fetching {len(missing)} new + {len(stale)} active from TMDB...")
 
     semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
     fetched: dict[int, dict] = {}
@@ -136,8 +144,8 @@ async def sync_shows_batch(
             except Exception as e:
                 print(f"  Failed to fetch show tmdb={tmdb_id}: {e}")
 
-    if missing:
-        await asyncio.gather(*[fetch_show(tid) for tid in missing])
+    if to_fetch:
+        await asyncio.gather(*[fetch_show(tid) for tid in to_fetch])
 
     if fetched:
         values = []
