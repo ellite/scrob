@@ -363,6 +363,10 @@ async def get_show(
             "user_rating": state_item.get("user_rating"),
             "season_states": season_states,
             "seasons": {f"season_{k}": v for k, v in sorted(seasons.items())},
+            "created_by": [
+                {"tmdb_id": c["id"], "name": c["name"]}
+                for c in (tmdb_extra or show.tmdb_data or {}).get("created_by", [])
+            ],
             "cast": cast,
             "networks": networks,
             "where_to_watch": where_to_watch,
@@ -433,6 +437,10 @@ async def get_show(
             "request_enabled": state_item_tmdb.get("request_enabled", False),
             "request_status": state_item_tmdb.get("request_status"),
             "user_rating": state_item_tmdb.get("user_rating"),
+            "created_by": [
+                {"tmdb_id": c["id"], "name": c["name"]}
+                for c in data.get("created_by", [])
+            ],
             "cast": cast,
             "networks": networks,
             "seasons_meta": [

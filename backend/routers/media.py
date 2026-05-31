@@ -4064,6 +4064,11 @@ async def get_media_details(
                 "show_tmdb_id": show.tmdb_id,
                 "show_poster_path": show.poster_path,
                 "show_backdrop_path": show.backdrop_path,
+                "directors": [
+                    {"tmdb_id": c.get("id"), "name": c.get("name")}
+                    for c in (ep_data.get("credits") or {}).get("crew", [])
+                    if c.get("job") == "Director"
+                ],
                 "cast": [
                     {
                         "tmdb_id": c.get("id"),
@@ -4212,6 +4217,11 @@ async def get_media_details(
             "adult": data.get("adult", False),
             "collection": collection,
             "production_companies": production_companies,
+            "directors": [
+                {"tmdb_id": c["id"], "name": c["name"]}
+                for c in data.get("credits", {}).get("crew", [])
+                if c.get("job") == "Director"
+            ],
             "cast": [
                 {
                     "tmdb_id": c["id"],
