@@ -157,8 +157,8 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
       const now = Date.now();
       const delta = (now - (lastTickAt ?? now)) / 1000;
       lastTickAt = now;
-      progressSeconds = Math.min(progressSeconds + delta, runtime * 60 || Infinity);
       const total = runtime * 60;
+      progressSeconds = Math.min(progressSeconds + delta, total || Infinity);
       const p = total > 0 ? Math.min(100, Math.floor((progressSeconds / total) * 100)) : 0;
       const bar = document.getElementById('ms-bar');
       const pctEl = document.getElementById('ms-pct');
@@ -166,6 +166,7 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
       if (bar) bar.style.width = p + '%';
       if (pctEl) pctEl.textContent = p + '%';
       if (timeEl) timeEl.textContent = `${fmt(progressSeconds)} / ${total ? fmt(total) : '--:--'}`;
+      if (total > 0 && progressSeconds >= total) completeSession();
     }, 1000);
   }
 
@@ -256,12 +257,25 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
     try {
       await fetch(`${API}/history/session/${key}/complete`, {
         method: 'POST',
+        keepalive: true,
         headers: { 'Authorization': `Bearer ${TOKEN()}` },
       });
       markPageWatched();
     } catch {}
     renderIdle();
   }
+
+  window.addEventListener('beforeunload', () => {
+    if (!sessionKey) return;
+    const total = runtime * 60;
+    if (total > 0 && progressSeconds >= total) {
+      fetch(`${API}/history/session/${sessionKey}/complete`, {
+        method: 'POST',
+        keepalive: true,
+        headers: { 'Authorization': `Bearer ${TOKEN()}` },
+      });
+    }
+  });
 
   // ── Init: check for existing session ──────────────────────────────────────
   async function init(): Promise<void> {
@@ -287,6 +301,7 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
           : 0;
         const total = runtime * 60;
         progressSeconds = Math.min((existing.progress_seconds ?? 0) + elapsedSinceUpdate, total || Infinity);
+        if (total > 0 && progressSeconds >= total) { renderIdle(); return; }
         lastTickAt = Date.now();
         renderActive();
         startDisplayTimer();

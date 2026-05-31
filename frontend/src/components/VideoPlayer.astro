@@ -322,6 +322,22 @@ const useHls = Astro.cookies.get("use_hls_player")?.value === "true";
 
     video.addEventListener('pause',   () => { reportSession('paused'); });
     video.addEventListener('play',    () => { reportSession('playing'); });
+    async function markWatched(): Promise<void> {
+      try {
+        await fetch('/api/proxy/history', {
+          method: 'POST',
+          keepalive: true,
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tmdb_id: parseInt(tmdbId), media_type: mediaType, completed: true }),
+        });
+      } catch {}
+    }
+
+    video.addEventListener('ended', () => {
+      stopSession();
+      reportSession('stopped');
+      markWatched();
+    });
 
     function renderSources(sources: {
       file_id?: string;
@@ -374,6 +390,8 @@ const useHls = Astro.cookies.get("use_hls_player")?.value === "true";
     }
 
     function closePlayer(): void {
+      const dur = video.duration;
+      if (dur > 0 && video.currentTime / dur >= 0.95) markWatched();
       reportSession('stopped');
       stopSession();
       hidePlaybackError();

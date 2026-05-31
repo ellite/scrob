@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, or_, select, desc, func, delete
@@ -729,7 +730,7 @@ async def mark_season_watched(
         raise HTTPException(status_code=404, detail=f"Season not found: {e}")
 
     # 3. Ensure Media rows exist for all aired episodes in this season
-    now = datetime.now()
+    now = datetime.utcnow()
     today = now.date()
     
     # Get existing episodes for this season
@@ -901,7 +902,7 @@ async def mark_show_watched(
     seasons = [s["season_number"] for s in show.tmdb_data["seasons"] if s["season_number"] > 0]
     all_newly_watched_ids = []
     
-    now = datetime.now()
+    now = datetime.utcnow()
     today = now.date()
 
     for sn in seasons:
@@ -1192,6 +1193,44 @@ async def stop_manual_session(
     return {"status": "ok"}
 
 
+async def auto_complete_manual_sessions(db: AsyncSession) -> None:
+    """Complete any manual sessions where enough time has elapsed since the last heartbeat."""
+    now = datetime.utcnow()
+    result = await db.execute(
+        select(PlaybackSession, Media)
+        .join(Media, Media.id == PlaybackSession.media_id)
+        .where(PlaybackSession.source == "manual", PlaybackSession.state == "playing")
+    )
+    completed: list[tuple[int, int]] = []  # (user_id, media_id)
+    for session, media in result.all():
+        runtime_seconds = (media.runtime or 0) * 60
+        if runtime_seconds <= 0:
+            continue
+        elapsed = session.progress_seconds + (now - session.updated_at).total_seconds()
+        if elapsed < runtime_seconds:
+            continue
+        await db.execute(delete(PlaybackSession).where(PlaybackSession.id == session.id))
+        await db.execute(
+            delete(PlaybackProgress).where(
+                PlaybackProgress.user_id == session.user_id,
+                PlaybackProgress.media_id == session.media_id,
+            )
+        )
+        db.add(WatchEvent(
+            user_id=session.user_id,
+            media_id=session.media_id,
+            watched_at=now,
+            completed=True,
+            play_count=1,
+            progress_percent=1.0,
+        ))
+        completed.append((session.user_id, session.media_id))
+    if completed:
+        await db.commit()
+        for user_id, media_id in completed:
+            await _push_watch_state(db, user_id, [media_id], watched=True)
+
+
 @router.post("/session/{session_key}/complete")
 async def complete_manual_session(
     session_key: str,
@@ -1221,7 +1260,7 @@ async def complete_manual_session(
     db.add(WatchEvent(
         user_id=current_user.id,
         media_id=media_id,
-        watched_at=datetime.now(),
+        watched_at=datetime.utcnow(),
         completed=True,
         play_count=1,
         progress_percent=1.0,

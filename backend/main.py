@@ -92,6 +92,20 @@ async def _auto_sync_scheduler():
             traceback.print_exc()
 
 
+async def _manual_session_completer():
+    from db import async_sessionmaker
+    from routers.history import auto_complete_manual_sessions
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with async_session() as db:
+                await auto_complete_manual_sessions(db)
+        except Exception as e:
+            print(f"Manual session completer error: {e}")
+
+
 async def _watchlist_poller():
     import logging
     log = logging.getLogger("uvicorn.error")
@@ -250,17 +264,23 @@ async def lifespan(app: FastAPI):
 
     scheduler_task = asyncio.create_task(_auto_sync_scheduler())
     watchlist_task = asyncio.create_task(_watchlist_poller())
+    manual_session_task = asyncio.create_task(_manual_session_completer())
 
     yield
 
     scheduler_task.cancel()
     watchlist_task.cancel()
+    manual_session_task.cancel()
     try:
         await scheduler_task
     except asyncio.CancelledError:
         pass
     try:
         await watchlist_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await manual_session_task
     except asyncio.CancelledError:
         pass
 
