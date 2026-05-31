@@ -14,11 +14,17 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
   if (auth) {
     forwardHeaders.set("Authorization", auth);
   } else {
-    // Video elements can't set custom headers — extract JWT from the session cookie instead
-    const cookieStr = request.headers.get("Cookie") ?? "";
-    const tokenMatch = /(?:^|;\s*)token=([^;]+)/.exec(cookieStr);
-    if (tokenMatch) {
-      forwardHeaders.set("Authorization", `Bearer ${decodeURIComponent(tokenMatch[1])}`);
+    // Video elements can't set custom headers — extract JWT from the query string or session cookie instead
+    const url = new URL(request.url);
+    const tokenQuery = url.searchParams.get("token");
+    if (tokenQuery) {
+      forwardHeaders.set("Authorization", `Bearer ${tokenQuery}`);
+    } else {
+      const cookieStr = request.headers.get("Cookie") ?? "";
+      const tokenMatch = /(?:^|;\s*)token=([^;]+)/.exec(cookieStr);
+      if (tokenMatch) {
+        forwardHeaders.set("Authorization", `Bearer ${decodeURIComponent(tokenMatch[1])}`);
+      }
     }
   }
 
@@ -41,7 +47,14 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
 
   const responseHeaders = new Headers();
   const resCt = res.headers.get("Content-Type");
-  if (resCt) responseHeaders.set("Content-Type", resCt);
+  if (resCt) {
+    const cleanCt = resCt.toLowerCase().trim();
+    if (cleanCt === "video/x-matroska" || cleanCt === "video/mkv") {
+      responseHeaders.set("Content-Type", "video/webm");
+    } else {
+      responseHeaders.set("Content-Type", resCt);
+    }
+  }
 
   // Forward streaming and download headers
   for (const h of ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Disposition"]) {

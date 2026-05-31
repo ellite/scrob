@@ -16,6 +16,7 @@
     "@tailwindcss/vite": "^4.2.2",
     "@types/qrcode": "^1.5.6",
     "astro": "^6.1.2",
+    "hls.js": "^1.6.16",
     "qrcode": "^1.5.4",
     "tailwindcss": "^4.2.2"
   }

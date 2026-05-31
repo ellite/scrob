@@ -118,6 +118,7 @@ class UserSettings(BaseModel):
     preferences: Optional[dict] = None
     blur_explicit: Optional[bool] = None
     time_format_24h: Optional[bool] = None
+    use_hls_player: Optional[bool] = None
 
     class Config:
         from_attributes = True

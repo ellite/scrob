@@ -1052,6 +1052,29 @@ if (me.totp_enabled) {
         </div>
       </section>
 
+      <!-- Experimental Features -->
+      <section>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Experimental Features</h2>
+        <div class="space-y-6">
+          <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
+            <div>
+              <p class="text-sm font-semibold text-zinc-100 mb-1">HLS player <span class="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-400 bg-amber-400/10 border border-amber-400/30 rounded px-1.5 py-0.5">Experimental</span></p>
+              <p class="text-xs text-zinc-400">Use the HLS-based player for Plex and Jellyfin/Emby sources. Enables transcoding if your browser doesn't natively support the file's codecs. Disable this if playback is broken.</p>
+            </div>
+            <label class="relative inline-flex items-center shrink-0 cursor-pointer mt-0.5">
+              <input
+                type="checkbox"
+                name="use_hls_player"
+                id="use-hls-player-toggle"
+                class="sr-only peer"
+                checked={settings.use_hls_player === true}
+              />
+              <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+            </label>
+          </div>
+        </div>
+      </section>
+
       <!-- Maintenance -->
       <section>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Maintenance</h2>
@@ -3242,6 +3265,7 @@ if (me.totp_enabled) {
           'simkl_push_watched', 'simkl_push_ratings',
           'blur_explicit',
           'time_format_24h',
+          'use_hls_player',
         ] as const;
         const syncPrefs: Record<string, boolean> = {};
         for (const key of syncKeys) {
@@ -3556,6 +3580,22 @@ if (me.totp_enabled) {
         method: 'PATCH',
         headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ time_format_24h: timeFormatToggle.checked }),
+      });
+    });
+  }
+
+  // Sync use_hls_player cookie from the server-rendered value on page load.
+  const hlsPlayerToggle = document.getElementById('use-hls-player-toggle') as HTMLInputElement | null;
+  if (hlsPlayerToggle) {
+    document.cookie = `use_hls_player=${hlsPlayerToggle.checked ? 'true' : 'false'}; path=/; SameSite=Lax; Max-Age=31536000`;
+
+    hlsPlayerToggle.addEventListener('change', async () => {
+      document.cookie = `use_hls_player=${hlsPlayerToggle.checked ? 'true' : 'false'}; path=/; SameSite=Lax; Max-Age=31536000`;
+      const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
+      await fetch('/api/proxy/auth/settings', {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ use_hls_player: hlsPlayerToggle.checked }),
       });
     });
   }

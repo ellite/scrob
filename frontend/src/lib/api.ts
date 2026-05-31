@@ -415,6 +415,7 @@ export interface UserSettings {
   preferences: UserPreferences | null;
   blur_explicit: boolean;
   time_format_24h: boolean;
+  use_hls_player: boolean;
 }
 
 export interface MediaServerConnection {
@@ -1176,6 +1177,8 @@ export const api = {
       put<{ saved: number }>(`/sync/connection/${connectionId}/libraries`, body, token),
     scanLibraries: (connectionId: number, token: string) =>
       post<{ status: string; message: string }>(`/sync/connection/${connectionId}/scan`, undefined, token),
+    getSeasonOverrides: (token: string) =>
+      get<ShowSeasonOverride[]>("/sync/season-overrides", undefined, token),
   },
 
   profile: {
@@ -1229,9 +1232,5 @@ export const api = {
       post<{ status: string }>(`/admin/requests/${requestId}/approve`, undefined, token),
     rejectRequest: (requestId: number, token: string) =>
       post<{ status: string }>(`/admin/requests/${requestId}/reject`, undefined, token),
-  },
-  sync: {
-    getSeasonOverrides: (token: string) =>
-      get<ShowSeasonOverride[]>("/sync/season-overrides", undefined, token),
   },
 };
