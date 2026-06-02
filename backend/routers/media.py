@@ -3233,11 +3233,14 @@ async def get_playback_sources(
                                 codec = (stream.get("codec") or "").lower()
                                 if codec in _plex_image_codecs:
                                     continue
+                                skey = stream.get("key")
+                                if not skey:
+                                    continue
                                 lang = stream.get("languageCode") or stream.get("languageTag") or None
                                 label = stream.get("displayTitle") or stream.get("title") or lang or "Subtitle"
                                 subtitles.append({
                                     "index": stream.get("id"),
-                                    "key": stream.get("key"),
+                                    "key": skey,
                                     "language": lang,
                                     "label": label,
                                     "codec": codec,
@@ -3352,11 +3355,12 @@ async def get_subtitle(
                     "plex subtitle /library/streams/%d returned %d — trying item metadata fallback",
                     stream_index, res.status_code,
                 )
+                from core import plex as plex_core
                 item = await plex_core.get_item(conn.url, conn.token, cf.source_id)
                 fallback_key: str | None = None
                 if item:
                     for stream in item.get("Media", [{}])[0].get("Part", [{}])[0].get("Stream", []):
-                        if stream.get("streamType") == 3 and stream.get("id") == stream_index:
+                        if int(stream.get("streamType") or 0) == 3 and str(stream.get("id")) == str(stream_index):
                             fallback_key = stream.get("key")
                             break
                 if fallback_key:

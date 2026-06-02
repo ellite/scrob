@@ -1,4 +1,6 @@
 ---
+import { api } from "../lib/api";
+
 interface Props {
   tmdbId: number;
   mediaType: string; // "movie" | "episode"
@@ -10,7 +12,8 @@ interface Props {
 }
 
 const { tmdbId, mediaType, inLibrary, title, token, secondary = false, mediaId } = Astro.props;
-const useHls = Astro.cookies.get("use_hls_player")?.value === "true";
+const settings = await api.auth.getSettings(token);
+const useHls = settings.use_hls_player === true;
 ---
 
 {inLibrary && (
