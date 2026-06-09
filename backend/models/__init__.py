@@ -21,6 +21,7 @@ from .follows import Follow
 from .global_settings import GlobalSettings
 from .season_override import ShowSeasonOverride
 from .media_request import MediaRequest
+from .image_cache import ImageCache
 
 __all__ = [
     "Base",
@@ -46,4 +47,5 @@ __all__ = [
     "GlobalSettings",
     "ShowSeasonOverride",
     "MediaRequest",
+    "ImageCache",
 ]

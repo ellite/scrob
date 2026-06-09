@@ -1234,3 +1234,17 @@ export const api = {
       post<{ status: string }>(`/admin/requests/${requestId}/reject`, undefined, token),
   },
 };
+
+export function tmdbImageUrl(path: string | null | undefined, size: string = "w500"): string | null {
+  if (!path) return null;
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    const match = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
+    if (match) {
+      return `/api/proxy/media/image/${match[1]}${match[2]}`;
+    }
+    return path;
+  }
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return `/api/proxy/media/image/${size}${cleanPath}`;
+}
+

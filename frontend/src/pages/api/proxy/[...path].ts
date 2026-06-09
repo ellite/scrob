@@ -56,8 +56,8 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
     }
   }
 
-  // Forward streaming and download headers
-  for (const h of ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Disposition"]) {
+  // Forward streaming, download and caching headers
+  for (const h of ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Disposition", "Cache-Control", "ETag", "Last-Modified"]) {
     const v = res.headers.get(h);
     if (v) responseHeaders.set(h, v);
   }

@@ -1,5 +1,6 @@
 ---
 import type { MediaItem } from "../lib/api";
+import { tmdbImageUrl } from "../lib/api";
 import CardActionBar from "./CardActionBar.astro";
 
 interface Props {
@@ -38,11 +39,10 @@ const href = isPerson
               ? `/media/${item.type}/${item.tmdb_id}`
               : null;
 
-const posterPath = isEpisode && item.show_poster_path
-  ? (item.show_poster_path.startsWith('http') ? item.show_poster_path : `https://image.tmdb.org/t/p/w500${item.show_poster_path}`)
-  : item.poster_path
-    ? (item.poster_path.startsWith('http') ? item.poster_path : `https://image.tmdb.org/t/p/w500${item.poster_path}`)
-    : null;
+const posterPath = tmdbImageUrl(
+  isEpisode && item.show_poster_path ? item.show_poster_path : item.poster_path,
+  "w500"
+);
 
 const showActionBar = !isPerson && !isCollection;
 const watched = item.watched ?? false;

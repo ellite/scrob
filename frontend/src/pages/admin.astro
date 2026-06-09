@@ -275,6 +275,63 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       </form>
     </section>
 
+    <!-- ── Performance Settings ── -->
+    <section>
+      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">Performance Settings</h2>
+      <p class="text-zinc-400 text-sm mb-6">Configure media caching, limits, and system performance optimizations.</p>
+
+      <form id="performance-settings-form" class="space-y-6 bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+        <!-- Enable Caching -->
+        <label class="flex items-center justify-between gap-3 p-4 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:bg-zinc-800/40 transition-colors">
+          <div>
+            <span class="block text-sm font-semibold text-zinc-200">Enable TMDB Image Cache</span>
+            <span class="block text-xs text-zinc-500 mt-0.5">Cache poster and backdrop images locally on the server to improve load times and support offline mode.</span>
+          </div>
+          <input type="checkbox" name="image_cache_enabled" id="image_cache_enabled" value="true" class="sr-only peer" checked={globalSettings.image_cache_enabled ?? false} />
+          <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
+        </label>
+
+        <!-- Size Limit -->
+        <div class="space-y-2 max-w-md">
+          <label for="image_cache_limit_gb" class="block text-sm font-medium text-zinc-400">Image Cache Size Limit (GB)</label>
+          <input
+            type="number"
+            name="image_cache_limit_gb"
+            id="image_cache_limit_gb"
+            min="0"
+            placeholder="0 (Unlimited)"
+            value={globalSettings.image_cache_limit_gb ?? ""}
+            class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+          />
+          <p class="text-xs text-zinc-500">Set a maximum storage limit in GB. Oldest accessed images will be pruned when the limit is exceeded. Set to 0 or leave empty for unlimited.</p>
+        </div>
+
+        <!-- Cache Usage -->
+        <div id="cache-stats-widget" class="hidden p-4 bg-zinc-950 border border-zinc-800 rounded-xl space-y-2.5">
+          <div class="flex items-center justify-between gap-2">
+            <span id="cache-stats-label" class="text-sm text-zinc-400"></span>
+            <span id="cache-stats-pct" class="text-sm font-semibold text-zinc-300 shrink-0"></span>
+          </div>
+          <div id="cache-progress-wrap" class="hidden space-y-1">
+            <div class="h-2 bg-zinc-800 rounded-full overflow-hidden">
+              <div id="cache-progress-bar" class="h-full rounded-full transition-all duration-500 bg-blue-500" style="width:0%"></div>
+            </div>
+            <div class="flex justify-between text-[11px] text-zinc-600">
+              <span id="cache-used-label"></span>
+              <span id="cache-limit-label"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-2">
+          <button type="submit" id="save-performance-btn"
+            class="w-full sm:w-auto bg-zinc-100 text-zinc-950 font-bold px-8 py-3 rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50">
+            Save Performance Settings
+          </button>
+        </div>
+      </form>
+    </section>
+
     <!-- ── Users ── -->
     <section>
       <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">Users</h2>
@@ -394,6 +451,18 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           <div class="flex justify-between text-xs text-zinc-500 mt-1">
             <span id="admin-heal-job-items"></span>
           </div>
+        </div>
+
+        <!-- Clear TMDB image cache -->
+        <div class="p-6 border-t border-zinc-800 flex flex-col sm:flex-row sm:items-center gap-4">
+          <div class="flex-1">
+            <h3 class="font-semibold text-zinc-100 mb-1">Clear TMDB image cache</h3>
+            <p class="text-sm text-zinc-400">Delete all locally cached TMDB poster and backdrop files, and clear their database records. Files will be re-downloaded on-demand when requested.</p>
+          </div>
+          <button id="admin-clear-cache-btn"
+            class="shrink-0 px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            Clear Cache
+          </button>
         </div>
       </div>
     </section>
@@ -755,7 +824,6 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     body['sonarr_season_folder']      = fd.get('sonarr_season_folder') === 'true';
     body['radarr_require_approval']   = fd.get('radarr_require_approval') === 'true';
     body['sonarr_require_approval']   = fd.get('sonarr_require_approval') === 'true';
-
     const radarrTags = fd.getAll('radarr_tags').map(v => parseInt(v as string)).filter(n => !isNaN(n));
     body['radarr_tags'] = radarrTags.length ? radarrTags : null;
     const sonarrTags = fd.getAll('sonarr_tags').map(v => parseInt(v as string)).filter(n => !isNaN(n));
@@ -774,6 +842,38 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     } finally {
       btn.disabled = false;
       btn.textContent = 'Save Changes';
+    }
+  });
+
+  // ── Performance settings form ──
+  document.getElementById('performance-settings-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('save-performance-btn') as HTMLButtonElement;
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    const form = e.target as HTMLFormElement;
+    const fd = new FormData(form);
+    const body: Record<string, string | number | boolean | null> = {};
+
+    body['image_cache_enabled'] = fd.get('image_cache_enabled') === 'true';
+    const cacheLimit = ((fd.get('image_cache_limit_gb') as string) ?? '').trim();
+    body['image_cache_limit_gb'] = cacheLimit ? parseInt(cacheLimit) : null;
+
+    try {
+      const res = await fetch('/api/proxy/admin/settings', {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Failed to save');
+      showMessage('Performance settings saved successfully.');
+      loadCacheStats();
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : 'Failed to save', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Save Performance Settings';
     }
   });
 
@@ -1116,6 +1216,30 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     }
   });
 
+  const clearCacheBtn = document.getElementById('admin-clear-cache-btn') as HTMLButtonElement;
+  clearCacheBtn?.addEventListener('click', async () => {
+    if (!confirm('Are you sure you want to clear the image cache? This will delete all cached posters and backdrops.')) {
+      return;
+    }
+    clearCacheBtn.disabled = true;
+    const originalText = clearCacheBtn.textContent || 'Clear Cache';
+    clearCacheBtn.textContent = 'Clearing…';
+    try {
+      const res = await fetch('/api/proxy/admin/maintenance/clear-cache', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Failed to clear cache');
+      showMessage('Image cache cleared successfully.');
+      loadCacheStats();
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : 'Failed to clear cache', 'error');
+    } finally {
+      clearCacheBtn.disabled = false;
+      clearCacheBtn.textContent = originalText;
+    }
+  });
+
   document.getElementById('users-table-body')!.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
     if (target.closest('.copy-api-key-btn')) return;
@@ -1155,4 +1279,53 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       openDeleteModal(userId, username, mainRow, target.closest('.delete-user-btn') as HTMLButtonElement, isSelf);
     }
   });
+
+  // ── Cache stats widget ──
+  function formatBytes(bytes: number): string {
+    if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(2)} GB`;
+    if (bytes >= 1048576)    return `${(bytes / 1048576).toFixed(1)} MB`;
+    if (bytes >= 1024)       return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${bytes} B`;
+  }
+
+  async function loadCacheStats() {
+    try {
+      const res = await fetch('/api/proxy/admin/maintenance/cache-stats', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const widget      = document.getElementById('cache-stats-widget')!;
+      const label       = document.getElementById('cache-stats-label')!;
+      const pctEl       = document.getElementById('cache-stats-pct')!;
+      const progressWrap = document.getElementById('cache-progress-wrap')!;
+      const progressBar = document.getElementById('cache-progress-bar') as HTMLElement;
+      const usedLabel   = document.getElementById('cache-used-label')!;
+      const limitLabel  = document.getElementById('cache-limit-label')!;
+
+      const usedStr = formatBytes(data.total_size_bytes);
+      const count: number = data.entry_count;
+      label.textContent = `${usedStr} used · ${count.toLocaleString()} image${count !== 1 ? 's' : ''} cached`;
+      widget.classList.remove('hidden');
+
+      if (data.limit_gb && data.limit_gb > 0) {
+        const limitBytes = data.limit_gb * 1073741824;
+        const pct = Math.min(100, (data.total_size_bytes / limitBytes) * 100);
+        pctEl.textContent = `${pct.toFixed(1)}%`;
+        progressWrap.classList.remove('hidden');
+        progressBar.style.width = `${pct}%`;
+        progressBar.className = `h-full rounded-full transition-all duration-500 ${
+          pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : 'bg-blue-500'
+        }`;
+        usedLabel.textContent = usedStr;
+        limitLabel.textContent = `${data.limit_gb} GB limit`;
+      } else {
+        pctEl.textContent = '';
+        progressWrap.classList.add('hidden');
+      }
+    } catch { /* stats are non-critical */ }
+  }
+
+  loadCacheStats();
 </script>

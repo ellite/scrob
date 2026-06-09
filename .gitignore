@@ -66,6 +66,7 @@ frontend/frontend.log
 
 # --- Common AI files ---
 backend/data/avatars/
+backend/data/image_cache/
 GEMINI.md
 CLAUDE.md
 AGENTS.md

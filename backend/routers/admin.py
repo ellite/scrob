@@ -169,6 +169,33 @@ async def backup_database(_: User = Depends(require_admin)):
         await conn.close()
 
 
+@router.get("/maintenance/cache-stats")
+async def get_cache_stats(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    from models.image_cache import ImageCache
+    total_size = (await db.execute(select(func.sum(ImageCache.file_size)))).scalar() or 0
+    count = (await db.execute(select(func.count(ImageCache.id)))).scalar() or 0
+    gs = (await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))).scalar_one_or_none()
+    return {
+        "total_size_bytes": total_size,
+        "entry_count": count,
+        "limit_gb": gs.image_cache_limit_gb if gs else None,
+    }
+
+
+@router.post("/maintenance/clear-cache")
+async def admin_clear_cache(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Delete all cached TMDB images on disk and clear their database records."""
+    from core.image_cache import clear_image_cache
+    await clear_image_cache(db)
+    return {"status": "success", "message": "Image cache cleared successfully"}
+
+
 @router.post("/maintenance/heal")
 async def admin_heal_metadata(
     background_tasks: BackgroundTasks,

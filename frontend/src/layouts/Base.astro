@@ -448,6 +448,16 @@ const bottomNavItem = (active: boolean) =>
         .replace(/"/g, '&quot;');
     }
 
+    function tmdbImageUrl(path, size = 'w500') {
+      if (!path) return null;
+      if (path.startsWith('http://') || path.startsWith('https://')) {
+        const m = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
+        if (m) return `/api/proxy/media/image/${m[1]}${m[2]}`;
+        return path;
+      }
+      return `/api/proxy/media/image/${size}${path.startsWith('/') ? path : '/' + path}`;
+    }
+
     function calcLivePct(progressSeconds, updatedAt, runtime, playing) {
       if (!runtime || runtime <= 0) return 0;
       const runtimeSeconds = runtime * 60;
@@ -495,9 +505,7 @@ const bottomNavItem = (active: boolean) =>
           : `<span class="relative shrink-0 flex w-2 h-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full ${dotColor} opacity-75"></span><span class="relative inline-flex rounded-full w-2 h-2 ${dotColor}"></span></span>`;
 
         const rawPoster = isEpisode ? (m.show_poster_path ?? m.poster_path) : m.poster_path;
-        const posterUrl = rawPoster
-          ? (rawPoster.startsWith('http') ? rawPoster : `https://image.tmdb.org/t/p/w185${rawPoster}`)
-          : null;
+        const posterUrl = tmdbImageUrl(rawPoster, 'w185');
 
         return `<div class="relative group border-b border-zinc-800/50 last:border-0">
             <div class="absolute inset-0 bg-zinc-900"></div>

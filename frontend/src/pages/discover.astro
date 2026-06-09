@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import { api } from "../lib/api";
+import { api, tmdbImageUrl } from "../lib/api";
 export const prerender = false;
 
 const { token } = Astro.locals;
@@ -39,7 +39,7 @@ if (canPick) {
     if (pool.length > 0) {
       const pick = pool[Math.floor(Math.random() * pool.length)];
       const bp = pick.backdrop_path as string;
-      luckyBackdropUrl = bp.startsWith('http') ? bp : `https://image.tmdb.org/t/p/w1280${bp}`;
+      luckyBackdropUrl = tmdbImageUrl(bp, "w1280");
     }
   } catch { /* no backdrop, fallback to gradient */ }
 }

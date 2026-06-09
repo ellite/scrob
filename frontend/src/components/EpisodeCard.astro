@@ -1,5 +1,6 @@
 ---
 import type { MediaItem } from "../lib/api";
+import { tmdbImageUrl } from "../lib/api";
 import CardActionBar from "./CardActionBar.astro";
 
 interface Props {
@@ -34,11 +35,7 @@ const href =
 const rawImage = isSeries
   ? (item.backdrop_path ?? item.poster_path)
   : (item.poster_path ?? item.show_backdrop_path ?? item.show_poster_path);
-const imageUrl = rawImage
-  ? rawImage.startsWith("http")
-    ? rawImage
-    : `https://image.tmdb.org/t/p/w780${rawImage}`
-  : null;
+const imageUrl = tmdbImageUrl(rawImage, "w780");
 
 const watched = item.watched ?? false;
 const inLists = item.in_lists ?? [];

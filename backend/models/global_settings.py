@@ -26,3 +26,5 @@ class GlobalSettings(Base):
     radarr_require_approval      : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
     sonarr_require_approval      : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
     tvdb_api_key                 : Mapped[Optional[str]] = mapped_column(String(255))
+    image_cache_enabled          : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
+    image_cache_limit_gb         : Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

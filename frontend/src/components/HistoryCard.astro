@@ -1,5 +1,6 @@
 ---
 import type { WatchEvent } from "../lib/api";
+import { tmdbImageUrl } from "../lib/api";
 
 interface Props {
   event: WatchEvent;
@@ -17,9 +18,7 @@ const showOrMovieTitle = isEpisode ? (media.show_title || media.title) : media.t
 const year = media.release_date?.slice(0, 4);
 
 const rawPoster = isEpisode ? (media.show_poster_path || media.poster_path) : media.poster_path;
-const posterPath = rawPoster
-  ? (rawPoster.startsWith('http') ? rawPoster : `https://image.tmdb.org/t/p/w500${rawPoster}`)
-  : null;
+const posterPath = tmdbImageUrl(rawPoster, "w500");
 
 const href = isEpisode
   ? media.show_tmdb_id

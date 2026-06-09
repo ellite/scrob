@@ -304,6 +304,8 @@ class GlobalSettings(BaseModel):
     sonarr_season_folder        : bool = True
     radarr_require_approval     : bool = False
     sonarr_require_approval     : bool = False
+    image_cache_enabled         : bool = False
+    image_cache_limit_gb        : Optional[int] = None
 
     class Config:
         from_attributes = True

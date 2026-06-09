@@ -26,6 +26,7 @@ from models.global_settings import GlobalSettings
 from core import jellyfin, emby, plex, tmdb
 import core.trakt as trakt_client
 from core.enrichment import enrich_media
+from core.image_cache import pre_cache_all_collected_bg
 
 from dependencies import get_current_user
 
@@ -1104,6 +1105,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
+            asyncio.create_task(pre_cache_all_collected_bg())
         except Exception as e:
             print(f"Jellyfin sync job {job_id} failed: {e}")
             import traceback
@@ -1292,6 +1294,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
+            asyncio.create_task(pre_cache_all_collected_bg())
         except Exception as e:
             print(f"Emby sync job {job_id} failed: {e}")
             import traceback
@@ -1591,6 +1594,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
+            asyncio.create_task(pre_cache_all_collected_bg())
         except Exception as e:
             print(f"Plex sync job {job_id} failed: {e}")
             import traceback
@@ -2293,6 +2297,7 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
                 print(f"Heal: recovered {recovered}/{len(seen)} orphaned episode(s) for user {user_id}")
 
             await _update_job(status=SyncStatus.completed, stats={"healed": True})
+            asyncio.create_task(pre_cache_all_collected_bg())
 
         except Exception as e:
             print(f"Heal failed for user {user_id}: {e}")

@@ -295,6 +295,16 @@ Astro.response.headers.set("Cache-Control", "no-store");
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
   }
+
+  function tmdbImageUrl(path, size = 'w500') {
+    if (!path) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      const m = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
+      if (m) return `/api/proxy/media/image/${m[1]}${m[2]}`;
+      return path;
+    }
+    return `/api/proxy/media/image/${size}${path.startsWith('/') ? path : '/' + path}`;
+  }
   // --- Edit list ---
   const editModal = document.getElementById('edit-modal');
   const editForm = document.getElementById('edit-form');
@@ -492,9 +502,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
       searchResults.classList.remove('hidden');
 
       items.slice(0, 12).forEach(item => {
-        const poster = item.poster_path
-          ? (item.poster_path.startsWith('http') ? item.poster_path : `https://image.tmdb.org/t/p/w300${item.poster_path}`)
-          : null;
+        const poster = tmdbImageUrl(item.poster_path, 'w300');
         const year = item.release_date?.slice(0, 4) || '';
         const isPerson = item.type === 'person';
         const rating = item.tmdb_rating ? Number(item.tmdb_rating).toFixed(1) : '';
@@ -538,9 +546,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
       ? `/person/${media.tmdb_id}`
       : `/media/${media.type}/${media.tmdb_id}`;
 
-    const poster = media.poster_path
-      ? (media.poster_path.startsWith('http') ? media.poster_path : `https://image.tmdb.org/t/p/w500${media.poster_path}`)
-      : null;
+    const poster = tmdbImageUrl(media.poster_path, 'w500');
 
     const rating = media.tmdb_rating ? Number(media.tmdb_rating).toFixed(1) : null;
     const year = media.release_date?.slice(0, 4) ?? '';

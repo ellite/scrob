@@ -1,5 +1,6 @@
 ---
 import type { ContinueWatchingItem } from "../lib/api";
+import { tmdbImageUrl } from "../lib/api";
 
 interface Props {
   item: ContinueWatchingItem;
@@ -17,16 +18,10 @@ const sxe =
 const progressPct =
   progress_percent != null ? Math.round(progress_percent * 100) : 0;
 
-const posterSrc =
-  isEpisode && media.show_poster_path
-    ? media.show_poster_path.startsWith("http")
-      ? media.show_poster_path
-      : `https://image.tmdb.org/t/p/w500${media.show_poster_path}`
-    : media.poster_path
-      ? media.poster_path.startsWith("http")
-        ? media.poster_path
-        : `https://image.tmdb.org/t/p/w500${media.poster_path}`
-      : null;
+const posterSrc = tmdbImageUrl(
+  isEpisode && media.show_poster_path ? media.show_poster_path : media.poster_path,
+  "w500"
+);
 
 const href =
   isEpisode && media.show_tmdb_id && media.season_number != null && media.episode_number != null

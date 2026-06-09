@@ -1,7 +1,7 @@
 ---
 import Base from "../../layouts/Base.astro";
 import ListCard from "../../components/ListCard.astro";
-import { api, type PublicProfile, type ProfileListItem, type ProfileFollowEntry } from "../../lib/api";
+import { api, type PublicProfile, type ProfileListItem, type ProfileFollowEntry, tmdbImageUrl } from "../../lib/api";
 
 export const prerender = false;
 
@@ -42,17 +42,13 @@ const headerBackdropPath = backdropPool.length > 0
   : null;
 
 function backdropUrl(path: string | null): string | null {
-  if (!path) return null;
-  if (path.startsWith("http")) return path;
-  return `https://image.tmdb.org/t/p/w1280${path}`;
+  return tmdbImageUrl(path, "w1280");
 }
 
 const headerBg = backdropUrl(headerBackdropPath);
 
 function posterUrl(path: string | null, size = "w342"): string | null {
-  if (!path) return null;
-  if (path.startsWith("http")) return path;
-  return `https://image.tmdb.org/t/p/${size}${path}`;
+  return tmdbImageUrl(path, size);
 }
 
 function mediaUrl(type: string, tmdbId: number): string {

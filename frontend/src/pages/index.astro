@@ -4,7 +4,7 @@ import MediaRow from "../components/MediaRow.astro";
 import MediaCard from "../components/MediaCard.astro";
 import EpisodeCard from "../components/EpisodeCard.astro";
 import ContinueWatchingCard from "../components/ContinueWatchingCard.astro";
-import { api, type ContinueWatchingItem, type MediaItem } from "../lib/api";
+import { api, type ContinueWatchingItem, type MediaItem, tmdbImageUrl } from "../lib/api";
 
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -64,9 +64,7 @@ const discoverPick = backdropPool.length > 0
   ? backdropPool[Math.floor(Math.random() * backdropPool.length)]
   : null;
 const discoverBackdropUrl = discoverPick?.backdrop_path
-  ? (discoverPick.backdrop_path.startsWith("http")
-      ? discoverPick.backdrop_path
-      : `https://image.tmdb.org/t/p/w1280${discoverPick.backdrop_path}`)
+  ? tmdbImageUrl(discoverPick.backdrop_path, "w1280")
   : FALLBACK_BACKDROPS[Math.floor(Math.random() * FALLBACK_BACKDROPS.length)];
 ---
 
@@ -98,9 +96,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       ? `S${hero.season_number} E${hero.episode_number}`
       : null;
     const rawBackdrop = hero.backdrop_path || hero.show_backdrop_path;
-    const heroBackdrop = rawBackdrop
-      ? (rawBackdrop.startsWith('http') ? rawBackdrop : `https://image.tmdb.org/t/p/w1280${rawBackdrop}`)
-      : null;
+    const heroBackdrop = tmdbImageUrl(rawBackdrop, "w1280");
     return (
       <section class="relative md:-mt-8 mb-16">
         <div class="absolute top-0 left-1/2 -translate-x-1/2 w-screen overflow-hidden pointer-events-none" style="height: 100%;">
@@ -296,6 +292,16 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
             .replace(/"/g, '&quot;');
         }
 
+  function tmdbImageUrl(path, size = 'w500') {
+    if (!path) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      const m = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
+      if (m) return `/api/proxy/media/image/${m[1]}${m[2]}`;
+      return path;
+    }
+    return `/api/proxy/media/image/${size}${path.startsWith('/') ? path : '/' + path}`;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
 
         function mediaCardHtml(item) {
@@ -306,9 +312,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
           const year = item.release_date ? item.release_date.slice(0, 4) : null;
           const rating = item.tmdb_rating ? Number(item.tmdb_rating).toFixed(1) : null;
           const raw = item.poster_path;
-          const posterUrl = raw
-            ? (raw.startsWith('http') ? raw : `https://image.tmdb.org/t/p/w500${raw}`)
-            : null;
+          const posterUrl = tmdbImageUrl(raw, 'w500');
           const typeLabel = isSeries ? 'Show' : 'Movie';
           const watched = item.watched ?? false;
           const inLists = item.in_lists ?? [];
@@ -392,9 +396,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
                 ? `/show/${item.tmdb_id}`
                 : `/media/${item.type}/${item.tmdb_id}`;
           const raw = isSeries ? (item.backdrop_path ?? item.poster_path) : item.poster_path;
-          const imageUrl = raw
-            ? (raw.startsWith('http') ? raw : `https://image.tmdb.org/t/p/w780${raw}`)
-            : null;
+          const imageUrl = tmdbImageUrl(raw, 'w780');
           const sxe = item.season_number != null && item.episode_number != null
             ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`
             : null;

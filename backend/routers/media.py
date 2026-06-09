@@ -4574,3 +4574,77 @@ async def pick_for_me(
 
     pick["sources"] = sources
     return pick
+
+
+from fastapi.responses import FileResponse, RedirectResponse
+from jose import jwt, JWTError
+from core.security import ALGORITHM
+from core.config import settings
+
+async def verify_image_token(request: Request) -> int:
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    token = None
+    auth = request.headers.get("Authorization")
+    if auth and auth.startswith("Bearer "):
+        token = auth.split(" ")[1]
+    else:
+        token = request.query_params.get("token")
+        if not token:
+            cookie_str = request.headers.get("Cookie") or ""
+            match = re.search(r"(?:^|;\s*)token=([^;]+)", cookie_str)
+            if match:
+                token = urllib.parse.unquote(match.group(1))
+
+    if not token:
+        raise credentials_exception
+
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        if payload.get("type") == "2fa_pending":
+            raise credentials_exception
+        user_id: int = int(payload.get("sub"))
+        return user_id
+    except (JWTError, ValueError):
+        raise credentials_exception
+
+
+@router.get("/image/{size}/{path:path}")
+async def serve_image(
+    size: str,
+    path: str,
+    db: AsyncSession = Depends(get_db),
+    _: int = Depends(verify_image_token),
+):
+    if not path.startswith("/"):
+        path = "/" + path
+
+    # Check settings
+    settings_stmt = select(GlobalSettings).where(GlobalSettings.id == 1)
+    gs = (await db.execute(settings_stmt)).scalar_one_or_none()
+
+    if not gs or not gs.image_cache_enabled:
+        return RedirectResponse(f"https://image.tmdb.org/t/p/{size}{path}")
+
+    from core.image_cache import ALLOWED_SIZES, download_and_cache_image, prune_cache_bg
+    if size not in ALLOWED_SIZES:
+        raise HTTPException(status_code=400, detail="Invalid image size")
+    if ".." in path:
+        raise HTTPException(status_code=400, detail="Invalid image path")
+
+    local_path_str = await download_and_cache_image(db, size, path)
+    if not local_path_str:
+        return RedirectResponse(f"https://image.tmdb.org/t/p/{size}{path}")
+
+    # Eviction pruning check in background
+    bg_tasks = BackgroundTask(prune_cache_bg, limit_gb=gs.image_cache_limit_gb)
+
+    return FileResponse(
+        local_path_str,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        background=bg_tasks,
+    )
+
