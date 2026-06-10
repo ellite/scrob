@@ -4208,20 +4208,13 @@ async def get_media_details(
             for c in data.get("production_companies", [])
         ]
 
-        # Gather: collection fetch + state enrichment + where-to-watch in parallel
         state_item: dict = {"tmdb_id": tmdb_id, "type": type.value}
         raw_coll = data.get("belongs_to_collection") if type == MediaType.movie else None
 
-        gather_coros = [
-            enrich_with_state(db, current_user.id, [state_item]),
-            get_where_to_watch(db, current_user.id, tmdb_id, MediaType.movie, media=media, tmdb_key=tmdb_key),
-        ]
-        if raw_coll:
-            gather_coros.append(tmdb.get_collection(raw_coll["id"], api_key=tmdb_key))
-
-        gather_results = await asyncio.gather(*gather_coros)
-        where_to_watch = gather_results[1]
-        coll_data = gather_results[2] if raw_coll else None
+        # DB operations must run sequentially — async session doesn't support concurrent use
+        await enrich_with_state(db, current_user.id, [state_item])
+        where_to_watch = await get_where_to_watch(db, current_user.id, tmdb_id, MediaType.movie, media=media, tmdb_key=tmdb_key)
+        coll_data = await tmdb.get_collection(raw_coll["id"], api_key=tmdb_key) if raw_coll else None
 
         collection = None
         if coll_data:
