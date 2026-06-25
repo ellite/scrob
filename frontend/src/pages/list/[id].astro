@@ -30,6 +30,12 @@ if (!list && !error) {
 }
 
 Astro.response.headers.set("Cache-Control", "no-store");
+
+const origin = Astro.url.origin;
+const hasMovies = list ? list.items.some(i => i.media.type === "movie") : false;
+const hasShows = list ? list.items.some(i => i.media.type === "series") : false;
+const radarrUrl = `${origin}/api/proxy/radarr-compat/${list?.id}/api/v3/movie`;
+const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}/api/v3/series`;
 ---
 
 <Base title={list?.name || "List"}>
@@ -165,6 +171,55 @@ Astro.response.headers.set("Cache-Control", "no-store");
           </form>
         </div>
       </div>
+
+      <!-- Radarr / Sonarr import (owner only) -->
+      {list.is_owner && (hasMovies || hasShows) && (
+        <details class="mb-6 group bg-zinc-900/40 border border-zinc-800/60 rounded-2xl">
+          <summary class="flex items-center justify-between px-5 py-4 cursor-pointer list-none select-none">
+            <div class="flex items-center gap-2.5">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-400">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+              </svg>
+              <span class="text-sm font-black text-zinc-400 uppercase tracking-widest">Import into Radarr / Sonarr</span>
+            </div>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-500 transition-transform group-open:rotate-180">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+          </summary>
+
+          <div class="px-5 pb-5 pt-1 space-y-4 border-t border-zinc-800/60 mt-0">
+            <p class="text-xs text-zinc-500 pt-3">
+              In Radarr / Sonarr → Settings → Import Lists → Add → choose <strong class="text-zinc-400">Radarr</strong> or <strong class="text-zinc-400">Sonarr</strong> as the list type. Paste the URL below as the <strong class="text-zinc-400">Base URL</strong> and your Scrob API key (from <a href="/user-settings" class="text-blue-400 hover:underline">User Settings</a>) as the <strong class="text-zinc-400">API Key</strong>.
+            </p>
+
+            {hasMovies && (
+              <div>
+                <p class="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1.5">Radarr — movies</p>
+                <div class="flex items-center gap-2">
+                  <code class="flex-1 text-xs bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-zinc-300 truncate font-mono">{radarrUrl}</code>
+                  <button
+                    class="copy-btn shrink-0 px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                    data-url={radarrUrl}
+                  >Copy</button>
+                </div>
+              </div>
+            )}
+
+            {hasShows && (
+              <div>
+                <p class="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1.5">Sonarr — shows</p>
+                <div class="flex items-center gap-2">
+                  <code class="flex-1 text-xs bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-zinc-300 truncate font-mono">{sonarrUrl}</code>
+                  <button
+                    class="copy-btn shrink-0 px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                    data-url={sonarrUrl}
+                  >Copy</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </details>
+      )}
 
       <!-- Add Items Search (owner only) -->
       {list.is_owner && (
@@ -720,4 +775,18 @@ Astro.response.headers.set("Cache-Control", "no-store");
       btn.disabled = false;
     }
   }
+
+  // Copy buttons for Radarr/Sonarr import URLs
+  document.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const url = btn.getAttribute('data-url');
+      if (!url) return;
+      try {
+        await navigator.clipboard.writeText(url);
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+      } catch {}
+    });
+  });
 </script>

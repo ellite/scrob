@@ -36,6 +36,10 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
   const range = request.headers.get("Range");
   if (range) forwardHeaders.set("Range", range);
 
+  // Forward API key for Radarr/Sonarr import list compat endpoints
+  const apiKey = request.headers.get("X-Api-Key");
+  if (apiKey) forwardHeaders.set("X-Api-Key", apiKey);
+
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const body = hasBody ? await request.arrayBuffer() : undefined;
 
