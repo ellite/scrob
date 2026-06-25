@@ -238,3 +238,61 @@ async def remove_show_rating(client_id: str, access_token: str, tmdb_id: int) ->
             headers=_headers(client_id, access_token),
         )
         resp.raise_for_status()
+
+
+async def checkin_movie(
+    client_id: str,
+    access_token: str,
+    tmdb_id: int,
+    title: Optional[str] = None,
+    year: Optional[int] = None,
+) -> None:
+    """Check into a movie on Simkl (now watching)."""
+    movie: dict = {"ids": {"tmdb": tmdb_id}}
+    if title:
+        movie["title"] = title
+    if year:
+        movie["year"] = year
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{SIMKL_BASE}/checkin",
+            json={"movie": movie},
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
+
+
+async def checkin_episode(
+    client_id: str,
+    access_token: str,
+    show_tmdb_id: int,
+    season_number: int,
+    episode_number: int,
+    show_title: Optional[str] = None,
+) -> None:
+    """Check into a TV episode on Simkl (now watching)."""
+    show: dict = {"ids": {"tmdb": show_tmdb_id}}
+    if show_title:
+        show["title"] = show_title
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{SIMKL_BASE}/checkin",
+            json={
+                "show": show,
+                "episode": {"season": season_number, "episode": episode_number},
+            },
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
+
+
+async def delete_checkin(client_id: str, access_token: str) -> None:
+    """Delete the current Simkl checkin (stopped watching).
+    Simkl returns 400 when there is no active checkin; treat that as a no-op."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.delete(
+            f"{SIMKL_BASE}/checkin",
+            headers=_headers(client_id, access_token),
+        )
+        if resp.status_code not in (400, 404):
+            resp.raise_for_status()

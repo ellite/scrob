@@ -449,3 +449,69 @@ async def remove_show_rating(client_id: str, access_token: str, tmdb_id: int) ->
             headers=_headers(client_id, access_token),
         )
         resp.raise_for_status()
+
+
+async def scrobble_movie(
+    client_id: str,
+    access_token: str,
+    action: str,
+    tmdb_id: int,
+    progress: float,
+    title: Optional[str] = None,
+    year: Optional[int] = None,
+) -> None:
+    """Scrobble a movie to Trakt. action is 'start', 'pause', or 'stop'."""
+    body: dict = {
+        "movie": {"ids": {"tmdb": tmdb_id}},
+        "progress": round(min(100.0, max(0.0, progress)), 1),
+    }
+    if title:
+        body["movie"]["title"] = title
+    if year:
+        body["movie"]["year"] = year
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{TRAKT_BASE}/scrobble/{action}",
+            json=body,
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
+
+
+async def scrobble_episode(
+    client_id: str,
+    access_token: str,
+    action: str,
+    season_number: int,
+    episode_number: int,
+    progress: float,
+    show_tmdb_id: Optional[int] = None,
+    show_title: Optional[str] = None,
+    episode_tmdb_id: Optional[int] = None,
+) -> None:
+    """Scrobble an episode to Trakt. action is 'start', 'pause', or 'stop'."""
+    episode_ids: dict = {}
+    if episode_tmdb_id:
+        episode_ids["tmdb"] = episode_tmdb_id
+    body: dict = {
+        "episode": {
+            "season": season_number,
+            "number": episode_number,
+            **({"ids": episode_ids} if episode_ids else {}),
+        },
+        "progress": round(min(100.0, max(0.0, progress)), 1),
+    }
+    show_payload: dict = {}
+    if show_tmdb_id:
+        show_payload["ids"] = {"tmdb": show_tmdb_id}
+    if show_title:
+        show_payload["title"] = show_title
+    if show_payload:
+        body["show"] = show_payload
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{TRAKT_BASE}/scrobble/{action}",
+            json=body,
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()

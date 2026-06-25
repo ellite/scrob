@@ -403,6 +403,7 @@ export interface UserSettings {
   trakt_push_watched: boolean;
   trakt_push_ratings: boolean;
   trakt_push_lists: boolean;
+  trakt_scrobble: boolean;
 
   // Simkl
   simkl_client_id: string | null;
@@ -412,6 +413,7 @@ export interface UserSettings {
   simkl_sync_lists: boolean;
   simkl_push_watched: boolean;
   simkl_push_ratings: boolean;
+  simkl_scrobble: boolean;
 
   preferences: UserPreferences | null;
   blur_explicit: boolean;

@@ -82,6 +82,7 @@ class UserSettings(Base):
     # Trakt outbound push flags (Scrob → Trakt)
     trakt_push_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     trakt_push_ratings       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    trakt_scrobble           : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # Trakt list import/export
     trakt_sync_lists         : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
@@ -106,6 +107,7 @@ class UserSettings(Base):
     # Simkl outbound push flags (Scrob → Simkl)
     simkl_push_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     simkl_push_ratings       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    simkl_scrobble           : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     preferences    : Mapped[Optional[dict]] = mapped_column(JSONB)
     blur_explicit   : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")

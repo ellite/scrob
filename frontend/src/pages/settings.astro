@@ -717,6 +717,12 @@ if (me.totp_enabled) {
                             <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
                           </label>
                         ))}
+                        <label class="flex items-center gap-3 cursor-pointer group">
+                          <input type="checkbox" name="trakt_scrobble" id="trakt_scrobble" checked={!!settings.trakt_scrobble} class="sync-pref-checkbox w-4 h-4 rounded accent-red-500 cursor-pointer" />
+                          <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">
+                            Now watching <span class="text-zinc-500 text-xs">(live scrobble on play/pause/stop)</span>
+                          </span>
+                        </label>
                         <button
                           type="button"
                           data-action="push_trakt"
@@ -827,6 +833,12 @@ if (me.totp_enabled) {
                             <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
                           </label>
                         ))}
+                        <label class="flex items-center gap-3 cursor-pointer group">
+                          <input type="checkbox" name="simkl_scrobble" id="simkl_scrobble" checked={!!settings.simkl_scrobble} class="sync-pref-checkbox w-4 h-4 rounded accent-teal-500 cursor-pointer" />
+                          <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">
+                            Now watching <span class="text-zinc-500 text-xs">(live checkin on play/stop)</span>
+                          </span>
+                        </label>
                         <button
                           type="button"
                           data-action="push_simkl"
@@ -3328,9 +3340,9 @@ if (me.totp_enabled) {
         // Collect boolean checkboxes (Trakt + Simkl sync prefs + app preferences)
         const syncKeys = [
           'trakt_sync_watched', 'trakt_sync_ratings', 'trakt_sync_lists', 'trakt_watchlist_split',
-          'trakt_push_watched', 'trakt_push_ratings', 'trakt_push_lists',
+          'trakt_push_watched', 'trakt_push_ratings', 'trakt_push_lists', 'trakt_scrobble',
           'simkl_sync_watched', 'simkl_sync_ratings', 'simkl_sync_lists',
-          'simkl_push_watched', 'simkl_push_ratings',
+          'simkl_push_watched', 'simkl_push_ratings', 'simkl_scrobble',
           'blur_explicit',
           'time_format_24h',
           'use_hls_player',

@@ -105,6 +105,7 @@ class UserSettings(BaseModel):
     trakt_push_watched: Optional[bool] = None
     trakt_push_ratings: Optional[bool] = None
     trakt_push_lists: Optional[bool] = None
+    trakt_scrobble: Optional[bool] = None
 
     # Simkl — client_id only (PIN flow, no secret); OAuth token managed via /simkl/* endpoints
     simkl_client_id: Optional[str] = None
@@ -114,6 +115,7 @@ class UserSettings(BaseModel):
     simkl_sync_lists: Optional[bool] = None
     simkl_push_watched: Optional[bool] = None
     simkl_push_ratings: Optional[bool] = None
+    simkl_scrobble: Optional[bool] = None
 
     preferences: Optional[dict] = None
     blur_explicit: Optional[bool] = None
