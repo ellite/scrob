@@ -15,7 +15,7 @@ ARG APP_VERSION=dev
 ENV APP_VERSION=${APP_VERSION}
 ENV TZ=UTC
 
-# Install Node.js 22, supervisord, gosu and tzdata
+# Install Node.js 22, supervisord, gosu, curl and tzdata
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     curl \
     gosu \
@@ -23,8 +23,6 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     tzdata \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && apt-get purge -y curl \
-    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -51,5 +49,9 @@ COPY supervisord.conf /etc/supervisor/conf.d/scrob.conf
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 7330
+
+# Requires Docker Engine 25+ for --start-interval
+HEALTHCHECK --interval=2m --timeout=2s --start-period=20s --start-interval=5s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:${BACKEND_PORT:-7331}/health || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

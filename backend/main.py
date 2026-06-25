@@ -320,4 +320,11 @@ app.include_router(admin.router, prefix="/admin", tags=["admin"])
 
 @app.get("/health")
 async def health():
+    from sqlalchemy import text
+    from fastapi.responses import JSONResponse
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "error", "app": "Scrob"})
     return {"status": "ok", "app": "Scrob"}
