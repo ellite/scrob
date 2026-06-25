@@ -1814,7 +1814,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, api_key: str)
         progress_percent = data["progress_percent"] or (session.progress_percent if session else 0.0)
         progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
         completed = data.get("ended") or progress_percent >= 0.90
-        if progress_percent > 0.05:
+        if completed or progress_percent > 0.05:
             await _write_watch_event(db, user.id, media.id, progress_percent, progress_seconds, completed)
         await db.commit()
 
