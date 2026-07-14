@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,7 +31,7 @@ class MediaServerConnection(Base):
     push_ratings     : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # Auto sync interval in hours (null = disabled)
-    auto_sync_interval : Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    auto_sync_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Plex watchlist → Radarr/Sonarr auto-request (Plex connections only)
     watchlist_to_radarr       : Mapped[bool]           = mapped_column(Boolean, nullable=False, default=False, server_default="false")

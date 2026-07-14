@@ -19,6 +19,7 @@ class CollectionSource(str, enum.Enum):
     jellyfin = "jellyfin"
     emby     = "emby"
     plex     = "plex"
+    nuvio    = "nuvio"
     trakt    = "trakt"
     simkl    = "simkl"
     manual   = "manual"

@@ -433,7 +433,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <div class="p-6 flex flex-col sm:flex-row sm:items-center gap-4">
           <div class="flex-1">
             <h3 class="font-semibold text-zinc-100 mb-1">Heal missing metadata</h3>
-            <p class="text-sm text-zinc-400">Re-enrich all items across every user's collection that are missing poster or date metadata. Requires a global TMDB API key to be set.</p>
+            <p class="text-sm text-zinc-400">Re-enrich all items across every user's collection that are missing poster or date metadata. Requires a global TMDB Read Access Token to be set.</p>
           </div>
           <button id="admin-heal-btn"
             class="shrink-0 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">

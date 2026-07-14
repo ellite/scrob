@@ -13,7 +13,7 @@
 
 ---
 
-Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks your watch history, ratings, and personal lists, and lets you push your activity back to your media server - all from a clean, app-like web interface that installs as a PWA on any device.
+Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, and **Nuvio**, tracks your watch history, ratings, and personal lists, and can push watched activity back to connected providers - all from a clean, app-like web interface that installs as a PWA on any device.
 
 ## Table of Contents
 
@@ -40,8 +40,8 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks you
 
 ## Features
 
-- **Multi-source sync**: Import your full library, watch history, and ratings from Jellyfin, Plex, and Emby. Incremental syncs keep everything up to date.
-- **Keep all servers in sync**: Keep your watched status in sync between all your servers. Supports multiple instances.
+- **Multi-source sync**: Import libraries and watch history from Jellyfin, Plex, Emby, and Nuvio. Nuvio also imports playback progress for Continue Watching.
+- **Keep providers in sync**: Keep watched status synchronized between your media servers and Nuvio. Supports multiple instances and Nuvio profiles.
 - **Real-time scrobbling**: Webhooks from Jellyfin, Plex, Emby, and Kodi update your watch state as you play - no manual sync needed.
 - **Manual scrobble**: Start a watching session directly from any movie or episode page. Pause, resume, stop, or mark as watched - session progress shows live on the home screen.
 - **Trakt integration**: Sync your watched history and ratings from Trakt, and push Scrob activity back to Trakt automatically.
@@ -111,7 +111,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks you
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
-- A [TMDB API key](https://www.themoviedb.org/settings/api) (free) - used for metadata, search, and images
+- A [TMDB Read Access Token](https://www.themoviedb.org/settings/api) (free) - used for metadata, search, and images
 
 ### Docker Compose
 
@@ -249,8 +249,10 @@ docker run -d \
 ### First Setup
 
 1. Open `http://localhost:7330` and create your account.
-2. Go to **Settings → Integrations** to add your TMDB API key and connect Jellyfin, Plex, or Emby.
-3. Select which libraries to sync, then trigger your first sync from **Settings → Sync**.
+2. Go to **Settings → Integrations** to add your TMDB Read Access Token and connect Jellyfin, Plex, Emby, or Nuvio.
+3. Select which media-server libraries to sync, or select a Nuvio profile, then trigger your first sync.
+
+For Nuvio, choose **Nuvio** as the provider, sign in with your Nuvio email and password, and select one of the returned profiles. Scrob exchanges the password for a refresh token and does not store the password. **Sync now** pulls the profile's library, watch history, and playback progress through Nuvio's public sync API; **Auto Pull** repeats that sync at the selected interval.
 
 ### Updating
 

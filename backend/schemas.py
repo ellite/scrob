@@ -126,6 +126,18 @@ class UserSettings(BaseModel):
         from_attributes = True
 
 
+class NuvioLoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+    url: str = "https://api.nuvio.tv"
+
+
+class NuvioConnectionTestRequest(BaseModel):
+    url: str
+    token: str
+    profile_id: int
+
+
 class MediaServerConnectionBase(BaseModel):
     type: str
     name: str
@@ -139,7 +151,7 @@ class MediaServerConnectionBase(BaseModel):
     sync_playback: bool = True
     push_watched: bool = False
     push_ratings: bool = False
-    auto_sync_interval: Optional[int] = None
+    auto_sync_interval: Optional[float] = None
     watchlist_to_radarr: bool = False
     watchlist_to_sonarr: bool = False
     watchlist_all_users: bool = False
@@ -164,7 +176,7 @@ class MediaServerConnectionUpdate(BaseModel):
     sync_playback: Optional[bool] = None
     push_watched: Optional[bool] = None
     push_ratings: Optional[bool] = None
-    auto_sync_interval: Optional[int] = None
+    auto_sync_interval: Optional[float] = None
     watchlist_to_radarr: Optional[bool] = None
     watchlist_to_sonarr: Optional[bool] = None
     watchlist_all_users: Optional[bool] = None

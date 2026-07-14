@@ -22,13 +22,13 @@ from models.playback_session import PlaybackSession
 async def _auto_sync_scheduler():
     from db import async_sessionmaker
     from models.connections import MediaServerConnection
-    from routers.sync import run_jellyfin_sync, run_emby_sync, run_plex_sync
+    from routers.sync import run_jellyfin_sync, run_emby_sync, run_plex_sync, run_nuvio_sync
     from datetime import datetime, timezone
 
     CHECK_INTERVAL = 300  # seconds between scheduler ticks
 
-    source_map = {"jellyfin": CollectionSource.jellyfin, "emby": CollectionSource.emby, "plex": CollectionSource.plex}
-    runner_map = {"jellyfin": run_jellyfin_sync, "emby": run_emby_sync, "plex": run_plex_sync}
+    source_map = {"jellyfin": CollectionSource.jellyfin, "emby": CollectionSource.emby, "plex": CollectionSource.plex, "nuvio": CollectionSource.nuvio}
+    runner_map = {"jellyfin": run_jellyfin_sync, "emby": run_emby_sync, "plex": run_plex_sync, "nuvio": run_nuvio_sync}
 
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
@@ -51,11 +51,12 @@ async def _auto_sync_scheduler():
                     if not source or not run_fn:
                         continue
 
-                    # Skip if a sync is already pending or running for this user+source
+                    # Skip if a sync is already pending or running for this connection
                     active_q = await db.execute(
                         select(SyncJob).where(
                             SyncJob.user_id == user_id,
                             SyncJob.source == source,
+                            SyncJob.connection_id == conn.id,
                             SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]),
                         )
                     )
@@ -67,6 +68,7 @@ async def _auto_sync_scheduler():
                         select(SyncJob).where(
                             SyncJob.user_id == user_id,
                             SyncJob.source == source,
+                            SyncJob.connection_id == conn.id,
                             SyncJob.status.in_([SyncStatus.completed, SyncStatus.failed]),
                         ).order_by(SyncJob.updated_at.desc()).limit(1)
                     )
@@ -77,7 +79,7 @@ async def _auto_sync_scheduler():
                         if elapsed_hours < conn.auto_sync_interval:
                             continue
 
-                    job = SyncJob(user_id=user_id, source=source, status=SyncStatus.pending)
+                    job = SyncJob(user_id=user_id, source=source, status=SyncStatus.pending, connection_id=conn.id)
                     db.add(job)
                     await db.flush()
                     job_id = job.id

@@ -424,7 +424,7 @@ export interface UserSettings {
 export interface MediaServerConnection {
   id: number;
   user_id: number;
-  type: "jellyfin" | "emby" | "plex";
+  type: "jellyfin" | "emby" | "plex" | "nuvio";
   name: string;
   url: string;
   token: string;
@@ -441,7 +441,7 @@ export interface MediaServerConnection {
 }
 
 export interface MediaServerConnectionCreate {
-  type: "jellyfin" | "emby" | "plex";
+  type: "jellyfin" | "emby" | "plex" | "nuvio";
   name: string;
   url: string;
   token: string;

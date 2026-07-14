@@ -43,6 +43,28 @@ def _generate_api_key() -> str:
     return secrets.token_urlsafe(32)
 
 router = APIRouter()
+def _parse_nuvio_profile_id(value: str | None) -> int:
+    try:
+        profile_id = int(value or "")
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Nuvio profile must be an integer from 1 to 6")
+    if profile_id < 1 or profile_id > 6:
+        raise HTTPException(status_code=400, detail="Nuvio profile must be an integer from 1 to 6")
+    return profile_id
+
+
+def _nuvio_profile_name(profiles: list[dict], profile_id: int) -> str:
+    for profile in profiles:
+        try:
+            matches = int(profile.get("profile_index", 0)) == profile_id
+        except (TypeError, ValueError):
+            continue
+        if matches:
+            name = str(profile.get("name") or "").strip()
+            return name or f"Profile {profile_id}"
+    return f"Profile {profile_id}"
+
+
 
 
 async def _registration_allowed(db: AsyncSession) -> bool:
@@ -418,23 +440,38 @@ async def create_connection(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if body.type not in ("plex", "jellyfin", "emby"):
-        raise HTTPException(status_code=400, detail="type must be plex, jellyfin, or emby")
+    if body.type not in ("plex", "jellyfin", "emby", "nuvio"):
+        raise HTTPException(status_code=400, detail="type must be plex, jellyfin, emby, or nuvio")
     validated_url = await validate_service_url(body.url, f"{body.type.capitalize()} URL")
+    connection_token = body.token
+    server_user_id = body.server_user_id
+    server_username = body.server_username
+    if body.type == "nuvio":
+        from core import nuvio
+
+        profile_id = _parse_nuvio_profile_id(server_user_id)
+        try:
+            session, profiles = await nuvio.validate_connection(validated_url, connection_token, profile_id)
+        except nuvio.NuvioAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        connection_token = session.refresh_token
+        server_user_id = str(profile_id)
+        server_username = _nuvio_profile_name(profiles, profile_id)
+
     conn = MediaServerConnection(
         user_id=current_user.id,
         type=body.type,
         name=body.name,
         url=validated_url,
-        token=body.token,
-        server_user_id=body.server_user_id,
-        server_username=body.server_username,
+        token=connection_token,
+        server_user_id=server_user_id,
+        server_username=server_username,
         sync_collection=body.sync_collection,
         sync_watched=body.sync_watched,
-        sync_ratings=body.sync_ratings,
+        sync_ratings=body.sync_ratings if body.type != "nuvio" else False,
         sync_playback=body.sync_playback,
         push_watched=body.push_watched,
-        push_ratings=body.push_ratings,
+        push_ratings=body.push_ratings if body.type != "nuvio" else False,
         auto_sync_interval=body.auto_sync_interval,
     )
     db.add(conn)
@@ -463,6 +500,22 @@ async def update_connection(
     update_data = body.model_dump(exclude_unset=True)
     if "url" in update_data and update_data["url"]:
         update_data["url"] = await validate_service_url(update_data["url"], f"{conn.type.capitalize()} URL")
+
+    if conn.type == "nuvio":
+        from core import nuvio
+
+        candidate_url = update_data.get("url", conn.url)
+        candidate_token = update_data.get("token", conn.token)
+        profile_id = _parse_nuvio_profile_id(update_data.get("server_user_id", conn.server_user_id))
+        try:
+            session, profiles = await nuvio.validate_connection(candidate_url, candidate_token, profile_id)
+        except nuvio.NuvioAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        update_data["token"] = session.refresh_token
+        update_data["server_user_id"] = str(profile_id)
+        update_data["server_username"] = _nuvio_profile_name(profiles, profile_id)
+        update_data["sync_ratings"] = False
+        update_data["push_ratings"] = False
 
     for field, value in update_data.items():
         setattr(conn, field, value)
@@ -668,6 +721,46 @@ async def test_plex(
         raise HTTPException(status_code=400, detail="Failed to connect to Plex")
     return {"status": "ok"}
 
+
+@router.post("/nuvio-login")
+async def login_nuvio(
+    body: schemas.NuvioLoginRequest,
+    current_user: User = Depends(get_current_user),
+):
+    from core import nuvio
+
+    url = await validate_service_url(body.url, "Nuvio URL")
+    try:
+        session, profiles = await nuvio.authenticate(url, body.email, body.password)
+    except nuvio.NuvioAPIError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "url": url,
+        "refresh_token": session.refresh_token,
+        "profiles": profiles,
+    }
+
+
+@router.post("/test-nuvio")
+async def test_nuvio(
+    body: schemas.NuvioConnectionTestRequest,
+    current_user: User = Depends(get_current_user),
+):
+    from core import nuvio
+
+    url = await validate_service_url(body.url, "Nuvio URL")
+    profile_id = _parse_nuvio_profile_id(str(body.profile_id))
+    try:
+        session, profiles = await nuvio.validate_connection(url, body.token, profile_id)
+    except nuvio.NuvioAPIError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "status": "ok",
+        "message": "Nuvio connection is valid.",
+        "refresh_token": session.refresh_token,
+        "profiles": profiles,
+    }
+
 @router.post("/test-radarr")
 async def test_radarr(
     url: str = Query(...),
@@ -776,15 +869,34 @@ async def get_connection_status(
         return {"configured": True, "connected": connected}
 
     async def check_media_server(conn):
-        from core import jellyfin, plex
+        from core import jellyfin, nuvio, plex
+
         try:
             if conn.type == "plex":
                 connected = await plex.validate_connection(conn.url, conn.token)
+            elif conn.type == "nuvio":
+                profile_id = _parse_nuvio_profile_id(conn.server_user_id)
+                session, profiles = await nuvio.validate_connection(conn.url, conn.token, profile_id)
+                conn.token = session.refresh_token
+                conn.server_username = _nuvio_profile_name(profiles, profile_id)
+                connected = True
             else:
                 connected = await jellyfin.validate_connection(conn.url, conn.token, conn.server_user_id)
         except Exception:
             connected = False
-        return {"id": conn.id, "connected": connected}
+        result = {"id": conn.id, "connected": connected}
+        if conn.type == "nuvio" and connected:
+            result["token"] = conn.token
+            result["profile_name"] = conn.server_username
+            result["profiles"] = [
+                {
+                    "profile_index": profile.get("profile_index"),
+                    "name": str(profile.get("name") or "").strip()
+                    or f"Profile {profile.get('profile_index')}",
+                }
+                for profile in profiles
+            ]
+        return result
 
     async def check_simkl():
         from core import simkl as simkl_client
@@ -797,6 +909,8 @@ async def get_connection_status(
     rdr_status, snr_status, trakt_status, simkl_status, *ms_statuses = await asyncio.gather(
         check_radarr(), check_sonarr(), check_trakt(), check_simkl(), *media_server_tasks
     )
+    if any(conn.type == "nuvio" for conn in media_server_conns):
+        await db.commit()
 
     return {"radarr": rdr_status, "sonarr": snr_status, "trakt": trakt_status, "simkl": simkl_status, "connections": ms_statuses}
 

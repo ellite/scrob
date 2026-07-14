@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, or_, select, desc, func, delete
@@ -23,6 +23,7 @@ import core.plex as plex_client
 import core.jellyfin as jellyfin_client
 import core.emby as emby_client
 import core.trakt as trakt_client
+import core.nuvio as nuvio_client
 
 router = APIRouter()
 
@@ -133,6 +134,96 @@ async def _push_watch_state(
 
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
+
+    nuvio_connections = [conn for conn in connections if conn.type == "nuvio"]
+    if nuvio_connections:
+        media_result = await db.execute(select(Media).where(Media.id.in_(media_ids)))
+        media_items = media_result.scalars().all()
+        show_ids = {media.show_id for media in media_items if media.show_id is not None}
+        shows_by_id: dict[int, Show] = {}
+        if show_ids:
+            show_result = await db.execute(select(Show).where(Show.id.in_(show_ids)))
+            shows_by_id = {show.id: show for show in show_result.scalars().all()}
+
+        watched_at_by_media: dict[int, datetime] = {}
+        if watched:
+            event_result = await db.execute(
+                select(WatchEvent.media_id, WatchEvent.watched_at)
+                .where(
+                    WatchEvent.user_id == user_id,
+                    WatchEvent.media_id.in_(media_ids),
+                    WatchEvent.completed == True,
+                )
+                .order_by(WatchEvent.watched_at.desc())
+            )
+            for media_id, watched_at in event_result.all():
+                watched_at_by_media.setdefault(media_id, watched_at)
+
+        nuvio_items: list[dict] = []
+        nuvio_keys: list[dict] = []
+        for media in media_items:
+            if media.media_type == MediaType.movie and media.tmdb_id:
+                key = {"content_id": f"tmdb:{media.tmdb_id}"}
+                payload = {
+                    **key,
+                    "content_type": "movie",
+                    "title": media.title,
+                }
+            elif (
+                media.media_type == MediaType.episode
+                and media.show_id is not None
+                and media.season_number is not None
+                and media.episode_number is not None
+            ):
+                show = shows_by_id.get(media.show_id)
+                if not show or not show.tmdb_id:
+                    continue
+                key = {
+                    "content_id": f"tmdb:{show.tmdb_id}",
+                    "season": media.season_number,
+                    "episode": media.episode_number,
+                }
+                payload = {
+                    **key,
+                    "content_type": "series",
+                    "title": media.title,
+                }
+            elif media.media_type == MediaType.series and media.tmdb_id:
+                key = {"content_id": f"tmdb:{media.tmdb_id}"}
+                payload = {
+                    **key,
+                    "content_type": "series",
+                    "title": media.title,
+                }
+            else:
+                continue
+
+            if watched:
+                watched_at = watched_at_by_media.get(media.id, datetime.utcnow())
+                payload["watched_at"] = int(watched_at.replace(tzinfo=timezone.utc).timestamp() * 1000)
+                nuvio_items.append(payload)
+            else:
+                nuvio_keys.append(key)
+
+        for conn in nuvio_connections:
+            try:
+                profile_id = int(conn.server_user_id or "")
+                if profile_id < 1 or profile_id > 6:
+                    continue
+                if watched and nuvio_items:
+                    session = await nuvio_client.push_watched_items(
+                        conn.url, conn.token, profile_id, nuvio_items
+                    )
+                elif not watched and nuvio_keys:
+                    session = await nuvio_client.delete_watched_items(
+                        conn.url, conn.token, profile_id, nuvio_keys
+                    )
+                else:
+                    continue
+                conn.token = session.refresh_token
+            except Exception:
+                continue
+        await db.commit()
 
 
 def format_event(event: WatchEvent | PlaybackProgress, media: Media) -> dict:

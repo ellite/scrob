@@ -41,9 +41,9 @@ if (me.totp_enabled) {
         </div>
         <form id="settings-form" class="space-y-6">
           <div class="space-y-6 max-w-xl">
-          <!-- TMDB API Key -->
+          <!-- TMDB Read Access Token -->
           <div class="space-y-2">
-            <label for="tmdb_api_key" class="block text-sm font-medium text-zinc-400">TMDB API Key</label>
+            <label for="tmdb_api_key" class="block text-sm font-medium text-zinc-400">TMDB Read Access Token</label>
             <div class="flex gap-2">
               <div class="relative flex-1 group/field">
                 <input
@@ -70,7 +70,7 @@ if (me.totp_enabled) {
               <button
                 type="button"
                 data-action="test_tmdb"
-                title="Test TMDB key"
+                title="Test TMDB token"
                 class="js-action-btn px-3 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
@@ -79,11 +79,11 @@ if (me.totp_enabled) {
               </button>
             </div>
             {settings.has_global_tmdb_key && !settings.tmdb_api_key ? (
-              <p class="text-xs text-blue-400">A server-wide TMDB key is configured by your admin. You can leave this blank to use it, or enter your own key to override it.</p>
+              <p class="text-xs text-blue-400">A server-wide TMDB token is configured by your admin. You can leave this blank to use it, or enter your own token to override it.</p>
             ) : settings.has_global_tmdb_key && settings.tmdb_api_key ? (
-              <p class="text-xs text-blue-400">A server-wide TMDB key is configured, but you are using your own key. Clear this field to fall back to the server key.</p>
+              <p class="text-xs text-blue-400">A server-wide TMDB token is configured, but you are using your own token. Clear this field to fall back to the server token.</p>
             ) : (
-              <p class="text-xs text-zinc-500">Required for fetching metadata and posters. Will be validated before saving.</p>
+              <p class="text-xs text-zinc-500">Paste the API Read Access Token (v4) from TMDB Settings → API. Required for metadata and posters; validated before saving.</p>
             )}
           </div>
 
@@ -137,13 +137,13 @@ if (me.totp_enabled) {
 
           <!-- ======== SYNC SECTION ======== -->
           <div class="space-y-3 mt-8">
-            <h2 class="section-headline border-b border-zinc-800 pb-2">Media Server Connections</h2>
+            <h2 class="section-headline border-b border-zinc-800 pb-2">Media &amp; Cloud Connections</h2>
 
             <!-- Connections list (server-side rendered, managed client-side) -->
             <div id="connections-list" class="space-y-3">
             {connections.map((conn) => {
-              const typeColor = conn.type === "jellyfin" ? "bg-purple-500" : conn.type === "emby" ? "bg-green-500" : "bg-yellow-500";
-              const typeLabel = conn.type === "jellyfin" ? "Jellyfin" : conn.type === "emby" ? "Emby" : "Plex";
+              const typeColor = conn.type === "jellyfin" ? "bg-purple-500" : conn.type === "emby" ? "bg-green-500" : conn.type === "plex" ? "bg-yellow-500" : "bg-cyan-500";
+              const typeLabel = conn.type === "jellyfin" ? "Jellyfin" : conn.type === "emby" ? "Emby" : conn.type === "plex" ? "Plex" : "Nuvio";
               return (
               <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden" data-connection-id={conn.id}>
                 <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target={`conn-body-${conn.id}`}>
@@ -188,11 +188,11 @@ if (me.totp_enabled) {
                     <!-- Left: Connection details -->
                     <div class="space-y-4">
                       <div class="space-y-2">
-                        <label class="block text-sm font-medium text-zinc-400">Server URL</label>
-                        <input type="url" class="conn-url-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={conn.url} data-conn-id={conn.id} />
+                        <label class="block text-sm font-medium text-zinc-400">{conn.type === "nuvio" ? "Cloud API URL" : "Server URL"}</label>
+                        <input type="url" class="conn-url-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all disabled:opacity-70" value={conn.url} data-conn-id={conn.id} disabled={conn.type === "nuvio"} />
                       </div>
                       <div class="space-y-2">
-                        <label class="block text-sm font-medium text-zinc-400">{conn.type === "plex" ? "X-Plex-Token" : "API Token"}</label>
+                        <label class="block text-sm font-medium text-zinc-400">{conn.type === "plex" ? "X-Plex-Token" : conn.type === "nuvio" ? "Refresh Token" : "API Token"}</label>
                         <div class="relative">
                           <input type="password" class="conn-token-input w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={conn.token} data-conn-id={conn.id} />
                           <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle token visibility">
@@ -201,7 +201,14 @@ if (me.totp_enabled) {
                           </button>
                         </div>
                       </div>
-                      {conn.type !== "plex" && (
+                      {conn.type === "nuvio" ? (
+                        <div class="space-y-2">
+                          <label class="block text-sm font-medium text-zinc-400">Nuvio Profile</label>
+                          <select aria-label="Nuvio profile" class="conn-user-id-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
+                            <option value={conn.server_user_id || ""}>{conn.server_username || `Profile ${conn.server_user_id}`} (#{conn.server_user_id})</option>
+                          </select>
+                        </div>
+                      ) : conn.type !== "plex" && (
                         <div class="space-y-2">
                           <label class="block text-sm font-medium text-zinc-400">User ID</label>
                           <input type="text" class="conn-user-id-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={conn.server_user_id || ""} data-conn-id={conn.id} />
@@ -214,35 +221,39 @@ if (me.totp_enabled) {
                           <input type="text" class="conn-username-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={conn.server_username || ""} data-conn-id={conn.id} />
                         </div>
                       )}
-                      <div class="space-y-2">
-                        <label class="block text-sm font-medium text-zinc-400">Libraries to sync</label>
-                        <div class={`conn-library-picker`} data-conn-id={conn.id} data-conn-type={conn.type}>
-                          <div class="conn-libraries-list space-y-1 text-sm text-zinc-500 italic">Checking connection…</div>
-                          <p class="text-xs text-zinc-400 mt-1">Leave all unchecked to sync every library.</p>
-                          <div class="mt-3">
-                            <button type="button" data-action="scan_libraries" data-conn-id={conn.id} class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-4 py-2 rounded-lg transition-colors cursor-pointer">Trigger library scan</button>
+                      {conn.type !== "nuvio" && (
+                        <>
+                          <div class="space-y-2">
+                            <label class="block text-sm font-medium text-zinc-400">Libraries to sync</label>
+                            <div class={`conn-library-picker`} data-conn-id={conn.id} data-conn-type={conn.type}>
+                              <div class="conn-libraries-list space-y-1 text-sm text-zinc-500 italic">Checking connection…</div>
+                              <p class="text-xs text-zinc-400 mt-1">Leave all unchecked to sync every library.</p>
+                              <div class="mt-3">
+                                <button type="button" data-action="scan_libraries" data-conn-id={conn.id} class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-4 py-2 rounded-lg transition-colors cursor-pointer">Trigger library scan</button>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                      <div class="space-y-2">
-                        <label class="block text-sm font-medium text-zinc-400">Webhook URL</label>
-                        <div class="flex gap-2">
-                          <input type="text" readonly class="conn-webhook-url flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-300 font-mono text-xs focus:outline-none cursor-default select-all" value="" data-conn-id={conn.id} data-conn-type={conn.type} />
-                          <button type="button" class="conn-copy-webhook px-3 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer" data-conn-id={conn.id}>
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>
-                          </button>
-                        </div>
-                      </div>
+                          <div class="space-y-2">
+                            <label class="block text-sm font-medium text-zinc-400">Webhook URL</label>
+                            <div class="flex gap-2">
+                              <input type="text" readonly class="conn-webhook-url flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-300 font-mono text-xs focus:outline-none cursor-default select-all" value="" data-conn-id={conn.id} data-conn-type={conn.type} />
+                              <button type="button" class="conn-copy-webhook px-3 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer" data-conn-id={conn.id}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>
+                              </button>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                     <!-- Right: Sync Preferences -->
                     <div class="space-y-4">
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
                         <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">{typeLabel} → Scrob</p>
                         {[
-                          { key: "sync_collection",   label: "Collection status" },
-                          { key: "sync_watched",      label: "Watched status" },
-                          { key: "sync_ratings",      label: "Ratings" },
-                          { key: "sync_playback",     label: "Playback events" },
+                          { key: "sync_collection", label: "Collection status" },
+                          { key: "sync_watched", label: "Watched status" },
+                          ...(conn.type === "nuvio" ? [] : [{ key: "sync_ratings", label: "Ratings" }]),
+                          { key: "sync_playback", label: conn.type === "nuvio" ? "Playback progress" : "Playback events" },
                           ...(conn.type === "plex" ? [{ key: "plex_sync_watchlist", label: "Watchlist" }] : []),
                         ].map(({ key, label }) => (
                           <label class="flex items-center gap-3 cursor-pointer group">
@@ -253,9 +264,9 @@ if (me.totp_enabled) {
                         <div class="flex items-center gap-3">
                           <button type="button" data-action="sync_connection" data-conn-id={conn.id} data-conn-type={conn.type} data-conn-name={conn.name}
                             disabled={!hasTmdbKey}
-                            title={!hasTmdbKey ? "TMDB API Key is required for sync" : `Pull from ${conn.name}`}
+                            title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : conn.type === "nuvio" ? "Sync Nuvio library, watch history, and playback progress" : `Pull from ${conn.name}`}
                             class={`js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${hasTmdbKey ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700" : "bg-zinc-800 text-zinc-400 border border-zinc-700 opacity-50"}`}
-                          >Pull</button>
+                          >{conn.type === "nuvio" ? "Sync now" : "Pull"}</button>
                           <span id={`${conn.type}-last-sync`} class="hidden text-xs text-zinc-500"></span>
                         </div>
                       </div>
@@ -263,7 +274,7 @@ if (me.totp_enabled) {
                         <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → {typeLabel}</p>
                         {[
                           { key: "push_watched", label: "Watched status" },
-                          { key: "push_ratings", label: "Ratings" },
+                          ...(conn.type === "nuvio" ? [] : [{ key: "push_ratings", label: "Ratings" }]),
                           ...(conn.type === "plex" ? [{ key: "plex_push_watchlist", label: "Watchlist" }] : []),
                         ].map(({ key, label }) => (
                           <label class="flex items-center gap-3 cursor-pointer group">
@@ -272,7 +283,7 @@ if (me.totp_enabled) {
                           </label>
                         ))}
                         <button type="button" data-action="push_upstream" data-conn-id={conn.id} data-conn-name={conn.name}
-                          title="Push all watched states and ratings from Scrob to this server"
+                          title={`Push all watched states from Scrob to ${conn.name}`}
                           class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
                         >Push</button>
                       </div>
@@ -282,8 +293,17 @@ if (me.totp_enabled) {
                           <label class="text-sm text-zinc-300">Pull interval</label>
                           <select class="conn-auto-sync bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
                             <option value="" selected={!conn.auto_sync_interval}>Disabled</option>
-                            {[6, 12, 24, 48].map(h => (
-                              <option value={String(h)} selected={conn.auto_sync_interval === h}>Every {h}h</option>
+                            {[
+                              { value: 0.25, label: "Every 15m" },
+                              { value: 0.5, label: "Every 30m" },
+                              { value: 1, label: "Every 1h" },
+                              { value: 3, label: "Every 3h" },
+                              { value: 6, label: "Every 6h" },
+                              { value: 12, label: "Every 12h" },
+                              { value: 24, label: "Every 24h" },
+                              { value: 48, label: "Every 48h" },
+                            ].map(({ value, label }) => (
+                              <option value={String(value)} selected={conn.auto_sync_interval === value}>{label}</option>
                             ))}
                           </select>
                         </div>
@@ -350,19 +370,24 @@ if (me.totp_enabled) {
                       <input type="text" id="new-conn-name" placeholder="e.g. Home Plex" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                     </div>
                     <div class="space-y-2">
-                      <label for="new-conn-type" class="block text-sm font-medium text-zinc-400">Server Type</label>
+                      <label for="new-conn-type" class="block text-sm font-medium text-zinc-400">Provider Type</label>
                       <select id="new-conn-type" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer">
                         <option value="jellyfin">Jellyfin</option>
                         <option value="emby">Emby</option>
                         <option value="plex">Plex</option>
+                        <option value="nuvio">Nuvio</option>
                       </select>
                     </div>
-                    <div class="space-y-2">
-                      <label for="new-conn-url" class="block text-sm font-medium text-zinc-400">Server URL</label>
-                      <input type="url" id="new-conn-url" placeholder="http://192.168.1.100:8096" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+                    <div id="new-conn-url-row" class="space-y-2">
+                      <label id="new-conn-url-label" for="new-conn-url" class="block text-sm font-medium text-zinc-400">Server URL</label>
+                      <input type="url" id="new-conn-url" placeholder="http://192.168.1.100:8096" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all disabled:opacity-70" />
+                    </div>
+                    <div id="new-nuvio-email-row" class="space-y-2 hidden">
+                      <label for="new-nuvio-email" class="block text-sm font-medium text-zinc-400">Nuvio Email</label>
+                      <input type="email" id="new-nuvio-email" autocomplete="username" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                     </div>
                     <div class="space-y-2">
-                      <label for="new-conn-token" class="block text-sm font-medium text-zinc-400">Token</label>
+                      <label id="new-conn-token-label" for="new-conn-token" class="block text-sm font-medium text-zinc-400">Token</label>
                       <div class="relative">
                         <input type="password" id="new-conn-token" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                         <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle token visibility">
@@ -374,6 +399,12 @@ if (me.totp_enabled) {
                     <div id="new-conn-user-id-row" class="space-y-2">
                       <label for="new-conn-user-id" class="block text-sm font-medium text-zinc-400">User ID</label>
                       <input type="text" id="new-conn-user-id" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+                    </div>
+                    <div id="new-nuvio-profile-row" class="space-y-2 hidden">
+                      <label for="new-nuvio-profile" class="block text-sm font-medium text-zinc-400">Nuvio Profile</label>
+                      <select id="new-nuvio-profile" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer">
+                        <option value="">Sign in to load profiles</option>
+                      </select>
                     </div>
                     <div id="new-conn-username-row" class="space-y-2 hidden">
                       <label for="new-conn-username" class="block text-sm font-medium text-zinc-400">Plex Username</label>
@@ -387,26 +418,26 @@ if (me.totp_enabled) {
                   </div>
                   <div class="space-y-4">
                     <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                      <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Server → Scrob</p>
+                      <p id="new-pull-heading" class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Server → Scrob</p>
                       {[
                         { id: "new-sync-collection", label: "Collection status", defaultOn: true },
                         { id: "new-sync-watched",    label: "Watched status",    defaultOn: true },
                         { id: "new-sync-ratings",    label: "Ratings",           defaultOn: true },
                         { id: "new-sync-playback",   label: "Playback events",   defaultOn: true },
                       ].map(({ id, label, defaultOn }) => (
-                        <label class="flex items-center gap-3 cursor-pointer group">
+                        <label class="new-provider-pref flex items-center gap-3 cursor-pointer group">
                           <input type="checkbox" id={id} class="w-4 h-4 rounded cursor-pointer" checked={defaultOn} />
-                          <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
+                          <span id={`${id}-label`} class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
                         </label>
                       ))}
                     </div>
                     <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                      <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → Server</p>
+                      <p id="new-push-heading" class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → Server</p>
                       {[
                         { id: "new-push-watched", label: "Watched status" },
                         { id: "new-push-ratings", label: "Ratings" },
                       ].map(({ id, label }) => (
-                        <label class="flex items-center gap-3 cursor-pointer group">
+                        <label class="new-provider-pref flex items-center gap-3 cursor-pointer group">
                           <input type="checkbox" id={id} class="w-4 h-4 rounded cursor-pointer" />
                           <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
                         </label>
@@ -418,7 +449,16 @@ if (me.totp_enabled) {
                         <label class="text-sm text-zinc-300">Sync interval</label>
                         <select id="new-auto-sync" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 cursor-pointer">
                           <option value="">Disabled</option>
-                          {[6, 12, 24, 48].map(h => (<option value={String(h)}>Every {h}h</option>))}
+                          {[
+                            { value: 0.25, label: "Every 15m" },
+                            { value: 0.5, label: "Every 30m" },
+                            { value: 1, label: "Every 1h" },
+                            { value: 3, label: "Every 3h" },
+                            { value: 6, label: "Every 6h" },
+                            { value: 12, label: "Every 12h" },
+                            { value: 24, label: "Every 24h" },
+                            { value: 48, label: "Every 48h" },
+                          ].map(({ value, label }) => (<option value={String(value)}>{label}</option>))}
                         </select>
                       </div>
                     </div>
@@ -703,7 +743,7 @@ if (me.totp_enabled) {
                           type="button"
                           data-action="sync_trakt"
                           disabled={!hasTmdbKey}
-                          title={!hasTmdbKey ? "TMDB API Key is required for sync" : "Pull watched history and ratings from Trakt"}
+                          title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : "Pull watched history and ratings from Trakt"}
                           class={`js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${hasTmdbKey ? "bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30" : "bg-zinc-800 text-zinc-400 border border-zinc-700 opacity-50"}`}
                         >Pull</button>
                       </div>
@@ -820,7 +860,7 @@ if (me.totp_enabled) {
                           type="button"
                           data-action="sync_simkl"
                           disabled={!hasTmdbKey}
-                          title={!hasTmdbKey ? "TMDB API Key is required for sync" : "Pull watched history and ratings from Simkl"}
+                          title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : "Pull watched history and ratings from Simkl"}
                           class={`js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${hasTmdbKey ? "bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/30" : "bg-zinc-800 text-zinc-400 border border-zinc-700 opacity-50"}`}
                         >Pull</button>
                       </div>
@@ -1103,7 +1143,7 @@ if (me.totp_enabled) {
                 id="heal-btn"
                 type="button"
                 disabled={!hasTmdbKey}
-                title={!hasTmdbKey ? "TMDB API Key is required" : ""}
+                title={!hasTmdbKey ? "TMDB Read Access Token is required" : ""}
                 class="ml-4 shrink-0 text-sm px-4 py-2 rounded-lg transition-colors cursor-pointer disabled:opacity-50 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30"
               >
                 Heal
@@ -2112,6 +2152,24 @@ if (me.totp_enabled) {
       }
       for (const cs of (data.connections ?? [])) {
         setConnStatus(`conn-status-${cs.id}`, cs.connected ? 'connected' : 'disconnected');
+        if (cs.token) {
+          const card = document.querySelector(`[data-connection-id="${cs.id}"]`);
+          const tokenInput = card?.querySelector('.conn-token-input') as HTMLInputElement | null;
+          if (tokenInput) tokenInput.value = cs.token;
+        }
+        if (cs.profiles?.length) {
+          const card = document.querySelector(`[data-connection-id="${cs.id}"]`);
+          const profileSelect = card?.querySelector('.conn-user-id-input') as HTMLSelectElement | null;
+          if (profileSelect) {
+            const selectedProfile = profileSelect.value;
+            profileSelect.innerHTML = cs.profiles.map((profile: any) =>
+              `<option value="${esc(String(profile.profile_index))}">${esc(profile.name || `Profile ${profile.profile_index}`)} (#${esc(String(profile.profile_index))})</option>`
+            ).join('');
+            if ([...profileSelect.options].some(option => option.value === selectedProfile)) {
+              profileSelect.value = selectedProfile;
+            }
+          }
+        }
         if (cs.connected) loadLibraries(String(cs.id));
       }
     } catch {
@@ -2234,19 +2292,39 @@ if (me.totp_enabled) {
             const u = (card?.querySelector('.conn-url-input') as HTMLInputElement)?.value || '';
             const t = (card?.querySelector('.conn-token-input') as HTMLInputElement)?.value || '';
             const ui = (card?.querySelector('.conn-user-id-input') as HTMLInputElement)?.value || '';
-            let testEndpoint: string;
-            if (connType === 'plex') {
-              testEndpoint = `/api/proxy/auth/test-plex?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`;
-            } else if (connType === 'emby') {
-              testEndpoint = `/api/proxy/auth/test-emby?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
+            let testRes: Response;
+            if (connType === 'nuvio') {
+              testRes = await fetch('/api/proxy/auth/test-nuvio', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: u, token: t, profile_id: parseInt(ui) }),
+              });
             } else {
-              testEndpoint = `/api/proxy/auth/test-jellyfin?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
+              let testEndpoint: string;
+              if (connType === 'plex') {
+                testEndpoint = `/api/proxy/auth/test-plex?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`;
+              } else if (connType === 'emby') {
+                testEndpoint = `/api/proxy/auth/test-emby?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
+              } else {
+                testEndpoint = `/api/proxy/auth/test-jellyfin?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
+              }
+              testRes = await fetch(testEndpoint, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
             }
-            const testRes = await fetch(testEndpoint, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
             const testData = await testRes.json();
             if (testRes.ok) {
               showMessage(testData.message || 'Connection successful!');
               if (connId) setConnStatus(`conn-status-${connId}`, 'connected');
+              if (connType === 'nuvio' && connId) {
+                const saveTokenRes = await fetch(`/api/proxy/auth/connections/${connId}`, {
+                  method: 'PATCH',
+                  headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ token: testData.refresh_token }),
+                });
+                if (!saveTokenRes.ok) throw new Error('Nuvio session was validated but could not be saved');
+                const savedConnection = await saveTokenRes.json();
+                const tokenInput = card?.querySelector('.conn-token-input') as HTMLInputElement | null;
+                if (tokenInput) tokenInput.value = savedConnection.token;
+              }
             } else {
               if (connId) setConnStatus(`conn-status-${connId}`, 'disconnected');
               throw new Error(testData.detail || 'Connection test failed');
@@ -2262,7 +2340,7 @@ if (me.totp_enabled) {
               server_username: (card?.querySelector('.conn-username-input') as HTMLInputElement)?.value || null,
               auto_sync_interval: (() => {
                 const v = (card?.querySelector('.conn-auto-sync') as HTMLSelectElement)?.value;
-                return v ? parseInt(v) : null;
+                return v ? parseFloat(v) : null;
               })(),
             };
             card?.querySelectorAll('.conn-pref-checkbox').forEach((cb: any) => {
@@ -2283,6 +2361,9 @@ if (me.totp_enabled) {
               const err = await saveRes.json();
               throw new Error(err.detail || 'Failed to save connection');
             }
+            const savedConnection = await saveRes.json();
+            const savedTokenInput = card?.querySelector('.conn-token-input') as HTMLInputElement | null;
+            if (savedTokenInput && savedConnection.token) savedTokenInput.value = savedConnection.token;
             // Save libraries if they've been loaded
             const libList = card?.querySelector('.conn-libraries-list');
             if (libList && libList.querySelector('.library-checkbox')) {
@@ -3070,17 +3151,83 @@ if (me.totp_enabled) {
       cancelBtn.addEventListener('click', () => addForm.classList.add('hidden'));
     }
 
-    // Show/hide user_id vs username based on new connection type
+    // Provider-specific fields for a new connection
     const typeSelect = document.getElementById('new-conn-type') as HTMLSelectElement | null;
     const userIdRow = document.getElementById('new-conn-user-id-row');
     const usernameRow = document.getElementById('new-conn-username-row');
+    const nuvioEmailRow = document.getElementById('new-nuvio-email-row');
+    const nuvioProfileRow = document.getElementById('new-nuvio-profile-row');
+    const urlInput = document.getElementById('new-conn-url') as HTMLInputElement | null;
+    const urlLabel = document.getElementById('new-conn-url-label');
+    const tokenInput = document.getElementById('new-conn-token') as HTMLInputElement | null;
+    const tokenLabel = document.getElementById('new-conn-token-label');
+    const nuvioProfileSelect = document.getElementById('new-nuvio-profile') as HTMLSelectElement | null;
+    let pendingNuvioRefreshToken = '';
+    let previousType = typeSelect?.value ?? 'jellyfin';
+
     const updateTypeFields = () => {
-      const isPlex = typeSelect?.value === 'plex';
-      userIdRow?.classList.toggle('hidden', isPlex);
+      const type = typeSelect?.value ?? 'jellyfin';
+      const isPlex = type === 'plex';
+      const isNuvio = type === 'nuvio';
+      userIdRow?.classList.toggle('hidden', isPlex || isNuvio);
       usernameRow?.classList.toggle('hidden', !isPlex);
+      nuvioEmailRow?.classList.toggle('hidden', !isNuvio);
+      nuvioProfileRow?.classList.toggle('hidden', !isNuvio);
+      if (urlInput) {
+        if (isNuvio) {
+          urlInput.value = 'https://api.nuvio.tv';
+          urlInput.disabled = true;
+        } else {
+          if (previousType === 'nuvio' && urlInput.value === 'https://api.nuvio.tv') urlInput.value = '';
+          urlInput.disabled = false;
+        }
+      }
+      if (urlLabel) urlLabel.textContent = isNuvio ? 'Cloud API URL' : 'Server URL';
+      if (tokenLabel) tokenLabel.textContent = isNuvio ? 'Nuvio Password' : 'Token';
+      if (tokenInput) tokenInput.autocomplete = isNuvio ? 'current-password' : 'off';
+      const syncRatings = document.getElementById('new-sync-ratings') as HTMLInputElement | null;
+      const pushRatings = document.getElementById('new-push-ratings') as HTMLInputElement | null;
+      for (const checkbox of [syncRatings, pushRatings]) {
+        checkbox?.closest('label')?.classList.toggle('hidden', isNuvio);
+        if (checkbox) checkbox.disabled = isNuvio;
+      }
+      const playbackLabel = document.getElementById('new-sync-playback-label');
+      if (playbackLabel) playbackLabel.textContent = isNuvio ? 'Playback progress' : 'Playback events';
+      const pullHeading = document.getElementById('new-pull-heading');
+      const pushHeading = document.getElementById('new-push-heading');
+      if (pullHeading) pullHeading.textContent = isNuvio ? 'Nuvio → Scrob' : 'Server → Scrob';
+      if (pushHeading) pushHeading.textContent = isNuvio ? 'Scrob → Nuvio' : 'Scrob → Server';
+      if (type !== previousType) pendingNuvioRefreshToken = '';
+      previousType = type;
     };
     typeSelect?.addEventListener('change', updateTypeFields);
     updateTypeFields();
+
+    const authenticateNuvio = async () => {
+      const email = (document.getElementById('new-nuvio-email') as HTMLInputElement | null)?.value.trim() || '';
+      const password = tokenInput?.value || '';
+      const url = urlInput?.value || 'https://api.nuvio.tv';
+      if (!email || !password) throw new Error('Nuvio email and password are required.');
+      const selectedProfile = nuvioProfileSelect?.value || '';
+      const response = await fetch('/api/proxy/auth/nuvio-login', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, url }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Nuvio sign-in failed');
+      pendingNuvioRefreshToken = data.refresh_token;
+      if (nuvioProfileSelect) {
+        nuvioProfileSelect.innerHTML = (data.profiles || []).map((profile: any) =>
+          `<option value="${esc(String(profile.profile_index))}">${esc(profile.name || `Profile ${profile.profile_index}`)} (#${esc(String(profile.profile_index))})</option>`
+        ).join('');
+        if (selectedProfile && [...nuvioProfileSelect.options].some(option => option.value === selectedProfile)) {
+          nuvioProfileSelect.value = selectedProfile;
+        }
+      }
+      if (!nuvioProfileSelect?.value) throw new Error('No Nuvio profile is available for this account.');
+      return data;
+    };
 
     // Test new connection button
     const testNewBtn = document.getElementById('test-new-connection-btn');
@@ -3094,18 +3241,23 @@ if (me.totp_enabled) {
         const orig = testNewBtn.textContent;
         testNewBtn.textContent = '...';
         try {
-          let ep: string;
-          if (type === 'plex') {
-            ep = `/api/proxy/auth/test-plex?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`;
-          } else if (type === 'emby') {
-            ep = `/api/proxy/auth/test-emby?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
+          if (type === 'nuvio') {
+            await authenticateNuvio();
+            showMessage('Nuvio connection successful. Select the profile to sync.');
           } else {
-            ep = `/api/proxy/auth/test-jellyfin?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
+            let ep: string;
+            if (type === 'plex') {
+              ep = `/api/proxy/auth/test-plex?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`;
+            } else if (type === 'emby') {
+              ep = `/api/proxy/auth/test-emby?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
+            } else {
+              ep = `/api/proxy/auth/test-jellyfin?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
+            }
+            const res = await fetch(ep, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+            const data = await res.json();
+            if (res.ok) showMessage(data.message || 'Connection successful!');
+            else throw new Error(data.detail || 'Connection test failed');
           }
-          const res = await fetch(ep, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
-          const data = await res.json();
-          if (res.ok) showMessage(data.message || 'Connection successful!');
-          else throw new Error(data.detail || 'Connection test failed');
         } catch (e: any) {
           showMessage(e.message, 'error');
         } finally {
@@ -3122,32 +3274,40 @@ if (me.totp_enabled) {
         const name = (document.getElementById('new-conn-name') as HTMLInputElement)?.value.trim();
         const type = typeSelect?.value ?? 'jellyfin';
         const u = (document.getElementById('new-conn-url') as HTMLInputElement)?.value.trim();
-        const t = (document.getElementById('new-conn-token') as HTMLInputElement)?.value.trim();
-        const ui = (document.getElementById('new-conn-user-id') as HTMLInputElement)?.value.trim() || null;
-        const un = (document.getElementById('new-conn-username') as HTMLInputElement)?.value.trim() || null;
-        if (!name || !u || !t) { showMessage('Name, URL and Token are required.', 'error'); return; }
+        let connectionToken = (document.getElementById('new-conn-token') as HTMLInputElement)?.value.trim();
+        let userId = (document.getElementById('new-conn-user-id') as HTMLInputElement)?.value.trim() || null;
+        const username = (document.getElementById('new-conn-username') as HTMLInputElement)?.value.trim() || null;
+        if (!name || !u || !connectionToken) {
+          showMessage(type === 'nuvio' ? 'Name, Nuvio email and password are required.' : 'Name, URL and Token are required.', 'error');
+          return;
+        }
 
         createBtn.disabled = true;
         const orig = createBtn.textContent;
         createBtn.textContent = 'Adding…';
 
-        const body: Record<string, any> = {
-          name, type, url: u, token: t,
-          sync_collection: (document.getElementById('new-sync-collection') as HTMLInputElement)?.checked ?? true,
-          sync_watched: (document.getElementById('new-sync-watched') as HTMLInputElement)?.checked ?? true,
-          sync_ratings: (document.getElementById('new-sync-ratings') as HTMLInputElement)?.checked ?? true,
-          sync_playback: (document.getElementById('new-sync-playback') as HTMLInputElement)?.checked ?? true,
-          push_watched: (document.getElementById('new-push-watched') as HTMLInputElement)?.checked ?? false,
-          push_ratings: (document.getElementById('new-push-ratings') as HTMLInputElement)?.checked ?? false,
-          auto_sync_interval: (() => {
-            const v = (document.getElementById('new-auto-sync') as HTMLSelectElement)?.value;
-            return v ? parseInt(v) : null;
-          })(),
-        };
-        if (type === 'plex') body.server_username = un;
-        else body.server_user_id = ui;
-
         try {
+          if (type === 'nuvio') {
+            await authenticateNuvio();
+            connectionToken = pendingNuvioRefreshToken;
+            userId = nuvioProfileSelect?.value || null;
+          }
+          const body: Record<string, any> = {
+            name, type, url: u, token: connectionToken,
+            sync_collection: (document.getElementById('new-sync-collection') as HTMLInputElement)?.checked ?? true,
+            sync_watched: (document.getElementById('new-sync-watched') as HTMLInputElement)?.checked ?? true,
+            sync_ratings: type === 'nuvio' ? false : ((document.getElementById('new-sync-ratings') as HTMLInputElement)?.checked ?? true),
+            sync_playback: (document.getElementById('new-sync-playback') as HTMLInputElement)?.checked ?? true,
+            push_watched: (document.getElementById('new-push-watched') as HTMLInputElement)?.checked ?? false,
+            push_ratings: type === 'nuvio' ? false : ((document.getElementById('new-push-ratings') as HTMLInputElement)?.checked ?? false),
+            auto_sync_interval: (() => {
+              const value = (document.getElementById('new-auto-sync') as HTMLSelectElement)?.value;
+              return value ? parseFloat(value) : null;
+            })(),
+          };
+          if (type === 'plex') body.server_username = username;
+          else body.server_user_id = userId;
+
           const res = await fetch('/api/proxy/auth/connections', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -3730,7 +3890,7 @@ if (me.totp_enabled) {
         return `${Math.floor(diff / 86400)}d ago`;
       }
 
-      for (const source of ['jellyfin', 'emby', 'plex'] as const) {
+      for (const source of ['jellyfin', 'emby', 'plex', 'nuvio'] as const) {
         const el = document.getElementById(`${source}-last-sync`);
         if (!el) continue;
         const job = jobs.find(j => j.source === source && (j.status === 'completed' || j.status === 'failed'));
