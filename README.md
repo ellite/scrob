@@ -27,6 +27,10 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, and **Nuvio**,
   - [Updating](#updating)
 - [Configuration](#configuration)
 - [Development](#development)
+- [Nuvio Cloud Synchronization](#nuvio-cloud-synchronization)
+  - [Connect Nuvio](#connect-nuvio)
+  - [Synchronization Directions](#synchronization-directions)
+  - [Scheduling and Limitations](#scheduling-and-limitations)
 - [Webhooks](#webhooks-real-time-scrobbling)
   - [Jellyfin](#jellyfin)
   - [Plex](#plex)
@@ -252,7 +256,7 @@ docker run -d \
 2. Go to **Settings → Integrations** to add your TMDB Read Access Token and connect Jellyfin, Plex, Emby, or Nuvio.
 3. Select which media-server libraries to sync, or select a Nuvio profile, then trigger your first sync.
 
-For Nuvio, choose **Nuvio** as the provider, sign in with your Nuvio email and password, and select one of the returned profiles. Scrob exchanges the password for a refresh token and does not store the password. **Sync now** pulls the profile's library, watch history, and playback progress through Nuvio's public sync API; **Auto Pull** repeats that sync at the selected interval.
+For Nuvio, choose **Nuvio** as the provider, sign in, and select one of the returned profiles. See [Nuvio Cloud Synchronization](#nuvio-cloud-synchronization) for credential handling, sync directions, scheduling, and current limitations.
 
 ### Updating
 
@@ -297,6 +301,40 @@ Remove the `scrob-db` service and set `DATABASE_URL` to your existing instance:
 ```yaml
 DATABASE_URL: postgresql+asyncpg://user:password@your-db-host:5432/scrob
 ```
+
+## Nuvio Cloud Synchronization
+
+Scrob connects to the [Nuvio public Cloud API](https://nuvio.tv/docs) at `https://api.nuvio.tv`. A TMDB Read Access Token must be configured in Scrob so Nuvio content identifiers can be matched to movies and shows.
+
+### Connect Nuvio
+
+1. Open **Settings → Media Server Connections** and select **Add Connection**.
+2. Choose **Nuvio**, then enter a connection name, your Nuvio email, and your Nuvio password.
+3. Select **Test** to authenticate and load the profiles attached to the account.
+4. Select the Nuvio profile to synchronize, choose the pull and push options, then select **Add**.
+
+Scrob exchanges the email and password for a refresh token. The password is never persisted. Refresh-token rotation is handled automatically during connection checks, synchronization, and watched-state pushes.
+
+Each connection targets one Nuvio profile. Add another connection if you need to synchronize another profile from the same account.
+
+### Synchronization Directions
+
+| Direction | Setting | Behavior |
+|---|---|---|
+| Nuvio → Scrob | **Collection status** | Imports the profile's library movies and series. |
+| Nuvio → Scrob | **Watched status** | Imports watched movies and episodes with their latest watch timestamps. |
+| Nuvio → Scrob | **Playback progress** | Imports position and duration into Continue Watching. |
+| Scrob → Nuvio | **Watched status** | Pushes watched and unwatched changes made in Scrob or imported from another connected provider. |
+
+**Sync now** runs an inbound synchronization using the enabled Nuvio → Scrob settings. **Push** sends all watched items currently known to Scrob to Nuvio as non-destructive upserts; it does not remove Nuvio watched items merely because they are absent from Scrob.
+
+Library membership and playback progress are currently pull-only. Ratings are not synchronized with Nuvio.
+
+### Scheduling and Limitations
+
+**Auto Pull** repeats the enabled inbound synchronization every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours. Nuvio synchronization is polling-based; Nuvio does not use the media-server webhook URLs documented below.
+
+Content matching prefers TMDB identifiers. Bare IMDb identifiers returned by Nuvio are resolved through TMDB before import. Unsupported identifiers are skipped rather than attached to the wrong title.
 
 ## Webhooks (Real-time Scrobbling)
 
