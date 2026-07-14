@@ -221,23 +221,62 @@ async def pull_sync_data(
     return session, {"library": library, "watched": watched, "progress": progress}
 
 
+async def _push_sync_items(
+    url: str,
+    refresh_token: str,
+    profile_id: int,
+    watched_items: list[dict[str, Any]] | None = None,
+    progress_items: list[dict[str, Any]] | None = None,
+) -> NuvioSession:
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+        session = await refresh_session(url, refresh_token, client=client)
+        for function_name, items_key, items in (
+            ("sync_push_watched_items", "p_items", watched_items or []),
+            ("sync_push_watch_progress", "p_entries", progress_items or []),
+        ):
+            for offset in range(0, len(items), _PAGE_SIZE):
+                await _rpc(
+                    client,
+                    url,
+                    session.access_token,
+                    function_name,
+                    {"p_profile_id": profile_id, items_key: items[offset : offset + _PAGE_SIZE]},
+                )
+    return session
+
+
 async def push_watched_items(
     url: str,
     refresh_token: str,
     profile_id: int,
     items: list[dict[str, Any]],
 ) -> NuvioSession:
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
-        session = await refresh_session(url, refresh_token, client=client)
-        for offset in range(0, len(items), _PAGE_SIZE):
-            await _rpc(
-                client,
-                url,
-                session.access_token,
-                "sync_push_watched_items",
-                {"p_profile_id": profile_id, "p_items": items[offset : offset + _PAGE_SIZE]},
-            )
-    return session
+    return await _push_sync_items(url, refresh_token, profile_id, watched_items=items)
+
+
+async def push_watch_progress(
+    url: str,
+    refresh_token: str,
+    profile_id: int,
+    items: list[dict[str, Any]],
+) -> NuvioSession:
+    return await _push_sync_items(url, refresh_token, profile_id, progress_items=items)
+
+
+async def push_sync_items(
+    url: str,
+    refresh_token: str,
+    profile_id: int,
+    watched_items: list[dict[str, Any]],
+    progress_items: list[dict[str, Any]],
+) -> NuvioSession:
+    return await _push_sync_items(
+        url,
+        refresh_token,
+        profile_id,
+        watched_items=watched_items,
+        progress_items=progress_items,
+    )
 
 
 async def delete_watched_items(

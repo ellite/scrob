@@ -36,6 +36,7 @@ async def enrich_media(media: Media, api_key: str = None, series_tmdb_id: int = 
             media.tmdb_data = {
                 "runtime": data.get("runtime"),
                 "genres": [g["name"] for g in data.get("genres", [])],
+                "external_ids": data.get("external_ids", {}),
                 "cast": [
                     {"name": c["name"], "character": c["character"], "profile_path": tmdb.poster_url(c.get("profile_path"), size="w185")}
                     for c in data.get("credits", {}).get("cast", [])[:10]

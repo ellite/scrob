@@ -435,6 +435,7 @@ export interface MediaServerConnection {
   sync_ratings: boolean;
   sync_playback: boolean;
   push_watched: boolean;
+  push_playback: boolean;
   push_ratings: boolean;
   auto_sync_interval: number | null;
   created_at: string;
@@ -452,6 +453,7 @@ export interface MediaServerConnectionCreate {
   sync_ratings?: boolean;
   sync_playback?: boolean;
   push_watched?: boolean;
+  push_playback?: boolean;
   push_ratings?: boolean;
   auto_sync_interval?: number | null;
 }

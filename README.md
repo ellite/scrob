@@ -313,7 +313,7 @@ Scrob connects to the [Nuvio public Cloud API](https://nuvio.tv/docs) at `https:
 3. Select **Test** to authenticate and load the profiles attached to the account.
 4. Select the Nuvio profile to synchronize, choose the pull and push options, then select **Add**.
 
-Scrob exchanges the email and password for a refresh token. The password is never persisted. Refresh-token rotation is handled automatically during connection checks, synchronization, and watched-state pushes.
+Scrob exchanges the email and password for a refresh token. The password is never persisted. Refresh-token rotation is handled automatically during connection checks and synchronization.
 
 Each connection targets one Nuvio profile. Add another connection if you need to synchronize another profile from the same account.
 
@@ -325,16 +325,17 @@ Each connection targets one Nuvio profile. Add another connection if you need to
 | Nuvio → Scrob | **Watched status** | Imports watched movies and episodes with their latest watch timestamps. |
 | Nuvio → Scrob | **Playback progress** | Imports position and duration into Continue Watching. |
 | Scrob → Nuvio | **Watched status** | Pushes watched and unwatched changes made in Scrob or imported from another connected provider. |
+| Scrob → Nuvio | **Playback progress** | Pushes current playback positions into Nuvio's Continue Watching state as non-destructive upserts. |
 
-**Sync now** runs an inbound synchronization using the enabled Nuvio → Scrob settings. **Push** sends all watched items currently known to Scrob to Nuvio as non-destructive upserts; it does not remove Nuvio watched items merely because they are absent from Scrob.
+**Sync now** runs an inbound synchronization using the enabled Nuvio → Scrob settings. **Push** sends the enabled watched-history and playback-progress data from Scrob to Nuvio. Both operations use non-destructive upserts; items absent from Scrob are not removed from Nuvio.
 
-Library membership and playback progress are currently pull-only. Ratings are not synchronized with Nuvio.
+Library membership is currently pull-only. Ratings are not synchronized with Nuvio.
 
 ### Scheduling and Limitations
 
 **Auto Pull** repeats the enabled inbound synchronization every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours. Nuvio synchronization is polling-based; Nuvio does not use the media-server webhook URLs documented below.
 
-Content matching prefers TMDB identifiers. Bare IMDb identifiers returned by Nuvio are resolved through TMDB before import. Unsupported identifiers are skipped rather than attached to the wrong title.
+Inbound Nuvio identifiers are normalized to TMDB for Scrob's internal matching. Before an outbound push, Scrob resolves those TMDB identifiers to Nuvio-compatible bare IMDb identifiers (`tt...`) and caches the mapping. Unsupported identifiers are skipped rather than attached to the wrong title.
 
 ## Webhooks (Real-time Scrobbling)
 

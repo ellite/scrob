@@ -28,6 +28,7 @@ class MediaServerConnection(Base):
 
     # Outbound push flags (Scrob → source)
     push_watched     : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    push_playback    : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     push_ratings     : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # Auto sync interval in hours (null = disabled)

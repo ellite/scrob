@@ -150,6 +150,7 @@ class MediaServerConnectionBase(BaseModel):
     sync_ratings: bool = True
     sync_playback: bool = True
     push_watched: bool = False
+    push_playback: bool = False
     push_ratings: bool = False
     auto_sync_interval: Optional[float] = None
     watchlist_to_radarr: bool = False
@@ -175,6 +176,7 @@ class MediaServerConnectionUpdate(BaseModel):
     sync_ratings: Optional[bool] = None
     sync_playback: Optional[bool] = None
     push_watched: Optional[bool] = None
+    push_playback: Optional[bool] = None
     push_ratings: Optional[bool] = None
     auto_sync_interval: Optional[float] = None
     watchlist_to_radarr: Optional[bool] = None

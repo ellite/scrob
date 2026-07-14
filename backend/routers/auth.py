@@ -471,6 +471,7 @@ async def create_connection(
         sync_ratings=body.sync_ratings if body.type != "nuvio" else False,
         sync_playback=body.sync_playback,
         push_watched=body.push_watched,
+        push_playback=body.push_playback if body.type == "nuvio" else False,
         push_ratings=body.push_ratings if body.type != "nuvio" else False,
         auto_sync_interval=body.auto_sync_interval,
     )
@@ -516,6 +517,9 @@ async def update_connection(
         update_data["server_username"] = _nuvio_profile_name(profiles, profile_id)
         update_data["sync_ratings"] = False
         update_data["push_ratings"] = False
+        update_data["push_playback"] = update_data.get("push_playback", conn.push_playback)
+    else:
+        update_data["push_playback"] = False
 
     for field, value in update_data.items():
         setattr(conn, field, value)

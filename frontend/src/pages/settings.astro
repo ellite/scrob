@@ -274,6 +274,7 @@ if (me.totp_enabled) {
                         <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → {typeLabel}</p>
                         {[
                           { key: "push_watched", label: "Watched status" },
+                          ...(conn.type === "nuvio" ? [{ key: "push_playback", label: "Playback progress" }] : []),
                           ...(conn.type === "nuvio" ? [] : [{ key: "push_ratings", label: "Ratings" }]),
                           ...(conn.type === "plex" ? [{ key: "plex_push_watchlist", label: "Watchlist" }] : []),
                         ].map(({ key, label }) => (
@@ -283,7 +284,7 @@ if (me.totp_enabled) {
                           </label>
                         ))}
                         <button type="button" data-action="push_upstream" data-conn-id={conn.id} data-conn-name={conn.name}
-                          title={`Push all watched states from Scrob to ${conn.name}`}
+                          title={`Push enabled data from Scrob to ${conn.name}`}
                           class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
                         >Push</button>
                       </div>
@@ -442,6 +443,10 @@ if (me.totp_enabled) {
                           <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
                         </label>
                       ))}
+                      <label id="new-push-playback-row" class="hidden new-provider-pref flex items-center gap-3 cursor-pointer group">
+                        <input type="checkbox" id="new-push-playback" class="w-4 h-4 rounded cursor-pointer" disabled />
+                        <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">Playback progress</span>
+                      </label>
                     </div>
                     <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
                       <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
@@ -2468,6 +2473,7 @@ if (me.totp_enabled) {
             const pushPrefLabels: Record<string, string> = {
               push_watched: 'watched status',
               push_ratings: 'ratings',
+              push_playback: 'playback progress',
             };
             const pushing: string[] = [];
             card?.querySelectorAll('.conn-pref-checkbox').forEach((el: any) => {
@@ -3187,6 +3193,9 @@ if (me.totp_enabled) {
       if (tokenInput) tokenInput.autocomplete = isNuvio ? 'current-password' : 'off';
       const syncRatings = document.getElementById('new-sync-ratings') as HTMLInputElement | null;
       const pushRatings = document.getElementById('new-push-ratings') as HTMLInputElement | null;
+      const pushPlayback = document.getElementById('new-push-playback') as HTMLInputElement | null;
+      pushPlayback?.closest('label')?.classList.toggle('hidden', !isNuvio);
+      if (pushPlayback) pushPlayback.disabled = !isNuvio;
       for (const checkbox of [syncRatings, pushRatings]) {
         checkbox?.closest('label')?.classList.toggle('hidden', isNuvio);
         if (checkbox) checkbox.disabled = isNuvio;
@@ -3299,6 +3308,7 @@ if (me.totp_enabled) {
             sync_ratings: type === 'nuvio' ? false : ((document.getElementById('new-sync-ratings') as HTMLInputElement)?.checked ?? true),
             sync_playback: (document.getElementById('new-sync-playback') as HTMLInputElement)?.checked ?? true,
             push_watched: (document.getElementById('new-push-watched') as HTMLInputElement)?.checked ?? false,
+            push_playback: type === 'nuvio' && ((document.getElementById('new-push-playback') as HTMLInputElement)?.checked ?? false),
             push_ratings: type === 'nuvio' ? false : ((document.getElementById('new-push-ratings') as HTMLInputElement)?.checked ?? false),
             auto_sync_interval: (() => {
               const value = (document.getElementById('new-auto-sync') as HTMLSelectElement)?.value;

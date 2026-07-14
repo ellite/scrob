@@ -144,6 +144,10 @@ async def _push_watch_state(
         if show_ids:
             show_result = await db.execute(select(Show).where(Show.id.in_(show_ids)))
             shows_by_id = {show.id: show for show in show_result.scalars().all()}
+        from routers.sync import _ensure_nuvio_imdb_ids, _nuvio_watched_item
+
+        api_key = await get_user_tmdb_key(db, user_id)
+        await _ensure_nuvio_imdb_ids(media_items, shows_by_id, api_key)
 
         watched_at_by_media: dict[int, datetime] = {}
         if watched:
@@ -162,45 +166,19 @@ async def _push_watch_state(
         nuvio_items: list[dict] = []
         nuvio_keys: list[dict] = []
         for media in media_items:
-            if media.media_type == MediaType.movie and media.tmdb_id:
-                key = {"content_id": f"tmdb:{media.tmdb_id}"}
-                payload = {
-                    **key,
-                    "content_type": "movie",
-                    "title": media.title,
-                }
-            elif (
-                media.media_type == MediaType.episode
-                and media.show_id is not None
-                and media.season_number is not None
-                and media.episode_number is not None
-            ):
-                show = shows_by_id.get(media.show_id)
-                if not show or not show.tmdb_id:
-                    continue
-                key = {
-                    "content_id": f"tmdb:{show.tmdb_id}",
-                    "season": media.season_number,
-                    "episode": media.episode_number,
-                }
-                payload = {
-                    **key,
-                    "content_type": "series",
-                    "title": media.title,
-                }
-            elif media.media_type == MediaType.series and media.tmdb_id:
-                key = {"content_id": f"tmdb:{media.tmdb_id}"}
-                payload = {
-                    **key,
-                    "content_type": "series",
-                    "title": media.title,
-                }
-            else:
+            payload = _nuvio_watched_item(
+                media,
+                watched_at_by_media.get(media.id, datetime.utcnow()),
+                shows_by_id.get(media.show_id),
+            )
+            if not payload:
                 continue
-
+            key = {
+                field: payload[field]
+                for field in ("content_id", "season", "episode")
+                if field in payload
+            }
             if watched:
-                watched_at = watched_at_by_media.get(media.id, datetime.utcnow())
-                payload["watched_at"] = int(watched_at.replace(tzinfo=timezone.utc).timestamp() * 1000)
                 nuvio_items.append(payload)
             else:
                 nuvio_keys.append(key)
