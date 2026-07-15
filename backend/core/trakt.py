@@ -23,14 +23,17 @@ async def _get_all_pages(
     client: httpx.AsyncClient,
     path: str,
     headers: dict,
+    extra_params: dict[str, str] | None = None,
 ) -> list[dict]:
     items: list[dict] = []
     page = 1
     while True:
+        params = dict(extra_params or {})
+        params.update({"page": page, "limit": PAGE_SIZE})
         response = await client.get(
             f"{TRAKT_BASE}{path}",
             headers=headers,
-            params={"page": page, "limit": PAGE_SIZE},
+            params=params,
         )
         response.raise_for_status()
         page_items = response.json()
@@ -38,11 +41,13 @@ async def _get_all_pages(
             raise TypeError(f"Trakt {path} returned a non-list response")
         items.extend(page_items)
 
+        if not page_items:
+            return items
         try:
-            page_count = int(response.headers.get("X-Pagination-Page-Count", page))
-        except (TypeError, ValueError):
-            page_count = page
-        if page >= page_count or not page_items:
+            page_count = int(response.headers["X-Pagination-Page-Count"])
+        except (KeyError, TypeError, ValueError):
+            page_count = None
+        if page_count is not None and page >= page_count:
             return items
         page += 1
 
@@ -173,6 +178,7 @@ async def get_watched_shows(client_id: str, access_token: str) -> list[dict]:
             client,
             "/sync/watched/shows",
             _headers(client_id, access_token),
+            extra_params={"extended": "progress"},
         )
 
 
