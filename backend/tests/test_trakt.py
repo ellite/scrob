@@ -15,15 +15,15 @@ class TraktClientTests(unittest.IsolatedAsyncioTestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.url.path, "/sync/watched/movies")
-            self.assertEqual(request.url.params["limit"], "100")
+            self.assertEqual(request.url.params["limit"], "250")
             self.assertEqual(request.headers["authorization"], "Bearer access-token")
 
             page = int(request.url.params["page"])
             requested_pages.append(page)
             page_items = {
-                1: [{"movie": {"ids": {"tmdb": index}}} for index in range(1, 101)],
-                2: [{"movie": {"ids": {"tmdb": index}}} for index in range(101, 201)],
-                3: [{"movie": {"ids": {"tmdb": index}}} for index in range(201, 218)],
+                1: [{"movie": {"ids": {"tmdb": index}}} for index in range(1, 251)],
+                2: [{"movie": {"ids": {"tmdb": index}}} for index in range(251, 501)],
+                3: [{"movie": {"ids": {"tmdb": index}}} for index in range(501, 518)],
             }[page]
             return httpx.Response(
                 200,
@@ -40,8 +40,8 @@ class TraktClientTests(unittest.IsolatedAsyncioTestCase):
             movies = await trakt.get_watched_movies("client-id", "access-token")
 
         self.assertEqual(requested_pages, [1, 2, 3])
-        self.assertEqual(len(movies), 217)
-        self.assertEqual(movies[-1]["movie"]["ids"]["tmdb"], 217)
+        self.assertEqual(len(movies), 517)
+        self.assertEqual(movies[-1]["movie"]["ids"]["tmdb"], 517)
 
 
     async def test_get_watched_shows_requests_progress_on_every_page(self) -> None:
@@ -49,7 +49,7 @@ class TraktClientTests(unittest.IsolatedAsyncioTestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.url.path, "/sync/watched/shows")
-            self.assertEqual(request.url.params["limit"], "100")
+            self.assertEqual(request.url.params["limit"], "250")
             self.assertEqual(request.url.params["extended"], "progress")
             page = int(request.url.params["page"])
             requested_pages.append(page)

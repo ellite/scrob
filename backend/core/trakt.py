@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 TRAKT_BASE = "https://api.trakt.tv"
 TIMEOUT = 30.0
-PAGE_SIZE = 100
+PAGE_SIZE = 250
 
 
 async def _get_all_pages(
