@@ -49,6 +49,7 @@ async def _push_watch_state(
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
     settings = settings_result.scalar_one_or_none()
     push_trakt = settings and settings.trakt_push_watched and settings.trakt_access_token
+    push_mdblist = settings and settings.mdblist_push_watched and settings.mdblist_api_key
 
     tasks = []
 
@@ -131,6 +132,19 @@ async def _push_watch_state(
                         tasks.append(trakt_client.add_episode_to_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number))
                     else:
                         tasks.append(trakt_client.remove_episode_from_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number))
+
+    if push_mdblist:
+        from core import mdblist as mdblist_client
+        from routers.mdblist import _empty_payload, _payload_item
+
+        mdblist_payload = _empty_payload()
+        media_result = await db.execute(select(Media).where(Media.id.in_(media_ids)))
+        for media in media_result.scalars().all():
+            item = _payload_item(media, watched_at=datetime.utcnow()) if watched else _payload_item(media)
+            if item:
+                mdblist_payload[item[0]].append(item[1])
+        operation = mdblist_client.push_watched if watched else mdblist_client.remove_watched
+        tasks.append(operation(settings.mdblist_api_key, mdblist_payload))
 
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)

@@ -22,6 +22,7 @@ class CollectionSource(str, enum.Enum):
     nuvio    = "nuvio"
     trakt    = "trakt"
     simkl    = "simkl"
+    mdblist = "mdblist"
     manual   = "manual"
     tmdb     = "tmdb"
 

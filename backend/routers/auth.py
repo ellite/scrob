@@ -347,6 +347,7 @@ async def _settings_response(settings: UserSettings, db: AsyncSession) -> schema
     data = schemas.UserSettings.model_validate(settings)
     data.trakt_connected = bool(settings.trakt_access_token)
     data.simkl_connected = bool(settings.simkl_access_token)
+    data.mdblist_connected = bool(settings.mdblist_api_key)
     gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
     gs = gs_result.scalar_one_or_none()
     data.has_global_tmdb_key = bool(gs and gs.tmdb_api_key)
@@ -391,7 +392,7 @@ async def update_user_settings(
         db.add(settings)
 
     # Computed read-only fields; never write them back
-    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected", "has_global_tmdb_key", "has_effective_tmdb_key", "has_global_tvdb_key", "has_effective_tvdb_key"}
+    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected", "mdblist_connected", "has_global_tmdb_key", "has_effective_tmdb_key", "has_global_tvdb_key", "has_effective_tvdb_key"}
     update_data = {k: v for k, v in settings_in.model_dump(exclude_unset=True).items() if k not in READ_ONLY_FIELDS}
 
     if "tmdb_api_key" in update_data and update_data["tmdb_api_key"]:
@@ -404,6 +405,11 @@ async def update_user_settings(
         success = await tvdb.validate_api_key(update_data["tvdb_api_key"])
         if not success:
             raise HTTPException(status_code=400, detail="Invalid TVDB API Key")
+
+    if "mdblist_api_key" in update_data and update_data["mdblist_api_key"]:
+        from core import mdblist
+        if not await mdblist.validate_api_key(update_data["mdblist_api_key"]):
+            raise HTTPException(status_code=400, detail="Invalid MDBList API key")
 
     url_fields = {"radarr_url": "Radarr URL", "sonarr_url": "Sonarr URL"}
     for field, label in url_fields.items():
@@ -909,14 +915,21 @@ async def get_connection_status(
         connected = await simkl_client.validate_token(user_settings.simkl_client_id, user_settings.simkl_access_token)
         return {"configured": True, "connected": connected}
 
+    async def check_mdblist():
+        from core import mdblist
+        if not user_settings or not user_settings.mdblist_api_key:
+            return {"configured": False, "connected": False}
+        connected = await mdblist.validate_api_key(user_settings.mdblist_api_key)
+        return {"configured": True, "connected": connected}
+
     media_server_tasks = [check_media_server(c) for c in media_server_conns]
-    rdr_status, snr_status, trakt_status, simkl_status, *ms_statuses = await asyncio.gather(
-        check_radarr(), check_sonarr(), check_trakt(), check_simkl(), *media_server_tasks
+    rdr_status, snr_status, trakt_status, simkl_status, mdblist_status, *ms_statuses = await asyncio.gather(
+        check_radarr(), check_sonarr(), check_trakt(), check_simkl(), check_mdblist(), *media_server_tasks
     )
     if any(conn.type == "nuvio" for conn in media_server_conns):
         await db.commit()
 
-    return {"radarr": rdr_status, "sonarr": snr_status, "trakt": trakt_status, "simkl": simkl_status, "connections": ms_statuses}
+    return {"radarr": rdr_status, "sonarr": snr_status, "trakt": trakt_status, "simkl": simkl_status, "mdblist": mdblist_status, "connections": ms_statuses}
 
 
 @router.get("/sonarr/profiles")

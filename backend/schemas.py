@@ -117,6 +117,16 @@ class UserSettings(BaseModel):
     simkl_push_ratings: Optional[bool] = None
     simkl_scrobble: Optional[bool] = None
 
+    # MDBList — API key authentication
+    mdblist_api_key: Optional[str] = None
+    mdblist_connected: Optional[bool] = None  # read-only, validated by /auth/connection-status
+    mdblist_sync_watched: Optional[bool] = None
+    mdblist_sync_ratings: Optional[bool] = None
+    mdblist_sync_watchlist: Optional[bool] = None
+    mdblist_push_watched: Optional[bool] = None
+    mdblist_push_ratings: Optional[bool] = None
+    mdblist_push_watchlist: Optional[bool] = None
+
     preferences: Optional[dict] = None
     blur_explicit: Optional[bool] = None
     time_format_24h: Optional[bool] = None

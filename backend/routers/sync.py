@@ -544,14 +544,12 @@ async def _fan_out_changes_to_other_connections(
     new_watched_ids: set[int],
     new_ratings: dict[int, float],
     settings: "UserSettings | None" = None,
+    exclude_cloud_source: CollectionSource | None = None,
 ) -> None:
-    """After an inbound sync, push the items that actually changed to every OTHER
-    connection (media servers + Trakt) that has push_watched / push_ratings enabled.
+    """Push an inbound sync delta to every enabled media server and cloud target.
 
-    Only the delta (what was added to Scrob during this sync) is pushed, so we
-    never blast unchanged history at the target server.
-
-    pass exclude_connection_id=None when syncing from Trakt (no MediaServerConnection to skip).
+    ``exclude_connection_id`` prevents media-server echo. ``exclude_cloud_source``
+    prevents a cloud pull from writing the same delta back to its source.
     """
     if not new_watched_ids and not new_ratings:
         return
@@ -647,8 +645,8 @@ async def _fan_out_changes_to_other_connections(
                             push_tasks.append(_guarded(emby.set_rating(conn.url, conn.token, conn.server_user_id, sid, rating)))
 
     # ── Trakt fan-out ────────────────────────────────────────────────────────
-    push_trakt_watched = settings and settings.trakt_push_watched and settings.trakt_access_token and settings.trakt_client_id
-    push_trakt_ratings = settings and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id
+    push_trakt_watched = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_watched and settings.trakt_access_token and settings.trakt_client_id
+    push_trakt_ratings = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id
 
     if (push_trakt_watched or push_trakt_ratings) and all_changed_ids:
         media_items = await _select_in_chunks(
@@ -707,9 +705,44 @@ async def _fan_out_changes_to_other_connections(
                 trakt_movie_ratings, trakt_show_ratings,
             ))
 
+    # ── MDBList fan-out ──────────────────────────────────────────────────────
+    push_mdblist_watched = settings and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_watched and settings.mdblist_api_key
+    push_mdblist_ratings = settings and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_ratings and settings.mdblist_api_key
+
+    if (push_mdblist_watched or push_mdblist_ratings) and all_changed_ids:
+        from core import mdblist as mdblist_client
+        from routers.mdblist import _empty_payload, _payload_item
+
+        mdblist_media = await _select_in_chunks(
+            db,
+            lambda chunk: select(Media).where(Media.id.in_(chunk)),
+            list(all_changed_ids),
+        )
+        mdblist_media_by_id = {media.id: media for media in mdblist_media}
+
+        if push_mdblist_watched:
+            watched_payload = _empty_payload()
+            for media_id in new_watched_ids:
+                media = mdblist_media_by_id.get(media_id)
+                item = _payload_item(media, watched_at=datetime.utcnow()) if media else None
+                if item:
+                    watched_payload[item[0]].append(item[1])
+            push_tasks.append(mdblist_client.push_watched(settings.mdblist_api_key, watched_payload))
+
+        if push_mdblist_ratings:
+            ratings_payload = _empty_payload()
+            for media_id, rating in new_ratings.items():
+                media = mdblist_media_by_id.get(media_id)
+                item = _payload_item(media, rating=rating) if media else None
+                if item:
+                    ratings_payload[item[0]].append(item[1])
+            push_tasks.append(mdblist_client.push_ratings(settings.mdblist_api_key, ratings_payload))
+
     if push_tasks:
-        target_count = len(push_candidates) + (1 if (push_trakt_watched or push_trakt_ratings) else 0)
-        print(f"  Fanning out {len(push_tasks)} changes to {target_count} other connection(s) (incl. Trakt)...")
+        target_count = len(push_candidates)
+        target_count += 1 if (push_trakt_watched or push_trakt_ratings) else 0
+        target_count += 1 if (push_mdblist_watched or push_mdblist_ratings) else 0
+        print(f"  Fanning out {len(push_tasks)} changes to {target_count} other connection(s)...")
         results = await asyncio.gather(*push_tasks, return_exceptions=True)
         failed = sum(1 for r in results if isinstance(r, Exception))
         if failed:

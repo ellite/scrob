@@ -651,7 +651,7 @@ if (me.totp_enabled) {
                 <div class="flex items-center gap-2">
                   <div class="flex gap-2" onclick="event.stopPropagation()">
                     {settings.trakt_connected ? (
-                      <button type="button" id="trakt-disconnect-btn" class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Disconnect</button>
+                      <button type="button" id="trakt-disconnect-btn" class="js-action-btn text-sm bg-zinc-800 hover:bg-red-900/30 text-red-400 border border-zinc-700 hover:border-red-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Disconnect</button>
                     ) : (
                       <button type="button" id="trakt-connect-btn" class="text-sm bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Connect Trakt</button>
                     )}
@@ -796,7 +796,7 @@ if (me.totp_enabled) {
                 <div class="flex items-center gap-2">
                   <div class="flex gap-2" onclick="event.stopPropagation()">
                     {settings.simkl_connected ? (
-                      <button type="button" id="simkl-disconnect-btn" class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Disconnect</button>
+                      <button type="button" id="simkl-disconnect-btn" class="js-action-btn text-sm bg-zinc-800 hover:bg-red-900/30 text-red-400 border border-zinc-700 hover:border-red-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Disconnect</button>
                     ) : (
                       <button type="button" id="simkl-connect-btn" class="text-sm bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Connect Simkl</button>
                     )}
@@ -895,6 +895,101 @@ if (me.totp_enabled) {
                       </div>
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+
+            <!-- MDBList collapsible row -->
+            <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+              <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="mdblist-body">
+                <div class="flex items-center gap-3 pointer-events-none">
+                  <span class="w-2 h-2 bg-violet-400 rounded-full shrink-0"></span>
+                  <div class="flex flex-col gap-0.5">
+                    <span class="font-medium text-zinc-200">MDBList</span>
+                    <span id="mdblist-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
+                  </div>
+                </div>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </div>
+              <div id="mdblist-progress" class="hidden border-t border-zinc-800 px-6 py-3">
+                <div class="flex justify-between items-center mb-1.5">
+                  <span id="mdblist-job-label" class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Working…</span>
+                  <span id="mdblist-job-pct" class="text-xs font-bold text-zinc-400"></span>
+                </div>
+                <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                  <div id="mdblist-job-bar" class="h-1.5 rounded-full transition-all duration-500 bg-violet-500 animate-pulse" style="width: 100%"></div>
+                </div>
+                <div class="flex justify-between text-xs text-zinc-500 mt-1">
+                  <span id="mdblist-job-items"></span>
+                  <span id="mdblist-job-status"></span>
+                </div>
+              </div>
+              <div id="mdblist-body" class="border-t border-zinc-800 hidden">
+                <div class="grid md:grid-cols-2 gap-8 px-6 py-6">
+                  <div class="space-y-4">
+                    <div class="space-y-2">
+                      <label for="mdblist_api_key" class="block text-sm font-medium text-zinc-400">API Key</label>
+                      <div class="relative group/field">
+                        <input
+                          type="password"
+                          name="mdblist_api_key"
+                          id="mdblist_api_key"
+                          value={settings.mdblist_api_key || ""}
+                          placeholder="Your MDBList API key"
+                          class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all"
+                        />
+                        <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle password visibility">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+                        </button>
+                      </div>
+                      <p class="text-xs text-zinc-500">Copy the API key from <span class="text-zinc-400">mdblist.com/preferences</span>. Save Settings validates it before storage.</p>
+                    </div>
+                  </div>
+                  <div class="space-y-4">
+                    <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
+                      <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">MDBList → Scrob</p>
+                      {[
+                        { key: "mdblist_sync_watched", label: "Watched history" },
+                        { key: "mdblist_sync_ratings", label: "Ratings" },
+                        { key: "mdblist_sync_watchlist", label: "Watchlist" },
+                      ].map(({ key, label }) => (
+                        <label class="flex items-center gap-3 cursor-pointer group">
+                          <input type="checkbox" name={key} id={key} checked={settings[key as keyof typeof settings] !== false} class="sync-pref-checkbox w-4 h-4 rounded accent-violet-500 cursor-pointer" />
+                          <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
+                        </label>
+                      ))}
+                      <button
+                        type="button"
+                        data-action="sync_mdblist"
+                        disabled={!settings.mdblist_connected || !hasTmdbKey}
+                        title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : "Pull watched history, ratings, and watchlist from MDBList"}
+                        class="js-action-btn text-sm bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                      >Pull</button>
+                    </div>
+                    <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
+                      <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → MDBList</p>
+                      {[
+                        { key: "mdblist_push_watched", label: "Watched status" },
+                        { key: "mdblist_push_ratings", label: "Ratings" },
+                        { key: "mdblist_push_watchlist", label: "Watchlist" },
+                      ].map(({ key, label }) => (
+                        <label class="flex items-center gap-3 cursor-pointer group">
+                          <input type="checkbox" name={key} id={key} checked={!!settings[key as keyof typeof settings]} class="sync-pref-checkbox w-4 h-4 rounded accent-violet-500 cursor-pointer" />
+                          <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
+                        </label>
+                      ))}
+                      <button
+                        type="button"
+                        data-action="push_mdblist"
+                        disabled={!settings.mdblist_connected}
+                        class="js-action-btn text-sm bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                        title="Push watched states, ratings, and the managed watchlist to MDBList"
+                      >Push</button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1934,6 +2029,77 @@ if (me.totp_enabled) {
     pollTraktJob();
   }
 
+  // ── MDBList progress tracking ─────────────────────────────────────────────
+  let mdblistPoller: ReturnType<typeof setTimeout> | null = null;
+
+  function renderMdblistProgress(job: any) {
+    const strip = document.getElementById('mdblist-progress');
+    const bar = document.getElementById('mdblist-job-bar');
+    const pctEl = document.getElementById('mdblist-job-pct');
+    const label = document.getElementById('mdblist-job-label');
+    const items = document.getElementById('mdblist-job-items');
+    if (!strip) return;
+    if (!job) { strip.classList.add('hidden'); return; }
+    strip.classList.remove('hidden');
+
+    const isPush = job.job_type === 'push';
+    const isFailed = job.status === 'failed';
+    const isCompleted = job.status === 'completed';
+    const isPending = job.status === 'pending';
+
+    if (isFailed) {
+      if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
+      if (label) label.textContent = isPush ? 'Push failed' : 'Pull failed';
+      if (pctEl) pctEl.textContent = '';
+      if (items) items.textContent = esc(job.error_message || 'Unknown error');
+      return;
+    }
+    if (isCompleted) {
+      if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-violet-500'; bar.style.width = '100%'; }
+      if (label) label.textContent = isPush ? 'Push complete' : 'Pull complete';
+      if (pctEl) pctEl.textContent = '100%';
+      if (items) items.textContent = `${job.processed_items ?? 0} items`;
+      return;
+    }
+
+    const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
+    const indeterminate = isPending || pct === 0;
+    if (bar) {
+      bar.className = `h-1.5 rounded-full transition-all duration-500 bg-violet-500${indeterminate ? ' animate-pulse' : ''}`;
+      bar.style.width = indeterminate ? '100%' : `${pct}%`;
+    }
+    if (label) label.textContent = isPush ? (isPending ? 'Push queued…' : 'Pushing…') : (isPending ? 'Pull queued…' : 'Pulling…');
+    if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
+    if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
+  }
+
+  async function pollMdblistJob() {
+    try {
+      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!res.ok) return;
+      const jobs: any[] = await res.json();
+      const job = jobs.find(j => j.source === 'mdblist');
+      const isActive = job && (job.status === 'pending' || job.status === 'running');
+      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed')
+        && new Date(job.updated_at).getTime() > Date.now() - 8000;
+      renderMdblistProgress((isActive || isRecentDone) ? job : null);
+      if (isActive) {
+        mdblistPoller = setTimeout(pollMdblistJob, 2000);
+      } else if (isRecentDone) {
+        mdblistPoller = setTimeout(() => { renderMdblistProgress(null); mdblistPoller = null; }, 4000);
+      } else {
+        mdblistPoller = null;
+      }
+    } catch {
+      mdblistPoller = null;
+    }
+  }
+
+  function startMdblistPoller() {
+    if (mdblistPoller != null) clearTimeout(mdblistPoller);
+    pollMdblistJob();
+  }
+
   // ── Heal progress tracking ────────────────────────────────────────────────
   let healPoller: ReturnType<typeof setTimeout> | null = null;
 
@@ -2024,6 +2190,9 @@ if (me.totp_enabled) {
         if (job.source === 'trakt' && (job.status === 'pending' || job.status === 'running')) {
           startTraktPoller();
         }
+        if (job.source === 'mdblist' && (job.status === 'pending' || job.status === 'running')) {
+          startMdblistPoller();
+        }
         if (job.source === 'tmdb' && job.job_type === 'heal' && (job.status === 'pending' || job.status === 'running')) {
           startHealPoller();
         }
@@ -2099,17 +2268,19 @@ if (me.totp_enabled) {
     if (!token) return;
     const traktConnected = !!document.getElementById('trakt-disconnect-btn');
     const simklConnected = !!document.getElementById('simkl-disconnect-btn');
+    const mdblistConfigured = !!document.getElementById('mdblist_api_key')?.value;
     const radarrConfigured = !!document.getElementById('radarr_url')?.value;
     const sonarrConfigured = !!document.getElementById('sonarr_url')?.value;
     const mediaServerIds = Array.from(document.querySelectorAll<HTMLElement>('[data-connection-id]'))
       .map(el => el.getAttribute('data-connection-id'))
       .filter(Boolean) as string[];
-    if (!radarrConfigured && !sonarrConfigured && !traktConnected && !simklConnected && mediaServerIds.length === 0) return;
+    if (!radarrConfigured && !sonarrConfigured && !traktConnected && !simklConnected && !mdblistConfigured && mediaServerIds.length === 0) return;
 
     if (radarrConfigured) setConnStatus('radarr-conn-status', 'checking');
     if (sonarrConfigured) setConnStatus('sonarr-conn-status', 'checking');
     if (traktConnected) setConnStatus('trakt-conn-status', 'checking');
     if (simklConnected) setConnStatus('simkl-conn-status', 'checking');
+    if (mdblistConfigured) setConnStatus('mdblist-conn-status', 'checking');
     for (const id of mediaServerIds) setConnStatus(`conn-status-${id}`, 'checking');
 
     try {
@@ -2154,6 +2325,9 @@ if (me.totp_enabled) {
       }
       if (data.simkl?.configured) {
         setConnStatus('simkl-conn-status', data.simkl.connected ? 'connected' : 'disconnected');
+      }
+      if (data.mdblist?.configured) {
+        setConnStatus('mdblist-conn-status', data.mdblist.connected ? 'connected' : 'disconnected');
       }
       for (const cs of (data.connections ?? [])) {
         setConnStatus(`conn-status-${cs.id}`, cs.connected ? 'connected' : 'disconnected');
@@ -2663,6 +2837,46 @@ if (me.totp_enabled) {
             );
             if (!ok) return;
             url = `/api/proxy/trakt/push`;
+          } else if (action === 'sync_mdblist') {
+            const labels: Record<string, string> = {
+              mdblist_sync_watched: 'watched history',
+              mdblist_sync_ratings: 'ratings',
+              mdblist_sync_watchlist: 'watchlist',
+            };
+            const selected = Array.from(document.querySelectorAll<HTMLInputElement>('.sync-pref-checkbox'))
+              .filter(el => el.checked && labels[el.name])
+              .map(el => labels[el.name]);
+            const empty = selected.length === 0;
+            const ok = await showConfirmModal(
+              empty ? 'Nothing to pull' : 'Pull from MDBList?',
+              empty
+                ? 'Enable at least one option in the "MDBList → Scrob" section.'
+                : `This will import your ${formatList(selected)} from MDBList into Scrob.`,
+              empty ? 'Got it' : 'Pull',
+              empty
+            );
+            if (!ok) return;
+            url = '/api/proxy/mdblist/sync';
+          } else if (action === 'push_mdblist') {
+            const labels: Record<string, string> = {
+              mdblist_push_watched: 'watched history',
+              mdblist_push_ratings: 'ratings',
+              mdblist_push_watchlist: 'watchlist',
+            };
+            const selected = Array.from(document.querySelectorAll<HTMLInputElement>('.sync-pref-checkbox'))
+              .filter(el => el.checked && labels[el.name])
+              .map(el => labels[el.name]);
+            const empty = selected.length === 0;
+            const ok = await showConfirmModal(
+              empty ? 'Nothing to push' : 'Push to MDBList?',
+              empty
+                ? 'Enable at least one option in the "Scrob → MDBList" section.'
+                : `This will add or update your ${formatList(selected)} on MDBList. Existing remote items are retained.`,
+              empty ? 'Got it' : 'Push',
+              empty
+            );
+            if (!ok) return;
+            url = '/api/proxy/mdblist/push';
           }
 
           const res = await fetch(url, {
@@ -2676,6 +2890,7 @@ if (me.totp_enabled) {
             if (syncConnId) startConnPoller(syncConnId);
             if (action === 'sync_simkl' || action === 'push_simkl') startSimklPoller();
             if (action === 'sync_trakt' || action === 'push_trakt') startTraktPoller();
+            if (action === 'sync_mdblist' || action === 'push_mdblist') startMdblistPoller();
           } else {
             if (syncConnId) renderConnProgress(syncConnId, null);
             throw new Error(data.detail || 'Action failed');
@@ -3507,14 +3722,17 @@ if (me.totp_enabled) {
           trakt_client_secret: formData.get('trakt_client_secret') || null,
 
           simkl_client_id: formData.get('simkl_client_id') || null,
+          mdblist_api_key: formData.get('mdblist_api_key') || null,
         };
 
-        // Collect boolean checkboxes (Trakt + Simkl sync prefs + app preferences)
+        // Collect boolean checkboxes (cloud sync preferences + app preferences)
         const syncKeys = [
           'trakt_sync_watched', 'trakt_sync_ratings', 'trakt_sync_lists', 'trakt_watchlist_split',
           'trakt_push_watched', 'trakt_push_ratings', 'trakt_push_lists', 'trakt_scrobble',
           'simkl_sync_watched', 'simkl_sync_ratings', 'simkl_sync_lists',
           'simkl_push_watched', 'simkl_push_ratings', 'simkl_scrobble',
+          'mdblist_sync_watched', 'mdblist_sync_ratings', 'mdblist_sync_watchlist',
+          'mdblist_push_watched', 'mdblist_push_ratings', 'mdblist_push_watchlist',
           'blur_explicit',
           'time_format_24h',
           'use_hls_player',

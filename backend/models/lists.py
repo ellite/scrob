@@ -16,6 +16,7 @@ class List(Base):
     description   : Mapped[Optional[str]] = mapped_column(Text)
     privacy_level : Mapped[PrivacyLevel]  = mapped_column(SQLEnum(PrivacyLevel), default=PrivacyLevel.private, nullable=False, server_default=PrivacyLevel.private.value)
     trakt_slug    : Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    mdblist_slug : Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at    : Mapped[datetime]      = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at    : Mapped[datetime]      = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
