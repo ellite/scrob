@@ -85,6 +85,77 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(data["watched"]), 1)
         self.assertEqual(len(data["progress"]), 1)
 
+    async def test_pull_watch_progress_omits_unsupported_offset_param(self) -> None:
+        """Regression test: sync_pull_watch_progress has no p_offset parameter
+        on the real API — sending one 404s with "could not find the function"
+        because PostgREST can't match the signature. Only p_profile_id/p_limit
+        are valid."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(
+                    200,
+                    json={"access_token": "access-token", "refresh_token": "new-refresh", "expires_in": 3600},
+                )
+            payload = json.loads(request.content or b"{}")
+            if request.url.path.endswith("/sync_pull_profiles"):
+                return httpx.Response(200, json=[{"profile_index": 2, "name": "Main"}])
+            if request.url.path.endswith("/sync_pull_library"):
+                return httpx.Response(200, json=[])
+            if request.url.path.endswith("/sync_pull_watched_items"):
+                return httpx.Response(200, json=[])
+            if request.url.path.endswith("/sync_pull_watch_progress"):
+                if "p_offset" in payload:
+                    return httpx.Response(
+                        404,
+                        json={
+                            "message": "Could not find the function public.sync_pull_watch_progress"
+                            "(p_limit, p_offset, p_profile_id) in the schema cache"
+                        },
+                    )
+                self.assertEqual(payload, {"p_profile_id": 2, "p_limit": 200})
+                return httpx.Response(
+                    200,
+                    json=[{"content_id": "tmdb:550", "content_type": "movie", "position": 1, "duration": 2}],
+                )
+            return httpx.Response(404, json={"message": "unexpected request"})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            nuvio.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            _, data = await nuvio.pull_sync_data("https://api.nuvio.tv/", "old-refresh", 2)
+
+        self.assertEqual(len(data["progress"]), 1)
+
+    async def test_pull_sync_data_tolerates_null_profile_index(self) -> None:
+        """Regression test: a profile with profile_index: null must not crash
+        pull_sync_data the way it previously crashed on int(None)."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(
+                    200,
+                    json={"access_token": "access-token", "refresh_token": "new-refresh", "expires_in": 3600},
+                )
+            if request.url.path.endswith("/sync_pull_profiles"):
+                return httpx.Response(200, json=[{"profile_index": None, "name": "Kids"}, {"profile_index": 2, "name": "Main"}])
+            if request.url.path.endswith(("/sync_pull_library", "/sync_pull_watched_items", "/sync_pull_watch_progress")):
+                return httpx.Response(200, json=[])
+            return httpx.Response(404, json={"message": "unexpected request"})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            nuvio.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            session, data = await nuvio.pull_sync_data("https://api.nuvio.tv/", "old-refresh", 2)
+
+        self.assertEqual(session.refresh_token, "new-refresh")
+
     async def test_push_watched_items_batches_without_full_replace(self) -> None:
         batch_sizes: list[int] = []
 

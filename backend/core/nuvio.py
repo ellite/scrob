@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,6 +12,16 @@ _PAGE_SIZE = 500
 
 class NuvioAPIError(RuntimeError):
     pass
+
+
+def parse_profile_id(value: str | None) -> int:
+    try:
+        profile_id = int(value or "")
+    except (TypeError, ValueError):
+        raise NuvioAPIError("Nuvio profile must be an integer from 1 to 6")
+    if profile_id < 1 or profile_id > 6:
+        raise NuvioAPIError("Nuvio profile must be an integer from 1 to 6")
+    return profile_id
 
 
 @dataclass(frozen=True)
@@ -138,7 +149,7 @@ async def validate_connection(
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
         profiles = await get_profiles(url, session.access_token, client=client)
-    if profile_id is not None and not any(int(profile.get("profile_index", 0)) == profile_id for profile in profiles):
+    if profile_id is not None and not any(int(profile.get("profile_index") or 0) == profile_id for profile in profiles):
         raise NuvioAPIError(f"Nuvio profile {profile_id} was not found")
     return session, profiles
 
@@ -195,6 +206,10 @@ async def _pull_watch_progress(
     access_token: str,
     profile_id: int,
 ) -> list[dict[str, Any]]:
+    # sync_pull_watch_progress does not accept a p_offset parameter — passing
+    # one makes PostgREST 404 with "could not find the function" because no
+    # matching signature exists. The RPC always returns the full in-progress
+    # list (bounded, unlike watch history) in a single call.
     rows = await _rpc(
         client,
         url,
@@ -213,11 +228,13 @@ async def pull_sync_data(
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
         profiles = await get_profiles(url, session.access_token, client=client)
-        if not any(int(profile.get("profile_index", 0)) == profile_id for profile in profiles):
+        if not any(int(profile.get("profile_index") or 0) == profile_id for profile in profiles):
             raise NuvioAPIError(f"Nuvio profile {profile_id} was not found")
-        library = await _pull_library(client, url, session.access_token, profile_id)
-        watched = await _pull_watched_items(client, url, session.access_token, profile_id)
-        progress = await _pull_watch_progress(client, url, session.access_token, profile_id)
+        library, watched, progress = await asyncio.gather(
+            _pull_library(client, url, session.access_token, profile_id),
+            _pull_watched_items(client, url, session.access_token, profile_id),
+            _pull_watch_progress(client, url, session.access_token, profile_id),
+        )
     return session, {"library": library, "watched": watched, "progress": progress}
 
 
