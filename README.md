@@ -26,7 +26,6 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, and **Nuvio**,
   - [First Setup](#first-setup)
   - [Updating](#updating)
 - [Configuration](#configuration)
-- [Development](#development)
 - [Nuvio Cloud Synchronization](#nuvio-cloud-synchronization)
   - [Connect Nuvio](#connect-nuvio)
   - [Synchronization Directions](#synchronization-directions)
@@ -41,6 +40,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, and **Nuvio**,
 - [Email Validation & SMTP](#email-validation--smtp)
 - [Contributing](#contributing)
 - [Contributors](#contributors)
+- [Development](#development)
 - [License](#license)
 
 ## Features
@@ -310,7 +310,7 @@ Scrob connects to the [Nuvio public Cloud API](https://nuvio.tv/docs) at `https:
 
 ### Connect Nuvio
 
-1. Open **Settings → Media Server Connections** and select **Add Connection**.
+1. Open **Settings → Media & Cloud Connections** and select **Add Connection**.
 2. Choose **Nuvio**, then enter a connection name, your Nuvio email, and your Nuvio password.
 3. Select **Test** to authenticate and load the profiles attached to the account.
 4. Select the Nuvio profile to synchronize, choose the pull and push options, then select **Add**.
