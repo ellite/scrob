@@ -44,10 +44,10 @@ async def _get_all_pages(
         if not page_items:
             return items
         try:
-            page_count = int(response.headers["X-Pagination-Page-Count"])
-        except (KeyError, TypeError, ValueError):
-            page_count = None
-        if page_count is not None and page >= page_count:
+            page_count = int(response.headers.get("X-Pagination-Page-Count", page))
+        except (TypeError, ValueError):
+            page_count = page
+        if page >= page_count:
             return items
         page += 1
 
