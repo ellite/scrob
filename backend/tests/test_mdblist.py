@@ -13,7 +13,13 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from core import mdblist
 from models.base import MediaType
 from models.media import Media
-from routers.mdblist import _episode_identity, _payload_item, _resolve_external_tmdb_id
+from routers.mdblist import (
+    _episode_identity,
+    _payload_item,
+    _rating_removal_item,
+    _resolve_external_tmdb_id,
+    _season_identity,
+)
 from routers.lists import _push_list_item_to_mdblist
 
 
@@ -212,6 +218,68 @@ class MDBListNormalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kind, "movies")
         self.assertEqual(item["rating"], 8.0)
         self.assertEqual(item["rated_at"], "2026-07-17T12:00:00Z")
+
+    def test_season_identity_uses_parent_show_and_season_number(self) -> None:
+        entry = {
+            "rated_at": "2026-07-18T00:00:00Z",
+            "rating": 8,
+            "season": {"number": 1, "ids": {"tmdb": 3572}},
+            "show": {"title": "Breaking Bad", "ids": {"tmdb": 1396}},
+        }
+
+        show, season_number = _season_identity(entry)
+
+        self.assertEqual(show["ids"]["tmdb"], 1396)
+        self.assertEqual(season_number, 1)
+
+    def test_payload_item_nests_season_under_parent_show(self) -> None:
+        media = Media(
+            id=1,
+            tmdb_id=1396,
+            media_type=MediaType.series,
+            title="Breaking Bad",
+        )
+
+        kind, item = _payload_item(
+            media,
+            season_number=1,
+            rating=8.0,
+            rated_at=datetime(2026, 7, 18, 0, 0, 0, 123456),
+        )
+
+        self.assertEqual(kind, "shows")
+        self.assertEqual(
+            item,
+            {
+                "ids": {"tmdb": 1396},
+                "seasons": [
+                    {
+                        "number": 1,
+                        "rating": 8.0,
+                        "rated_at": "2026-07-18T00:00:00Z",
+                    }
+                ],
+            },
+        )
+
+    def test_rating_removal_nests_season_under_parent_show(self) -> None:
+        media = Media(
+            id=1,
+            tmdb_id=1396,
+            media_type=MediaType.series,
+            title="Breaking Bad",
+        )
+
+        kind, item = _rating_removal_item(media, season_number=1)
+
+        self.assertEqual(kind, "shows")
+        self.assertEqual(
+            item,
+            {
+                "ids": {"tmdb": 1396},
+                "seasons": [{"number": 1}],
+            },
+        )
 
 
 if __name__ == "__main__":

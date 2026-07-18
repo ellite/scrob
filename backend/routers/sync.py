@@ -17,7 +17,7 @@ from models.users import User, UserSettings
 from models.connections import MediaServerConnection
 from models.sync import SyncJob, SyncStatus
 from models.events import WatchEvent
-from models.ratings import Rating
+from models.ratings import Rating, RatingChanges, RatingKey
 from models.playback_progress import PlaybackProgress
 from models.library_selections import JellyfinLibrarySelection, EmbyLibrarySelection, PlexLibrarySelection
 from models.season_override import ShowSeasonOverride
@@ -83,6 +83,73 @@ async def _latest_watched_at(db: AsyncSession, user_id: int, media_ids: list) ->
         for media_id, watched_at in result.all():
             watched_at_by_media.setdefault(media_id, watched_at)
     return watched_at_by_media
+
+
+async def _resolve_tmdb_season_ids(
+    media_by_id: dict[int, Media],
+    rating_keys: set[RatingKey],
+    api_key: str | None,
+) -> dict[RatingKey, int]:
+    """Resolve TMDB season resource IDs for season rating operations."""
+    season_keys = {
+        key
+        for key in rating_keys
+        if key[1] is not None
+        and (media := media_by_id.get(key[0]))
+        and media.media_type == MediaType.series
+        and media.tmdb_id
+    }
+    if not season_keys:
+        return {}
+
+    resolved: dict[RatingKey, int] = {}
+    semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
+
+    async def resolve(key: RatingKey) -> None:
+        media = media_by_id[key[0]]
+        async with semaphore:
+            try:
+                season = await tmdb.get_season(
+                    media.tmdb_id,
+                    key[1],
+                    api_key=api_key,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Could not resolve TMDB season ID for show=%s season=%s: %s",
+                    media.tmdb_id,
+                    key[1],
+                    exc,
+                )
+                return
+        season_tmdb_id = season.get("id")
+        if season_tmdb_id:
+            resolved[key] = int(season_tmdb_id)
+
+    await asyncio.gather(*(resolve(key) for key in season_keys))
+    return resolved
+
+
+async def _get_or_create_series_rating_media(
+    db: AsyncSession,
+    tmdb_id: int,
+    title: str,
+    api_key: str | None,
+) -> Media:
+    result = await db.execute(
+        select(Media).where(
+            Media.tmdb_id == tmdb_id,
+            Media.media_type == MediaType.series,
+        )
+    )
+    media = result.scalars().first()
+    if media:
+        return media
+    media = Media(tmdb_id=tmdb_id, media_type=MediaType.series, title=title)
+    db.add(media)
+    await db.flush()
+    await enrich_media(media, api_key=api_key)
+    return media
 
 
 def extract_watch_state(item: dict, source: CollectionSource) -> dict:
@@ -555,19 +622,31 @@ async def _fan_out_changes_to_other_connections(
     user_id: int,
     exclude_connection_id: int | None,
     new_watched_ids: set[int],
-    new_ratings: dict[int, float],
+    new_ratings: RatingChanges,
     settings: "UserSettings | None" = None,
     exclude_cloud_source: CollectionSource | None = None,
+    removed_ratings: set[RatingKey] | None = None,
 ) -> None:
     """Push an inbound sync delta to every enabled media server and cloud target.
 
     ``exclude_connection_id`` prevents media-server echo. ``exclude_cloud_source``
     prevents a cloud pull from writing the same delta back to its source.
     """
-    if not new_watched_ids and not new_ratings:
+    removed_ratings = removed_ratings or set()
+    if not new_watched_ids and not new_ratings and not removed_ratings:
         return
 
-    all_changed_ids = set(new_watched_ids) | set(new_ratings.keys())
+    all_changed_ids = (
+        set(new_watched_ids)
+        | {media_id for media_id, _ in new_ratings}
+        | {media_id for media_id, _ in removed_ratings}
+    )
+    media_items = await _select_in_chunks(
+        db,
+        lambda chunk: select(Media).where(Media.id.in_(chunk)),
+        list(all_changed_ids),
+    )
+    media_by_id: dict[int, Media] = {media.id: media for media in media_items}
 
     # ── Media server fan-out ─────────────────────────────────────────────────
     conns_filter = [MediaServerConnection.user_id == user_id]
@@ -580,6 +659,8 @@ async def _fan_out_changes_to_other_connections(
     push_candidates = [c for c in other_conns if c.push_watched or c.push_ratings]
 
     push_tasks = []
+    server_rating_changes = {key: 0.0 for key in removed_ratings}
+    server_rating_changes.update(new_ratings)
 
     if push_candidates:
         # Chunk the IN clause to stay under asyncpg's 32767-parameter limit.
@@ -648,7 +729,33 @@ async def _fan_out_changes_to_other_connections(
                         elif conn.type == "emby":
                             push_tasks.append(_guarded(emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid)))
             if conn.push_ratings:
-                for mid, rating in new_ratings.items():
+                for (mid, season_number), rating in server_rating_changes.items():
+                    media = media_by_id.get(mid)
+                    if season_number is not None:
+                        if conn.type == "plex" and media and media.tmdb_id:
+                            async def _set_plex_season_rating(
+                                target_conn: MediaServerConnection = conn,
+                                target_media: Media = media,
+                                target_season: int = season_number,
+                                target_rating: float = rating,
+                            ) -> bool:
+                                rating_key = await plex.resolve_season_rating_key(
+                                    target_conn.url,
+                                    target_conn.token,
+                                    target_media.tmdb_id,
+                                    target_season,
+                                )
+                                if not rating_key:
+                                    return False
+                                return await plex.set_rating(
+                                    target_conn.url,
+                                    target_conn.token,
+                                    rating_key,
+                                    target_rating,
+                                )
+
+                            push_tasks.append(_guarded(_set_plex_season_rating()))
+                        continue
                     for sid in source_ids_map.get((conn_source, mid), []):
                         if conn.type == "plex":
                             push_tasks.append(_guarded(plex.set_rating(conn.url, conn.token, sid, rating)))
@@ -657,17 +764,13 @@ async def _fan_out_changes_to_other_connections(
                         elif conn.type == "emby":
                             push_tasks.append(_guarded(emby.set_rating(conn.url, conn.token, conn.server_user_id, sid, rating)))
 
+    season_tmdb_ids: dict[RatingKey, int] = {}
     # ── Trakt fan-out ────────────────────────────────────────────────────────
     push_trakt_watched = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_watched and settings.trakt_access_token and settings.trakt_client_id
     push_trakt_ratings = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id
 
     if (push_trakt_watched or push_trakt_ratings) and all_changed_ids:
-        media_items = await _select_in_chunks(
-            db,
-            lambda chunk: select(Media).where(Media.id.in_(chunk)),
-            list(all_changed_ids),
-        )
-        media_by_id: dict[int, Media] = {m.id: m for m in media_items}
+        media_items = list(media_by_id.values())
 
         # Load shows for episode tmdb_id lookups
         show_ids = {m.show_id for m in media_items if m.show_id}
@@ -702,21 +805,64 @@ async def _fan_out_changes_to_other_connections(
 
         trakt_movie_ratings: list[tuple[int, float]] = []
         trakt_show_ratings: list[tuple[int, float]] = []
+        trakt_season_ratings: list[tuple[int, float]] = []
         if push_trakt_ratings:
-            for mid, rating in new_ratings.items():
+            all_rating_keys = set(new_ratings) | removed_ratings
+            season_tmdb_ids = await _resolve_tmdb_season_ids(
+                media_by_id,
+                all_rating_keys,
+                await _get_effective_tmdb_key(db, settings),
+            )
+            for key, rating in new_ratings.items():
+                mid, season_number = key
                 media = media_by_id.get(mid)
                 if not media or not media.tmdb_id:
                     continue
-                if media.media_type == MediaType.movie:
+                if season_number is not None:
+                    if season_tmdb_id := season_tmdb_ids.get(key):
+                        trakt_season_ratings.append((season_tmdb_id, rating))
+                elif media.media_type == MediaType.movie:
                     trakt_movie_ratings.append((media.tmdb_id, rating))
-                elif media.media_type in (MediaType.series, MediaType.episode):
+                elif media.media_type == MediaType.series:
                     trakt_show_ratings.append((media.tmdb_id, rating))
 
-        if trakt_movie_ratings or trakt_show_ratings:
-            push_tasks.append(trakt_client.set_ratings_batch(
-                settings.trakt_client_id, settings.trakt_access_token,
-                trakt_movie_ratings, trakt_show_ratings,
-            ))
+        if trakt_movie_ratings or trakt_show_ratings or trakt_season_ratings:
+            push_tasks.append(
+                trakt_client.set_ratings_batch(
+                    settings.trakt_client_id,
+                    settings.trakt_access_token,
+                    trakt_movie_ratings,
+                    trakt_show_ratings,
+                    trakt_season_ratings,
+                )
+            )
+
+        if push_trakt_ratings:
+            removed_trakt_movies: list[int] = []
+            removed_trakt_shows: list[int] = []
+            removed_trakt_seasons: list[int] = []
+            for key in removed_ratings:
+                media_id, season_number = key
+                media = media_by_id.get(media_id)
+                if not media or not media.tmdb_id:
+                    continue
+                if season_number is not None:
+                    if season_tmdb_id := season_tmdb_ids.get(key):
+                        removed_trakt_seasons.append(season_tmdb_id)
+                elif media.media_type == MediaType.movie:
+                    removed_trakt_movies.append(media.tmdb_id)
+                elif media.media_type == MediaType.series:
+                    removed_trakt_shows.append(media.tmdb_id)
+            if removed_trakt_movies or removed_trakt_shows or removed_trakt_seasons:
+                push_tasks.append(
+                    trakt_client.remove_ratings_batch(
+                        settings.trakt_client_id,
+                        settings.trakt_access_token,
+                        removed_trakt_movies,
+                        removed_trakt_shows,
+                        removed_trakt_seasons,
+                    )
+                )
 
     # ── MDBList fan-out ──────────────────────────────────────────────────────
     push_mdblist_watched = settings and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_watched and settings.mdblist_api_key
@@ -724,14 +870,9 @@ async def _fan_out_changes_to_other_connections(
 
     if (push_mdblist_watched or push_mdblist_ratings) and all_changed_ids:
         from core import mdblist as mdblist_client
-        from routers.mdblist import _empty_payload, _payload_item
+        from routers.mdblist import _empty_payload, _payload_item, _rating_removal_item
 
-        mdblist_media = await _select_in_chunks(
-            db,
-            lambda chunk: select(Media).where(Media.id.in_(chunk)),
-            list(all_changed_ids),
-        )
-        mdblist_media_by_id = {media.id: media for media in mdblist_media}
+        mdblist_media_by_id = media_by_id
 
         if push_mdblist_watched:
             watched_at_by_media = await _latest_watched_at(db, user_id, list(new_watched_ids))
@@ -744,22 +885,34 @@ async def _fan_out_changes_to_other_connections(
                     watched_payload[item[0]].append(item[1])
             push_tasks.append(mdblist_client.push_watched(settings.mdblist_api_key, watched_payload))
 
-        if push_mdblist_ratings:
-            rated_media_ids = list(new_ratings.keys())
-            rated_at_by_media: dict[int, datetime] = {}
+        if push_mdblist_ratings and new_ratings:
+            rated_media_ids = list({media_id for media_id, _ in new_ratings})
+            rated_at_by_key: dict[RatingKey, datetime] = {}
             for i in range(0, len(rated_media_ids), _MAX_IN_PARAMS):
                 chunk = rated_media_ids[i : i + _MAX_IN_PARAMS]
                 rated_at_result = await db.execute(
-                    select(Rating.media_id, Rating.rated_at).where(
-                        Rating.user_id == user_id, Rating.media_id.in_(chunk)
+                    select(Rating.media_id, Rating.season_number, Rating.rated_at).where(
+                        Rating.user_id == user_id,
+                        Rating.media_id.in_(chunk),
                     )
                 )
-                rated_at_by_media.update(dict(rated_at_result.all()))
+                rated_at_by_key.update(
+                    {
+                        (media_id, season_number): rated_at
+                        for media_id, season_number, rated_at in rated_at_result.all()
+                    }
+                )
             ratings_payload = _empty_payload()
-            for media_id, rating in new_ratings.items():
+            for key, rating in new_ratings.items():
+                media_id, season_number = key
                 media = mdblist_media_by_id.get(media_id)
                 item = (
-                    _payload_item(media, rating=rating, rated_at=rated_at_by_media.get(media_id))
+                    _payload_item(
+                        media,
+                        rating=rating,
+                        rated_at=rated_at_by_key.get(key),
+                        season_number=season_number,
+                    )
                     if media
                     else None
                 )
@@ -767,10 +920,88 @@ async def _fan_out_changes_to_other_connections(
                     ratings_payload[item[0]].append(item[1])
             push_tasks.append(mdblist_client.push_ratings(settings.mdblist_api_key, ratings_payload))
 
+        if push_mdblist_ratings and removed_ratings:
+            removed_payload = _empty_payload()
+            for media_id, season_number in removed_ratings:
+                media = mdblist_media_by_id.get(media_id)
+                item = (
+                    _rating_removal_item(media, season_number)
+                    if media
+                    else None
+                )
+                if item:
+                    removed_payload[item[0]].append(item[1])
+            push_tasks.append(
+                mdblist_client.remove_ratings(
+                    settings.mdblist_api_key,
+                    removed_payload,
+                )
+            )
+
+    # ── Simkl fan-out ────────────────────────────────────────────────────────
+    push_simkl_ratings = (
+        settings
+        and exclude_cloud_source != CollectionSource.simkl
+        and settings.simkl_push_ratings
+        and settings.simkl_access_token
+        and settings.simkl_client_id
+    )
+    if push_simkl_ratings:
+        from core import simkl as simkl_client
+
+        for key, rating in new_ratings.items():
+            media_id, season_number = key
+            if season_number is not None:
+                continue
+            media = media_by_id.get(media_id)
+            if not media or not media.tmdb_id:
+                continue
+            if media.media_type == MediaType.movie:
+                push_tasks.append(
+                    simkl_client.set_movie_rating(
+                        settings.simkl_client_id,
+                        settings.simkl_access_token,
+                        media.tmdb_id,
+                        rating,
+                    )
+                )
+            elif media.media_type == MediaType.series:
+                push_tasks.append(
+                    simkl_client.set_show_rating(
+                        settings.simkl_client_id,
+                        settings.simkl_access_token,
+                        media.tmdb_id,
+                        rating,
+                    )
+                )
+        for media_id, season_number in removed_ratings:
+            if season_number is not None:
+                continue
+            media = media_by_id.get(media_id)
+            if not media or not media.tmdb_id:
+                continue
+            if media.media_type == MediaType.movie:
+                push_tasks.append(
+                    simkl_client.remove_movie_rating(
+                        settings.simkl_client_id,
+                        settings.simkl_access_token,
+                        media.tmdb_id,
+                    )
+                )
+            elif media.media_type == MediaType.series:
+                push_tasks.append(
+                    simkl_client.remove_show_rating(
+                        settings.simkl_client_id,
+                        settings.simkl_access_token,
+                        media.tmdb_id,
+                    )
+                )
+
     if push_tasks:
         target_count = len(push_candidates)
         target_count += 1 if (push_trakt_watched or push_trakt_ratings) else 0
         target_count += 1 if (push_mdblist_watched or push_mdblist_ratings) else 0
+        target_count += 1 if push_simkl_ratings else 0
         print(f"  Fanning out {len(push_tasks)} changes to {target_count} other connection(s)...")
         results = await asyncio.gather(*push_tasks, return_exceptions=True)
         failed = sum(1 for r in results if isinstance(r, Exception))
@@ -795,7 +1026,7 @@ async def sync_items(
     sync_watched: bool = True,
     sync_ratings: bool = True,
     new_watched_ids: set[int] | None = None,  # accumulated across calls; mutated in-place
-    new_ratings: dict[int, float] | None = None,  # accumulated across calls; mutated in-place
+    new_ratings: RatingChanges | None = None,  # accumulated across calls; mutated in-place
     connection_id: int | None = None,
 ) -> list[dict]:  # returns warnings
     print(f"  Syncing {len(items)} {media_type.value}s from {source.value}...")
@@ -1208,7 +1439,7 @@ async def sync_items(
                             db.add(new_r)
                             existing_ratings[media_id_for_watch] = new_r
                         if new_ratings is not None:
-                            new_ratings[media_id_for_watch] = watch_state["user_rating"]
+                            new_ratings[(media_id_for_watch, None)] = watch_state["user_rating"]
 
             # Savepoint committed — update pre-loaded caches so duplicates within the
             # same sync batch reuse the newly created media instead of creating another.
@@ -1331,7 +1562,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
             all_warnings: list[dict] = []
             total_discovered = 0
             _new_watched: set[int] = set()
-            _new_ratings: dict[int, float] = {}
+            _new_ratings: RatingChanges = {}
 
             for lib in libraries:
                 lib_type = (lib.get("CollectionType") or "").lower()
@@ -1518,7 +1749,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             all_warnings: list[dict] = []
             total_discovered = 0
             _new_watched: set[int] = set()
-            _new_ratings: dict[int, float] = {}
+            _new_ratings: RatingChanges = {}
 
             for lib in libraries:
                 lib_type = (lib.get("CollectionType") or "").lower()
@@ -1772,11 +2003,18 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                 libraries = [lib for lib in libraries if lib.get("key") in selected_keys]
 
             print(f"  Found {len(libraries)} libraries to sync")
-            stats = {"movies": 0, "episodes": 0, "skipped": 0, "errors": 0}
+            stats = {"movies": 0, "episodes": 0, "ratings": 0, "skipped": 0, "errors": 0}
             all_warnings: list[dict] = []
             total_discovered = 0
             _new_watched: set[int] = set()
-            _new_ratings: dict[int, float] = {}
+            _new_ratings: RatingChanges = {}
+            ratings_result = await db.execute(
+                select(Rating).where(Rating.user_id == user_id)
+            )
+            existing_ratings = {
+                (rating.media_id, rating.season_number): rating
+                for rating in ratings_result.scalars().all()
+            }
 
             for lib in libraries:
                 lib_type = lib.get("type")
@@ -1890,6 +2128,63 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         series_tmdb_map, db, api_key=tmdb_api_key
                     )
                     print(f"    Mapped {len(show_map)}/{len(series_tmdb_map)} shows.")
+
+                    if conn.sync_ratings:
+                        seasons = await plex.get_seasons(p_url, p_token, lib_key)
+                        show_titles = {
+                            str(show.get("ratingKey")): str(show.get("title") or "")
+                            for show in shows
+                        }
+                        rated_seasons = [
+                            season
+                            for season in seasons
+                            if season.get("userRating") is not None
+                        ]
+                        total_discovered += len(rated_seasons)
+                        for season in rated_seasons:
+                            parent_key = str(season.get("parentRatingKey") or "")
+                            show_id = show_map.get(parent_key)
+                            show_tmdb_id = show_id_to_tmdb.get(show_id) if show_id else None
+                            season_number = season.get("index")
+                            if show_tmdb_id is None or season_number is None:
+                                stats["skipped"] += 1
+                                continue
+                            try:
+                                async with db.begin_nested():
+                                    media = await _get_or_create_series_rating_media(
+                                        db,
+                                        show_tmdb_id,
+                                        show_titles.get(parent_key, ""),
+                                        tmdb_api_key,
+                                    )
+                                    key = (media.id, int(season_number))
+                                    rating_value = float(season["userRating"])
+                                    current = existing_ratings.get(key)
+                                    if current and current.rating == rating_value:
+                                        stats["skipped"] += 1
+                                        continue
+                                    if current:
+                                        current.rating = rating_value
+                                        current.rated_at = datetime.utcnow()
+                                    else:
+                                        current = Rating(
+                                            user_id=user_id,
+                                            media_id=media.id,
+                                            season_number=int(season_number),
+                                            rating=rating_value,
+                                        )
+                                        db.add(current)
+                                        existing_ratings[key] = current
+                                    _new_ratings[key] = rating_value
+                                    stats["ratings"] += 1
+                            except Exception as exc:
+                                logger.warning(
+                                    "Error importing Plex season rating show=%s season=%s: %s",
+                                    show_tmdb_id,
+                                    season_number,
+                                    exc,
+                                )
+                                stats["errors"] += 1
 
                     unmatched_shows = [s for s in shows if str(s.get("ratingKey")) not in show_map]
                     for s in unmatched_shows:
@@ -2874,7 +3169,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
 
             conn_source = CollectionSource(conn.type)
             watched_ids: set[int] = set()
-            ratings_map: dict[int, float] = {}
+            ratings_map: RatingChanges = {}
 
             if conn.push_watched:
                 watched_result = await db.execute(
@@ -2884,14 +3179,17 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
 
             if conn.push_ratings:
                 ratings_result = await db.execute(
-                    select(Rating.media_id, Rating.rating).where(
+                    select(Rating.media_id, Rating.season_number, Rating.rating).where(
                         Rating.user_id == user_id,
                         Rating.rating.isnot(None),
                     )
                 )
-                ratings_map = {row[0]: row[1] for row in ratings_result.all()}
+                ratings_map = {
+                    (media_id, season_number): float(rating)
+                    for media_id, season_number, rating in ratings_result.all()
+                }
 
-            all_media_ids = watched_ids | set(ratings_map.keys())
+            all_media_ids = watched_ids | {media_id for media_id, _ in ratings_map}
             if not all_media_ids:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, total_items=0, processed_items=0))
                 await db.commit()
@@ -2916,19 +3214,25 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 for source_id, media_id in files_chunk.all():
                     source_ids_map.setdefault(media_id, []).append(source_id)
 
-            # Slow path: items not in source_ids_map need a live TMDB-based lookup on the server
-            missing_ids = all_media_ids - set(source_ids_map.keys())
+            # Slow path: unknown items and Plex season ratings need media metadata.
+            missing_ids = all_media_ids - set(source_ids_map)
+            season_rating_ids = {
+                media_id
+                for media_id, season_number in ratings_map
+                if season_number is not None
+            }
+            lookup_media_ids = missing_ids | season_rating_ids
             media_info: dict[int, Media] = {}
             show_tmdb_map: dict[int, int] = {}  # show.id → show.tmdb_id
 
-            if missing_ids:
+            if lookup_media_ids:
                 media_rows_list = await _select_in_chunks(
                     db,
                     lambda chunk: select(Media).where(Media.id.in_(chunk)),
-                    list(missing_ids),
+                    list(lookup_media_ids),
                 )
-                for m in media_rows_list:
-                    media_info[m.id] = m
+                for media in media_rows_list:
+                    media_info[media.id] = media
 
                 show_ids_needed = {m.show_id for m in media_info.values() if m.show_id is not None}
                 if show_ids_needed:
@@ -2948,12 +3252,14 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                         push_items.append(("watched", sid))
 
             if conn.push_ratings:
-                for mid, rating in ratings_map.items():
+                for (mid, season_number), rating in ratings_map.items():
+                    if season_number is not None:
+                        continue
                     for sid in source_ids_map.get(mid, []):
                         push_items.append(("rating", sid, rating))
 
-            # Items that need live lookup: defer as coroutines resolved during push
-            lookup_items: list[tuple] = []  # (action, media_id, [rating])
+            # Items that need live lookup: defer as coroutines resolved during push.
+            lookup_items: list[tuple] = []
 
             if missing_ids:
                 if conn.push_watched:
@@ -2961,9 +3267,14 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                         if mid in media_info:
                             lookup_items.append(("watched", mid))
                 if conn.push_ratings:
-                    for mid in set(ratings_map.keys()) & missing_ids:
-                        if mid in media_info:
-                            lookup_items.append(("rating", mid, ratings_map[mid]))
+                    for key, rating in ratings_map.items():
+                        mid, season_number = key
+                        if season_number is None and mid in missing_ids and mid in media_info:
+                            lookup_items.append(("rating", mid, rating))
+            if conn.type == "plex" and conn.push_ratings:
+                for (mid, season_number), rating in ratings_map.items():
+                    if season_number is not None and mid in media_info:
+                        lookup_items.append(("season_rating", mid, season_number, rating))
 
             total = len(push_items) + len(lookup_items)
             if total == 0:
@@ -3038,6 +3349,25 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 async with sem:
                     try:
                         mid = item[1]
+                        if item[0] == "season_rating":
+                            media = media_info.get(mid)
+                            if not media or not media.tmdb_id:
+                                return False
+                            sid = await plex.resolve_season_rating_key(
+                                conn.url,
+                                conn.token,
+                                media.tmdb_id,
+                                item[2],
+                            )
+                            if not sid:
+                                return False
+                            return await plex.set_rating(
+                                conn.url,
+                                conn.token,
+                                sid,
+                                item[3],
+                                client=client,
+                            )
                         sid = await _find_source_id(mid)
                         if not sid:
                             return False

@@ -7,6 +7,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 
+RatingKey = tuple[int, int | None]
+RatingChanges = dict[RatingKey, float]
+
+
 class Rating(Base):
     __tablename__ = "ratings"
 

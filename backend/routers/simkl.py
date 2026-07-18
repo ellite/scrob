@@ -24,7 +24,7 @@ from models.base import CollectionSource, MediaType
 from models.events import WatchEvent
 from models.lists import List as ListModel, ListItem
 from models.media import Media
-from models.ratings import Rating
+from models.ratings import Rating, RatingChanges
 from models.show import Show
 from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
@@ -277,7 +277,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
 
             stats: dict[str, int] = {"movies": 0, "episodes": 0, "ratings": 0, "lists": 0, "list_items": 0, "skipped": 0, "errors": 0}
             _new_watched: set[int] = set()
-            _new_ratings: dict[int, float] = {}
+            _new_ratings: RatingChanges = {}
 
             print("  Fetching all items from Simkl…")
             all_items = await simkl_client.get_all_items(client_id, access_token)
@@ -419,7 +419,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                             if media.id not in existing_rated:
                                 db.add(Rating(user_id=user_id, media_id=media.id, rating=float(rating_val)))
                                 existing_rated.add(media.id)
-                                _new_ratings[media.id] = float(rating_val)
+                                _new_ratings[(media.id, None)] = float(rating_val)
                                 stats["ratings"] += 1
                     except Exception as exc:
                         logger.warning("Error processing Simkl movie rating tmdb=%s: %s", tmdb_id, exc)
@@ -448,7 +448,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                             if media.id not in existing_rated:
                                 db.add(Rating(user_id=user_id, media_id=media.id, rating=float(rating_val)))
                                 existing_rated.add(media.id)
-                                _new_ratings[media.id] = float(rating_val)
+                                _new_ratings[(media.id, None)] = float(rating_val)
                                 stats["ratings"] += 1
                     except Exception as exc:
                         logger.warning("Error processing Simkl show rating tmdb=%s: %s", tmdb_id, exc)
@@ -542,7 +542,15 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                 f"Skipped: {stats['skipped']}. Errors: {stats['errors']}."
             )
             from routers.sync import _fan_out_changes_to_other_connections
-            await _fan_out_changes_to_other_connections(db, user_id, None, _new_watched, _new_ratings, settings=settings)
+            await _fan_out_changes_to_other_connections(
+                db,
+                user_id,
+                None,
+                _new_watched,
+                _new_ratings,
+                settings=settings,
+                exclude_cloud_source=CollectionSource.simkl,
+            )
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed,

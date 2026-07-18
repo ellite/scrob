@@ -23,7 +23,7 @@ from models.base import CollectionSource, MediaType
 from models.events import WatchEvent
 from models.lists import List as ListModel, ListItem
 from models.media import Media
-from models.ratings import Rating
+from models.ratings import Rating, RatingChanges
 from models.show import Show
 from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
@@ -197,6 +197,72 @@ async def _get_or_create_movie_media(db: AsyncSession, tmdb_id: int, title: str,
     return media
 
 
+async def _get_or_create_series_media(
+    db: AsyncSession,
+    tmdb_id: int,
+    title: str,
+    api_key: str | None,
+) -> Media | None:
+    result = await db.execute(
+        select(Media).where(
+            Media.tmdb_id == tmdb_id,
+            Media.media_type == MediaType.series,
+        )
+    )
+    media = result.scalars().first()
+    if media:
+        return media
+    media = Media(tmdb_id=tmdb_id, media_type=MediaType.series, title=title)
+    db.add(media)
+    await db.flush()
+    await enrich_media(media, api_key=api_key)
+    return media
+
+
+def _trakt_rated_at(value: str | None) -> datetime:
+    if not value:
+        return datetime.utcnow()
+    from dateutil import parser as dt_parser
+
+    parsed = dt_parser.isoparse(value)
+    if parsed.tzinfo:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _apply_imported_rating(
+    db: AsyncSession,
+    user_id: int,
+    media: Media,
+    season_number: int | None,
+    item: dict,
+    existing: dict[tuple[int, int | None], Rating],
+    changed: RatingChanges,
+) -> bool:
+    rating_value = float(item["rating"])
+    rated_at = _trakt_rated_at(item.get("rated_at"))
+    key = (media.id, season_number)
+    current = existing.get(key)
+    if current and current.rating == rating_value:
+        current.rated_at = rated_at
+        return False
+    if current:
+        current.rating = rating_value
+        current.rated_at = rated_at
+    else:
+        current = Rating(
+            user_id=user_id,
+            media_id=media.id,
+            season_number=season_number,
+            rating=rating_value,
+            rated_at=rated_at,
+        )
+        db.add(current)
+        existing[key] = current
+    changed[key] = rating_value
+    return True
+
+
 async def _get_or_create_episode_media(
     db: AsyncSession,
     show_id: int,
@@ -306,7 +372,7 @@ async def run_trakt_sync(user_id: int, job_id: int):
 
             stats = {"movies": 0, "episodes": 0, "ratings": 0, "lists": 0, "list_items": 0, "skipped": 0, "errors": 0}
             _new_watched: set[int] = set()
-            _new_ratings: dict[int, float] = {}
+            _new_ratings: RatingChanges = {}
             watched_processed = 0
 
             # ── Watched Movies ────────────────────────────────────────────────
@@ -469,70 +535,72 @@ async def run_trakt_sync(user_id: int, job_id: int):
 
             # ── Ratings ───────────────────────────────────────────────────────
             if sync_ratings:
-                print(f"  Fetching ratings from Trakt...")
+                print("  Fetching ratings from Trakt...")
                 ratings_data = await trakt_client.get_ratings(client_id, access_token)
 
-                # Pre-load existing ratings
-                rat_res = await db.execute(
-                    select(Rating.media_id).where(Rating.user_id == user_id)
+                ratings_result = await db.execute(
+                    select(Rating).where(Rating.user_id == user_id)
                 )
-                existing_rated: set[int] = {row[0] for row in rat_res}
+                existing_ratings = {
+                    (rating.media_id, rating.season_number): rating
+                    for rating in ratings_result.scalars().all()
+                }
 
-                # Movies
-                for item in ratings_data.get("movies", []):
-                    movie_data = item.get("movie", {})
-                    tmdb_id = movie_data.get("ids", {}).get("tmdb")
-                    if not tmdb_id:
-                        continue
-                    try:
-                        async with db.begin_nested():
-                            media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
-                            if not media:
-                                continue
-                            if media.id not in existing_rated:
-                                db.add(Rating(
-                                    user_id=user_id,
-                                    media_id=media.id,
-                                    rating=float(item.get("rating", 0)),
-                                ))
-                                existing_rated.add(media.id)
-                                _new_ratings[media.id] = float(item.get("rating", 0))
-                                stats["ratings"] += 1
-                    except Exception as exc:
-                        logger.warning("Error processing Trakt movie rating tmdb=%s: %s", tmdb_id, exc)
-                        stats["errors"] += 1
+                for kind in ("movies", "shows", "seasons"):
+                    for item in ratings_data.get(kind, []):
+                        try:
+                            async with db.begin_nested():
+                                season_number: int | None = None
+                                if kind == "movies":
+                                    movie_data = item.get("movie", {})
+                                    tmdb_id = movie_data.get("ids", {}).get("tmdb")
+                                    media = (
+                                        await _get_or_create_movie_media(
+                                            db,
+                                            tmdb_id,
+                                            movie_data.get("title", ""),
+                                            api_key,
+                                        )
+                                        if tmdb_id
+                                        else None
+                                    )
+                                else:
+                                    show_data = item.get("show", {})
+                                    tmdb_id = show_data.get("ids", {}).get("tmdb")
+                                    if kind == "seasons":
+                                        season_number = item.get("season", {}).get("number")
+                                    media = (
+                                        await _get_or_create_series_media(
+                                            db,
+                                            tmdb_id,
+                                            show_data.get("title", ""),
+                                            api_key,
+                                        )
+                                        if tmdb_id and (kind != "seasons" or season_number is not None)
+                                        else None
+                                    )
 
-                # Shows
-                for item in ratings_data.get("shows", []):
-                    show_data = item.get("show", {})
-                    tmdb_id = show_data.get("ids", {}).get("tmdb")
-                    if not tmdb_id:
-                        continue
-                    try:
-                        async with db.begin_nested():
-                            result = await db.execute(
-                                select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.series)
-                            )
-                            media = result.scalar_one_or_none()
-                            if not media:
-                                from core import tmdb
-                                d = await tmdb.get_show(tmdb_id, api_key=api_key)
-                                media = Media(tmdb_id=tmdb_id, media_type=MediaType.series, title=d.get("name") or show_data.get("title", ""))
-                                db.add(media)
-                                await db.flush()
-                                await enrich_media(media, api_key=api_key)
-                            if media.id not in existing_rated:
-                                db.add(Rating(
-                                    user_id=user_id,
-                                    media_id=media.id,
-                                    rating=float(item.get("rating", 0)),
-                                ))
-                                existing_rated.add(media.id)
-                                _new_ratings[media.id] = float(item.get("rating", 0))
-                                stats["ratings"] += 1
-                    except Exception as exc:
-                        logger.warning("Error processing Trakt show rating tmdb=%s: %s", tmdb_id, exc)
-                        stats["errors"] += 1
+                                if not media:
+                                    stats["skipped"] += 1
+                                    continue
+                                if _apply_imported_rating(
+                                    db,
+                                    user_id,
+                                    media,
+                                    season_number,
+                                    item,
+                                    existing_ratings,
+                                    _new_ratings,
+                                ):
+                                    stats["ratings"] += 1
+                                else:
+                                    stats["skipped"] += 1
+                        except (KeyError, TypeError, ValueError) as exc:
+                            logger.warning("Invalid Trakt %s rating: %s", kind, exc)
+                            stats["errors"] += 1
+                        except Exception as exc:
+                            logger.warning("Error processing Trakt %s rating: %s", kind, exc)
+                            stats["errors"] += 1
 
                 await db.commit()
 
@@ -904,7 +972,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
 
             all_media_ids: set[int] = set()
             watched_ids: set[int] = set()
-            ratings_map: dict[int, float] = {}
+            ratings_map: RatingChanges = {}
 
             if settings.trakt_push_watched:
                 watched_result = await db.execute(
@@ -915,13 +983,16 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
 
             if settings.trakt_push_ratings:
                 ratings_result = await db.execute(
-                    select(Rating.media_id, Rating.rating).where(
+                    select(Rating.media_id, Rating.season_number, Rating.rating).where(
                         Rating.user_id == user_id,
                         Rating.rating.isnot(None),
                     )
                 )
-                ratings_map = {row[0]: row[1] for row in ratings_result.all()}
-                all_media_ids |= set(ratings_map.keys())
+                ratings_map = {
+                    (media_id, season_number): float(rating)
+                    for media_id, season_number, rating in ratings_result.all()
+                }
+                all_media_ids |= {media_id for media_id, _ in ratings_map}
 
             if not all_media_ids:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats={"succeeded": 0, "failed": 0}, processed_items=0, total_items=0))
@@ -955,13 +1026,31 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                             push_tasks.append(trakt_client.add_episode_to_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number))
 
             if settings.trakt_push_ratings:
-                for mid, rating in ratings_map.items():
+                from routers.sync import _get_effective_tmdb_key, _resolve_tmdb_season_ids
+
+                season_tmdb_ids = await _resolve_tmdb_season_ids(
+                    media_by_id,
+                    set(ratings_map),
+                    await _get_effective_tmdb_key(db, settings),
+                )
+                for key, rating in ratings_map.items():
+                    mid, season_number = key
                     media = media_by_id.get(mid)
                     if not media or not media.tmdb_id:
                         continue
-                    if media.media_type == MediaType.movie:
+                    if season_number is not None:
+                        if season_tmdb_id := season_tmdb_ids.get(key):
+                            push_tasks.append(
+                                trakt_client.set_season_rating(
+                                    settings.trakt_client_id,
+                                    settings.trakt_access_token,
+                                    season_tmdb_id,
+                                    rating,
+                                )
+                            )
+                    elif media.media_type == MediaType.movie:
                         push_tasks.append(trakt_client.set_movie_rating(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, rating))
-                    elif media.media_type in (MediaType.series, MediaType.episode):
+                    elif media.media_type == MediaType.series:
                         push_tasks.append(trakt_client.set_show_rating(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, rating))
 
             total = len(push_tasks)

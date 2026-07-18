@@ -19,7 +19,7 @@ from models.base import CollectionSource, MediaType
 from models.events import WatchEvent
 from models.lists import List as ListModel, ListItem
 from models.media import Media
-from models.ratings import Rating
+from models.ratings import Rating, RatingChanges
 from models.show import Show
 from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
@@ -55,7 +55,7 @@ def _iso_utc(value: datetime | None) -> str:
         value = value.replace(tzinfo=timezone.utc)
     else:
         value = value.astimezone(timezone.utc)
-    return value.isoformat().replace("+00:00", "Z")
+    return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _integer(value: Any) -> int | None:
@@ -138,6 +138,16 @@ def _episode_identity(entry: dict[str, Any]) -> tuple[int | None, int | None, in
     return show_tmdb_id, _integer(season), _integer(episode_number), title
 
 
+def _season_identity(
+    entry: dict[str, Any],
+) -> tuple[dict[str, Any], int | None]:
+    season = _entry_data("seasons", entry)
+    show_data = entry.get("show") or season.get("show") or {}
+    show_data = show_data if isinstance(show_data, dict) else {}
+    number = season.get("number", entry.get("number"))
+    return show_data, _integer(number)
+
+
 async def _get_or_create_series_media(
     db: AsyncSession,
     tmdb_id: int,
@@ -214,9 +224,28 @@ def _payload_item(
     watched_at: datetime | None = None,
     rating: float | None = None,
     rated_at: datetime | None = None,
+    season_number: int | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     if not media.tmdb_id:
         return None
+
+    if season_number is not None:
+        if media.media_type != MediaType.series:
+            return None
+        season: dict[str, Any] = {"number": season_number}
+        if rating is not None:
+            season["rating"] = float(rating)
+            season["rated_at"] = _iso_utc(rated_at or datetime.now(timezone.utc))
+        return (
+            "shows",
+            {
+                "ids": {"tmdb": media.tmdb_id},
+                "seasons": [season],
+            },
+        )
+
+    item: dict[str, Any] = {"ids": {"tmdb": media.tmdb_id}}
+
     if media.media_type == MediaType.movie:
         kind = "movies"
     elif media.media_type == MediaType.series:
@@ -226,13 +255,32 @@ def _payload_item(
     else:
         return None
 
-    item: dict[str, Any] = {"ids": {"tmdb": media.tmdb_id}}
     if watched_at is not None:
         item["watched_at"] = _iso_utc(watched_at)
     if rating is not None:
         item["rating"] = float(rating)
         item["rated_at"] = _iso_utc(rated_at or datetime.now(timezone.utc))
     return kind, item
+
+
+def _rating_removal_item(
+    media: Media,
+    season_number: int | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Build an MDBList season removal without clearing its show rating."""
+    if not media.tmdb_id:
+        return None
+    if season_number is not None:
+        if media.media_type != MediaType.series:
+            return None
+        return (
+            "shows",
+            {
+                "ids": {"tmdb": media.tmdb_id},
+                "seasons": [{"number": season_number}],
+            },
+        )
+    return _payload_item(media)
 
 
 async def _effective_tmdb_key(db: AsyncSession, settings: UserSettings) -> str | None:
@@ -301,14 +349,15 @@ async def _import_ratings(
     api_key: str | None,
     external_cache: dict[tuple[str, str], int | None],
     stats: dict[str, int],
-) -> dict[int, float]:
-    ratings_result = await db.execute(
-        select(Rating).where(Rating.user_id == user_id, Rating.season_number.is_(None))
-    )
-    existing = {rating.media_id: rating for rating in ratings_result.scalars().all()}
-    changed: dict[int, float] = {}
+) -> RatingChanges:
+    ratings_result = await db.execute(select(Rating).where(Rating.user_id == user_id))
+    existing = {
+        (rating.media_id, rating.season_number): rating
+        for rating in ratings_result.scalars().all()
+    }
+    changed: RatingChanges = {}
 
-    for kind in ("movies", "shows", "episodes"):
+    for kind in ("movies", "shows", "seasons", "episodes"):
         for entry in payload.get(kind, []):
             rating_value = entry.get("rating")
             try:
@@ -318,33 +367,63 @@ async def _import_ratings(
                 continue
             try:
                 async with db.begin_nested():
-                    media = await _resolve_media(db, kind, entry, api_key, external_cache)
+                    season_number: int | None = None
+                    if kind == "seasons":
+                        show_data, season_number = _season_identity(entry)
+                        show_tmdb_id = await _resolve_external_tmdb_id(
+                            show_data,
+                            "tv",
+                            api_key,
+                            external_cache,
+                        )
+                        media = (
+                            await _get_or_create_series_media(
+                                db,
+                                show_tmdb_id,
+                                str(show_data.get("title") or ""),
+                                api_key,
+                            )
+                            if show_tmdb_id and season_number is not None
+                            else None
+                        )
+                    else:
+                        media = await _resolve_media(
+                            db,
+                            kind,
+                            entry,
+                            api_key,
+                            external_cache,
+                        )
                     if not media:
                         stats["skipped"] += 1
                         continue
-                    current = existing.get(media.id)
+
+                    key = (media.id, season_number)
+                    current = existing.get(key)
+                    rated_at = _utc_naive(entry.get("rated_at"))
                     if current and current.rating == rating:
+                        current.rated_at = rated_at
                         stats["skipped"] += 1
                         continue
                     if current:
                         current.rating = rating
-                        current.rated_at = _utc_naive(entry.get("rated_at"))
+                        current.rated_at = rated_at
                     else:
                         current = Rating(
                             user_id=user_id,
                             media_id=media.id,
+                            season_number=season_number,
                             rating=rating,
-                            rated_at=_utc_naive(entry.get("rated_at")),
+                            rated_at=rated_at,
                         )
                         db.add(current)
-                        existing[media.id] = current
-                    changed[media.id] = rating
+                        existing[key] = current
+                    changed[key] = rating
                     stats["ratings"] += 1
             except Exception as exc:
                 logger.warning("Error importing MDBList %s rating: %s", kind, exc)
                 stats["errors"] += 1
 
-    stats["skipped"] += len(payload.get("seasons", []))
     return changed
 
 
@@ -461,7 +540,7 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
                 "errors": 0,
             }
             new_watched: set[int] = set()
-            new_ratings: dict[int, float] = {}
+            new_ratings: RatingChanges = {}
             external_cache: dict[tuple[str, str], int | None] = {}
 
             if "watched" in snapshots:
@@ -540,7 +619,7 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                 raise RuntimeError("MDBList API key is not configured")
 
             watched_rows: list[tuple[int, datetime]] = []
-            rating_rows: list[tuple[int, float, datetime | None]] = []
+            rating_rows: list[tuple[int, int | None, float, datetime | None]] = []
             watchlist_ids: set[int] = set()
 
             if settings.mdblist_push_watched:
@@ -552,15 +631,14 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                 watched_rows = list(watched_result.all())
             if settings.mdblist_push_ratings:
                 ratings_result = await db.execute(
-                    select(Rating.media_id, Rating.rating, Rating.rated_at).where(
+                    select(Rating.media_id, Rating.season_number, Rating.rating, Rating.rated_at).where(
                         Rating.user_id == user_id,
                         Rating.rating.isnot(None),
-                        Rating.season_number.is_(None),
                     )
                 )
                 rating_rows = [
-                    (media_id, float(rating), rated_at)
-                    for media_id, rating, rated_at in ratings_result.all()
+                    (media_id, season_number, float(rating), rated_at)
+                    for media_id, season_number, rating, rated_at in ratings_result.all()
                 ]
             if settings.mdblist_push_watchlist:
                 watchlist_result = await db.execute(
@@ -587,9 +665,18 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                 item = _payload_item(media, watched_at=watched_at) if media else None
                 if item:
                     watched_payload[item[0]].append(item[1])
-            for media_id, rating, rated_at in rating_rows:
+            for media_id, season_number, rating, rated_at in rating_rows:
                 media = media_by_id.get(media_id)
-                item = _payload_item(media, rating=rating, rated_at=rated_at) if media else None
+                item = (
+                    _payload_item(
+                        media,
+                        rating=rating,
+                        rated_at=rated_at,
+                        season_number=season_number,
+                    )
+                    if media
+                    else None
+                )
                 if item:
                     ratings_payload[item[0]].append(item[1])
             for media_id in watchlist_ids:

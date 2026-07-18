@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import patch
 
@@ -117,6 +118,88 @@ class TraktClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request_count, 1)
         self.assertEqual(len(movies), 1)
 
+
+    async def test_get_ratings_fetches_movies_shows_and_seasons(self) -> None:
+        requested: list[tuple[str, int]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            kind = request.url.path.rsplit("/", 1)[-1]
+            page = int(request.url.params["page"])
+            requested.append((kind, page))
+            payload = {
+                "movies": {"movie": {"ids": {"tmdb": 550}}},
+                "shows": {"show": {"ids": {"tmdb": 1396}}},
+                "seasons": {
+                    "show": {"ids": {"tmdb": 1396}},
+                    "season": {"number": page, "ids": {"tmdb": 3572 + page - 1}},
+                },
+            }
+            return httpx.Response(
+                200,
+                json=[payload[kind]],
+                headers={"X-Pagination-Page-Count": "2"},
+            )
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            trakt.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            ratings = await trakt.get_ratings("client-id", "access-token")
+
+        self.assertCountEqual(
+            requested,
+            [
+                ("movies", 1),
+                ("movies", 2),
+                ("shows", 1),
+                ("shows", 2),
+                ("seasons", 1),
+                ("seasons", 2),
+            ],
+        )
+        self.assertEqual(len(ratings["seasons"]), 2)
+        self.assertEqual(ratings["seasons"][1]["season"]["number"], 2)
+
+    async def test_rating_batches_preserve_season_tmdb_ids(self) -> None:
+        requests: list[tuple[str, dict]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(200, json={"added": {}, "deleted": {}})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            trakt.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            await trakt.set_ratings_batch(
+                "client-id",
+                "access-token",
+                [(550, 8.4)],
+                [(1396, 9.0)],
+                [(3572, 7.6)],
+            )
+            await trakt.remove_ratings_batch(
+                "client-id",
+                "access-token",
+                [550],
+                [1396],
+                [3572],
+            )
+
+        self.assertEqual(requests[0][0], "/sync/ratings")
+        self.assertEqual(
+            requests[0][1]["seasons"],
+            [{"rating": 8, "ids": {"tmdb": 3572}}],
+        )
+        self.assertEqual(requests[1][0], "/sync/ratings/remove")
+        self.assertEqual(
+            requests[1][1]["seasons"],
+            [{"ids": {"tmdb": 3572}}],
+        )
 
 if __name__ == "__main__":
     unittest.main()

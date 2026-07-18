@@ -9,16 +9,10 @@ from sqlalchemy import select, desc, delete
 from db import get_db
 from models.media import Media
 from models.ratings import Rating
-from models.collection import Collection, CollectionFile
-from models.base import CollectionSource, MediaType
+from models.base import MediaType
 from models.users import UserSettings
-from models.connections import MediaServerConnection
 from dependencies import get_current_user
 from models.users import User
-import core.plex as plex_client
-import core.jellyfin as jellyfin_client
-import core.emby as emby_client
-import core.trakt as trakt_client
 from core.enrichment import enrich_media
 
 router = APIRouter()
@@ -127,62 +121,20 @@ async def submit_rating(
     await db.commit()
     await db.refresh(rating)
 
-    # Fan-out rating push to all connections with push_ratings enabled
-    import asyncio
-    push_tasks = []
-    conns_result = await db.execute(
-        select(MediaServerConnection).where(
-            MediaServerConnection.user_id == current_user.id,
-            MediaServerConnection.push_ratings == True,
-        )
+    settings_result = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == current_user.id)
     )
-    push_connections = conns_result.scalars().all()
-    if push_connections:
-        files_result = await db.execute(
-            select(CollectionFile)
-            .join(Collection, Collection.id == CollectionFile.collection_id)
-            .where(Collection.user_id == current_user.id, Collection.media_id == media.id)
-        )
-        coll_files = files_result.scalars().all()
-        conn_by_type: dict[str, list] = {}
-        for conn in push_connections:
-            conn_by_type.setdefault(conn.type, []).append(conn)
-        for coll_file in coll_files:
-            if not coll_file.source_id:
-                continue
-            source_type = coll_file.source.value if hasattr(coll_file.source, "value") else str(coll_file.source)
-            for conn in conn_by_type.get(source_type, []):
-                if coll_file.source == CollectionSource.plex:
-                    push_tasks.append(plex_client.set_rating(conn.url, conn.token, coll_file.source_id, body.rating))
-                elif coll_file.source == CollectionSource.jellyfin:
-                    push_tasks.append(jellyfin_client.set_rating(conn.url, conn.token, conn.server_user_id, coll_file.source_id, body.rating))
-                elif coll_file.source == CollectionSource.emby:
-                    push_tasks.append(emby_client.set_rating(conn.url, conn.token, conn.server_user_id, coll_file.source_id, body.rating))
-
-    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
-    if settings and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id and media.tmdb_id:
-        if media_type == MediaType.movie:
-            push_tasks.append(trakt_client.set_movie_rating(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, body.rating))
-        elif media_type == MediaType.series:
-            push_tasks.append(trakt_client.set_show_rating(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, body.rating))
-    if settings and settings.simkl_push_ratings and settings.simkl_access_token and settings.simkl_client_id and media.tmdb_id:
-        from core import simkl as simkl_client
-        if media_type == MediaType.movie:
-            push_tasks.append(simkl_client.set_movie_rating(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, body.rating))
-        elif media_type == MediaType.series:
-            push_tasks.append(simkl_client.set_show_rating(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, body.rating))
-    if settings and settings.mdblist_push_ratings and settings.mdblist_api_key:
-        from core import mdblist as mdblist_client
-        from routers.mdblist import _empty_payload, _payload_item
+    from routers.sync import _fan_out_changes_to_other_connections
 
-        payload = _empty_payload()
-        item = _payload_item(media, rating=body.rating)
-        if item:
-            payload[item[0]].append(item[1])
-            push_tasks.append(mdblist_client.push_ratings(settings.mdblist_api_key, payload))
-    if push_tasks:
-        await asyncio.gather(*push_tasks, return_exceptions=True)
+    await _fan_out_changes_to_other_connections(
+        db,
+        current_user.id,
+        None,
+        set(),
+        {(media.id, effective_season): body.rating},
+        settings=settings,
+    )
 
     return format_rating(rating, media)
 
@@ -253,60 +205,20 @@ async def delete_rating(
     await db.delete(rating)
     await db.commit()
 
-    import asyncio
-    push_tasks = []
-    conns_result = await db.execute(
-        select(MediaServerConnection).where(
-            MediaServerConnection.user_id == current_user.id,
-            MediaServerConnection.push_ratings == True,
-        )
+    settings_result = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == current_user.id)
     )
-    push_connections = conns_result.scalars().all()
-    if push_connections:
-        files_result = await db.execute(
-            select(CollectionFile)
-            .join(Collection, Collection.id == CollectionFile.collection_id)
-            .where(Collection.user_id == current_user.id, Collection.media_id == media.id)
-        )
-        coll_files = files_result.scalars().all()
-        conn_by_type: dict[str, list] = {}
-        for conn in push_connections:
-            conn_by_type.setdefault(conn.type, []).append(conn)
-        for coll_file in coll_files:
-            if not coll_file.source_id:
-                continue
-            source_type = coll_file.source.value if hasattr(coll_file.source, "value") else str(coll_file.source)
-            for conn in conn_by_type.get(source_type, []):
-                if coll_file.source == CollectionSource.plex:
-                    push_tasks.append(plex_client.set_rating(conn.url, conn.token, coll_file.source_id, 0))
-                elif coll_file.source == CollectionSource.jellyfin:
-                    push_tasks.append(jellyfin_client.set_rating(conn.url, conn.token, conn.server_user_id, coll_file.source_id, 0))
-                elif coll_file.source == CollectionSource.emby:
-                    push_tasks.append(emby_client.set_rating(conn.url, conn.token, conn.server_user_id, coll_file.source_id, 0))
-
-    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
-    if settings and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id and media.tmdb_id:
-        if mt == MediaType.movie:
-            push_tasks.append(trakt_client.remove_movie_rating(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id))
-        elif mt == MediaType.series:
-            push_tasks.append(trakt_client.remove_show_rating(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id))
-    if settings and settings.simkl_push_ratings and settings.simkl_access_token and settings.simkl_client_id and media.tmdb_id:
-        from core import simkl as simkl_client
-        if mt == MediaType.movie:
-            push_tasks.append(simkl_client.remove_movie_rating(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id))
-        elif mt == MediaType.series:
-            push_tasks.append(simkl_client.remove_show_rating(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id))
-    if settings and settings.mdblist_push_ratings and settings.mdblist_api_key:
-        from core import mdblist as mdblist_client
-        from routers.mdblist import _empty_payload, _payload_item
+    from routers.sync import _fan_out_changes_to_other_connections
 
-        payload = _empty_payload()
-        item = _payload_item(media)
-        if item:
-            payload[item[0]].append(item[1])
-            push_tasks.append(mdblist_client.remove_ratings(settings.mdblist_api_key, payload))
-    if push_tasks:
-        await asyncio.gather(*push_tasks, return_exceptions=True)
+    await _fan_out_changes_to_other_connections(
+        db,
+        current_user.id,
+        None,
+        set(),
+        {},
+        settings=settings,
+        removed_ratings={(media.id, effective_season)},
+    )
 
     return {"status": "deleted"}
