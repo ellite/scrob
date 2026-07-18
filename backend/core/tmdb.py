@@ -52,7 +52,7 @@ async def validate_api_key(api_key: str) -> bool:
 
 
 async def get_movie(tmdb_id: int, api_key: str = None, language: str | None = None) -> dict:
-    params: dict = {"append_to_response": "credits,release_dates,recommendations"}
+    params: dict = {"append_to_response": "credits,release_dates,recommendations,external_ids"}
     if language:
         params["language"] = language
     return await _get(

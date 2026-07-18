@@ -16,6 +16,40 @@ logger = logging.getLogger(__name__)
 
 TRAKT_BASE = "https://api.trakt.tv"
 TIMEOUT = 30.0
+PAGE_SIZE = 250
+
+
+async def _get_all_pages(
+    client: httpx.AsyncClient,
+    path: str,
+    headers: dict,
+    extra_params: dict[str, str] | None = None,
+) -> list[dict]:
+    items: list[dict] = []
+    page = 1
+    while True:
+        params = dict(extra_params or {})
+        params.update({"page": page, "limit": PAGE_SIZE})
+        response = await client.get(
+            f"{TRAKT_BASE}{path}",
+            headers=headers,
+            params=params,
+        )
+        response.raise_for_status()
+        page_items = response.json()
+        if not isinstance(page_items, list):
+            raise TypeError(f"Trakt {path} returned a non-list response")
+        items.extend(page_items)
+
+        if not page_items:
+            return items
+        try:
+            page_count = int(response.headers.get("X-Pagination-Page-Count", page))
+        except (TypeError, ValueError):
+            page_count = page
+        if page >= page_count:
+            return items
+        page += 1
 
 
 def _headers(client_id: str, access_token: Optional[str] = None) -> dict:
@@ -127,12 +161,11 @@ async def get_watched_movies(client_id: str, access_token: str) -> list[dict]:
     Returns list of: {plays, last_watched_at, movie: {title, ids: {tmdb, ...}}}
     """
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.get(
-            f"{TRAKT_BASE}/sync/watched/movies",
-            headers=_headers(client_id, access_token),
+        return await _get_all_pages(
+            client,
+            "/sync/watched/movies",
+            _headers(client_id, access_token),
         )
-        resp.raise_for_status()
-        return resp.json()
 
 
 async def get_watched_shows(client_id: str, access_token: str) -> list[dict]:
@@ -141,12 +174,12 @@ async def get_watched_shows(client_id: str, access_token: str) -> list[dict]:
     Returns list of: {show: {title, ids: {tmdb, ...}}, seasons: [{number, episodes: [{number, plays, last_watched_at}]}]}
     """
     async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.get(
-            f"{TRAKT_BASE}/sync/watched/shows",
-            headers=_headers(client_id, access_token),
+        return await _get_all_pages(
+            client,
+            "/sync/watched/shows",
+            _headers(client_id, access_token),
+            extra_params={"extended": "progress"},
         )
-        resp.raise_for_status()
-        return resp.json()
 
 
 async def get_ratings(client_id: str, access_token: str) -> dict:

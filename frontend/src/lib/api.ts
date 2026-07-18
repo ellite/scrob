@@ -415,6 +415,16 @@ export interface UserSettings {
   simkl_push_ratings: boolean;
   simkl_scrobble: boolean;
 
+  // MDBList
+  mdblist_api_key: string | null;
+  mdblist_connected: boolean;
+  mdblist_sync_watched: boolean;
+  mdblist_sync_ratings: boolean;
+  mdblist_sync_watchlist: boolean;
+  mdblist_push_watched: boolean;
+  mdblist_push_ratings: boolean;
+  mdblist_push_watchlist: boolean;
+
   preferences: UserPreferences | null;
   blur_explicit: boolean;
   time_format_24h: boolean;
@@ -424,7 +434,7 @@ export interface UserSettings {
 export interface MediaServerConnection {
   id: number;
   user_id: number;
-  type: "jellyfin" | "emby" | "plex";
+  type: "jellyfin" | "emby" | "plex" | "nuvio";
   name: string;
   url: string;
   token: string;
@@ -435,13 +445,14 @@ export interface MediaServerConnection {
   sync_ratings: boolean;
   sync_playback: boolean;
   push_watched: boolean;
+  push_playback: boolean;
   push_ratings: boolean;
   auto_sync_interval: number | null;
   created_at: string;
 }
 
 export interface MediaServerConnectionCreate {
-  type: "jellyfin" | "emby" | "plex";
+  type: "jellyfin" | "emby" | "plex" | "nuvio";
   name: string;
   url: string;
   token: string;
@@ -452,6 +463,7 @@ export interface MediaServerConnectionCreate {
   sync_ratings?: boolean;
   sync_playback?: boolean;
   push_watched?: boolean;
+  push_playback?: boolean;
   push_ratings?: boolean;
   auto_sync_interval?: number | null;
 }
@@ -496,6 +508,7 @@ export interface ConnectionStatus {
   sonarr: ServiceStatus;
   trakt: ServiceStatus;
   simkl: ServiceStatus;
+  mdblist: ServiceStatus;
 }
 
 export interface MediaItem {
@@ -1001,6 +1014,13 @@ export const api = {
       post<{ status: string; job_id: number; message: string }>("/simkl/sync", undefined, token),
     push: (token: string) =>
       post<{ status: string; message: string }>("/simkl/push", undefined, token),
+  },
+
+  mdblist: {
+    sync: (token: string) =>
+      post<{ status: string; job_id: number; message: string }>("/mdblist/sync", undefined, token),
+    push: (token: string) =>
+      post<{ status: string; job_id: number; message: string }>("/mdblist/push", undefined, token),
   },
 
   media: {

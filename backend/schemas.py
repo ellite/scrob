@@ -117,6 +117,16 @@ class UserSettings(BaseModel):
     simkl_push_ratings: Optional[bool] = None
     simkl_scrobble: Optional[bool] = None
 
+    # MDBList — API key authentication
+    mdblist_api_key: Optional[str] = None
+    mdblist_connected: Optional[bool] = None  # read-only, validated by /auth/connection-status
+    mdblist_sync_watched: Optional[bool] = None
+    mdblist_sync_ratings: Optional[bool] = None
+    mdblist_sync_watchlist: Optional[bool] = None
+    mdblist_push_watched: Optional[bool] = None
+    mdblist_push_ratings: Optional[bool] = None
+    mdblist_push_watchlist: Optional[bool] = None
+
     preferences: Optional[dict] = None
     blur_explicit: Optional[bool] = None
     time_format_24h: Optional[bool] = None
@@ -124,6 +134,18 @@ class UserSettings(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class NuvioLoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+    url: str = "https://api.nuvio.tv"
+
+
+class NuvioConnectionTestRequest(BaseModel):
+    url: str
+    token: str
+    profile_id: int
 
 
 class MediaServerConnectionBase(BaseModel):
@@ -138,8 +160,9 @@ class MediaServerConnectionBase(BaseModel):
     sync_ratings: bool = True
     sync_playback: bool = True
     push_watched: bool = False
+    push_playback: bool = False
     push_ratings: bool = False
-    auto_sync_interval: Optional[int] = None
+    auto_sync_interval: Optional[float] = None
     watchlist_to_radarr: bool = False
     watchlist_to_sonarr: bool = False
     watchlist_all_users: bool = False
@@ -163,8 +186,9 @@ class MediaServerConnectionUpdate(BaseModel):
     sync_ratings: Optional[bool] = None
     sync_playback: Optional[bool] = None
     push_watched: Optional[bool] = None
+    push_playback: Optional[bool] = None
     push_ratings: Optional[bool] = None
-    auto_sync_interval: Optional[int] = None
+    auto_sync_interval: Optional[float] = None
     watchlist_to_radarr: Optional[bool] = None
     watchlist_to_sonarr: Optional[bool] = None
     watchlist_all_users: Optional[bool] = None

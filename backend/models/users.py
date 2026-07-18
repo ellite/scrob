@@ -115,6 +115,15 @@ class UserSettings(Base):
     use_hls_player  : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     next_up_hidden_shows : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="'[]'")
 
+    # MDBList — API key authentication
+    mdblist_api_key: Mapped[Optional[str]] = mapped_column(String(255))
+    mdblist_sync_watched: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    mdblist_sync_ratings: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    mdblist_sync_watchlist: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    mdblist_push_watched: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    mdblist_push_ratings: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    mdblist_push_watchlist: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
     user : Mapped["User"] = relationship(back_populates="settings")
 
 

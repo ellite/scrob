@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, and_, func, cast as sa_cast, Text
+from sqlalchemy import select, or_, and_, delete, func, cast as sa_cast, Text
 from sqlalchemy.orm import joinedload
 
 from db import get_db, AsyncSessionLocal

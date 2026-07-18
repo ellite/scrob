@@ -24,6 +24,9 @@ ALLOWED_SIZES = {"w92", "w154", "w185", "w342", "w500", "w780", "w1280", "origin
 _last_prune_at: datetime = datetime.min.replace(tzinfo=timezone.utc)
 _PRUNE_INTERVAL = timedelta(minutes=5)
 
+# asyncpg hard limit is 32767 parameters per query; stay well under it
+_MAX_IN_PARAMS = 30_000
+
 
 def parse_tmdb_url(url: str) -> tuple[Optional[str], Optional[str]]:
     """Parse TMDB URL or path into (size, path) tuple."""
@@ -120,8 +123,9 @@ async def _prune_type(db, image_type: str, total_size: int, limit_bytes: int) ->
         total_size -= row.file_size
         ids_to_delete.append(row.id)
 
-    if ids_to_delete:
-        await db.execute(sa_delete(ImageCache).where(ImageCache.id.in_(ids_to_delete)))
+    for i in range(0, len(ids_to_delete), _MAX_IN_PARAMS):
+        chunk = ids_to_delete[i : i + _MAX_IN_PARAMS]
+        await db.execute(sa_delete(ImageCache).where(ImageCache.id.in_(chunk)))
 
     return total_size
 

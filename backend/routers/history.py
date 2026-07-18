@@ -1,5 +1,6 @@
 import asyncio
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, or_, select, desc, func, delete
@@ -23,8 +24,10 @@ import core.plex as plex_client
 import core.jellyfin as jellyfin_client
 import core.emby as emby_client
 import core.trakt as trakt_client
+import core.nuvio as nuvio_client
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 async def _push_watch_state(
@@ -48,6 +51,7 @@ async def _push_watch_state(
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
     settings = settings_result.scalar_one_or_none()
     push_trakt = settings and settings.trakt_push_watched and settings.trakt_access_token
+    push_mdblist = settings and settings.mdblist_push_watched and settings.mdblist_api_key
 
     tasks = []
 
@@ -131,8 +135,83 @@ async def _push_watch_state(
                     else:
                         tasks.append(trakt_client.remove_episode_from_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number))
 
+    if push_mdblist:
+        from core import mdblist as mdblist_client
+        from routers.mdblist import _empty_payload, _payload_item
+        from routers.sync import _latest_watched_at
+
+        mdblist_watched_at: dict[int, datetime] = {}
+        if watched:
+            mdblist_watched_at = await _latest_watched_at(db, user_id, media_ids)
+
+        mdblist_payload = _empty_payload()
+        media_result = await db.execute(select(Media).where(Media.id.in_(media_ids)))
+        for media in media_result.scalars().all():
+            item = _payload_item(media, watched_at=mdblist_watched_at.get(media.id, datetime.utcnow())) if watched else _payload_item(media)
+            if item:
+                mdblist_payload[item[0]].append(item[1])
+        operation = mdblist_client.push_watched if watched else mdblist_client.remove_watched
+        tasks.append(operation(settings.mdblist_api_key, mdblist_payload))
+
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
+
+    nuvio_connections = [conn for conn in connections if conn.type == "nuvio"]
+    if nuvio_connections:
+        media_result = await db.execute(select(Media).where(Media.id.in_(media_ids)))
+        media_items = media_result.scalars().all()
+        show_ids = {media.show_id for media in media_items if media.show_id is not None}
+        shows_by_id: dict[int, Show] = {}
+        if show_ids:
+            show_result = await db.execute(select(Show).where(Show.id.in_(show_ids)))
+            shows_by_id = {show.id: show for show in show_result.scalars().all()}
+        from routers.sync import _ensure_nuvio_imdb_ids, _latest_watched_at, _nuvio_watched_item
+
+        api_key = await get_user_tmdb_key(db, user_id)
+        await _ensure_nuvio_imdb_ids(media_items, shows_by_id, api_key)
+
+        watched_at_by_media: dict[int, datetime] = {}
+        if watched:
+            watched_at_by_media = await _latest_watched_at(db, user_id, media_ids)
+
+        nuvio_items: list[dict] = []
+        nuvio_keys: list[dict] = []
+        for media in media_items:
+            payload = _nuvio_watched_item(
+                media,
+                watched_at_by_media.get(media.id, datetime.utcnow()),
+                shows_by_id.get(media.show_id),
+            )
+            if not payload:
+                continue
+            key = {
+                field: payload[field]
+                for field in ("content_id", "season", "episode")
+                if field in payload
+            }
+            if watched:
+                nuvio_items.append(payload)
+            else:
+                nuvio_keys.append(key)
+
+        for conn in nuvio_connections:
+            try:
+                profile_id = nuvio_client.parse_profile_id(conn.server_user_id)
+                if watched and nuvio_items:
+                    session = await nuvio_client.push_watched_items(
+                        conn.url, conn.token, profile_id, nuvio_items
+                    )
+                elif not watched and nuvio_keys:
+                    session = await nuvio_client.delete_watched_items(
+                        conn.url, conn.token, profile_id, nuvio_keys
+                    )
+                else:
+                    continue
+                conn.token = session.refresh_token
+            except Exception:
+                logger.exception("Failed to push watch state to Nuvio connection %s", conn.id)
+                continue
+        await db.commit()
 
 
 def format_event(event: WatchEvent | PlaybackProgress, media: Media) -> dict:

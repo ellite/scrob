@@ -19,8 +19,10 @@ class CollectionSource(str, enum.Enum):
     jellyfin = "jellyfin"
     emby     = "emby"
     plex     = "plex"
+    nuvio    = "nuvio"
     trakt    = "trakt"
     simkl    = "simkl"
+    mdblist  = "mdblist"
     manual   = "manual"
     tmdb     = "tmdb"
 

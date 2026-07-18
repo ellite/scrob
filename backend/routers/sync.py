@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -17,18 +18,21 @@ from models.connections import MediaServerConnection
 from models.sync import SyncJob, SyncStatus
 from models.events import WatchEvent
 from models.ratings import Rating
+from models.playback_progress import PlaybackProgress
 from models.library_selections import JellyfinLibrarySelection, EmbyLibrarySelection, PlexLibrarySelection
 from models.season_override import ShowSeasonOverride
 from datetime import datetime, timezone
 from dateutil import parser
 from models.base import MediaType, CollectionSource
 from models.global_settings import GlobalSettings
-from core import jellyfin, emby, plex, tmdb
+from core import jellyfin, emby, plex, nuvio, tmdb
 import core.trakt as trakt_client
 from core.enrichment import enrich_media
 from core.image_cache import pre_cache_all_collected_bg
 
 from dependencies import get_current_user
+logger = logging.getLogger("uvicorn.error")
+
 
 
 async def _get_effective_tmdb_key(db: AsyncSession, user_settings: UserSettings | None) -> str | None:
@@ -47,6 +51,7 @@ BATCH_SIZE = 500
 TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
 # asyncpg hard limit is 32767 parameters per query; stay well under it
 _MAX_IN_PARAMS = 30_000
+_MEDIA_BROWSER_ITEM_SOURCES = (CollectionSource.jellyfin, CollectionSource.emby, CollectionSource.nuvio)
 
 
 async def _select_in_chunks(db: AsyncSession, stmt_builder, ids: list):
@@ -61,10 +66,29 @@ async def _select_in_chunks(db: AsyncSession, stmt_builder, ids: list):
     return results
 
 
+async def _latest_watched_at(db: AsyncSession, user_id: int, media_ids: list) -> dict:
+    """Latest completed WatchEvent.watched_at per media_id, chunked to avoid the 32767-parameter limit."""
+    watched_at_by_media: dict[int, datetime] = {}
+    for i in range(0, len(media_ids), _MAX_IN_PARAMS):
+        chunk = media_ids[i : i + _MAX_IN_PARAMS]
+        result = await db.execute(
+            select(WatchEvent.media_id, WatchEvent.watched_at)
+            .where(
+                WatchEvent.user_id == user_id,
+                WatchEvent.media_id.in_(chunk),
+                WatchEvent.completed == True,
+            )
+            .order_by(WatchEvent.watched_at.desc())
+        )
+        for media_id, watched_at in result.all():
+            watched_at_by_media.setdefault(media_id, watched_at)
+    return watched_at_by_media
+
+
 def extract_watch_state(item: dict, source: CollectionSource) -> dict:
     state = {"completed": False, "last_played": None, "play_count": 0, "user_rating": None}
 
-    if source in (CollectionSource.jellyfin, CollectionSource.emby):
+    if source in _MEDIA_BROWSER_ITEM_SOURCES:
         user_data = item.get("UserData", {})
         state["completed"] = user_data.get("Played", False)
         state["play_count"] = user_data.get("PlayCount", 1 if state["completed"] else 0)
@@ -287,6 +311,245 @@ async def batch_enrich_items(
     return warnings
 
 
+def _nuvio_profile_id(conn: MediaServerConnection) -> int:
+    return nuvio.parse_profile_id(conn.server_user_id)
+
+
+def _nuvio_imdb_id(entity: Media | Show | None) -> str | None:
+    if entity is None:
+        return None
+    data = entity.tmdb_data or {}
+    value = data.get("imdb_id") or (data.get("external_ids") or {}).get("imdb_id")
+    imdb_id = str(value or "").strip()
+    return imdb_id if imdb_id.startswith("tt") and imdb_id[2:].isdigit() else None
+
+
+async def _ensure_nuvio_imdb_ids(
+    media_rows: list[Media],
+    shows_by_id: dict[int, Show],
+    api_key: str | None,
+) -> None:
+    if not api_key:
+        return
+
+    targets: dict[tuple[str, int], Media | Show] = {}
+    for media in media_rows:
+        if media.media_type == MediaType.episode:
+            show = shows_by_id.get(media.show_id)
+            if show and show.tmdb_id and not _nuvio_imdb_id(show):
+                targets[("tv", show.tmdb_id)] = show
+        elif media.tmdb_id and not _nuvio_imdb_id(media):
+            target_type = "movie" if media.media_type == MediaType.movie else "tv"
+            targets[(target_type, media.tmdb_id)] = media
+    if not targets:
+        return
+
+    semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
+
+    async def fetch_imdb_id(target_type: str, tmdb_id: int, entity: Media | Show) -> None:
+        async with semaphore:
+            try:
+                external_ids = await tmdb.get_external_ids(tmdb_id, target_type, api_key=api_key)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to resolve outbound Nuvio IMDb ID for TMDB %s (%s): %s",
+                    tmdb_id,
+                    target_type,
+                    exc,
+                )
+                return
+        imdb_id = str(external_ids.get("imdb_id") or "").strip()
+        if not (imdb_id.startswith("tt") and imdb_id[2:].isdigit()):
+            return
+        tmdb_data = dict(entity.tmdb_data or {})
+        stored_external_ids = dict(tmdb_data.get("external_ids") or {})
+        stored_external_ids["imdb_id"] = imdb_id
+        tmdb_data["external_ids"] = stored_external_ids
+        entity.tmdb_data = tmdb_data
+
+    await asyncio.gather(
+        *[
+            fetch_imdb_id(target_type, tmdb_id, entity)
+            for (target_type, tmdb_id), entity in targets.items()
+        ]
+    )
+    logger.info("Resolved %s outbound Nuvio IMDb identifiers through TMDB", len(targets))
+
+
+def _nuvio_watched_item(
+    media: Media,
+    watched_at: datetime,
+    show: Show | None = None,
+) -> dict | None:
+    if watched_at.tzinfo is None:
+        watched_at = watched_at.replace(tzinfo=timezone.utc)
+    watched_epoch_ms = int(watched_at.timestamp() * 1000)
+
+    if media.media_type == MediaType.movie and (content_id := _nuvio_imdb_id(media)):
+        return {
+            "content_id": content_id,
+            "content_type": "movie",
+            "title": media.title,
+            "watched_at": watched_epoch_ms,
+        }
+    if (
+        media.media_type == MediaType.episode
+        and (content_id := _nuvio_imdb_id(show))
+        and media.season_number is not None
+        and media.episode_number is not None
+    ):
+        return {
+            "content_id": content_id,
+            "content_type": "series",
+            "title": media.title,
+            "season": media.season_number,
+            "episode": media.episode_number,
+            "watched_at": watched_epoch_ms,
+        }
+    if media.media_type == MediaType.series and (content_id := _nuvio_imdb_id(media)):
+        return {
+            "content_id": content_id,
+            "content_type": "series",
+            "title": media.title,
+            "watched_at": watched_epoch_ms,
+        }
+    return None
+
+
+async def _build_nuvio_watched_items(
+    db: AsyncSession,
+    user_id: int,
+    media_ids: set[int] | None = None,
+    api_key: str | None = None,
+) -> list[dict]:
+    event_query = (
+        select(WatchEvent.media_id, WatchEvent.watched_at)
+        .where(WatchEvent.user_id == user_id, WatchEvent.completed == True)
+        .order_by(WatchEvent.watched_at.desc())
+    )
+    if media_ids is not None:
+        if not media_ids:
+            return []
+        event_query = event_query.where(WatchEvent.media_id.in_(media_ids))
+    event_result = await db.execute(event_query)
+    latest_watched_at: dict[int, datetime] = {}
+    for media_id, watched_at in event_result.all():
+        latest_watched_at.setdefault(media_id, watched_at)
+    if not latest_watched_at:
+        return []
+
+    media_rows = await _select_in_chunks(
+        db,
+        lambda chunk: select(Media).where(Media.id.in_(chunk)),
+        list(latest_watched_at),
+    )
+    show_ids = {media.show_id for media in media_rows if media.show_id is not None}
+    shows_by_id: dict[int, Show] = {}
+    if show_ids:
+        shows = await _select_in_chunks(
+            db,
+            lambda chunk: select(Show).where(Show.id.in_(chunk)),
+            list(show_ids),
+        )
+        shows_by_id = {show.id: show for show in shows}
+
+    await _ensure_nuvio_imdb_ids(media_rows, shows_by_id, api_key)
+    items: list[dict] = []
+    for media in media_rows:
+        item = _nuvio_watched_item(
+            media,
+            latest_watched_at[media.id],
+            shows_by_id.get(media.show_id),
+        )
+        if item:
+            items.append(item)
+    return items
+
+
+def _nuvio_progress_item(
+    progress: PlaybackProgress,
+    media: Media,
+    show: Show | None = None,
+) -> dict | None:
+    try:
+        progress_seconds = max(0, int(progress.progress_seconds))
+        progress_percent = float(progress.progress_percent)
+    except (TypeError, ValueError):
+        return None
+    if progress_seconds <= 0 or progress_percent <= 0:
+        return None
+
+    position_ms = progress_seconds * 1000
+    if media.runtime and media.runtime > 0:
+        duration_ms = media.runtime * 60_000
+    else:
+        duration_ms = round(position_ms / max(min(progress_percent, 1.0), 0.01))
+    duration_ms = max(position_ms, duration_ms)
+
+    updated_at = progress.updated_at
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    last_watched = int(updated_at.timestamp() * 1000)
+
+    if media.media_type == MediaType.movie and (content_id := _nuvio_imdb_id(media)):
+        return {
+            "content_id": content_id,
+            "content_type": "movie",
+            "video_id": content_id,
+            "position": position_ms,
+            "duration": duration_ms,
+            "last_watched": last_watched,
+        }
+    if (
+        media.media_type == MediaType.episode
+        and (content_id := _nuvio_imdb_id(show))
+        and media.season_number is not None
+        and media.episode_number is not None
+    ):
+        return {
+            "content_id": content_id,
+            "content_type": "series",
+            "video_id": f"{content_id}:{media.season_number}:{media.episode_number}",
+            "season": media.season_number,
+            "episode": media.episode_number,
+            "position": position_ms,
+            "duration": duration_ms,
+            "last_watched": last_watched,
+        }
+    return None
+
+
+async def _build_nuvio_progress_items(
+    db: AsyncSession,
+    user_id: int,
+    api_key: str | None = None,
+) -> list[dict]:
+    result = await db.execute(
+        select(PlaybackProgress, Media)
+        .join(Media, Media.id == PlaybackProgress.media_id)
+        .where(PlaybackProgress.user_id == user_id)
+        .order_by(Media.id)
+    )
+    rows = result.all()
+    show_ids = {
+        media.show_id
+        for _, media in rows
+        if media.media_type == MediaType.episode and media.show_id is not None
+    }
+    shows_by_id: dict[int, Show] = {}
+    if show_ids:
+        shows_result = await db.execute(select(Show).where(Show.id.in_(show_ids)))
+        shows_by_id = {show.id: show for show in shows_result.scalars().all()}
+    await _ensure_nuvio_imdb_ids([media for _, media in rows], shows_by_id, api_key)
+
+    items: list[dict] = []
+    for progress, media in rows:
+        item = _nuvio_progress_item(progress, media, shows_by_id.get(media.show_id))
+        if item:
+            items.append(item)
+    return items
+
+
 async def _fan_out_changes_to_other_connections(
     db: AsyncSession,
     user_id: int,
@@ -294,14 +557,12 @@ async def _fan_out_changes_to_other_connections(
     new_watched_ids: set[int],
     new_ratings: dict[int, float],
     settings: "UserSettings | None" = None,
+    exclude_cloud_source: CollectionSource | None = None,
 ) -> None:
-    """After an inbound sync, push the items that actually changed to every OTHER
-    connection (media servers + Trakt) that has push_watched / push_ratings enabled.
+    """Push an inbound sync delta to every enabled media server and cloud target.
 
-    Only the delta (what was added to Scrob during this sync) is pushed, so we
-    never blast unchanged history at the target server.
-
-    pass exclude_connection_id=None when syncing from Trakt (no MediaServerConnection to skip).
+    ``exclude_connection_id`` prevents media-server echo. ``exclude_cloud_source``
+    prevents a cloud pull from writing the same delta back to its source.
     """
     if not new_watched_ids and not new_ratings:
         return
@@ -346,7 +607,36 @@ async def _fan_out_changes_to_other_connections(
             async with sem:
                 return await coro
 
+        nuvio_watched_items: list[dict] | None = None
+        nuvio_api_key = (
+            await _get_effective_tmdb_key(db, settings)
+            if any(conn.type == "nuvio" and conn.push_watched for conn in push_candidates)
+            else None
+        )
+
+        async def _push_to_nuvio(conn: MediaServerConnection, items: list[dict]) -> bool:
+            session = await nuvio.push_watched_items(
+                conn.url,
+                conn.token,
+                _nuvio_profile_id(conn),
+                items,
+            )
+            conn.token = session.refresh_token
+            return True
+
         for conn in push_candidates:
+            if conn.type == "nuvio":
+                if conn.push_watched:
+                    if nuvio_watched_items is None:
+                        nuvio_watched_items = await _build_nuvio_watched_items(
+                            db,
+                            user_id,
+                            new_watched_ids,
+                            api_key=nuvio_api_key,
+                        )
+                    if nuvio_watched_items:
+                        push_tasks.append(_guarded(_push_to_nuvio(conn, nuvio_watched_items)))
+                continue
             conn_source = CollectionSource(conn.type)
             if conn.push_watched:
                 for mid in new_watched_ids:
@@ -368,8 +658,8 @@ async def _fan_out_changes_to_other_connections(
                             push_tasks.append(_guarded(emby.set_rating(conn.url, conn.token, conn.server_user_id, sid, rating)))
 
     # ── Trakt fan-out ────────────────────────────────────────────────────────
-    push_trakt_watched = settings and settings.trakt_push_watched and settings.trakt_access_token and settings.trakt_client_id
-    push_trakt_ratings = settings and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id
+    push_trakt_watched = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_watched and settings.trakt_access_token and settings.trakt_client_id
+    push_trakt_ratings = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id
 
     if (push_trakt_watched or push_trakt_ratings) and all_changed_ids:
         media_items = await _select_in_chunks(
@@ -428,13 +718,66 @@ async def _fan_out_changes_to_other_connections(
                 trakt_movie_ratings, trakt_show_ratings,
             ))
 
+    # ── MDBList fan-out ──────────────────────────────────────────────────────
+    push_mdblist_watched = settings and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_watched and settings.mdblist_api_key
+    push_mdblist_ratings = settings and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_ratings and settings.mdblist_api_key
+
+    if (push_mdblist_watched or push_mdblist_ratings) and all_changed_ids:
+        from core import mdblist as mdblist_client
+        from routers.mdblist import _empty_payload, _payload_item
+
+        mdblist_media = await _select_in_chunks(
+            db,
+            lambda chunk: select(Media).where(Media.id.in_(chunk)),
+            list(all_changed_ids),
+        )
+        mdblist_media_by_id = {media.id: media for media in mdblist_media}
+
+        if push_mdblist_watched:
+            watched_at_by_media = await _latest_watched_at(db, user_id, list(new_watched_ids))
+
+            watched_payload = _empty_payload()
+            for media_id in new_watched_ids:
+                media = mdblist_media_by_id.get(media_id)
+                item = _payload_item(media, watched_at=watched_at_by_media.get(media_id, datetime.utcnow())) if media else None
+                if item:
+                    watched_payload[item[0]].append(item[1])
+            push_tasks.append(mdblist_client.push_watched(settings.mdblist_api_key, watched_payload))
+
+        if push_mdblist_ratings:
+            rated_media_ids = list(new_ratings.keys())
+            rated_at_by_media: dict[int, datetime] = {}
+            for i in range(0, len(rated_media_ids), _MAX_IN_PARAMS):
+                chunk = rated_media_ids[i : i + _MAX_IN_PARAMS]
+                rated_at_result = await db.execute(
+                    select(Rating.media_id, Rating.rated_at).where(
+                        Rating.user_id == user_id, Rating.media_id.in_(chunk)
+                    )
+                )
+                rated_at_by_media.update(dict(rated_at_result.all()))
+            ratings_payload = _empty_payload()
+            for media_id, rating in new_ratings.items():
+                media = mdblist_media_by_id.get(media_id)
+                item = (
+                    _payload_item(media, rating=rating, rated_at=rated_at_by_media.get(media_id))
+                    if media
+                    else None
+                )
+                if item:
+                    ratings_payload[item[0]].append(item[1])
+            push_tasks.append(mdblist_client.push_ratings(settings.mdblist_api_key, ratings_payload))
+
     if push_tasks:
-        target_count = len(push_candidates) + (1 if (push_trakt_watched or push_trakt_ratings) else 0)
-        print(f"  Fanning out {len(push_tasks)} changes to {target_count} other connection(s) (incl. Trakt)...")
+        target_count = len(push_candidates)
+        target_count += 1 if (push_trakt_watched or push_trakt_ratings) else 0
+        target_count += 1 if (push_mdblist_watched or push_mdblist_ratings) else 0
+        print(f"  Fanning out {len(push_tasks)} changes to {target_count} other connection(s)...")
         results = await asyncio.gather(*push_tasks, return_exceptions=True)
         failed = sum(1 for r in results if isinstance(r, Exception))
         if failed:
             print(f"  {failed}/{len(push_tasks)} fan-out push tasks failed (non-fatal)")
+        if any(conn.type == "nuvio" for conn in push_candidates):
+            await db.commit()
 
 
 async def sync_items(
@@ -504,7 +847,7 @@ async def sync_items(
         for item in items:
             tid = (
                 get_jellyfin_tmdb_id(item.get("ProviderIds", {}))
-                if source in (CollectionSource.jellyfin, CollectionSource.emby)
+                if source in _MEDIA_BROWSER_ITEM_SOURCES
                 else plex.extract_tmdb_id(item.get("Guid", []))
             )
             if tid:
@@ -526,7 +869,7 @@ async def sync_items(
         for item in items:
             tid = (
                 get_jellyfin_tmdb_id(item.get("ProviderIds", {}))
-                if source in (CollectionSource.jellyfin, CollectionSource.emby)
+                if source in _MEDIA_BROWSER_ITEM_SOURCES
                 else plex.extract_tmdb_id(item.get("Guid", []))
             )
             if tid:
@@ -561,7 +904,7 @@ async def sync_items(
         new_media: Media | None = None
         try:
             async with db.begin_nested():
-                if source in (CollectionSource.jellyfin, CollectionSource.emby):
+                if source in _MEDIA_BROWSER_ITEM_SOURCES:
                     source_id = str(item.get("Id"))
                     quality = extract_jellyfin_quality(item)
                     tmdb_id = get_jellyfin_tmdb_id(item.get("ProviderIds", {}))
@@ -660,7 +1003,7 @@ async def sync_items(
                                 and not (existing_media_obj.tmdb_data or {}).get("show_title")
                             ):
                                 _series_name = (
-                                    item.get("SeriesName") if source in (CollectionSource.jellyfin, CollectionSource.emby)
+                                    item.get("SeriesName") if source in _MEDIA_BROWSER_ITEM_SOURCES
                                     else item.get("grandparentTitle")
                                 )
                                 if _series_name:
@@ -736,7 +1079,7 @@ async def sync_items(
                                 # Jellyfin hasn't finished fetching episode metadata yet).
                                 # Everything else (movies, episodes without show context) is skipped.
                                 series_name = (
-                                    item.get("SeriesName") if source in (CollectionSource.jellyfin, CollectionSource.emby)
+                                    item.get("SeriesName") if source in _MEDIA_BROWSER_ITEM_SOURCES
                                     else item.get("grandparentTitle")
                                 ) if media_type == MediaType.episode else None
 
@@ -823,7 +1166,8 @@ async def sync_items(
                                 )
                                 coll_id = coll_result.scalar_one()
                                 existing_coll_by_media_id[media.id] = coll_id
-                                stats["movies" if media_type == MediaType.movie else "episodes"] += 1
+                                stat_key = "movies" if media_type == MediaType.movie else "series" if media_type == MediaType.series else "episodes"
+                                stats[stat_key] = stats.get(stat_key, 0) + 1
                             # else: collection already exists from another source — just add the file
                             db.add(CollectionFile(
                                 collection_id=coll_id,
@@ -914,7 +1258,7 @@ async def sync_items(
         series_title_map: dict[int, str] = {}
         if media_type == MediaType.episode:
             for item in items:
-                if source in (CollectionSource.jellyfin, CollectionSource.emby):
+                if source in _MEDIA_BROWSER_ITEM_SOURCES:
                     parent_id = str(item.get("SeriesId", ""))
                     title = item.get("SeriesName")
                 else:
@@ -1727,6 +2071,478 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             await db.commit()
 
 
+def _parse_nuvio_tmdb_id(content_id: object) -> int | None:
+    value = str(content_id or "")
+    if not value.startswith("tmdb:"):
+        return None
+    try:
+        return int(value[5:])
+    except ValueError:
+        return None
+
+
+async def _resolve_nuvio_tmdb_ids(
+    records: list[dict],
+    db: AsyncSession,
+    user_id: int,
+    api_key: str,
+) -> dict[str, int]:
+    content_types: dict[str, str] = {}
+    resolved: dict[str, int] = {}
+    for record in records:
+        content_id = str(record.get("content_id") or "").strip()
+        if not content_id:
+            continue
+        if tmdb_id := _parse_nuvio_tmdb_id(content_id):
+            resolved[content_id] = tmdb_id
+        elif re.fullmatch(r"tt\d+", content_id, flags=re.IGNORECASE):
+            content_types.setdefault(content_id, str(record.get("content_type") or "").lower())
+
+    unresolved = set(content_types) - set(resolved)
+    if unresolved:
+        existing_result = await db.execute(
+            select(CollectionFile.source_id, Media.tmdb_id)
+            .join(Collection, Collection.id == CollectionFile.collection_id)
+            .join(Media, Media.id == Collection.media_id)
+            .where(
+                Collection.user_id == user_id,
+                CollectionFile.source == CollectionSource.nuvio,
+                Media.tmdb_id.isnot(None),
+            )
+        )
+        for source_id, tmdb_id in existing_result.all():
+            parts = str(source_id).split(":")
+            if len(parts) >= 2 and parts[1] in unresolved:
+                resolved[parts[1]] = int(tmdb_id)
+        unresolved -= set(resolved)
+
+    semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
+
+    async def resolve_imdb_id(content_id: str) -> None:
+        async with semaphore:
+            try:
+                result = await tmdb.find_by_external_id(content_id, "imdb_id", api_key=api_key)
+                result_key = "movie_results" if content_types[content_id] == "movie" else "tv_results"
+                matches = result.get(result_key) or []
+                if matches and matches[0].get("id") is not None:
+                    resolved[content_id] = int(matches[0]["id"])
+            except Exception as exc:
+                logger.warning(
+                    "Failed to resolve Nuvio IMDb ID %s through TMDB: %s",
+                    content_id,
+                    exc,
+                )
+
+    if unresolved:
+        await asyncio.gather(*(resolve_imdb_id(content_id) for content_id in sorted(unresolved)))
+        logger.info(
+            "Resolved %s/%s new Nuvio IMDb IDs through TMDB",
+            len(unresolved & set(resolved)),
+            len(unresolved),
+        )
+    return resolved
+
+
+def _nuvio_datetime(epoch_ms: object) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(int(epoch_ms) / 1000, tz=timezone.utc).replace(tzinfo=None)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
+def _normalize_nuvio_item(
+    record: dict,
+    profile_id: int,
+    watched: bool = False,
+    tmdb_id: int | None = None,
+) -> tuple[MediaType, dict] | None:
+    tmdb_id = tmdb_id or _parse_nuvio_tmdb_id(record.get("content_id"))
+    if tmdb_id is None:
+        return None
+
+    content_type = str(record.get("content_type") or "").lower()
+    season = record.get("season")
+    episode = record.get("episode")
+    is_episode = content_type == "series" and season is not None and episode is not None
+    if content_type == "movie":
+        media_type = MediaType.movie
+    elif is_episode:
+        media_type = MediaType.episode
+    elif content_type == "series":
+        media_type = MediaType.series
+    else:
+        return None
+
+    content_id = str(record["content_id"])
+    source_id = f"{profile_id}:{content_id}"
+    if is_episode:
+        source_id = f"{source_id}:s{season}e{episode}"
+    last_played = _nuvio_datetime(record.get("watched_at") or record.get("last_watched"))
+    title = record.get("title") or record.get("name") or content_id
+
+    item = {
+        "Id": source_id,
+        "Name": title,
+        "ProviderIds": {} if is_episode else {"Tmdb": str(tmdb_id)},
+        "MediaStreams": [],
+        "Path": None,
+        "SeriesId": content_id if is_episode else None,
+        "SeriesName": title if is_episode else None,
+        "ParentIndexNumber": int(season) if season is not None else None,
+        "IndexNumber": int(episode) if episode is not None else None,
+        "UserData": {
+            "Played": watched,
+            "PlayCount": 1 if watched else 0,
+            "LastPlayedDate": last_played.isoformat() if last_played else None,
+        },
+    }
+    return media_type, item
+
+
+async def _apply_nuvio_progress(
+    db: AsyncSession,
+    user_id: int,
+    rows: list[dict],
+    show_map: dict[str, int],
+    tmdb_ids: dict[str, int],
+) -> None:
+    movie_tmdb_ids = {
+        tmdb_id
+        for row in rows
+        if str(row.get("content_type") or "").lower() == "movie"
+        if (tmdb_id := tmdb_ids.get(str(row.get("content_id") or ""))) is not None
+    }
+    movies_by_tmdb: dict[int, Media] = {}
+    if movie_tmdb_ids:
+        result = await db.execute(
+            select(Media).where(Media.media_type == MediaType.movie, Media.tmdb_id.in_(movie_tmdb_ids))
+        )
+        movies_by_tmdb = {media.tmdb_id: media for media in result.scalars().all() if media.tmdb_id is not None}
+
+    show_ids = set(show_map.values())
+    episodes_by_key: dict[tuple[int, int, int], Media] = {}
+    if show_ids:
+        result = await db.execute(
+            select(Media).where(Media.media_type == MediaType.episode, Media.show_id.in_(show_ids))
+        )
+        episodes_by_key = {
+            (media.show_id, media.season_number, media.episode_number): media
+            for media in result.scalars().all()
+            if media.show_id is not None and media.season_number is not None and media.episode_number is not None
+        }
+
+    media_rows: list[tuple[dict, Media]] = []
+    for row in rows:
+        content_id = str(row.get("content_id") or "")
+        tmdb_id = tmdb_ids.get(content_id)
+        if tmdb_id is None:
+            continue
+        if str(row.get("content_type") or "").lower() == "movie":
+            media = movies_by_tmdb.get(tmdb_id)
+        else:
+            season = row.get("season")
+            episode = row.get("episode")
+            show_id = show_map.get(content_id)
+            media = (
+                episodes_by_key.get((show_id, int(season), int(episode)))
+                if show_id is not None and season is not None and episode is not None
+                else None
+            )
+        if media is not None:
+            media_rows.append((row, media))
+
+    if not media_rows:
+        return
+
+    media_ids = {media.id for _, media in media_rows}
+    existing_result = await db.execute(
+        select(PlaybackProgress).where(
+            PlaybackProgress.user_id == user_id,
+            PlaybackProgress.media_id.in_(media_ids),
+        )
+    )
+    existing = {progress.media_id: progress for progress in existing_result.scalars().all()}
+
+    for row, media in media_rows:
+        try:
+            position_ms = max(0, int(row.get("position") or 0))
+            duration_ms = max(0, int(row.get("duration") or 0))
+        except (TypeError, ValueError):
+            continue
+        if duration_ms <= 0:
+            continue
+        progress_percent = min(1.0, position_ms / duration_ms)
+        progress = existing.get(media.id)
+        if 0.05 <= progress_percent < 0.90:
+            updated_at = _nuvio_datetime(row.get("last_watched")) or datetime.utcnow()
+            if progress:
+                progress.progress_percent = progress_percent
+                progress.progress_seconds = position_ms // 1000
+                progress.updated_at = updated_at
+            else:
+                progress = PlaybackProgress(
+                    user_id=user_id,
+                    media_id=media.id,
+                    progress_percent=progress_percent,
+                    progress_seconds=position_ms // 1000,
+                    updated_at=updated_at,
+                )
+                db.add(progress)
+                existing[media.id] = progress
+        elif progress:
+            await db.delete(progress)
+            existing.pop(media.id, None)
+    await db.commit()
+
+
+async def run_nuvio_sync(
+    user_id: int,
+    job_id: int,
+    movie_limit: int,
+    show_limit: int,
+    connection_id: int | None = None,
+):
+    async with _sync_semaphore:
+        await _run_nuvio_sync(user_id, job_id, movie_limit, show_limit, connection_id)
+
+
+async def _run_nuvio_sync(
+    user_id: int,
+    job_id: int,
+    movie_limit: int,
+    show_limit: int,
+    connection_id: int | None = None,
+):
+    logger.info("Starting Nuvio sync for user %s, job %s", user_id, job_id)
+    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with async_session() as db:
+        try:
+            await db.execute(
+                update(SyncJob)
+                .where(SyncJob.id == job_id)
+                .values(status=SyncStatus.running, processed_items=0, total_items=0)
+            )
+            await db.commit()
+
+            settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+            settings = settings_result.scalar_one_or_none()
+            tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+
+            conn_query = select(MediaServerConnection).where(
+                MediaServerConnection.user_id == user_id,
+                MediaServerConnection.type == "nuvio",
+            )
+            if connection_id:
+                conn_query = conn_query.where(MediaServerConnection.id == connection_id)
+            else:
+                conn_query = conn_query.order_by(MediaServerConnection.id.asc()).limit(1)
+            conn_result = await db.execute(conn_query)
+            conn = conn_result.scalar_one_or_none()
+            if not conn or not tmdb_api_key:
+                raise RuntimeError("Missing Nuvio connection or TMDB API key")
+
+            try:
+                profile_id = int(conn.server_user_id or "")
+            except ValueError:
+                raise RuntimeError("Invalid Nuvio profile index")
+            if profile_id < 1 or profile_id > 6:
+                raise RuntimeError("Invalid Nuvio profile index")
+
+            session, data = await nuvio.pull_sync_data(conn.url, conn.token, profile_id)
+            # Supabase refresh tokens rotate. Persist the replacement before doing
+            # any expensive metadata work so the connection remains recoverable.
+            conn.token = session.refresh_token
+            await db.commit()
+
+            library_records = data["library"] if conn.sync_collection else []
+            watched_records = data["watched"] if conn.sync_watched else []
+            progress_records = data["progress"] if conn.sync_playback else []
+            logger.info(
+                "Nuvio profile %s (index #%s): pulled %s library, %s watched, "
+                "and %s progress records; enabled for this sync: %s library, "
+                "%s watched, %s progress",
+                conn.server_username or f"#{profile_id}",
+                profile_id,
+                len(data["library"]),
+                len(data["watched"]),
+                len(data["progress"]),
+                len(library_records),
+                len(watched_records),
+                len(progress_records),
+            )
+
+            all_nuvio_records = [*library_records, *watched_records, *progress_records]
+            tmdb_ids = await _resolve_nuvio_tmdb_ids(
+                all_nuvio_records,
+                db,
+                user_id,
+                tmdb_api_key,
+            )
+            normalized_library = [
+                normalized
+                for record in library_records
+                if (
+                    normalized := _normalize_nuvio_item(
+                        record,
+                        profile_id,
+                        tmdb_id=tmdb_ids.get(str(record.get("content_id") or "")),
+                    )
+                )
+                is not None
+            ]
+            normalized_watched = [
+                normalized
+                for record in watched_records
+                if (
+                    normalized := _normalize_nuvio_item(
+                        record,
+                        profile_id,
+                        watched=True,
+                        tmdb_id=tmdb_ids.get(str(record.get("content_id") or "")),
+                    )
+                )
+                is not None
+            ]
+            normalized_progress = [
+                normalized
+                for record in progress_records
+                if (
+                    normalized := _normalize_nuvio_item(
+                        record,
+                        profile_id,
+                        tmdb_id=tmdb_ids.get(str(record.get("content_id") or "")),
+                    )
+                )
+                is not None
+            ]
+            skipped_nuvio_records = len(all_nuvio_records) - (
+                len(normalized_library) + len(normalized_watched) + len(normalized_progress)
+            )
+
+            if movie_limit:
+                normalized_library = [
+                    *[entry for entry in normalized_library if entry[0] == MediaType.movie][:movie_limit],
+                    *[entry for entry in normalized_library if entry[0] != MediaType.movie],
+                ]
+            if show_limit:
+                normalized_library = [
+                    *[entry for entry in normalized_library if entry[0] != MediaType.series],
+                    *[entry for entry in normalized_library if entry[0] == MediaType.series][:show_limit],
+                ]
+
+            series_tmdb_map = {
+                str(record.get("content_id")): tmdb_id
+                for record in [*library_records, *watched_records, *progress_records]
+                if str(record.get("content_type") or "").lower() == "series"
+                if (tmdb_id := tmdb_ids.get(str(record.get("content_id") or ""))) is not None
+            }
+            if series_tmdb_map:
+                show_map, show_id_to_tmdb = await sync_shows_batch(
+                    series_tmdb_map,
+                    db,
+                    api_key=tmdb_api_key,
+                )
+            else:
+                show_map, show_id_to_tmdb = {}, {}
+
+            all_entries = [*normalized_library, *normalized_watched, *normalized_progress]
+            await db.execute(
+                update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(all_entries))
+            )
+            await db.commit()
+
+            stats = {"movies": 0, "series": 0, "episodes": 0, "skipped": skipped_nuvio_records, "errors": 0}
+            warnings: list[dict] = []
+            new_watched_ids: set[int] = set()
+
+            async def sync_group(
+                entries: list[tuple[MediaType, dict]],
+                media_type: MediaType,
+                *,
+                sync_collection: bool,
+                sync_watched: bool,
+            ) -> None:
+                items = [item for item_type, item in entries if item_type == media_type]
+                if not items:
+                    return
+                group_warnings = await sync_items(
+                    items,
+                    media_type,
+                    CollectionSource.nuvio,
+                    db,
+                    stats,
+                    user_id,
+                    job_id,
+                    show_map if media_type == MediaType.episode else {},
+                    api_key=tmdb_api_key,
+                    show_id_to_tmdb=show_id_to_tmdb if media_type == MediaType.episode else {},
+                    sync_collection=sync_collection,
+                    sync_watched=sync_watched,
+                    sync_ratings=False,
+                    new_watched_ids=new_watched_ids,
+                    connection_id=conn.id,
+                )
+                warnings.extend(group_warnings)
+
+            for media_type in (MediaType.movie, MediaType.series, MediaType.episode):
+                await sync_group(
+                    normalized_library,
+                    media_type,
+                    sync_collection=True,
+                    sync_watched=False,
+                )
+            for media_type in (MediaType.movie, MediaType.series, MediaType.episode):
+                await sync_group(
+                    normalized_watched,
+                    media_type,
+                    sync_collection=False,
+                    sync_watched=True,
+                )
+            for media_type in (MediaType.movie, MediaType.series, MediaType.episode):
+                await sync_group(
+                    normalized_progress,
+                    media_type,
+                    sync_collection=False,
+                    sync_watched=False,
+                )
+
+            if progress_records:
+                await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids)
+
+            await _fan_out_changes_to_other_connections(
+                db,
+                user_id,
+                conn.id,
+                new_watched_ids,
+                {},
+                settings=settings,
+                exclude_cloud_source=CollectionSource.nuvio,
+            )
+            warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
+            await db.execute(
+                update(SyncJob)
+                .where(SyncJob.id == job_id)
+                .values(
+                    status=SyncStatus.completed,
+                    stats=stats,
+                    warnings=warnings or None,
+                    updated_at=func.now(),
+                )
+            )
+            await db.commit()
+            asyncio.create_task(pre_cache_all_collected_bg())
+            logger.info("Nuvio sync job %s completed. Stats: %s", job_id, stats)
+        except Exception as exc:
+            logger.exception("Nuvio sync job %s failed", job_id)
+            await db.rollback()
+            await db.execute(
+                update(SyncJob)
+                .where(SyncJob.id == job_id)
+                .values(status=SyncStatus.failed, error_message=str(exc)[:900])
+            )
+            await db.commit()
+
+
 class LibrarySelectionBody(BaseModel):
     library_ids: list[str]
 
@@ -1807,6 +2623,9 @@ async def get_connection_libraries(
             ]
             return {"libraries": libraries, "all_selected": len(selected_keys) == 0}
 
+        elif conn.type == "nuvio":
+            return {"libraries": [], "all_selected": True}
+
         else:
             raise HTTPException(status_code=400, detail=f"Unknown connection type: {conn.type}")
     except HTTPException:
@@ -1818,12 +2637,59 @@ async def get_connection_libraries(
 @router.post("/connection/{connection_id}/scan")
 async def trigger_library_scan(
     connection_id: int,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
 
     try:
+        if conn.type == "nuvio":
+            settings_result = await db.execute(
+                select(UserSettings).where(UserSettings.user_id == current_user.id)
+            )
+            settings = settings_result.scalar_one_or_none()
+            if not await _get_effective_tmdb_key(db, settings):
+                raise HTTPException(status_code=400, detail="TMDB API key required")
+            active_result = await db.execute(
+                select(SyncJob)
+                .where(
+                    SyncJob.user_id == current_user.id,
+                    SyncJob.connection_id == conn.id,
+                    SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]),
+                )
+                .limit(1)
+            )
+            active_job = active_result.scalar_one_or_none()
+            if active_job:
+                return {
+                    "status": "started",
+                    "job_id": active_job.id,
+                    "message": "Nuvio sync is already running",
+                }
+            job = SyncJob(
+                user_id=current_user.id,
+                source=CollectionSource.nuvio,
+                status=SyncStatus.pending,
+                connection_id=conn.id,
+                job_type="pull",
+            )
+            db.add(job)
+            await db.commit()
+            await db.refresh(job)
+            background_tasks.add_task(
+                run_nuvio_sync,
+                current_user.id,
+                job.id,
+                0,
+                0,
+                conn.id,
+            )
+            return {
+                "status": "started",
+                "job_id": job.id,
+                "message": "Nuvio library, watch history, and playback progress sync started",
+            }
         if conn.type in ("jellyfin", "emby"):
             client = jellyfin if conn.type == "jellyfin" else emby
             ok = await client.scan_libraries(conn.url, conn.token)
@@ -1888,6 +2754,9 @@ async def save_connection_libraries(
             await db.commit()
             return {"saved": len(library_keys)}
 
+        elif conn.type == "nuvio":
+            return {"saved": 0}
+
         else:
             raise HTTPException(status_code=400, detail=f"Unknown connection type: {conn.type}")
     except HTTPException:
@@ -1912,7 +2781,7 @@ async def sync_connection(
     if not await _get_effective_tmdb_key(db, settings):
         raise HTTPException(status_code=400, detail="TMDB API key required")
 
-    source_map = {"jellyfin": CollectionSource.jellyfin, "emby": CollectionSource.emby, "plex": CollectionSource.plex}
+    source_map = {"jellyfin": CollectionSource.jellyfin, "emby": CollectionSource.emby, "plex": CollectionSource.plex, "nuvio": CollectionSource.nuvio}
     source = source_map.get(conn.type)
     if not source:
         raise HTTPException(status_code=400, detail=f"Unknown connection type: {conn.type}")
@@ -1922,7 +2791,7 @@ async def sync_connection(
     await db.commit()
     await db.refresh(job)
 
-    runner_map = {"jellyfin": run_jellyfin_sync, "emby": run_emby_sync, "plex": run_plex_sync}
+    runner_map = {"jellyfin": run_jellyfin_sync, "emby": run_emby_sync, "plex": run_plex_sync, "nuvio": run_nuvio_sync}
     background_tasks.add_task(runner_map[conn.type], current_user.id, job.id, movie_limit, show_limit, connection_id)
     return {"status": "started", "job_id": job.id, "message": f"{conn.type.capitalize()} sync is running in the background"}
 
@@ -1946,6 +2815,61 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             if not conn:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message="Connection not found"))
                 await db.commit()
+                return
+
+            if conn.type == "nuvio":
+                settings_result = await db.execute(
+                    select(UserSettings).where(UserSettings.user_id == user_id)
+                )
+                user_settings = settings_result.scalar_one_or_none()
+                api_key = await _get_effective_tmdb_key(db, user_settings)
+                watched_items = (
+                    await _build_nuvio_watched_items(db, user_id, api_key=api_key)
+                    if conn.push_watched
+                    else []
+                )
+                progress_items = (
+                    await _build_nuvio_progress_items(db, user_id, api_key=api_key)
+                    if conn.push_playback
+                    else []
+                )
+                total = len(watched_items) + len(progress_items)
+                await db.execute(
+                    update(SyncJob)
+                    .where(SyncJob.id == job_id)
+                    .values(total_items=total, processed_items=0)
+                )
+                await db.commit()
+                if watched_items or progress_items:
+                    session = await nuvio.push_sync_items(
+                        conn.url,
+                        conn.token,
+                        _nuvio_profile_id(conn),
+                        watched_items,
+                        progress_items,
+                    )
+                    conn.token = session.refresh_token
+                await db.execute(
+                    update(SyncJob)
+                    .where(SyncJob.id == job_id)
+                    .values(
+                        status=SyncStatus.completed,
+                        processed_items=total,
+                        stats={
+                            "succeeded": total,
+                            "failed": 0,
+                            "watched": len(watched_items),
+                            "progress": len(progress_items),
+                        },
+                    )
+                )
+                await db.commit()
+                logger.info(
+                    "Full Nuvio push for connection %s: %s watched and %s progress items",
+                    connection_id,
+                    len(watched_items),
+                    len(progress_items),
+                )
                 return
 
             conn_source = CollectionSource(conn.type)
@@ -2178,10 +3102,10 @@ async def push_upstream(
     current_user: User = Depends(get_current_user),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
-    if not conn.push_watched and not conn.push_ratings:
+    if not conn.push_watched and not conn.push_ratings and not conn.push_playback:
         raise HTTPException(status_code=400, detail="Enable 'Scrob → Server' push flags for this connection first")
 
-    source_map = {"jellyfin": CollectionSource.jellyfin, "emby": CollectionSource.emby, "plex": CollectionSource.plex}
+    source_map = {"jellyfin": CollectionSource.jellyfin, "emby": CollectionSource.emby, "plex": CollectionSource.plex, "nuvio": CollectionSource.nuvio}
     source = source_map.get(conn.type, CollectionSource.jellyfin)
     job = SyncJob(user_id=current_user.id, source=source, status=SyncStatus.pending, connection_id=connection_id, job_type="push")
     db.add(job)

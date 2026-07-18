@@ -25,6 +25,7 @@ from core.email import send_activation_email, send_password_reset_email
 from core.url_validator import validate_service_url
 from core.limiter import limiter
 from core.backup import restore_backup
+from core.nuvio import NuvioAPIError, parse_profile_id
 import schemas
 from dependencies import get_current_user
 from sqlalchemy.orm import selectinload
@@ -43,6 +44,25 @@ def _generate_api_key() -> str:
     return secrets.token_urlsafe(32)
 
 router = APIRouter()
+def _parse_nuvio_profile_id(value: str | None) -> int:
+    try:
+        return parse_profile_id(value)
+    except NuvioAPIError:
+        raise HTTPException(status_code=400, detail="Nuvio profile must be an integer from 1 to 6")
+
+
+def _nuvio_profile_name(profiles: list[dict], profile_id: int) -> str:
+    for profile in profiles:
+        try:
+            matches = int(profile.get("profile_index") or 0) == profile_id
+        except (TypeError, ValueError):
+            continue
+        if matches:
+            name = str(profile.get("name") or "").strip()
+            return name or f"Profile {profile_id}"
+    return f"Profile {profile_id}"
+
+
 
 
 async def _registration_allowed(db: AsyncSession) -> bool:
@@ -325,6 +345,7 @@ async def _settings_response(settings: UserSettings, db: AsyncSession) -> schema
     data = schemas.UserSettings.model_validate(settings)
     data.trakt_connected = bool(settings.trakt_access_token)
     data.simkl_connected = bool(settings.simkl_access_token)
+    data.mdblist_connected = bool(settings.mdblist_api_key)
     gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
     gs = gs_result.scalar_one_or_none()
     data.has_global_tmdb_key = bool(gs and gs.tmdb_api_key)
@@ -369,7 +390,7 @@ async def update_user_settings(
         db.add(settings)
 
     # Computed read-only fields; never write them back
-    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected", "has_global_tmdb_key", "has_effective_tmdb_key", "has_global_tvdb_key", "has_effective_tvdb_key"}
+    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected", "mdblist_connected", "has_global_tmdb_key", "has_effective_tmdb_key", "has_global_tvdb_key", "has_effective_tvdb_key"}
     update_data = {k: v for k, v in settings_in.model_dump(exclude_unset=True).items() if k not in READ_ONLY_FIELDS}
 
     if "tmdb_api_key" in update_data and update_data["tmdb_api_key"]:
@@ -382,6 +403,11 @@ async def update_user_settings(
         success = await tvdb.validate_api_key(update_data["tvdb_api_key"])
         if not success:
             raise HTTPException(status_code=400, detail="Invalid TVDB API Key")
+
+    if "mdblist_api_key" in update_data and update_data["mdblist_api_key"]:
+        from core import mdblist
+        if not await mdblist.validate_api_key(update_data["mdblist_api_key"]):
+            raise HTTPException(status_code=400, detail="Invalid MDBList API key")
 
     url_fields = {"radarr_url": "Radarr URL", "sonarr_url": "Sonarr URL"}
     for field, label in url_fields.items():
@@ -418,23 +444,39 @@ async def create_connection(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if body.type not in ("plex", "jellyfin", "emby"):
-        raise HTTPException(status_code=400, detail="type must be plex, jellyfin, or emby")
+    if body.type not in ("plex", "jellyfin", "emby", "nuvio"):
+        raise HTTPException(status_code=400, detail="type must be plex, jellyfin, emby, or nuvio")
     validated_url = await validate_service_url(body.url, f"{body.type.capitalize()} URL")
+    connection_token = body.token
+    server_user_id = body.server_user_id
+    server_username = body.server_username
+    if body.type == "nuvio":
+        from core import nuvio
+
+        profile_id = _parse_nuvio_profile_id(server_user_id)
+        try:
+            session, profiles = await nuvio.validate_connection(validated_url, connection_token, profile_id)
+        except nuvio.NuvioAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        connection_token = session.refresh_token
+        server_user_id = str(profile_id)
+        server_username = _nuvio_profile_name(profiles, profile_id)
+
     conn = MediaServerConnection(
         user_id=current_user.id,
         type=body.type,
         name=body.name,
         url=validated_url,
-        token=body.token,
-        server_user_id=body.server_user_id,
-        server_username=body.server_username,
+        token=connection_token,
+        server_user_id=server_user_id,
+        server_username=server_username,
         sync_collection=body.sync_collection,
         sync_watched=body.sync_watched,
-        sync_ratings=body.sync_ratings,
+        sync_ratings=body.sync_ratings if body.type != "nuvio" else False,
         sync_playback=body.sync_playback,
         push_watched=body.push_watched,
-        push_ratings=body.push_ratings,
+        push_playback=body.push_playback if body.type == "nuvio" else False,
+        push_ratings=body.push_ratings if body.type != "nuvio" else False,
         auto_sync_interval=body.auto_sync_interval,
     )
     db.add(conn)
@@ -463,6 +505,25 @@ async def update_connection(
     update_data = body.model_dump(exclude_unset=True)
     if "url" in update_data and update_data["url"]:
         update_data["url"] = await validate_service_url(update_data["url"], f"{conn.type.capitalize()} URL")
+
+    if conn.type == "nuvio":
+        from core import nuvio
+
+        candidate_url = update_data.get("url", conn.url)
+        candidate_token = update_data.get("token", conn.token)
+        profile_id = _parse_nuvio_profile_id(update_data.get("server_user_id", conn.server_user_id))
+        try:
+            session, profiles = await nuvio.validate_connection(candidate_url, candidate_token, profile_id)
+        except nuvio.NuvioAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        update_data["token"] = session.refresh_token
+        update_data["server_user_id"] = str(profile_id)
+        update_data["server_username"] = _nuvio_profile_name(profiles, profile_id)
+        update_data["sync_ratings"] = False
+        update_data["push_ratings"] = False
+        update_data["push_playback"] = update_data.get("push_playback", conn.push_playback)
+    else:
+        update_data["push_playback"] = False
 
     for field, value in update_data.items():
         setattr(conn, field, value)
@@ -668,6 +729,46 @@ async def test_plex(
         raise HTTPException(status_code=400, detail="Failed to connect to Plex")
     return {"status": "ok"}
 
+
+@router.post("/nuvio-login")
+async def login_nuvio(
+    body: schemas.NuvioLoginRequest,
+    current_user: User = Depends(get_current_user),
+):
+    from core import nuvio
+
+    url = await validate_service_url(body.url, "Nuvio URL")
+    try:
+        session, profiles = await nuvio.authenticate(url, body.email, body.password)
+    except nuvio.NuvioAPIError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "url": url,
+        "refresh_token": session.refresh_token,
+        "profiles": profiles,
+    }
+
+
+@router.post("/test-nuvio")
+async def test_nuvio(
+    body: schemas.NuvioConnectionTestRequest,
+    current_user: User = Depends(get_current_user),
+):
+    from core import nuvio
+
+    url = await validate_service_url(body.url, "Nuvio URL")
+    profile_id = _parse_nuvio_profile_id(str(body.profile_id))
+    try:
+        session, profiles = await nuvio.validate_connection(url, body.token, profile_id)
+    except nuvio.NuvioAPIError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "status": "ok",
+        "message": "Nuvio connection is valid.",
+        "refresh_token": session.refresh_token,
+        "profiles": profiles,
+    }
+
 @router.post("/test-radarr")
 async def test_radarr(
     url: str = Query(...),
@@ -776,15 +877,34 @@ async def get_connection_status(
         return {"configured": True, "connected": connected}
 
     async def check_media_server(conn):
-        from core import jellyfin, plex
+        from core import jellyfin, nuvio, plex
+
         try:
             if conn.type == "plex":
                 connected = await plex.validate_connection(conn.url, conn.token)
+            elif conn.type == "nuvio":
+                profile_id = _parse_nuvio_profile_id(conn.server_user_id)
+                session, profiles = await nuvio.validate_connection(conn.url, conn.token, profile_id)
+                conn.token = session.refresh_token
+                conn.server_username = _nuvio_profile_name(profiles, profile_id)
+                connected = True
             else:
                 connected = await jellyfin.validate_connection(conn.url, conn.token, conn.server_user_id)
         except Exception:
             connected = False
-        return {"id": conn.id, "connected": connected}
+        result = {"id": conn.id, "connected": connected}
+        if conn.type == "nuvio" and connected:
+            result["token"] = conn.token
+            result["profile_name"] = conn.server_username
+            result["profiles"] = [
+                {
+                    "profile_index": profile.get("profile_index"),
+                    "name": str(profile.get("name") or "").strip()
+                    or f"Profile {profile.get('profile_index')}",
+                }
+                for profile in profiles
+            ]
+        return result
 
     async def check_simkl():
         from core import simkl as simkl_client
@@ -793,12 +913,21 @@ async def get_connection_status(
         connected = await simkl_client.validate_token(user_settings.simkl_client_id, user_settings.simkl_access_token)
         return {"configured": True, "connected": connected}
 
-    media_server_tasks = [check_media_server(c) for c in media_server_conns]
-    rdr_status, snr_status, trakt_status, simkl_status, *ms_statuses = await asyncio.gather(
-        check_radarr(), check_sonarr(), check_trakt(), check_simkl(), *media_server_tasks
-    )
+    async def check_mdblist():
+        from core import mdblist
+        if not user_settings or not user_settings.mdblist_api_key:
+            return {"configured": False, "connected": False}
+        connected = await mdblist.validate_api_key(user_settings.mdblist_api_key)
+        return {"configured": True, "connected": connected}
 
-    return {"radarr": rdr_status, "sonarr": snr_status, "trakt": trakt_status, "simkl": simkl_status, "connections": ms_statuses}
+    media_server_tasks = [check_media_server(c) for c in media_server_conns]
+    rdr_status, snr_status, trakt_status, simkl_status, mdblist_status, *ms_statuses = await asyncio.gather(
+        check_radarr(), check_sonarr(), check_trakt(), check_simkl(), check_mdblist(), *media_server_tasks
+    )
+    if any(conn.type == "nuvio" for conn in media_server_conns):
+        await db.commit()
+
+    return {"radarr": rdr_status, "sonarr": snr_status, "trakt": trakt_status, "simkl": simkl_status, "mdblist": mdblist_status, "connections": ms_statuses}
 
 
 @router.get("/sonarr/profiles")

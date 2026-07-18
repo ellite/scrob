@@ -362,6 +362,42 @@ async def _push_list_item_to_trakt(
         logger.warning("Failed to push list item to Trakt (slug=%s, remove=%s): %s", list_trakt_slug, remove, exc)
 
 
+
+async def _push_list_item_to_mdblist(
+    db: AsyncSession,
+    user_id: int,
+    list_mdblist_slug: str,
+    media: Media,
+    remove: bool = False,
+) -> None:
+    if (
+        list_mdblist_slug != "__watchlist__"
+        or not media.tmdb_id
+        or media.media_type not in (MediaType.movie, MediaType.series)
+    ):
+        return
+
+    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+    settings = settings_result.scalar_one_or_none()
+    if not settings or not settings.mdblist_push_watchlist or not settings.mdblist_api_key:
+        return
+
+    from core import mdblist as mdblist_client
+
+    kind = "movies" if media.media_type == MediaType.movie else "shows"
+    payload = {"movies": [], "shows": [], "seasons": [], "episodes": []}
+    payload[kind].append({"ids": {"tmdb": media.tmdb_id}})
+    try:
+        operation = mdblist_client.remove_watchlist if remove else mdblist_client.push_watchlist
+        await operation(settings.mdblist_api_key, payload)
+    except Exception as exc:
+        logger.warning(
+            "Failed to push list item to MDBList watchlist (remove=%s): %s",
+            remove,
+            exc,
+        )
+
+
 @router.post("/{list_id}/items", status_code=201)
 async def add_list_item(
     list_id: int,
@@ -456,6 +492,11 @@ async def add_list_item(
         if lst.trakt_slug == "__plex_watchlist__":
             await _push_list_item_to_plex_watchlist(db, current_user.id, media, remove=False)
 
+    if lst.mdblist_slug:
+        await _push_list_item_to_mdblist(
+            db, current_user.id, lst.mdblist_slug, media, remove=False
+        )
+
     item_result = await db.execute(
         select(ListItem)
         .options(selectinload(ListItem.media).selectinload(Media.show))
@@ -500,5 +541,10 @@ async def remove_list_item(
         await _push_list_item_to_trakt(db, current_user.id, lst.trakt_slug, media, remove=True)
         if lst.trakt_slug == "__plex_watchlist__":
             await _push_list_item_to_plex_watchlist(db, current_user.id, media, remove=True)
+
+    if lst and lst.mdblist_slug and media:
+        await _push_list_item_to_mdblist(
+            db, current_user.id, lst.mdblist_slug, media, remove=True
+        )
 
     return {"message": "Item removed"}

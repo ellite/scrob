@@ -81,9 +81,10 @@ async def list_shows(
 ):
     offset = (page - 1) * page_size
 
-    # A show is "in the user's collection" if they have at least one countable episode
-    # collected — same criteria used by enrich_with_state for the percentage calculation.
-    user_show_ids = (
+    # A show is in the user's collection when either the series itself is
+    # collected (cloud/watchlist providers) or at least one countable episode
+    # is collected (media-server libraries).
+    episode_show_ids = (
         select(Media.show_id)
         .join(Collection, Collection.media_id == Media.id)
         .where(
@@ -97,8 +98,24 @@ async def list_shows(
         .distinct()
         .subquery()
     )
+    direct_series_tmdb_ids = (
+        select(Media.tmdb_id)
+        .join(Collection, Collection.media_id == Media.id)
+        .where(
+            Collection.user_id == current_user.id,
+            Media.media_type == MediaType.series,
+            Media.tmdb_id.isnot(None),
+        )
+        .distinct()
+        .subquery()
+    )
 
-    base_query = select(ShowModel).where(ShowModel.id.in_(select(user_show_ids)))
+    base_query = select(ShowModel).where(
+        or_(
+            ShowModel.id.in_(select(episode_show_ids)),
+            ShowModel.tmdb_id.in_(select(direct_series_tmdb_ids)),
+        )
+    )
     if genre:
         base_query = base_query.where(sa_cast(ShowModel.tmdb_data["genres"], Text).contains(f'"{genre}"'))
     if year:

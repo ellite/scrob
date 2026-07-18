@@ -172,6 +172,15 @@ async def submit_rating(
             push_tasks.append(simkl_client.set_movie_rating(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, body.rating))
         elif media_type == MediaType.series:
             push_tasks.append(simkl_client.set_show_rating(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, body.rating))
+    if settings and settings.mdblist_push_ratings and settings.mdblist_api_key:
+        from core import mdblist as mdblist_client
+        from routers.mdblist import _empty_payload, _payload_item
+
+        payload = _empty_payload()
+        item = _payload_item(media, rating=body.rating)
+        if item:
+            payload[item[0]].append(item[1])
+            push_tasks.append(mdblist_client.push_ratings(settings.mdblist_api_key, payload))
     if push_tasks:
         await asyncio.gather(*push_tasks, return_exceptions=True)
 
@@ -288,6 +297,15 @@ async def delete_rating(
             push_tasks.append(simkl_client.remove_movie_rating(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id))
         elif mt == MediaType.series:
             push_tasks.append(simkl_client.remove_show_rating(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id))
+    if settings and settings.mdblist_push_ratings and settings.mdblist_api_key:
+        from core import mdblist as mdblist_client
+        from routers.mdblist import _empty_payload, _payload_item
+
+        payload = _empty_payload()
+        item = _payload_item(media)
+        if item:
+            payload[item[0]].append(item[1])
+            push_tasks.append(mdblist_client.remove_ratings(settings.mdblist_api_key, payload))
     if push_tasks:
         await asyncio.gather(*push_tasks, return_exceptions=True)
 

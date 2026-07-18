@@ -13,7 +13,7 @@
 
 ---
 
-Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks your watch history, ratings, and personal lists, and lets you push your activity back to your media server - all from a clean, app-like web interface that installs as a PWA on any device.
+Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, and **Nuvio**, tracks your watch history, ratings, and personal lists, and can push watched activity back to connected providers - all from a clean, app-like web interface that installs as a PWA on any device.
 
 ## Table of Contents
 
@@ -26,7 +26,11 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks you
   - [First Setup](#first-setup)
   - [Updating](#updating)
 - [Configuration](#configuration)
-- [Development](#development)
+- [Nuvio Cloud Synchronization](#nuvio-cloud-synchronization)
+  - [Connect Nuvio](#connect-nuvio)
+  - [Synchronization Directions](#synchronization-directions)
+  - [Scheduling and Limitations](#scheduling-and-limitations)
+- [MDBList Synchronization](#mdblist-synchronization)
 - [Webhooks](#webhooks-real-time-scrobbling)
   - [Jellyfin](#jellyfin)
   - [Plex](#plex)
@@ -36,16 +40,18 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks you
 - [Email Validation & SMTP](#email-validation--smtp)
 - [Contributing](#contributing)
 - [Contributors](#contributors)
+- [Development](#development)
 - [License](#license)
 
 ## Features
 
-- **Multi-source sync**: Import your full library, watch history, and ratings from Jellyfin, Plex, and Emby. Incremental syncs keep everything up to date.
-- **Keep all servers in sync**: Keep your watched status in sync between all your servers. Supports multiple instances.
+- **Multi-source sync**: Import libraries and watch history from Jellyfin, Plex, Emby, and Nuvio. Nuvio also imports playback progress for Continue Watching.
+- **Keep providers in sync**: Keep watched status synchronized between your media servers and Nuvio. Supports multiple instances and Nuvio profiles.
 - **Real-time scrobbling**: Webhooks from Jellyfin, Plex, Emby, and Kodi update your watch state as you play - no manual sync needed.
 - **Manual scrobble**: Start a watching session directly from any movie or episode page. Pause, resume, stop, or mark as watched - session progress shows live on the home screen.
 - **Trakt integration**: Sync your watched history and ratings from Trakt, and push Scrob activity back to Trakt automatically.
 - **Simkl integration**: Sync your watched history and ratings from Simkl, and push Scrob activity back to Simkl automatically.
+- **MDBList integration**: Pull watched history, ratings, and watchlist items from MDBList, and optionally push Scrob changes back using an MDBList API key.
 - **Watch history & ratings**: Track every movie and episode you've watched, including multiple plays with individual timestamps. Log plays manually with a custom date, or remove individual entries — all from the watched button on any movie or episode page. Rate them on a 10-point scale with optional reviews.
 - **Season ratings**: Rate individual seasons separately from the overall show.
 - **Personal lists**: Create and curate lists of movies and shows. Mark them public to share with other users on the same instance.
@@ -111,7 +117,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, and **Emby**, tracks you
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
-- A [TMDB API key](https://www.themoviedb.org/settings/api) (free) - used for metadata, search, and images
+- A [TMDB Read Access Token](https://www.themoviedb.org/settings/api) (free) - used for metadata, search, and images
 
 ### Docker Compose
 
@@ -249,8 +255,10 @@ docker run -d \
 ### First Setup
 
 1. Open `http://localhost:7330` and create your account.
-2. Go to **Settings → Integrations** to add your TMDB API key and connect Jellyfin, Plex, or Emby.
-3. Select which libraries to sync, then trigger your first sync from **Settings → Sync**.
+2. Go to **Settings → Integrations** to add your TMDB Read Access Token and connect Jellyfin, Plex, Emby, or Nuvio.
+3. Select which media-server libraries to sync, or select a Nuvio profile, then trigger your first sync.
+
+For Nuvio, choose **Nuvio** as the provider, sign in, and select one of the returned profiles. See [Nuvio Cloud Synchronization](#nuvio-cloud-synchronization) for credential handling, sync directions, scheduling, and current limitations.
 
 ### Updating
 
@@ -295,6 +303,50 @@ Remove the `scrob-db` service and set `DATABASE_URL` to your existing instance:
 ```yaml
 DATABASE_URL: postgresql+asyncpg://user:password@your-db-host:5432/scrob
 ```
+
+## Nuvio Cloud Synchronization
+
+Scrob connects to the [Nuvio public Cloud API](https://nuvio.tv/docs) at `https://api.nuvio.tv`. A TMDB Read Access Token must be configured in Scrob so Nuvio content identifiers can be matched to movies and shows.
+
+### Connect Nuvio
+
+1. Open **Settings → Media & Cloud Connections** and select **Add Connection**.
+2. Choose **Nuvio**, then enter a connection name, your Nuvio email, and your Nuvio password.
+3. Select **Test** to authenticate and load the profiles attached to the account.
+4. Select the Nuvio profile to synchronize, choose the pull and push options, then select **Add**.
+
+Scrob exchanges the email and password for a refresh token. The password is never persisted. Refresh-token rotation is handled automatically during connection checks and synchronization.
+
+Each connection targets one Nuvio profile. Add another connection if you need to synchronize another profile from the same account.
+
+### Synchronization Directions
+
+| Direction | Setting | Behavior |
+|---|---|---|
+| Nuvio → Scrob | **Collection status** | Imports the profile's library movies and series. |
+| Nuvio → Scrob | **Watched status** | Imports watched movies and episodes with their latest watch timestamps. |
+| Nuvio → Scrob | **Playback progress** | Imports position and duration into Continue Watching. |
+| Scrob → Nuvio | **Watched status** | Pushes watched and unwatched changes made in Scrob or imported from another connected provider. |
+| Scrob → Nuvio | **Playback progress** | Pushes current playback positions into Nuvio's Continue Watching state as non-destructive upserts. |
+
+**Sync now** runs an inbound synchronization using the enabled Nuvio → Scrob settings. **Push** sends the enabled watched-history and playback-progress data from Scrob to Nuvio. Both operations use non-destructive upserts; items absent from Scrob are not removed from Nuvio.
+
+Library membership is currently pull-only. Ratings are not synchronized with Nuvio.
+
+### Scheduling and Limitations
+
+**Auto Pull** repeats the enabled inbound synchronization every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours. Nuvio synchronization is polling-based; Nuvio does not use the media-server webhook URLs documented below.
+
+Inbound Nuvio identifiers are normalized to TMDB for Scrob's internal matching. Before an outbound push, Scrob resolves those TMDB identifiers to Nuvio-compatible bare IMDb identifiers (`tt...`) and caches the mapping. Unsupported identifiers are skipped rather than attached to the wrong title.
+
+## MDBList Synchronization
+
+1. Open **Settings → Connections → MDBList**.
+2. Copy the API key from [MDBList Preferences](https://mdblist.com/preferences), paste it into Scrob, and select **Save Changes**.
+3. Choose the data to import under **MDBList → Scrob**, then select **Pull**. MDBList pulls run only when this button is selected.
+4. To send changes back, enable the required **Scrob → MDBList** options. Watched-state and rating edits are pushed as they happen; edits to the managed **MDBList - Watchlist** are pushed to the MDBList watchlist.
+
+The manual **Push** action sends the complete enabled watched, ratings, or managed-watchlist snapshot. MDBList pagination follows `next_cursor` and requests the documented maximum of 1,000 items per page.
 
 ## Webhooks (Real-time Scrobbling)
 
