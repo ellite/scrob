@@ -25,6 +25,7 @@ from core.email import send_activation_email, send_password_reset_email
 from core.url_validator import validate_service_url
 from core.limiter import limiter
 from core.backup import restore_backup
+from core.nuvio import NuvioAPIError, parse_profile_id
 import schemas
 from dependencies import get_current_user
 from sqlalchemy.orm import selectinload
@@ -45,18 +46,15 @@ def _generate_api_key() -> str:
 router = APIRouter()
 def _parse_nuvio_profile_id(value: str | None) -> int:
     try:
-        profile_id = int(value or "")
-    except (TypeError, ValueError):
+        return parse_profile_id(value)
+    except NuvioAPIError:
         raise HTTPException(status_code=400, detail="Nuvio profile must be an integer from 1 to 6")
-    if profile_id < 1 or profile_id > 6:
-        raise HTTPException(status_code=400, detail="Nuvio profile must be an integer from 1 to 6")
-    return profile_id
 
 
 def _nuvio_profile_name(profiles: list[dict], profile_id: int) -> str:
     for profile in profiles:
         try:
-            matches = int(profile.get("profile_index", 0)) == profile_id
+            matches = int(profile.get("profile_index") or 0) == profile_id
         except (TypeError, ValueError):
             continue
         if matches:
