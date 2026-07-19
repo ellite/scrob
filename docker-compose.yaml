@@ -33,8 +33,8 @@ services:
       SECRET_KEY: changeme
 
       # ── Registrations ────────────────────────────────────────────────────────
-      # Registrations are open by default. Disable after initial setup if desired.
-      # ENABLE_REGISTRATIONS: "false"
+      # Registrations are disabled by default. Set to true to allow additional users.
+      # ENABLE_REGISTRATIONS: "true"
       # REGISTRATION_MAX_ALLOWED_USERS: "0"  # 0 = unlimited
 
       # ── OIDC (optional) ─────────────────────────────────────────────────────
