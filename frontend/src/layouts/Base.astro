@@ -301,6 +301,9 @@ const bottomNavItem = (active: boolean) =>
       </div>
       <div id="watch-history-modal-events" class="max-h-52 overflow-y-auto divide-y divide-zinc-800/50"></div>
       <div class="px-4 pt-3 pb-4 border-t border-zinc-800 space-y-2.5">
+        <button id="watch-history-unwatch-btn" class="hidden w-full px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95 disabled:opacity-50 disabled:pointer-events-none">
+          Mark as unwatched
+        </button>
         <p class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Add a play</p>
         <div class="flex gap-2">
           <button id="watch-history-now-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white">Just now</button>
@@ -308,7 +311,7 @@ const bottomNavItem = (active: boolean) =>
         </div>
         <input type="datetime-local" id="watch-history-date-input" class="hidden w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-sm text-zinc-200 focus:outline-none focus:border-green-500 [color-scheme:dark]" />
         <button id="watch-history-log-btn" class="w-full px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
-          Log play
+          Mark as watched
         </button>
       </div>
     </div>
@@ -1014,6 +1017,7 @@ const bottomNavItem = (active: boolean) =>
       dateInput.value = toLocal(new Date());
       dateInput.max = toLocal(new Date());
 
+      document.getElementById('watch-history-log-btn')!.textContent = 'Mark as watched';
       document.getElementById('watch-history-modal')!.classList.remove('hidden');
       await loadWatchHistoryEvents();
     }
@@ -1021,6 +1025,8 @@ const bottomNavItem = (active: boolean) =>
     async function loadWatchHistoryEvents() {
       const eventsEl = document.getElementById('watch-history-modal-events')!;
       eventsEl.innerHTML = '<div class="px-4 py-3 text-xs text-zinc-500">Loading…</div>';
+      const unwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
+      unwatchBtn.classList.add('hidden');
       try {
         const events: Array<{ id: number; watched_at: string }> = await apiFetch(
           `/history/item-events?tmdb_id=${_watchHistoryTmdbId}&media_type=${_watchHistoryMediaType}`
@@ -1040,6 +1046,8 @@ const bottomNavItem = (active: boolean) =>
           }).join('');
         }
         const isWatched = events.length > 0;
+        unwatchBtn.classList.toggle('hidden', !isWatched);
+        document.getElementById('watch-history-log-btn')!.textContent = isWatched ? 'Log a rewatch' : 'Mark as watched';
         document.querySelectorAll<HTMLElement>(
           `[data-card][data-tmdb-id="${_watchHistoryTmdbId}"][data-media-type="${_watchHistoryMediaType}"] [data-action="watched"]`
         ).forEach(b => updateWatchedButtonUI(b, isWatched));
@@ -1070,6 +1078,27 @@ const bottomNavItem = (active: boolean) =>
       }
     });
 
+    document.getElementById('watch-history-unwatch-btn')!.addEventListener('click', async () => {
+      const confirmed = await showConfirm(
+        'Mark as unwatched?',
+        'This will remove every recorded play for this item and mark it as unwatched on enabled services.'
+      );
+      if (!confirmed) return;
+
+      const unwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
+      unwatchBtn.disabled = true;
+      unwatchBtn.textContent = 'Removing…';
+      try {
+        await apiFetch(
+          `/history/item?tmdb_id=${encodeURIComponent(_watchHistoryTmdbId)}&media_type=${encodeURIComponent(_watchHistoryMediaType)}`,
+          'DELETE'
+        );
+        await loadWatchHistoryEvents();
+      } catch { /* keep the modal open so the user can retry */ }
+      unwatchBtn.disabled = false;
+      unwatchBtn.textContent = 'Mark as unwatched';
+    });
+
     (() => {
       const activeClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white';
       const inactiveClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200';
@@ -1095,8 +1124,9 @@ const bottomNavItem = (active: boolean) =>
         const input = document.getElementById('watch-history-date-input') as HTMLInputElement;
         const watchedAt = _watchHistoryUseNow ? toUTC(new Date()) : toUTC(new Date(input.value || toLocal(new Date())));
         const logBtn = document.getElementById('watch-history-log-btn') as HTMLButtonElement;
+        const idleLabel = logBtn.textContent || 'Mark as watched';
         logBtn.disabled = true;
-        logBtn.textContent = 'Logging…';
+        logBtn.textContent = 'Saving…';
         try {
           const watchBody: Record<string, unknown> = {
             tmdb_id: Number(_watchHistoryTmdbId),
@@ -1116,9 +1146,8 @@ const bottomNavItem = (active: boolean) =>
           (document.getElementById('watch-history-now-btn') as HTMLElement).className = activeClass;
           (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
           input.classList.add('hidden');
-        } catch { /* ignore */ }
+        } catch { logBtn.textContent = idleLabel; }
         logBtn.disabled = false;
-        logBtn.textContent = 'Log play';
       });
     })();
 
