@@ -273,6 +273,7 @@ if (me.totp_enabled) {
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
                         <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → {typeLabel}</p>
                         {[
+                          ...(conn.type === "nuvio" ? [{ key: "push_collection", label: "Collection status" }] : []),
                           { key: "push_watched", label: "Watched status" },
                           ...(conn.type === "nuvio" ? [{ key: "push_playback", label: "Playback progress" }] : []),
                           ...(conn.type === "nuvio" ? [] : [{ key: "push_ratings", label: "Ratings" }]),
@@ -289,7 +290,7 @@ if (me.totp_enabled) {
                         >Push</button>
                       </div>
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Pull</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
                         <div class="flex items-center justify-between gap-4">
                           <label class="text-sm text-zinc-300">Pull interval</label>
                           <select class="conn-auto-sync bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
@@ -305,6 +306,24 @@ if (me.totp_enabled) {
                               { value: 48, label: "Every 48h" },
                             ].map(({ value, label }) => (
                               <option value={String(value)} selected={conn.auto_sync_interval === value}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div class="flex items-center justify-between gap-4">
+                          <label class="text-sm text-zinc-300">Push interval</label>
+                          <select class="conn-auto-push bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
+                            <option value="" selected={!conn.auto_push_interval}>Disabled</option>
+                            {[
+                              { value: 0.25, label: "Every 15m" },
+                              { value: 0.5, label: "Every 30m" },
+                              { value: 1, label: "Every 1h" },
+                              { value: 3, label: "Every 3h" },
+                              { value: 6, label: "Every 6h" },
+                              { value: 12, label: "Every 12h" },
+                              { value: 24, label: "Every 24h" },
+                              { value: 48, label: "Every 48h" },
+                            ].map(({ value, label }) => (
+                              <option value={String(value)} selected={conn.auto_push_interval === value}>{label}</option>
                             ))}
                           </select>
                         </div>
@@ -443,6 +462,10 @@ if (me.totp_enabled) {
                           <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
                         </label>
                       ))}
+                      <label id="new-push-collection-row" class="hidden new-provider-pref flex items-center gap-3 cursor-pointer group">
+                        <input type="checkbox" id="new-push-collection" class="w-4 h-4 rounded cursor-pointer" disabled />
+                        <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">Collection status</span>
+                      </label>
                       <label id="new-push-playback-row" class="hidden new-provider-pref flex items-center gap-3 cursor-pointer group">
                         <input type="checkbox" id="new-push-playback" class="w-4 h-4 rounded cursor-pointer" disabled />
                         <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">Playback progress</span>
@@ -451,8 +474,24 @@ if (me.totp_enabled) {
                     <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
                       <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
                       <div class="flex items-center justify-between gap-4">
-                        <label class="text-sm text-zinc-300">Sync interval</label>
+                        <label class="text-sm text-zinc-300">Pull interval</label>
                         <select id="new-auto-sync" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 cursor-pointer">
+                          <option value="">Disabled</option>
+                          {[
+                            { value: 0.25, label: "Every 15m" },
+                            { value: 0.5, label: "Every 30m" },
+                            { value: 1, label: "Every 1h" },
+                            { value: 3, label: "Every 3h" },
+                            { value: 6, label: "Every 6h" },
+                            { value: 12, label: "Every 12h" },
+                            { value: 24, label: "Every 24h" },
+                            { value: 48, label: "Every 48h" },
+                          ].map(({ value, label }) => (<option value={String(value)}>{label}</option>))}
+                        </select>
+                      </div>
+                      <div class="flex items-center justify-between gap-4">
+                        <label class="text-sm text-zinc-300">Push interval</label>
+                        <select id="new-auto-push" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 cursor-pointer">
                           <option value="">Disabled</option>
                           {[
                             { value: 0.25, label: "Every 15m" },
@@ -2590,6 +2629,10 @@ if (me.totp_enabled) {
                 const v = (card?.querySelector('.conn-auto-sync') as HTMLSelectElement)?.value;
                 return v ? parseFloat(v) : null;
               })(),
+              auto_push_interval: (() => {
+                const v = (card?.querySelector('.conn-auto-push') as HTMLSelectElement)?.value;
+                return v ? parseFloat(v) : null;
+              })(),
             };
             card?.querySelectorAll('.conn-pref-checkbox').forEach((cb: any) => {
               body[cb.getAttribute('data-pref')] = cb.checked;
@@ -3511,6 +3554,9 @@ if (me.totp_enabled) {
       const pushPlayback = document.getElementById('new-push-playback') as HTMLInputElement | null;
       pushPlayback?.closest('label')?.classList.toggle('hidden', !isNuvio);
       if (pushPlayback) pushPlayback.disabled = !isNuvio;
+      const pushCollection = document.getElementById('new-push-collection') as HTMLInputElement | null;
+      pushCollection?.closest('label')?.classList.toggle('hidden', !isNuvio);
+      if (pushCollection) pushCollection.disabled = !isNuvio;
       for (const checkbox of [syncRatings, pushRatings]) {
         checkbox?.closest('label')?.classList.toggle('hidden', isNuvio);
         if (checkbox) checkbox.disabled = isNuvio;
@@ -3623,10 +3669,15 @@ if (me.totp_enabled) {
             sync_ratings: type === 'nuvio' ? false : ((document.getElementById('new-sync-ratings') as HTMLInputElement)?.checked ?? true),
             sync_playback: (document.getElementById('new-sync-playback') as HTMLInputElement)?.checked ?? true,
             push_watched: (document.getElementById('new-push-watched') as HTMLInputElement)?.checked ?? false,
+            push_collection: type === 'nuvio' && ((document.getElementById('new-push-collection') as HTMLInputElement)?.checked ?? false),
             push_playback: type === 'nuvio' && ((document.getElementById('new-push-playback') as HTMLInputElement)?.checked ?? false),
             push_ratings: type === 'nuvio' ? false : ((document.getElementById('new-push-ratings') as HTMLInputElement)?.checked ?? false),
             auto_sync_interval: (() => {
               const value = (document.getElementById('new-auto-sync') as HTMLSelectElement)?.value;
+              return value ? parseFloat(value) : null;
+            })(),
+            auto_push_interval: (() => {
+              const value = (document.getElementById('new-auto-push') as HTMLSelectElement)?.value;
               return value ? parseFloat(value) : null;
             })(),
           };

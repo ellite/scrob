@@ -475,9 +475,11 @@ async def create_connection(
         sync_ratings=body.sync_ratings if body.type != "nuvio" else False,
         sync_playback=body.sync_playback,
         push_watched=body.push_watched,
+        push_collection=body.push_collection if body.type == "nuvio" else False,
         push_playback=body.push_playback if body.type == "nuvio" else False,
         push_ratings=body.push_ratings if body.type != "nuvio" else False,
         auto_sync_interval=body.auto_sync_interval,
+        auto_push_interval=body.auto_push_interval,
     )
     db.add(conn)
     await db.commit()
@@ -522,8 +524,10 @@ async def update_connection(
         update_data["sync_ratings"] = False
         update_data["push_ratings"] = False
         update_data["push_playback"] = update_data.get("push_playback", conn.push_playback)
+        update_data["push_collection"] = update_data.get("push_collection", conn.push_collection)
     else:
         update_data["push_playback"] = False
+        update_data["push_collection"] = False
 
     for field, value in update_data.items():
         setattr(conn, field, value)

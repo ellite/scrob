@@ -2,7 +2,8 @@ import json
 from datetime import datetime, timezone
 import os
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
@@ -15,14 +16,29 @@ from models.media import Media
 from models.playback_progress import PlaybackProgress
 from models.show import Show
 from routers.sync import (
+    _fan_out_changes_to_other_connections,
+    _apply_nuvio_watch_history,
     _ensure_nuvio_imdb_ids,
     _normalize_nuvio_item,
+    _nuvio_library_item,
     _nuvio_progress_item,
     _nuvio_watched_item,
 )
 
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
+
+class _Result:
+    def __init__(self, *, scalars=None, rows=None):
+        self._scalars = scalars or []
+        self._rows = rows or []
+
+    def scalars(self):
+        return _Result(rows=self._scalars)
+
+    def all(self):
+        return self._rows
+
 
 
 class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
@@ -300,6 +316,249 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(show.tmdb_data["external_ids"]["imdb_id"], "tt14688458")
 
 
+    async def test_merge_library_preserves_unrelated_remote_items(self) -> None:
+        pushed_items: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(
+                    200,
+                    json={
+                        "access_token": "access-token",
+                        "refresh_token": "rotated-refresh",
+                        "expires_in": 3600,
+                    },
+                )
+            if request.url.path.endswith("/sync_pull_library"):
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "content_id": "tmdb:1",
+                            "content_type": "movie",
+                            "name": "Old title",
+                            "addon_base_url": "https://addon.example",
+                            "poster": "https://images.example/poster.jpg",
+                            "background": "https://images.example/background.jpg",
+                            "genres": ["Drama"],
+                        },
+                        {
+                            "content_id": "tmdb:2",
+                            "content_type": "movie",
+                            "name": "Keep me",
+                        },
+                    ],
+                )
+            if request.url.path.endswith("/sync_push_library"):
+                pushed_items.extend(json.loads(request.content)["p_items"])
+                return httpx.Response(204)
+            return httpx.Response(404, json={"message": "unexpected request"})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            nuvio.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            session, count = await nuvio.merge_library(
+                "https://api.nuvio.tv",
+                "old-refresh",
+                1,
+                additions=[
+                    {
+                        "content_id": "tmdb:1",
+                        "content_type": "movie",
+                        "name": "New title",
+                        "poster": "",
+                        "background": None,
+                        "genres": [],
+                    },
+                    {"content_id": "tmdb:3", "content_type": "movie", "name": "Added"},
+                ],
+                removed_content_ids=set(),
+            )
+
+        self.assertEqual(session.refresh_token, "rotated-refresh")
+        self.assertEqual(count, 3)
+        self.assertEqual({item["content_id"] for item in pushed_items}, {"tmdb:1", "tmdb:2", "tmdb:3"})
+        updated = next(item for item in pushed_items if item["content_id"] == "tmdb:1")
+        self.assertEqual(updated["name"], "New title")
+        self.assertEqual(updated["addon_base_url"], "https://addon.example")
+        self.assertEqual(updated["poster"], "https://images.example/poster.jpg")
+        self.assertEqual(updated["background"], "https://images.example/background.jpg")
+        self.assertEqual(updated["genres"], ["Drama"])
+
+    async def test_push_library_replaces_snapshot_but_preserves_playback_metadata(self) -> None:
+        pushed_items: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(
+                    200,
+                    json={
+                        "access_token": "access-token",
+                        "refresh_token": "rotated-refresh",
+                        "expires_in": 3600,
+                    },
+                )
+            if request.url.path.endswith("/sync_pull_library"):
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "content_id": "tmdb:1",
+                            "content_type": "movie",
+                            "addon_base_url": "https://addon.example",
+                        },
+                        {"content_id": "tmdb:2", "content_type": "movie"},
+                    ],
+                )
+            if request.url.path.endswith("/sync_push_library"):
+                pushed_items.extend(json.loads(request.content)["p_items"])
+                return httpx.Response(204)
+            return httpx.Response(404, json={"message": "unexpected request"})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            nuvio.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            await nuvio.push_library(
+                "https://api.nuvio.tv",
+                "old-refresh",
+                1,
+                [{"content_id": "tmdb:1", "content_type": "movie", "name": "Only item"}],
+            )
+
+        self.assertEqual(len(pushed_items), 1)
+        self.assertEqual(pushed_items[0]["content_id"], "tmdb:1")
+        self.assertEqual(pushed_items[0]["addon_base_url"], "https://addon.example")
+
+
+class NuvioCollectionFanoutTests(unittest.IsolatedAsyncioTestCase):
+    async def test_local_collection_addition_pushes_imdb_item_to_nuvio(self) -> None:
+        movie = Media(
+            id=10,
+            tmdb_id=1368337,
+            media_type=MediaType.movie,
+            title="The Odyssey",
+            tmdb_data={"external_ids": {"imdb_id": "tt33764258"}},
+        )
+        conn = SimpleNamespace(
+            id=4,
+            type="nuvio",
+            url="https://api.nuvio.tv",
+            token="refresh-token",
+            server_user_id="1",
+            push_collection=True,
+            push_watched=False,
+            push_ratings=False,
+        )
+        db = SimpleNamespace(
+            execute=AsyncMock(
+                side_effect=[
+                    _Result(scalars=[movie]),
+                    _Result(scalars=[conn]),
+                    _Result(rows=[]),
+                    _Result(rows=[(datetime(2026, 7, 19, tzinfo=timezone.utc), movie)]),
+                ]
+            ),
+            commit=AsyncMock(),
+        )
+
+        with (
+            patch(
+                "routers.sync._get_effective_tmdb_key",
+                AsyncMock(return_value="tmdb-token"),
+            ),
+            patch(
+                "routers.sync._push_nuvio_library_delta",
+                AsyncMock(return_value=True),
+            ) as push_delta,
+        ):
+            await _fan_out_changes_to_other_connections(
+                db,
+                user_id=7,
+                exclude_connection_id=None,
+                new_watched_ids=set(),
+                new_ratings={},
+                settings=None,
+                new_collected_ids={movie.id},
+            )
+
+        push_delta.assert_awaited_once()
+        _, current_items, changed_ids = push_delta.await_args.args
+        self.assertEqual(changed_ids, {"tt33764258"})
+        self.assertEqual(
+            current_items,
+            [
+                {
+                    "content_id": "tt33764258",
+                    "content_type": "movie",
+                    "name": "The Odyssey",
+                    "poster": None,
+                    "poster_shape": "poster",
+                    "background": None,
+                    "description": None,
+                    "release_info": None,
+                    "imdb_rating": None,
+                    "genres": [],
+                    "added_at": 1784419200000,
+                }
+            ],
+        )
+
+
+class NuvioWatchHistoryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_distinct_watch_timestamps_are_imported_idempotently(self) -> None:
+        movie = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club")
+        db = SimpleNamespace(
+            execute=AsyncMock(
+                side_effect=[
+                    _Result(scalars=[movie]),
+                    _Result(rows=[]),
+                ]
+            ),
+            add=MagicMock(),
+            commit=AsyncMock(),
+        )
+        rows = [
+            {
+                "content_id": "tmdb:550",
+                "content_type": "movie",
+                "watched_at": 1711600000000,
+            },
+            {
+                "content_id": "tmdb:550",
+                "content_type": "movie",
+                "watched_at": 1711700000000,
+            },
+            {
+                "content_id": "tmdb:550",
+                "content_type": "movie",
+                "watched_at": 1711700000000,
+            },
+        ]
+
+        added = await _apply_nuvio_watch_history(
+            db,
+            user_id=7,
+            rows=rows,
+            show_map={},
+            tmdb_ids={"tmdb:550": 550},
+        )
+
+        self.assertEqual(added, {10})
+        self.assertEqual(db.add.call_count, 2)
+        self.assertEqual(
+            {call.args[0].watched_at for call in db.add.call_args_list},
+            {
+                datetime(2024, 3, 28, 4, 26, 40),
+                datetime(2024, 3, 29, 8, 13, 20),
+            },
+        )
+
 class NuvioNormalizationTests(unittest.TestCase):
     def test_episode_history_maps_to_tmdb_series_and_watch_state(self) -> None:
         normalized = _normalize_nuvio_item(
@@ -324,6 +583,47 @@ class NuvioNormalizationTests(unittest.TestCase):
         self.assertEqual(item["UserData"]["Played"], True)
         self.assertEqual(item["UserData"]["PlayCount"], 1)
         self.assertIsNotNone(item["UserData"]["LastPlayedDate"])
+
+    def test_series_library_item_uses_canonical_show_artwork(self) -> None:
+        media = Media(
+            id=20,
+            tmdb_id=4607,
+            media_type=MediaType.series,
+            title="Lost : Les Disparus",
+            poster_path="",
+            backdrop_path="",
+        )
+        show = Show(
+            id=5,
+            tmdb_id=4607,
+            title="Lost",
+            poster_path="https://image.tmdb.org/t/p/w500/poster.jpg",
+            backdrop_path="https://image.tmdb.org/t/p/w1280/background.jpg",
+            overview="A mysterious island.",
+            first_air_date="2004-09-22",
+            tmdb_rating=8.0,
+            tmdb_data={
+                "genres": [{"name": "Drama"}],
+                "external_ids": {"imdb_id": "tt0411008"},
+            },
+        )
+
+        item = _nuvio_library_item(
+            media,
+            datetime(2026, 7, 19, tzinfo=timezone.utc),
+            show,
+        )
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item["content_id"], "tt0411008")
+        self.assertEqual(item["name"], "Lost : Les Disparus")
+        self.assertEqual(item["poster"], show.poster_path)
+        self.assertEqual(item["background"], show.backdrop_path)
+        self.assertEqual(item["description"], show.overview)
+        self.assertEqual(item["release_info"], "2004")
+        self.assertEqual(item["imdb_rating"], 8.0)
+        self.assertEqual(item["genres"], ["Drama"])
+
 
     def test_imdb_content_uses_resolved_tmdb_id(self) -> None:
         normalized = _normalize_nuvio_item(

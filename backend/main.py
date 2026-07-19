@@ -20,73 +20,127 @@ from models.playback_session import PlaybackSession
 
 
 async def _auto_sync_scheduler():
+    from datetime import datetime, timedelta, timezone
+
     from db import async_sessionmaker
     from models.connections import MediaServerConnection
-    from routers.sync import run_jellyfin_sync, run_emby_sync, run_plex_sync, run_nuvio_sync
-    from datetime import datetime, timezone
+    from routers.sync import (
+        _run_full_push,
+        run_emby_sync,
+        run_jellyfin_sync,
+        run_nuvio_sync,
+        run_plex_sync,
+    )
 
-    CHECK_INTERVAL = 300  # seconds between scheduler ticks
-
-    source_map = {"jellyfin": CollectionSource.jellyfin, "emby": CollectionSource.emby, "plex": CollectionSource.plex, "nuvio": CollectionSource.nuvio}
-    runner_map = {"jellyfin": run_jellyfin_sync, "emby": run_emby_sync, "plex": run_plex_sync, "nuvio": run_nuvio_sync}
+    check_interval = 300  # seconds between scheduler ticks
+    source_map = {
+        "jellyfin": CollectionSource.jellyfin,
+        "emby": CollectionSource.emby,
+        "plex": CollectionSource.plex,
+        "nuvio": CollectionSource.nuvio,
+    }
+    runner_map = {
+        "jellyfin": run_jellyfin_sync,
+        "emby": run_emby_sync,
+        "plex": run_plex_sync,
+        "nuvio": run_nuvio_sync,
+    }
 
     while True:
-        await asyncio.sleep(CHECK_INTERVAL)
+        await asyncio.sleep(check_interval)
         try:
             async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
             async with async_session() as db:
                 result = await db.execute(
                     select(MediaServerConnection).where(
-                        MediaServerConnection.auto_sync_interval.isnot(None)
+                        or_(
+                            MediaServerConnection.auto_sync_interval.isnot(None),
+                            MediaServerConnection.auto_push_interval.isnot(None),
+                        )
                     )
                 )
                 connections = result.scalars().all()
-
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 for conn in connections:
-                    user_id = conn.user_id
                     source = source_map.get(conn.type)
-                    run_fn = runner_map.get(conn.type)
-                    if not source or not run_fn:
+                    pull_runner = runner_map.get(conn.type)
+                    if not source or not pull_runner:
                         continue
 
-                    # Skip if a sync is already pending or running for this connection
                     active_q = await db.execute(
-                        select(SyncJob).where(
-                            SyncJob.user_id == user_id,
+                        select(SyncJob)
+                        .where(
+                            SyncJob.user_id == conn.user_id,
                             SyncJob.source == source,
                             SyncJob.connection_id == conn.id,
                             SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]),
                         )
+                        .limit(1)
                     )
                     if active_q.scalar_one_or_none():
                         continue
 
-                    # Find the last completed or failed sync for this user+source+connection
-                    last_q = await db.execute(
-                        select(SyncJob).where(
-                            SyncJob.user_id == user_id,
-                            SyncJob.source == source,
-                            SyncJob.connection_id == conn.id,
-                            SyncJob.status.in_([SyncStatus.completed, SyncStatus.failed]),
-                        ).order_by(SyncJob.updated_at.desc()).limit(1)
+                    schedules: list[tuple[str, float, object]] = []
+                    if conn.auto_sync_interval is not None:
+                        schedules.append(("pull", conn.auto_sync_interval, pull_runner))
+                    if (
+                        conn.auto_push_interval is not None
+                        and (
+                            conn.push_collection
+                            or conn.push_watched
+                            or conn.push_playback
+                            or conn.push_ratings
+                        )
+                    ):
+                        schedules.append(("push", conn.auto_push_interval, _run_full_push))
+
+                    due: list[tuple[datetime, str, object]] = []
+                    for job_type, interval, runner in schedules:
+                        last_q = await db.execute(
+                            select(SyncJob)
+                            .where(
+                                SyncJob.user_id == conn.user_id,
+                                SyncJob.source == source,
+                                SyncJob.connection_id == conn.id,
+                                SyncJob.job_type == job_type,
+                                SyncJob.status.in_([SyncStatus.completed, SyncStatus.failed]),
+                            )
+                            .order_by(SyncJob.updated_at.desc())
+                            .limit(1)
+                        )
+                        last_job = last_q.scalar_one_or_none()
+                        next_run = (
+                            last_job.updated_at + timedelta(hours=interval)
+                            if last_job
+                            else datetime.min
+                        )
+                        if next_run <= now:
+                            due.append((next_run, job_type, runner))
+
+                    if not due:
+                        continue
+                    _, job_type, runner = min(due, key=lambda item: item[0])
+                    job = SyncJob(
+                        user_id=conn.user_id,
+                        source=source,
+                        status=SyncStatus.pending,
+                        connection_id=conn.id,
+                        job_type=job_type,
                     )
-                    last_job = last_q.scalar_one_or_none()
-
-                    if last_job:
-                        elapsed_hours = (now - last_job.updated_at).total_seconds() / 3600
-                        if elapsed_hours < conn.auto_sync_interval:
-                            continue
-
-                    job = SyncJob(user_id=user_id, source=source, status=SyncStatus.pending, connection_id=conn.id)
                     db.add(job)
                     await db.flush()
                     job_id = job.id
                     await db.commit()
 
-                    print(f"Auto-sync: queuing {conn.type} sync for user {user_id}, connection {conn.id} (job {job_id})")
-                    asyncio.create_task(run_fn(user_id, job_id, 0, 0, conn.id))
+                    print(
+                        f"Auto-{job_type}: queuing {conn.type} for user {conn.user_id}, "
+                        f"connection {conn.id} (job {job_id})"
+                    )
+                    if job_type == "push":
+                        asyncio.create_task(runner(conn.user_id, conn.id, job_id))
+                    else:
+                        asyncio.create_task(runner(conn.user_id, job_id, 0, 0, conn.id))
 
         except Exception as e:
             print(f"Auto-sync scheduler error: {e}")

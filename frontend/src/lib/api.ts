@@ -445,9 +445,11 @@ export interface MediaServerConnection {
   sync_ratings: boolean;
   sync_playback: boolean;
   push_watched: boolean;
+  push_collection: boolean;
   push_playback: boolean;
   push_ratings: boolean;
   auto_sync_interval: number | null;
+  auto_push_interval: number | null;
   created_at: string;
 }
 
@@ -463,9 +465,11 @@ export interface MediaServerConnectionCreate {
   sync_ratings?: boolean;
   sync_playback?: boolean;
   push_watched?: boolean;
+  push_collection?: boolean;
   push_playback?: boolean;
   push_ratings?: boolean;
   auto_sync_interval?: number | null;
+  auto_push_interval?: number | null;
 }
 
 export type MediaServerConnectionUpdate = Partial<Omit<MediaServerConnectionCreate, "type">>;
@@ -543,6 +547,7 @@ export interface MediaItem {
   next_up_hidden?: boolean;
   known_for_department?: string | null;
   in_library?: boolean;
+  playable?: boolean;
   // Card action state
   watched?: boolean;
   in_lists?: number[];
