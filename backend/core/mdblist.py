@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
 import httpx
@@ -129,30 +129,70 @@ def _batched_payloads(payload: dict[str, list[dict[str, Any]]]) -> Iterable[dict
             yield {key: values[offset : offset + PUSH_BATCH_SIZE]}
 
 
-async def _push(path: str, api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
+def _count_leaf_items(payload: dict[str, list[dict[str, Any]]]) -> int:
+    """Count actual movies/shows/seasons/episodes represented in a payload.
+
+    A "shows" entry built by _merge_show_entries() can nest many seasons and
+    episodes under a single top-level object — counting len(payload["shows"])
+    alone would wildly understate how many real items were sent (e.g. hundreds
+    of watched episodes from a handful of shows would look like just a few
+    "submitted" items). Count the actual leaves instead.
+    """
+    count = len(payload.get("movies", [])) + len(payload.get("seasons", [])) + len(payload.get("episodes", []))
+    for show in payload.get("shows", []):
+        seasons = show.get("seasons")
+        if not seasons:
+            count += 1
+            continue
+        for season in seasons:
+            episodes = season.get("episodes")
+            count += len(episodes) if episodes else 1
+    return count
+
+
+async def _push(
+    path: str,
+    api_key: str,
+    payload: dict[str, list[dict[str, Any]]],
+    *,
+    on_batch: Callable[[int], Awaitable[None]] | None = None,
+) -> dict[str, int]:
     stats = {"submitted": 0, "batches": 0, "not_found": 0}
     for batch in _batched_payloads(payload):
         stats["batches"] += 1
         result = await _request("POST", path, api_key, payload=batch)
-        stats["submitted"] += sum(len(values) for values in batch.values())
+        batch_count = _count_leaf_items(batch)
+        stats["submitted"] += batch_count
         not_found = result.get("not_found")
         if isinstance(not_found, dict):
             stats["not_found"] += sum(
                 len(values) for values in not_found.values() if isinstance(values, list)
             )
+        if on_batch is not None:
+            await on_batch(batch_count)
     return stats
 
 
-async def push_watched(api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
-    return await _push("/sync/watched", api_key, payload)
+async def push_watched(
+    api_key: str,
+    payload: dict[str, list[dict[str, Any]]],
+    *,
+    on_batch: Callable[[int], Awaitable[None]] | None = None,
+) -> dict[str, int]:
+    return await _push("/sync/watched", api_key, payload, on_batch=on_batch)
 
 
 async def remove_watched(api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
     return await _push("/sync/watched/remove", api_key, payload)
 
 
-async def push_collection(api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
-    return await _push("/sync/collection", api_key, payload)
+async def push_collection(
+    api_key: str,
+    payload: dict[str, list[dict[str, Any]]],
+    *,
+    on_batch: Callable[[int], Awaitable[None]] | None = None,
+) -> dict[str, int]:
+    return await _push("/sync/collection", api_key, payload, on_batch=on_batch)
 
 
 async def remove_collection(api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
@@ -188,16 +228,26 @@ async def scrobble_episode(
     return await _request("POST", f"/scrobble/{action}", api_key, payload=body)
 
 
-async def push_ratings(api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
-    return await _push("/sync/ratings", api_key, payload)
+async def push_ratings(
+    api_key: str,
+    payload: dict[str, list[dict[str, Any]]],
+    *,
+    on_batch: Callable[[int], Awaitable[None]] | None = None,
+) -> dict[str, int]:
+    return await _push("/sync/ratings", api_key, payload, on_batch=on_batch)
 
 
 async def remove_ratings(api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
     return await _push("/sync/ratings/remove", api_key, payload)
 
 
-async def push_watchlist(api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
-    return await _push("/watchlist/items/add", api_key, payload)
+async def push_watchlist(
+    api_key: str,
+    payload: dict[str, list[dict[str, Any]]],
+    *,
+    on_batch: Callable[[int], Awaitable[None]] | None = None,
+) -> dict[str, int]:
+    return await _push("/watchlist/items/add", api_key, payload, on_batch=on_batch)
 
 
 async def remove_watchlist(api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:

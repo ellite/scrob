@@ -654,6 +654,18 @@ async def _fan_out_changes_to_other_connections(
     )
     media_by_id: dict[int, Media] = {media.id: media for media in media_items}
 
+    # Load parent shows for episode media — needed by both Trakt and MDBList fan-out
+    # to identify episodes (which have no meaningful standalone tmdb id on either API).
+    show_ids = {m.show_id for m in media_items if m.show_id}
+    shows_by_id: dict[int, "Show"] = {}
+    if show_ids:
+        shows_list = await _select_in_chunks(
+            db,
+            lambda chunk: select(Show).where(Show.id.in_(chunk)),
+            list(show_ids),
+        )
+        shows_by_id = {s.id: s for s in shows_list}
+
     # ── Media server fan-out ─────────────────────────────────────────────────
     conns_filter = [MediaServerConnection.user_id == user_id]
     if exclude_connection_id is not None:
@@ -777,19 +789,6 @@ async def _fan_out_changes_to_other_connections(
     push_trakt_collection = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_collection and settings.trakt_access_token and settings.trakt_client_id
 
     if (push_trakt_watched or push_trakt_ratings or push_trakt_collection) and all_changed_ids:
-        media_items = list(media_by_id.values())
-
-        # Load shows for episode tmdb_id lookups
-        show_ids = {m.show_id for m in media_items if m.show_id}
-        shows_by_id: dict[int, "Show"] = {}
-        if show_ids:
-            shows_list = await _select_in_chunks(
-                db,
-                lambda chunk: select(Show).where(Show.id.in_(chunk)),
-                list(show_ids),
-            )
-            shows_by_id = {s.id: s for s in shows_list}
-
         trakt_history_movies: list[int] = []
         trakt_history_episodes: list[tuple[int, int, int]] = []
         if push_trakt_watched:
@@ -927,9 +926,18 @@ async def _fan_out_changes_to_other_connections(
             watched_payload = _empty_payload()
             for media_id in new_watched_ids:
                 media = mdblist_media_by_id.get(media_id)
-                item = _payload_item(media, watched_at=watched_at_by_media.get(media_id, datetime.utcnow())) if media else None
+                item = (
+                    _payload_item(
+                        media,
+                        show=shows_by_id.get(media.show_id),
+                        watched_at=watched_at_by_media.get(media_id, datetime.utcnow()),
+                    )
+                    if media
+                    else None
+                )
                 if item:
                     watched_payload[item[0]].append(item[1])
+            watched_payload["shows"] = _merge_show_entries(watched_payload["shows"])
             push_tasks.append(mdblist_client.push_watched(settings.mdblist_api_key, watched_payload))
 
         if push_mdblist_collection and new_collected_ids:
@@ -945,21 +953,27 @@ async def _fan_out_changes_to_other_connections(
             for media_id in new_collected_ids:
                 media = mdblist_media_by_id.get(media_id)
                 item = (
-                    _payload_item(media, collected_at=collected_at_by_media.get(media_id, datetime.utcnow()))
+                    _payload_item(
+                        media,
+                        show=shows_by_id.get(media.show_id),
+                        collected_at=collected_at_by_media.get(media_id, datetime.utcnow()),
+                    )
                     if media
                     else None
                 )
                 if item:
                     collection_add_payload[item[0]].append(item[1])
+            collection_add_payload["shows"] = _merge_show_entries(collection_add_payload["shows"])
             push_tasks.append(mdblist_client.push_collection(settings.mdblist_api_key, collection_add_payload))
 
         if push_mdblist_collection and removed_collected_ids:
             collection_remove_payload = _empty_payload()
             for media_id in removed_collected_ids:
                 media = mdblist_media_by_id.get(media_id)
-                item = _payload_item(media) if media else None
+                item = _payload_item(media, show=shows_by_id.get(media.show_id)) if media else None
                 if item:
                     collection_remove_payload[item[0]].append(item[1])
+            collection_remove_payload["shows"] = _merge_show_entries(collection_remove_payload["shows"])
             push_tasks.append(mdblist_client.remove_collection(settings.mdblist_api_key, collection_remove_payload))
 
         if push_mdblist_ratings and new_ratings:
@@ -986,6 +1000,7 @@ async def _fan_out_changes_to_other_connections(
                 item = (
                     _payload_item(
                         media,
+                        show=shows_by_id.get(media.show_id),
                         rating=rating,
                         rated_at=rated_at_by_key.get(key),
                         season_number=season_number,
@@ -1003,7 +1018,7 @@ async def _fan_out_changes_to_other_connections(
             for media_id, season_number in removed_ratings:
                 media = mdblist_media_by_id.get(media_id)
                 item = (
-                    _rating_removal_item(media, season_number)
+                    _rating_removal_item(media, season_number, show=shows_by_id.get(media.show_id))
                     if media
                     else None
                 )

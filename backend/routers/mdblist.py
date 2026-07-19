@@ -219,13 +219,44 @@ def _empty_payload() -> dict[str, list[dict[str, Any]]]:
     return {"movies": [], "shows": [], "seasons": [], "episodes": []}
 
 
+def _merge_seasons(existing_seasons: list[dict[str, Any]], new_seasons: list[dict[str, Any]]) -> None:
+    """Merge season objects by number in-place, and episodes within each season by number.
+
+    MDBList expects at most one season object per number per show, with all of
+    that season's rated/watched episodes nested underneath as a single list.
+    """
+    by_number = {s["number"]: s for s in existing_seasons if "number" in s}
+    for season in new_seasons:
+        number = season.get("number")
+        target = by_number.get(number)
+        if target is None:
+            target = {"number": number}
+            existing_seasons.append(target)
+            by_number[number] = target
+        for key, value in season.items():
+            if key == "episodes":
+                existing_episodes = target.setdefault("episodes", [])
+                by_ep_number = {e["number"]: e for e in existing_episodes if "number" in e}
+                for episode in value:
+                    ep_number = episode.get("number")
+                    ep_target = by_ep_number.get(ep_number)
+                    if ep_target is None:
+                        existing_episodes.append(dict(episode))
+                        by_ep_number[ep_number] = existing_episodes[-1]
+                    else:
+                        ep_target.update(episode)
+            elif key != "number":
+                target[key] = value
+
+
 def _merge_show_entries(shows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Combine payload entries that share a show tmdb id.
 
-    _payload_item() builds one entry per season rating, so a batch touching
-    several seasons of the same show would otherwise produce multiple
-    entries with identical ids.tmdb — MDBList's API expects one show object
-    per tmdb id with all of its rated seasons nested underneath.
+    _payload_item() builds one entry per season/episode, so a batch touching
+    several seasons or episodes of the same show would otherwise produce
+    multiple entries with identical ids.tmdb — MDBList's API expects one show
+    object per tmdb id with all of its rated/watched seasons and episodes
+    nested underneath.
     """
     merged: dict[int, dict[str, Any]] = {}
     result: list[dict[str, Any]] = []
@@ -241,7 +272,7 @@ def _merge_show_entries(shows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             result.append(existing)
         for key, value in item.items():
             if key == "seasons":
-                existing.setdefault("seasons", []).extend(value)
+                _merge_seasons(existing.setdefault("seasons", []), value)
             elif key != "ids":
                 existing[key] = value
     return result
@@ -250,12 +281,38 @@ def _merge_show_entries(shows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _payload_item(
     media: Media,
     *,
+    show: Show | None = None,
     watched_at: datetime | None = None,
     rating: float | None = None,
     rated_at: datetime | None = None,
     season_number: int | None = None,
     collected_at: datetime | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
+    # Episodes have no meaningful standalone identity on MDBList — they must be
+    # addressed via their parent show's ids plus season/episode numbers, nested
+    # under "shows". Sending the episode's own TMDB id (a completely different
+    # ID namespace from shows/movies) resolves to an unrelated, wrong item.
+    if media.media_type == MediaType.episode:
+        if not show or not show.tmdb_id:
+            return None
+        if media.season_number is None or media.episode_number is None:
+            return None
+        episode: dict[str, Any] = {"number": media.episode_number}
+        if watched_at is not None:
+            episode["watched_at"] = _iso_utc(watched_at)
+        if rating is not None:
+            episode["rating"] = float(rating)
+            episode["rated_at"] = _iso_utc(rated_at or datetime.now(timezone.utc))
+        if collected_at is not None:
+            episode["collected_at"] = _iso_utc(collected_at)
+        return (
+            "shows",
+            {
+                "ids": {"tmdb": show.tmdb_id},
+                "seasons": [{"number": media.season_number, "episodes": [episode]}],
+            },
+        )
+
     if not media.tmdb_id:
         return None
 
@@ -280,8 +337,6 @@ def _payload_item(
         kind = "movies"
     elif media.media_type == MediaType.series:
         kind = "shows"
-    elif media.media_type == MediaType.episode:
-        kind = "episodes"
     else:
         return None
 
@@ -298,12 +353,11 @@ def _payload_item(
 def _rating_removal_item(
     media: Media,
     season_number: int | None = None,
+    show: Show | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Build an MDBList season removal without clearing its show rating."""
-    if not media.tmdb_id:
-        return None
     if season_number is not None:
-        if media.media_type != MediaType.series:
+        if not media.tmdb_id or media.media_type != MediaType.series:
             return None
         return (
             "shows",
@@ -312,7 +366,7 @@ def _rating_removal_item(
                 "seasons": [{"number": season_number}],
             },
         )
-    return _payload_item(media)
+    return _payload_item(media, show=show)
 
 
 async def _effective_tmdb_key(db: AsyncSession, settings: UserSettings) -> str | None:
@@ -634,6 +688,21 @@ async def _load_payload_media(db: AsyncSession, media_ids: set[int]) -> dict[int
     return {item.id: item for item in media}
 
 
+async def _load_shows_for_episodes(db: AsyncSession, media_by_id: dict[int, Media]) -> dict[int, Show]:
+    """Load parent Show rows for every episode Media, keyed by Show.id (== Media.show_id)."""
+    show_ids = {m.show_id for m in media_by_id.values() if m.media_type == MediaType.episode and m.show_id}
+    if not show_ids:
+        return {}
+    from routers.sync import _select_in_chunks
+
+    shows = await _select_in_chunks(
+        db,
+        lambda chunk: select(Show).where(Show.id.in_(chunk)),
+        list(show_ids),
+    )
+    return {show.id: show for show in shows}
+
+
 async def run_mdblist_push(user_id: int, job_id: int) -> None:
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with session_factory() as db:
@@ -699,6 +768,7 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                 | {row[0] for row in collected_rows}
             )
             media_by_id = await _load_payload_media(db, all_ids)
+            shows_by_id = await _load_shows_for_episodes(db, media_by_id)
             watched_payload = _empty_payload()
             ratings_payload = _empty_payload()
             watchlist_payload = _empty_payload()
@@ -706,12 +776,20 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
 
             for media_id, watched_at in watched_rows:
                 media = media_by_id.get(media_id)
-                item = _payload_item(media, watched_at=watched_at) if media else None
+                item = (
+                    _payload_item(media, show=shows_by_id.get(media.show_id), watched_at=watched_at)
+                    if media
+                    else None
+                )
                 if item:
                     watched_payload[item[0]].append(item[1])
             for media_id, added_at in collected_rows:
                 media = media_by_id.get(media_id)
-                item = _payload_item(media, collected_at=added_at) if media else None
+                item = (
+                    _payload_item(media, show=shows_by_id.get(media.show_id), collected_at=added_at)
+                    if media
+                    else None
+                )
                 if item:
                     collection_payload[item[0]].append(item[1])
             for media_id, season_number, rating, rated_at in rating_rows:
@@ -719,6 +797,7 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                 item = (
                     _payload_item(
                         media,
+                        show=shows_by_id.get(media.show_id),
                         rating=rating,
                         rated_at=rated_at,
                         season_number=season_number,
@@ -734,37 +813,66 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                 if item and item[0] in ("movies", "shows"):
                     watchlist_payload[item[0]].append(item[1])
 
+            watched_payload["shows"] = _merge_show_entries(watched_payload["shows"])
+            collection_payload["shows"] = _merge_show_entries(collection_payload["shows"])
+
             total_items = sum(
-                len(values)
+                mdblist_client._count_leaf_items(payload)
                 for payload in (watched_payload, ratings_payload, watchlist_payload, collection_payload)
-                for values in payload.values()
             )
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_items)
             )
             await db.commit()
 
+            print(
+                f"MDBList push job {job_id}: queued "
+                f"{len(watched_rows)} watched, {len(rating_rows)} ratings, "
+                f"{len(watchlist_ids)} watchlist, {len(collected_rows)} collection "
+                f"({total_items} payload entries after merging by show)."
+            )
+
+            processed_so_far = 0
+
+            async def _report_progress(batch_count: int) -> None:
+                nonlocal processed_so_far
+                processed_so_far += batch_count
+                await db.execute(
+                    update(SyncJob).where(SyncJob.id == job_id).values(processed_items=processed_so_far)
+                )
+                await db.commit()
+
             results: dict[str, Any] = {}
             if settings.mdblist_push_watched:
                 results["watched"] = await mdblist_client.push_watched(
-                    settings.mdblist_api_key, watched_payload
+                    settings.mdblist_api_key, watched_payload, on_batch=_report_progress
                 )
             if settings.mdblist_push_ratings:
                 ratings_payload["shows"] = _merge_show_entries(ratings_payload["shows"])
                 results["ratings"] = await mdblist_client.push_ratings(
-                    settings.mdblist_api_key, ratings_payload
+                    settings.mdblist_api_key, ratings_payload, on_batch=_report_progress
                 )
             if settings.mdblist_push_watchlist:
                 results["watchlist"] = await mdblist_client.push_watchlist(
-                    settings.mdblist_api_key, watchlist_payload
+                    settings.mdblist_api_key, watchlist_payload, on_batch=_report_progress
                 )
             if settings.mdblist_push_collection:
                 results["collection"] = await mdblist_client.push_collection(
-                    settings.mdblist_api_key, collection_payload
+                    settings.mdblist_api_key, collection_payload, on_batch=_report_progress
                 )
 
             submitted = sum(result["submitted"] for result in results.values())
             not_found = sum(result["not_found"] for result in results.values())
+            breakdown = ", ".join(
+                f"{name}: {r['submitted']} submitted"
+                + (f" ({r['not_found']} not found on MDBList)" if r["not_found"] else "")
+                + f" in {r['batches']} request(s)"
+                for name, r in results.items()
+            ) or "nothing enabled"
+            print(
+                f"MDBList push job {job_id} completed. {breakdown}. "
+                f"Total: {submitted} submitted, {not_found} not found."
+            )
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed,

@@ -13,6 +13,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from core import mdblist
 from models.base import MediaType
 from models.media import Media
+from models.show import Show
 from routers.mdblist import (
     _episode_identity,
     _merge_show_entries,
@@ -195,7 +196,12 @@ class MDBListNormalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((first, second), (1396, 1396))
         find.assert_awaited_once_with("tt0903747", "imdb_id", api_key="tmdb-token")
 
-    def test_payload_item_uses_episode_tmdb_identifier(self) -> None:
+    def test_payload_item_nests_episode_under_parent_show(self) -> None:
+        """Regression test: an episode's own TMDB id is a completely different
+        ID namespace from shows/movies. Sending it as a standalone "episodes"
+        entry (the old behavior) resolves to an unrelated, wrong item on
+        MDBList. Episodes must be identified via the parent show's ids plus
+        season/episode numbers, nested under "shows"."""
         media = Media(
             id=1,
             tmdb_id=62085,
@@ -204,10 +210,59 @@ class MDBListNormalizationTests(unittest.IsolatedAsyncioTestCase):
             season_number=3,
             episode_number=2,
         )
-        kind, item = _payload_item(media, watched_at=datetime(2026, 7, 17, 12, 0, 0))
-        self.assertEqual(kind, "episodes")
-        self.assertEqual(item["ids"], {"tmdb": 62085})
-        self.assertEqual(item["watched_at"], "2026-07-17T12:00:00Z")
+        show = Show(id=10, tmdb_id=1396, title="Breaking Bad")
+        kind, item = _payload_item(media, show=show, watched_at=datetime(2026, 7, 17, 12, 0, 0))
+        self.assertEqual(kind, "shows")
+        self.assertEqual(
+            item,
+            {
+                "ids": {"tmdb": 1396},
+                "seasons": [
+                    {
+                        "number": 3,
+                        "episodes": [
+                            {"number": 2, "watched_at": "2026-07-17T12:00:00Z"},
+                        ],
+                    }
+                ],
+            },
+        )
+
+    def test_payload_item_drops_episode_without_parent_show(self) -> None:
+        media = Media(
+            id=1,
+            tmdb_id=62085,
+            media_type=MediaType.episode,
+            title="Caballo sin Nombre",
+            season_number=3,
+            episode_number=2,
+        )
+        self.assertIsNone(_payload_item(media, watched_at=datetime(2026, 7, 17, 12, 0, 0)))
+        self.assertIsNone(
+            _payload_item(media, show=Show(id=10, title="Breaking Bad"), watched_at=datetime(2026, 7, 17, 12, 0, 0))
+        )
+
+    def test_merge_show_entries_combines_multiple_episodes_of_same_season(self) -> None:
+        show = Show(id=10, tmdb_id=1396, title="Breaking Bad")
+        media_ep1 = Media(id=1, media_type=MediaType.episode, season_number=2, episode_number=1)
+        media_ep2 = Media(id=2, media_type=MediaType.episode, season_number=2, episode_number=2)
+
+        _, ep1_item = _payload_item(media_ep1, show=show, watched_at=datetime(2026, 7, 17, 12, 0, 0))
+        _, ep2_item = _payload_item(media_ep2, show=show, watched_at=datetime(2026, 7, 17, 13, 0, 0))
+
+        merged = _merge_show_entries([ep1_item, ep2_item])
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["ids"], {"tmdb": 1396})
+        self.assertEqual(len(merged[0]["seasons"]), 1)
+        self.assertEqual(merged[0]["seasons"][0]["number"], 2)
+        self.assertEqual(
+            merged[0]["seasons"][0]["episodes"],
+            [
+                {"number": 1, "watched_at": "2026-07-17T12:00:00Z"},
+                {"number": 2, "watched_at": "2026-07-17T13:00:00Z"},
+            ],
+        )
 
     def test_payload_item_preserves_rating_timestamp(self) -> None:
         media = Media(id=1, tmdb_id=550, media_type=MediaType.movie, title="Fight Club")

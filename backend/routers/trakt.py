@@ -1022,7 +1022,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                 shows_result = await db.execute(select(Show).where(Show.id.in_(show_ids)))
                 shows_by_id = {s.id: s for s in shows_result.scalars().all()}
 
-            push_tasks = []
+            push_tasks: list[tuple[str, "Coroutine"]] = []
 
             if settings.trakt_push_watched:
                 for mid in watched_ids:
@@ -1030,11 +1030,11 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                     if not media or not media.tmdb_id:
                         continue
                     if media.media_type == MediaType.movie:
-                        push_tasks.append(trakt_client.add_movie_to_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id))
+                        push_tasks.append(("watched", trakt_client.add_movie_to_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id)))
                     elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
                         show = shows_by_id.get(media.show_id)
                         if show and show.tmdb_id:
-                            push_tasks.append(trakt_client.add_episode_to_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number))
+                            push_tasks.append(("watched", trakt_client.add_episode_to_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number)))
 
             if settings.trakt_push_collection:
                 collection_movies: list[int] = []
@@ -1050,7 +1050,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                         if show and show.tmdb_id:
                             collection_episodes.append((show.tmdb_id, media.season_number, media.episode_number))
                 if collection_movies or collection_episodes:
-                    push_tasks.append(trakt_client.add_to_collection_batch(settings.trakt_client_id, settings.trakt_access_token, collection_movies, collection_episodes))
+                    push_tasks.append(("collection", trakt_client.add_to_collection_batch(settings.trakt_client_id, settings.trakt_access_token, collection_movies, collection_episodes)))
 
             if settings.trakt_push_ratings:
                 from routers.sync import _get_effective_tmdb_key, _resolve_tmdb_season_ids
@@ -1067,37 +1067,59 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                         continue
                     if season_number is not None:
                         if season_tmdb_id := season_tmdb_ids.get(key):
-                            push_tasks.append(
+                            push_tasks.append((
+                                "ratings",
                                 trakt_client.set_season_rating(
                                     settings.trakt_client_id,
                                     settings.trakt_access_token,
                                     season_tmdb_id,
                                     rating,
-                                )
-                            )
+                                ),
+                            ))
                     elif media.media_type == MediaType.movie:
-                        push_tasks.append(trakt_client.set_movie_rating(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, rating))
+                        push_tasks.append(("ratings", trakt_client.set_movie_rating(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, rating)))
                     elif media.media_type == MediaType.series:
-                        push_tasks.append(trakt_client.set_show_rating(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, rating))
+                        push_tasks.append(("ratings", trakt_client.set_show_rating(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, rating)))
 
             total = len(push_tasks)
             if not push_tasks:
+                print(f"Trakt push job {job_id}: nothing to push (0 candidates matched enabled push flags).")
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats={"succeeded": 0, "failed": 0}, processed_items=0))
                 await db.commit()
                 return
 
-            print(f"Trakt full push: pushing {total} items...")
+            queued_counts: dict[str, int] = {}
+            for category, _ in push_tasks:
+                queued_counts[category] = queued_counts.get(category, 0) + 1
+            print(
+                f"Trakt push job {job_id}: queued "
+                + ", ".join(f"{n} {cat}" for cat, n in queued_counts.items())
+                + f" ({total} total)."
+            )
             BATCH_SIZE = 50
             succeeded = 0
             failed = 0
+            succeeded_by_category: dict[str, int] = {}
+            failed_by_category: dict[str, int] = {}
             for i in range(0, total, BATCH_SIZE):
                 batch = push_tasks[i:i + BATCH_SIZE]
-                results = await asyncio.gather(*batch, return_exceptions=True)
-                succeeded += sum(1 for r in results if not isinstance(r, Exception))
-                failed    += sum(1 for r in results if isinstance(r, Exception))
+                batch_categories = [category for category, _ in batch]
+                results = await asyncio.gather(*[task for _, task in batch], return_exceptions=True)
+                for category, result in zip(batch_categories, results):
+                    if isinstance(result, Exception):
+                        failed += 1
+                        failed_by_category[category] = failed_by_category.get(category, 0) + 1
+                    else:
+                        succeeded += 1
+                        succeeded_by_category[category] = succeeded_by_category.get(category, 0) + 1
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=succeeded + failed))
                 await db.commit()
-            print(f"Trakt full push: {succeeded}/{total} succeeded")
+            breakdown = ", ".join(
+                f"{cat}: {succeeded_by_category.get(cat, 0)} succeeded"
+                + (f", {failed_by_category[cat]} failed" if failed_by_category.get(cat) else "")
+                for cat in queued_counts
+            )
+            print(f"Trakt push job {job_id} completed. {breakdown}. Total: {succeeded}/{total} succeeded.")
 
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(

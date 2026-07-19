@@ -137,7 +137,7 @@ async def _push_watch_state(
 
     if push_mdblist:
         from core import mdblist as mdblist_client
-        from routers.mdblist import _empty_payload, _payload_item
+        from routers.mdblist import _empty_payload, _merge_show_entries, _payload_item
         from routers.sync import _latest_watched_at
 
         mdblist_watched_at: dict[int, datetime] = {}
@@ -146,10 +146,22 @@ async def _push_watch_state(
 
         mdblist_payload = _empty_payload()
         media_result = await db.execute(select(Media).where(Media.id.in_(media_ids)))
-        for media in media_result.scalars().all():
-            item = _payload_item(media, watched_at=mdblist_watched_at.get(media.id, datetime.utcnow())) if watched else _payload_item(media)
+        media_list = media_result.scalars().all()
+        mdblist_show_ids = {m.show_id for m in media_list if m.media_type == MediaType.episode and m.show_id}
+        mdblist_shows_by_id: dict[int, Show] = {}
+        if mdblist_show_ids:
+            shows_result = await db.execute(select(Show).where(Show.id.in_(mdblist_show_ids)))
+            mdblist_shows_by_id = {s.id: s for s in shows_result.scalars().all()}
+        for media in media_list:
+            show = mdblist_shows_by_id.get(media.show_id)
+            item = (
+                _payload_item(media, show=show, watched_at=mdblist_watched_at.get(media.id, datetime.utcnow()))
+                if watched
+                else _payload_item(media, show=show)
+            )
             if item:
                 mdblist_payload[item[0]].append(item[1])
+        mdblist_payload["shows"] = _merge_show_entries(mdblist_payload["shows"])
         operation = mdblist_client.push_watched if watched else mdblist_client.remove_watched
         tasks.append(operation(settings.mdblist_api_key, mdblist_payload))
 
