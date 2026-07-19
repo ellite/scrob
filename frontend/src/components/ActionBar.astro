@@ -10,6 +10,9 @@ interface Props {
   showTmdbId?: number;
   seasonNumber?: number;
   episodeNumber?: number;
+  displaySeasonNumber?: number;
+  episodeOrder?: "tmdb" | "tvdb";
+  tvdbId?: number;
   hideRequest?: boolean;
   hideLists?: boolean;
   isMonitored?: boolean;
@@ -31,6 +34,9 @@ const {
   showTmdbId,
   seasonNumber,
   episodeNumber,
+  displaySeasonNumber,
+  episodeOrder = "tmdb",
+  tvdbId,
   hideRequest = false,
   hideLists = false,
   isMonitored = false,
@@ -91,6 +97,9 @@ const requestTitle = isMonitored
   data-show-tmdb-id={showTmdbId ? String(showTmdbId) : ""}
   data-season={seasonNumber != null ? String(seasonNumber) : ""}
   data-episode-number={episodeNumber != null ? String(episodeNumber) : ""}
+  data-episode-order={episodeOrder}
+  data-tvdb-id={tvdbId != null ? String(tvdbId) : ""}
+  data-display-season={displaySeasonNumber != null ? String(displaySeasonNumber) : ""}
   data-media-id={mediaId != null ? String(mediaId) : ""}
   class="flex w-fit"
 >

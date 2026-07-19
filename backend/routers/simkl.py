@@ -401,7 +401,13 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                     logger.warning("Failed to fetch Simkl ratings: %s", exc)
                     ratings_data = {}
 
-                rat_res = await db.execute(select(Rating.media_id).where(Rating.user_id == user_id))
+                rat_res = await db.execute(
+                    select(Rating.media_id).where(
+                        Rating.user_id == user_id,
+                        Rating.season_number.is_(None),
+                        Rating.episode_order.is_(None),
+                    )
+                )
                 existing_rated: set[int] = {row[0] for row in rat_res}
 
                 for item in ratings_data.get("movies", []):
@@ -635,6 +641,8 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                     select(Rating.media_id, Rating.rating).where(
                         Rating.user_id == user_id,
                         Rating.rating.isnot(None),
+                        Rating.season_number.is_(None),
+                        Rating.episode_order.is_(None),
                     )
                 )
                 ratings_map = {row[0]: row[1] for row in ratings_result.all()}

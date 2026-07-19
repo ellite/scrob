@@ -24,6 +24,7 @@ class RatingIn(BaseModel):
     rating: float = Field(..., ge=0.0, le=10.0)
     review: Optional[str] = None
     season_number: Optional[int] = None
+    episode_order: Optional[str] = None
 
 
 def format_rating(rating: Rating, media: Media) -> dict:
@@ -38,6 +39,7 @@ def format_rating(rating: Rating, media: Media) -> dict:
             "release_date": media.release_date,
         },
         "season_number": rating.season_number,
+        "episode_order": rating.episode_order,
         "user_id": rating.user_id,
         "rating": rating.rating,
         "review": rating.review,
@@ -94,12 +96,20 @@ async def submit_rating(
             raise HTTPException(status_code=404, detail=f"TMDB Media not found: {e}")
 
     effective_season = None if media_type == MediaType.episode else body.season_number
+    effective_episode_order = (
+        body.episode_order
+        if media_type == MediaType.series and effective_season is not None
+        else None
+    )
+    if effective_episode_order not in (None, "tvdb"):
+        raise HTTPException(status_code=400, detail="Invalid episode order")
 
     result2 = await db.execute(
         select(Rating).where(
             Rating.media_id == media.id,
             Rating.user_id == current_user.id,
             Rating.season_number == effective_season,
+            Rating.episode_order == effective_episode_order,
         )
     )
     rating = result2.scalar_one_or_none()
@@ -115,11 +125,14 @@ async def submit_rating(
             rating=body.rating,
             review=body.review,
             season_number=effective_season,
+            episode_order=effective_episode_order,
         )
         db.add(rating)
 
     await db.commit()
     await db.refresh(rating)
+    if effective_episode_order == "tvdb":
+        return format_rating(rating, media)
 
     settings_result = await db.execute(
         select(UserSettings).where(UserSettings.user_id == current_user.id)
@@ -175,6 +188,7 @@ async def delete_rating(
     tmdb_id: int,
     media_type: str,
     season_number: Optional[int] = Query(None),
+    episode_order: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -191,12 +205,18 @@ async def delete_rating(
         raise HTTPException(status_code=404, detail="Media not found")
 
     effective_season = None if mt == MediaType.episode else season_number
+    effective_episode_order = (
+        episode_order
+        if mt == MediaType.series and effective_season is not None
+        else None
+    )
 
     result = await db.execute(
         select(Rating).where(
             Rating.media_id == media.id,
             Rating.user_id == current_user.id,
             Rating.season_number == effective_season,
+            Rating.episode_order == effective_episode_order,
         )
     )
     rating = result.scalar_one_or_none()
@@ -204,6 +224,8 @@ async def delete_rating(
         raise HTTPException(status_code=404, detail="Rating not found")
     await db.delete(rating)
     await db.commit()
+    if effective_episode_order == "tvdb":
+        return {"status": "deleted"}
 
     settings_result = await db.execute(
         select(UserSettings).where(UserSettings.user_id == current_user.id)

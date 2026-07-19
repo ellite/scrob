@@ -24,6 +24,7 @@ from .media_request import MediaRequest
 from .image_cache import ImageCache
 from .media_translation import MediaTranslation
 from .show_translation import ShowTranslation
+from .episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 
 __all__ = [
     "Base",
@@ -52,4 +53,5 @@ __all__ = [
     "ImageCache",
     "MediaTranslation",
     "ShowTranslation",
+    "EpisodeOrderMapping", "UserShowEpisodeOrder",
 ]

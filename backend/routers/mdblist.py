@@ -436,7 +436,12 @@ async def _import_ratings(
     external_cache: dict[tuple[str, str], int | None],
     stats: dict[str, int],
 ) -> RatingChanges:
-    ratings_result = await db.execute(select(Rating).where(Rating.user_id == user_id))
+    ratings_result = await db.execute(
+        select(Rating).where(
+            Rating.user_id == user_id,
+            Rating.episode_order.is_(None),
+        )
+    )
     existing = {
         (rating.media_id, rating.season_number): rating
         for rating in ratings_result.scalars().all()
@@ -741,6 +746,7 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                     select(Rating.media_id, Rating.season_number, Rating.rating, Rating.rated_at).where(
                         Rating.user_id == user_id,
                         Rating.rating.isnot(None),
+                        Rating.episode_order.is_(None),
                     )
                 )
                 rating_rows = [

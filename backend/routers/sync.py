@@ -985,6 +985,7 @@ async def _fan_out_changes_to_other_connections(
                     select(Rating.media_id, Rating.season_number, Rating.rated_at).where(
                         Rating.user_id == user_id,
                         Rating.media_id.in_(chunk),
+                        Rating.episode_order.is_(None),
                     )
                 )
                 rated_at_by_key.update(
@@ -1219,7 +1220,13 @@ async def sync_items(
     existing_watched: set[int] = {row[0] for row in we_res}
 
     # Existing ratings: media_id → Rating
-    rat_res = await db.execute(select(Rating).where(Rating.user_id == user_id))
+    rat_res = await db.execute(
+        select(Rating).where(
+            Rating.user_id == user_id,
+            Rating.season_number.is_(None),
+            Rating.episode_order.is_(None),
+        )
+    )
     existing_ratings: dict[int, Rating] = {r.media_id: r for r in rat_res.scalars()}
 
     # ── Phase 2: Main sync loop (no N+1 queries, savepoints for error isolation) ──
@@ -2109,7 +2116,10 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             _new_ratings: RatingChanges = {}
             _new_collected: set[int] = set()
             ratings_result = await db.execute(
-                select(Rating).where(Rating.user_id == user_id)
+                select(Rating).where(
+                    Rating.user_id == user_id,
+                    Rating.episode_order.is_(None),
+                )
             )
             existing_ratings = {
                 (rating.media_id, rating.season_number): rating
@@ -3285,6 +3295,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     select(Rating.media_id, Rating.season_number, Rating.rating).where(
                         Rating.user_id == user_id,
                         Rating.rating.isnot(None),
+                        Rating.episode_order.is_(None),
                     )
                 )
                 ratings_map = {

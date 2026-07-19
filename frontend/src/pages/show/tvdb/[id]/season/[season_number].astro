@@ -3,6 +3,7 @@ import Base from "../../../../../layouts/Base.astro";
 import ActionBar from "../../../../../components/ActionBar.astro";
 import CommentsSection from "../../../../../components/CommentsSection.astro";
 import { api, type TvdbSeason } from "../../../../../lib/api";
+import { formatSeasonTitle } from "../../../../../lib/media-format";
 export const prerender = false;
 
 const { id, season_number } = Astro.params;
@@ -23,9 +24,12 @@ if (!season && !error) {
 }
 
 const show = season?.show;
+const seasonTitle = season
+  ? formatSeasonTitle(Number(season_number), season.name)
+  : "Season Details";
 ---
 
-<Base title={season ? `${show?.title} — ${season.name}` : "Season Details"}>
+<Base title={season ? `${show?.title} — ${seasonTitle}` : "Season Details"}>
   {error && !season && (
     <div class="max-w-md mx-auto mt-20 text-center">
       <div class="bg-red-500/10 border border-red-500/20 text-red-500 p-6 rounded-2xl mb-6">
@@ -52,15 +56,15 @@ const show = season?.show;
           <span class="text-zinc-700">/</span>
           <a href={`/show/tvdb/${id}`} class="hover:text-zinc-100 transition truncate">{show?.title}</a>
           <span class="text-zinc-700">/</span>
-          <span class="text-zinc-100 font-bold">{season.name}</span>
+          <span class="text-zinc-100 font-bold">{seasonTitle}</span>
         </nav>
 
         <div class="flex flex-col md:flex-row gap-8 lg:gap-12 mb-16">
           <div class="w-56 shrink-0 mx-auto md:mx-0">
             <div class="aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 bg-zinc-900 ring-1 ring-white/10 relative">
               {(season.poster_path || show?.poster_path) ? (
-                <button id="poster-zoom-btn" class="w-full h-full group/poster block cursor-zoom-in" aria-label={`Enlarge poster for ${season.name}`}>
-                  <img src={season.poster_path ?? show?.poster_path ?? ""} alt={season.name} class="w-full h-full object-cover transition-transform duration-300 group-hover/poster:scale-105" />
+                <button id="poster-zoom-btn" class="w-full h-full group/poster block cursor-zoom-in" aria-label={`Enlarge poster for ${seasonTitle}`}>
+                  <img src={season.poster_path ?? show?.poster_path ?? ""} alt={seasonTitle} class="w-full h-full object-cover transition-transform duration-300 group-hover/poster:scale-105" />
                   <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover/poster:opacity-100 transition-opacity duration-200 bg-black/30">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8 text-white drop-shadow-lg">
                       <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607ZM10.5 7.5v6m3-3h-6" />
@@ -78,7 +82,7 @@ const show = season?.show;
 
           <div class="flex-1 pt-4 text-center md:text-left">
             <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-2">
-              <h1 class="text-4xl md:text-5xl font-black text-zinc-100 tracking-tight">{season.name}</h1>
+              <h1 class="text-4xl md:text-5xl font-black text-zinc-100 tracking-tight">{seasonTitle}</h1>
 
               {show?.seasons_meta && show.seasons_meta.length > 1 && (
                 <div class="flex items-center gap-2 shrink-0">
@@ -123,6 +127,12 @@ const show = season?.show;
 
             <div class="flex flex-wrap justify-center md:justify-start items-center gap-4 text-zinc-400 text-sm mb-8 bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm inline-flex">
               <span class="font-bold text-zinc-300">{season.episodes?.length || 0} Episodes</span>
+              {season.tmdb_rating != null && season.tmdb_rating > 0 && (
+                <span class="flex items-center gap-1.5 font-bold text-zinc-100">
+                  <span class="text-yellow-400">★</span>
+                  {season.tmdb_rating.toFixed(1)}
+                </span>
+              )}
               {season.air_date && (
                 <span>Premiered {new Date(season.air_date).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}</span>
               )}
@@ -130,7 +140,7 @@ const show = season?.show;
 
             <div class="mb-6">
               <ActionBar
-                tmdbId={Number(id)}
+                tmdbId={season.show.tmdb_id ?? Number(id)}
                 mediaType="series"
                 watched={season.season_watched}
                 inLists={[]}
@@ -138,6 +148,9 @@ const show = season?.show;
                 collectionPct={season.season_collection_pct}
                 watchPct={season.season_watch_pct ?? 0}
                 seasonNumber={Number(season_number)}
+                showTmdbId={season.show.tmdb_id ?? undefined}
+                episodeOrder="tvdb"
+                tvdbId={Number(id)}
                 requestEnabled={false}
                 hideLists={true}
                 userRating={season.season_user_rating}
@@ -175,7 +188,7 @@ const show = season?.show;
 
         <CommentsSection
           mediaType="series"
-          tmdbId={Number(id)}
+          tmdbId={season.show.tmdb_id ?? Number(id)}
           seasonNumber={Number(season_number)}
         />
 
@@ -236,15 +249,18 @@ const show = season?.show;
                 </a>
                 <div class="px-5 pb-5">
                   <ActionBar
-                    tmdbId={ep.tvdb_id ?? Number(id)}
+                    tmdbId={ep.tmdb_id ?? ep.tvdb_id ?? Number(id)}
                     mediaType="episode"
                     watched={ep.watched}
                     inLists={ep.in_lists}
                     inLibrary={ep.in_library}
                     collectionPct={ep.in_library ? 100 : 0}
-                    showTmdbId={Number(id)}
-                    seasonNumber={Number(season_number)}
-                    episodeNumber={ep.episode_number}
+                    showTmdbId={ep.show_tmdb_id ?? season.show.tmdb_id ?? undefined}
+                    seasonNumber={ep.tmdb_season_number}
+                    episodeNumber={ep.tmdb_episode_number}
+                    displaySeasonNumber={Number(season_number)}
+                    episodeOrder="tvdb"
+                    tvdbId={Number(id)}
                     hideRequest={true}
                     userRating={ep.user_rating}
                   />

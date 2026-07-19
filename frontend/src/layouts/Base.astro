@@ -708,7 +708,7 @@ const bottomNavItem = (active: boolean) =>
       _activeRatingBtn = null;
     }
 
-    function openRatingPopover(btn: HTMLElement, tmdbId: string, mediaType: string, currentRating: number | null, seasonNumber: number | null = null) {
+    function openRatingPopover(btn: HTMLElement, tmdbId: string, mediaType: string, currentRating: number | null, seasonNumber: number | null = null, episodeOrder: string = 'tmdb') {
       _activeRatingBtn = btn;
       const popover = document.getElementById('rating-popover')!;
       const starsEl = document.getElementById('rating-stars')!;
@@ -737,6 +737,7 @@ const bottomNavItem = (active: boolean) =>
           try {
             const ratingBody: Record<string, unknown> = { tmdb_id: Number(tmdbId), media_type: mediaType, rating: i };
             if (seasonNumber !== null) ratingBody.season_number = seasonNumber;
+            if (seasonNumber !== null && episodeOrder === 'tvdb') ratingBody.episode_order = 'tvdb';
             await apiFetch('/ratings', 'POST', ratingBody);
             btn.dataset.userRating = String(i);
             btn.dataset.state = 'active';
@@ -762,7 +763,8 @@ const bottomNavItem = (active: boolean) =>
       removeBtn.onclick = async () => {
         try {
           const seasonQuery = seasonNumber !== null ? `&season_number=${seasonNumber}` : '';
-          await apiFetch(`/ratings?tmdb_id=${tmdbId}&media_type=${mediaType}${seasonQuery}`, 'DELETE');
+          const orderQuery = seasonNumber !== null && episodeOrder === 'tvdb' ? '&episode_order=tvdb' : '';
+          await apiFetch(`/ratings?tmdb_id=${tmdbId}&media_type=${mediaType}${seasonQuery}${orderQuery}`, 'DELETE');
           btn.dataset.userRating = '';
           btn.dataset.state = 'inactive';
           btn.classList.remove('bg-amber-500/20', 'text-amber-400', 'hover:bg-amber-500/40');
@@ -1143,6 +1145,7 @@ const bottomNavItem = (active: boolean) =>
       const tmdbId = tmdbIdRaw && tmdbIdRaw !== 'null' ? tmdbIdRaw : '';
       const mediaId = card.dataset.id || '';
       const mediaType = card.dataset.mediaType!;
+      const episodeOrder = card.dataset.episodeOrder || 'tmdb';
 
       if (action === 'watched') {
         const isWatched = btn.dataset.watched === 'true';
@@ -1174,10 +1177,16 @@ const bottomNavItem = (active: boolean) =>
 
         try {
           if (mediaType === 'series' && season) {
+            const orderQuery = episodeOrder === 'tvdb' ? '&episode_order=tvdb' : '';
             if (isWatched) {
-              await apiFetch(`/history/season?series_tmdb_id=${seriesId}&season_number=${season}`, 'DELETE');
+              await apiFetch(`/history/season?series_tmdb_id=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
             } else {
-              await apiFetch('/history/season', 'POST', { series_tmdb_id: Number(seriesId), season_number: Number(season) });
+              const watchBody: Record<string, number | string> = {
+                series_tmdb_id: Number(seriesId),
+                season_number: Number(season),
+              };
+              if (episodeOrder === 'tvdb') watchBody.episode_order = 'tvdb';
+              await apiFetch('/history/season', 'POST', watchBody);
             }
           } else if (mediaType === 'series') {
             if (isWatched) {
@@ -1212,7 +1221,8 @@ const bottomNavItem = (active: boolean) =>
 
           // If marking a season as watched/unwatched, update all episodes for that season on the page
           if (mediaType === 'series' && season) {
-            const allEpCards = document.querySelectorAll(`[data-card][data-media-type="episode"][data-show-tmdb-id="${seriesId}"][data-season="${season}"]`);
+            const seasonAttribute = episodeOrder === 'tvdb' ? 'data-display-season' : 'data-season';
+            const allEpCards = document.querySelectorAll(`[data-card][data-media-type="episode"][data-show-tmdb-id="${seriesId}"][${seasonAttribute}="${season}"]`);
             allEpCards.forEach(c => {
               const eBtn = c.querySelector('[data-action="watched"]');
               if (eBtn) updateWatchedButtonUI(eBtn, nowWatched);
@@ -1248,9 +1258,15 @@ const bottomNavItem = (active: boolean) =>
             if (inLibrary) {
               const ok = await showConfirm('Remove season from collection?', 'This will remove all collection entries for this season.');
               if (!ok) return;
-              await apiFetch(`/media/collect-season?series_tmdb_id=${seriesId}&season_number=${season}`, 'DELETE');
+              const orderQuery = episodeOrder === 'tvdb' ? '&episode_order=tvdb' : '';
+              await apiFetch(`/media/collect-season?series_tmdb_id=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
             } else {
-              await apiFetch('/media/collect-season', 'POST', { series_tmdb_id: Number(seriesId), season_number: Number(season) });
+              const collectSeasonBody: Record<string, number | string> = {
+                series_tmdb_id: Number(seriesId),
+                season_number: Number(season),
+              };
+              if (episodeOrder === 'tvdb') collectSeasonBody.episode_order = 'tvdb';
+              await apiFetch('/media/collect-season', 'POST', collectSeasonBody);
             }
           } else {
             if (inLibrary) {
@@ -1292,7 +1308,7 @@ const bottomNavItem = (active: boolean) =>
         const currentRating = btn.dataset.userRating ? Number(btn.dataset.userRating) : null;
         const ratingSeason = (mediaType === 'series' && card.dataset.season) ? Number(card.dataset.season) : null;
         if (document.getElementById('rating-popover')!.classList.contains('hidden') || _activeRatingBtn !== btn) {
-          openRatingPopover(btn, tmdbId, mediaType, currentRating, ratingSeason);
+          openRatingPopover(btn, tmdbId, mediaType, currentRating, ratingSeason, episodeOrder);
         } else {
           closeRatingPopover();
         }

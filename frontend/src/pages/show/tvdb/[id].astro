@@ -2,7 +2,9 @@
 import Base from "../../../layouts/Base.astro";
 import ActionBar from "../../../components/ActionBar.astro";
 import CommentsSection from "../../../components/CommentsSection.astro";
+import EpisodeOrderSelector from "../../../components/EpisodeOrderSelector.astro";
 import { api, type TvdbShow } from "../../../lib/api";
+import { formatSeasonTitle } from "../../../lib/media-format";
 export const prerender = false;
 
 const { id } = Astro.params;
@@ -22,7 +24,9 @@ if (!show && !error) {
   return Astro.redirect("/404");
 }
 
-const seasons = (show?.seasons_meta ?? []).filter((s) => (s.season_number ?? 0) > 0);
+const seasons = (show?.seasons_meta ?? []).filter(
+  (season) => (season.season_number ?? 0) > 0 && (season.episode_count ?? 0) > 0
+);
 const year = show?.first_air_date?.slice(0, 4) ?? null;
 const langNames = new Intl.DisplayNames(["en"], { type: "language" });
 const originalLanguage = show?.original_language
@@ -133,20 +137,30 @@ const originalLanguage = show?.original_language
 
             <div class="mb-6">
               <ActionBar
-                tmdbId={show.tvdb_id}
+                tmdbId={show.tmdb_id_cross ?? show.tvdb_id}
                 mediaType="series"
                 watched={show.watched}
                 inLists={show.in_lists}
                 inLibrary={show.in_library}
                 collectionPct={show.collection_pct}
                 watchPct={show.watch_pct ?? 0}
-                showTmdbId={show.tvdb_id}
+                showTmdbId={show.tmdb_id_cross ?? undefined}
                 isMonitored={show.is_monitored}
                 requestEnabled={show.request_enabled}
                 requestStatus={show.request_status}
                 userRating={show.user_rating}
               />
             </div>
+            {show.tmdb_id_cross && (
+              <div class="mb-6">
+                <EpisodeOrderSelector
+                  tmdbId={show.tmdb_id_cross}
+                  tvdbId={show.tvdb_id}
+                  selected="tvdb"
+                  token={token}
+                />
+              </div>
+            )}
 
             {show.id && (
               <div class="mb-8">
@@ -217,6 +231,7 @@ const originalLanguage = show?.original_language
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {seasons.map((s) => {
               const seasonNum = s.season_number;
+              const seasonTitle = formatSeasonTitle(seasonNum, s.name);
               const poster = s.poster_path || show!.poster_path;
               const seasonState = show!.season_states?.[seasonNum] ?? { watched: false, in_library: false, collection_pct: 0, user_rating: null };
 
@@ -226,7 +241,7 @@ const originalLanguage = show?.original_language
                     <div class="w-28 shrink-0">
                       <div class="aspect-[2/3] rounded-2xl overflow-hidden border border-zinc-800 shadow-lg group-hover/season:ring-2 group-hover/season:ring-blue-500/50 transition-all duration-500">
                         {poster ? (
-                          <img src={poster} alt={s.name} class="w-full h-full object-cover group-hover/season:scale-110 transition-transform duration-700" />
+                          <img src={poster} alt={seasonTitle} class="w-full h-full object-cover group-hover/season:scale-110 transition-transform duration-700" />
                         ) : (
                           <div class="w-full h-full bg-zinc-900 flex flex-col items-center justify-center text-zinc-500 gap-1">
                             <span class="text-3xl">📺</span>
@@ -236,7 +251,15 @@ const originalLanguage = show?.original_language
                       </div>
                     </div>
                     <div class="flex-1 py-2">
-                      <h3 class="text-xl font-black text-zinc-100 group-hover/season:text-blue-400 transition-colors mb-1">{s.name || `Season ${seasonNum}`}</h3>
+                      <div class="flex items-start justify-between gap-4 mb-1">
+                        <h3 class="text-xl font-black text-zinc-100 group-hover/season:text-blue-400 transition-colors">{seasonTitle}</h3>
+                        {s.tmdb_rating != null && s.tmdb_rating > 0 && (
+                          <div class="bg-zinc-950 border border-zinc-800 px-2 py-1 rounded-xl flex items-center gap-1.5 shrink-0 shadow-sm">
+                            <span class="text-yellow-400 text-xs">★</span>
+                            <span class="text-zinc-100 text-xs font-bold">{s.tmdb_rating.toFixed(1)}</span>
+                          </div>
+                        )}
+                      </div>
                       <div class="flex items-center gap-2 mb-3">
                         <span class="text-[10px] font-black text-zinc-500 uppercase tracking-widest bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
                           {s.episode_count} Episodes
@@ -246,7 +269,7 @@ const originalLanguage = show?.original_language
                     </div>
                   </a>
                   <ActionBar
-                    tmdbId={show!.tvdb_id}
+                    tmdbId={show!.tmdb_id_cross ?? show!.tvdb_id}
                     mediaType="series"
                     watched={seasonState.watched}
                     inLists={[]}
@@ -254,6 +277,9 @@ const originalLanguage = show?.original_language
                     collectionPct={seasonState.collection_pct}
                     watchPct={seasonState.watch_pct ?? 0}
                     seasonNumber={seasonNum}
+                    showTmdbId={show!.tmdb_id_cross ?? undefined}
+                    episodeOrder="tvdb"
+                    tvdbId={show!.tvdb_id}
                     hideRequest={true}
                     hideLists={true}
                     userRating={seasonState.user_rating ?? null}
@@ -313,7 +339,7 @@ const originalLanguage = show?.original_language
 
         <CommentsSection
           mediaType="series"
-          tmdbId={show.tvdb_id}
+          tmdbId={show.tmdb_id_cross ?? show.tvdb_id}
         />
 
         {show.tmdb_id_cross && (

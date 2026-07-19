@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, date
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case, cast as sa_cast, Text, or_, and_
@@ -16,11 +17,13 @@ from models.collection import Collection, CollectionFile
 from models.base import MediaType
 from models.show import Show as ShowModel
 from models.users import User, UserSettings
+from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch, _effective_sonarr, _get_global_settings
 
 from dependencies import get_current_user
 from core import tmdb
 from core import tvdb as tvdb_client
+from core.episode_order import ensure_episode_order_mapping, get_episode_order, validate_episode_order
 from core.translations import (
     get_user_metadata_language,
     get_media_translations,
@@ -43,6 +46,111 @@ async def get_user_tvdb_key(db: AsyncSession, user_id: int) -> str | None:
     gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
     gs = gs_result.scalar_one_or_none()
     return gs.tvdb_api_key if gs else None
+
+
+async def _enrich_tvdb_seasons(
+    seasons: list[dict],
+    mappings: list[EpisodeOrderMapping],
+    *,
+    tvdb_api_key: str,
+    tvdb_language: str | None,
+    series_tmdb_id: int | None,
+    tmdb_api_key: str | None,
+    metadata_language: str | None,
+) -> tuple[list[dict], dict]:
+    """Add translated TVDB metadata and TMDB ratings to TVDB seasons."""
+    semaphore = asyncio.Semaphore(5)
+    tvdb_metadata: dict[int, dict] = {}
+    tmdb_show: dict = {}
+
+    async def fetch_tvdb_season(season: dict) -> None:
+        season_id = season.get("id")
+        season_number = season.get("season_number")
+        if season_id is None or season_number is None:
+            return
+        try:
+            async with semaphore:
+                raw = await tvdb_client.get_season(season_id, tvdb_api_key)
+            tvdb_metadata[season_number] = tvdb_client.format_season(
+                raw,
+                language=tvdb_language,
+            )
+        except Exception:
+            pass
+
+    async def fetch_tmdb_show() -> None:
+        nonlocal tmdb_show
+        if series_tmdb_id is None or not tmdb_api_key:
+            return
+        try:
+            tmdb_show = await tmdb.get_show(
+                series_tmdb_id,
+                tmdb_api_key,
+                language=metadata_language,
+            )
+        except Exception:
+            pass
+
+    await asyncio.gather(
+        *(fetch_tvdb_season(season) for season in seasons),
+        fetch_tmdb_show(),
+    )
+
+    tmdb_seasons = {
+        season.get("season_number"): season
+        for season in (tmdb_show.get("seasons") or [])
+        if season.get("season_number") is not None
+    }
+    mapping_counts: dict[int, dict[int, int]] = {}
+    for mapping in mappings:
+        if (
+            mapping.tvdb_season_number is None
+            or mapping.tmdb_season_number is None
+        ):
+            continue
+        counts = mapping_counts.setdefault(mapping.tvdb_season_number, {})
+        counts[mapping.tmdb_season_number] = (
+            counts.get(mapping.tmdb_season_number, 0) + 1
+        )
+
+    enriched = []
+    for season in seasons:
+        season_number = season.get("season_number")
+        tvdb_season = tvdb_metadata.get(season_number, {})
+        candidates = mapping_counts.get(season_number, {})
+        tmdb_season_number = (
+            max(
+                candidates,
+                key=lambda candidate: (
+                    candidates[candidate],
+                    candidate == season_number,
+                    -abs(candidate - season_number),
+                ),
+            )
+            if candidates
+            else season_number
+        )
+        tmdb_season = tmdb_seasons.get(tmdb_season_number, {})
+        enriched.append({
+            **season,
+            "name": tvdb_season.get("name") or season.get("name"),
+            "overview": (
+                tvdb_season.get("overview")
+                or tmdb_season.get("overview")
+                or season.get("overview")
+            ),
+            "poster_path": (
+                tvdb_season.get("poster_path")
+                or season.get("poster_path")
+            ),
+            "air_date": (
+                tvdb_season.get("air_date")
+                or season.get("air_date")
+                or tmdb_season.get("air_date")
+            ),
+            "tmdb_rating": tmdb_season.get("vote_average"),
+        })
+    return enriched, tmdb_show
 
 
 def format_show(show: ShowModel) -> dict:
@@ -169,6 +277,83 @@ async def list_shows(
     }
 
 
+class EpisodeOrderRequest(BaseModel):
+    episode_order: str
+    force_refresh: bool = False
+
+
+@router.post("/{series_tmdb_id}/episode-order")
+async def set_show_episode_order(
+    series_tmdb_id: int,
+    body: EpisodeOrderRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        selected_order = validate_episode_order(body.episode_order)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    preference = await get_episode_order(db, current_user.id, series_tmdb_id)
+    mapping_summary = None
+    tvdb_id = preference.tvdb_id if preference else None
+
+    if selected_order == "tvdb":
+        tmdb_api_key, tvdb_api_key = await asyncio.gather(
+            get_user_tmdb_key(db, current_user.id),
+            get_user_tvdb_key(db, current_user.id),
+        )
+        if not check_tmdb_key(tmdb_api_key):
+            raise HTTPException(status_code=400, detail="TMDB API key not configured")
+        if not tvdb_api_key:
+            raise HTTPException(status_code=400, detail="TVDB API key not configured")
+        try:
+            mapping_summary = await ensure_episode_order_mapping(
+                db,
+                series_tmdb_id,
+                tmdb_api_key,
+                tvdb_api_key,
+                force=body.force_refresh,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Episode mapping failed: {exc}")
+        tvdb_id = mapping_summary["tvdb_id"]
+
+    if preference:
+        preference.episode_order = selected_order
+        preference.tvdb_id = tvdb_id
+    else:
+        preference = UserShowEpisodeOrder(
+            user_id=current_user.id,
+            series_tmdb_id=series_tmdb_id,
+            episode_order=selected_order,
+            tvdb_id=tvdb_id,
+        )
+        db.add(preference)
+
+    if tvdb_id:
+        show_result = await db.execute(
+            select(ShowModel).where(ShowModel.tmdb_id == series_tmdb_id)
+        )
+        local_show = show_result.scalar_one_or_none()
+        if local_show:
+            local_show.tvdb_id = tvdb_id
+
+    await db.commit()
+    return {
+        "episode_order": selected_order,
+        "series_tmdb_id": series_tmdb_id,
+        "tvdb_id": tvdb_id,
+        "mapping": mapping_summary,
+        "redirect": (
+            f"/show/tvdb/{tvdb_id}" if selected_order == "tvdb"
+            else f"/show/{series_tmdb_id}"
+        ),
+    }
+
+
 @router.get("/{series_tmdb_id}")
 async def get_show(
     series_tmdb_id: int,
@@ -180,6 +365,8 @@ async def get_show(
         select(ShowModel).where(ShowModel.tmdb_id == series_tmdb_id)
     )
     show = show_result.scalar_one_or_none()
+    order_preference = await get_episode_order(db, current_user.id, series_tmdb_id)
+    selected_episode_order = order_preference.episode_order if order_preference else "tmdb"
 
     if show:
         # Fetch local episodes
@@ -328,6 +515,7 @@ async def get_show(
                     Rating.media_id == show_media.id,
                     Rating.user_id == current_user.id,
                     Rating.season_number.isnot(None),
+                    Rating.episode_order.is_(None),
                 )
                 .group_by(Rating.season_number)
             )
@@ -406,6 +594,12 @@ async def get_show(
 
         return {
             **show_dict,
+            "episode_order": selected_episode_order,
+            "tvdb_id": (
+                (order_preference.tvdb_id if order_preference else None)
+                or show.tvdb_id
+                or (tmdb_extra or show.tmdb_data or {}).get("external_ids", {}).get("tvdb_id")
+            ),
             "seasons_meta": enhanced_seasons_meta,
             "original_language": (show.tmdb_data or {}).get("original_language") or (tmdb_extra or {}).get("original_language"),
             "age_rating": _extract_show_content_rating(tmdb_extra) if tmdb_extra else None,
@@ -473,6 +667,11 @@ async def get_show(
         return {
             "id": None,
             "tmdb_id": series_tmdb_id,
+            "episode_order": selected_episode_order,
+            "tvdb_id": (
+                (order_preference.tvdb_id if order_preference else None)
+                or data.get("external_ids", {}).get("tvdb_id")
+            ),
             "title": data.get("name"),
             "original_title": data.get("original_name"),
             "overview": data.get("overview"),
@@ -852,6 +1051,7 @@ async def get_show_season(
                         Rating.media_id == show_media.id,
                         Rating.user_id == current_user.id,
                         Rating.season_number == season_number,
+                        Rating.episode_order.is_(None),
                     )
                 )
                 season_user_rating = rating_q.scalar_one_or_none()
@@ -1202,56 +1402,128 @@ async def get_tvdb_show(
     show_data = tvdb_client.format_series(raw, language=tvdb_lang)
     cast = tvdb_client.format_cast(raw)
 
-    # Look up local Show row by tvdb_id
-    show_result = await db.execute(select(ShowModel).where(ShowModel.tvdb_id == tvdb_id))
+    series_tmdb_id = show_data.get("tmdb_id_cross")
+    series_tmdb_id = int(series_tmdb_id) if series_tmdb_id else None
+    show_result = await db.execute(
+        select(ShowModel).where(
+            or_(
+                ShowModel.tvdb_id == tvdb_id,
+                ShowModel.tmdb_id == series_tmdb_id,
+            )
+        )
+    )
     show = show_result.scalar_one_or_none()
 
-    # Collect per-season library state if we have a local show
-    season_states: dict = {}
+    mapping_result = await db.execute(
+        select(EpisodeOrderMapping).where(
+            EpisodeOrderMapping.series_tmdb_id == series_tmdb_id
+        )
+    ) if series_tmdb_id else None
+    mappings = list(mapping_result.scalars().all()) if mapping_result else []
+    tmdb_api_key = await get_user_tmdb_key(db, current_user.id)
+    show_data["seasons"], tmdb_show = await _enrich_tvdb_seasons(
+        show_data["seasons"],
+        mappings,
+        tvdb_api_key=api_key,
+        tvdb_language=tvdb_lang,
+        series_tmdb_id=series_tmdb_id,
+        tmdb_api_key=tmdb_api_key,
+        metadata_language=metadata_lang,
+    )
+    mapping_by_tmdb = {
+        (mapping.tmdb_season_number, mapping.tmdb_episode_number): mapping
+        for mapping in mappings
+    }
+
+    collected_positions: dict[int, set[int]] = {}
+    watched_positions: dict[int, set[int]] = {}
+    season_ratings: dict[int, float] = {}
     if show:
-        coll_per_season_q = await db.execute(
-            select(Media.season_number, func.count(func.distinct(Media.episode_number)))
-            .join(Collection, Collection.media_id == Media.id)
-            .where(
+        local_eps_result = await db.execute(
+            select(Media).where(
                 Media.show_id == show.id,
-                Collection.user_id == current_user.id,
                 Media.media_type == MediaType.episode,
-                Media.season_number.isnot(None),
-                Media.episode_number.isnot(None),
             )
-            .group_by(Media.season_number)
         )
-        coll_per_season: dict = dict(coll_per_season_q.all())
-
-        watched_per_season_q = await db.execute(
-            select(Media.season_number, func.count(func.distinct(Media.episode_number)))
-            .join(WatchEvent, WatchEvent.media_id == Media.id)
-            .where(
-                Media.show_id == show.id,
-                WatchEvent.user_id == current_user.id,
-                Media.media_type == MediaType.episode,
-                Media.season_number.isnot(None),
-                Media.episode_number.isnot(None),
+        local_eps = list(local_eps_result.scalars().all())
+        local_media_ids = [episode.id for episode in local_eps]
+        collected_ids: set[int] = set()
+        watched_ids: set[int] = set()
+        if local_media_ids:
+            collected_result = await db.execute(
+                select(Collection.media_id).where(
+                    Collection.user_id == current_user.id,
+                    Collection.media_id.in_(local_media_ids),
+                )
             )
-            .group_by(Media.season_number)
-        )
-        watched_per_season: dict = dict(watched_per_season_q.all())
+            watched_result = await db.execute(
+                select(WatchEvent.media_id).where(
+                    WatchEvent.user_id == current_user.id,
+                    WatchEvent.media_id.in_(local_media_ids),
+                )
+            )
+            collected_ids = {row[0] for row in collected_result.all()}
+            watched_ids = {row[0] for row in watched_result.all()}
 
-        season_ep_counts = {s["season_number"]: s.get("episode_count", 0) for s in show_data["seasons"]}
+        for episode in local_eps:
+            mapping = mapping_by_tmdb.get(
+                (episode.season_number, episode.episode_number)
+            )
+            if mapping:
+                target_season = mapping.tvdb_season_number
+                target_episode = mapping.tvdb_episode_number
+            elif not mappings:
+                target_season = episode.season_number
+                target_episode = episode.episode_number
+            else:
+                continue
+            if target_season is None or target_episode is None:
+                continue
+            if episode.id in collected_ids:
+                collected_positions.setdefault(target_season, set()).add(target_episode)
+            if episode.id in watched_ids:
+                watched_positions.setdefault(target_season, set()).add(target_episode)
 
-        for sn in set(list(coll_per_season.keys()) + list(season_ep_counts.keys())):
-            collected = coll_per_season.get(sn, 0)
-            watched = watched_per_season.get(sn, 0)
-            total = season_ep_counts.get(sn, 0)
-            # When TVDB reports 0 episodes (common for web series), use collected count as denominator
-            effective_total = total if total > 0 else collected
-            season_states[sn] = {
-                "in_library": collected > 0,
-                "collection_pct": min(100, int((collected / effective_total) * 100)) if effective_total > 0 else 0,
-                "watched": watched >= effective_total if effective_total > 0 else False,
-                "watch_pct": min(100, int((watched / effective_total) * 100)) if effective_total > 0 else 0,
-                "user_rating": None,
-            }
+        if series_tmdb_id:
+            show_media_result = await db.execute(
+                select(Media).where(
+                    Media.tmdb_id == series_tmdb_id,
+                    Media.media_type == MediaType.series,
+                )
+            )
+            show_media = show_media_result.scalar_one_or_none()
+            if show_media:
+                rating_result = await db.execute(
+                    select(Rating.season_number, Rating.rating).where(
+                        Rating.user_id == current_user.id,
+                        Rating.media_id == show_media.id,
+                        Rating.episode_order == "tvdb",
+                        Rating.season_number.isnot(None),
+                    )
+                )
+                season_ratings = dict(rating_result.all())
+
+    season_states: dict = {}
+    season_ep_counts = {
+        season["season_number"]: season.get("episode_count", 0)
+        for season in show_data["seasons"]
+    }
+    for season_number_value in set(
+        list(season_ep_counts)
+        + list(collected_positions)
+        + list(watched_positions)
+    ):
+        collected = len(collected_positions.get(season_number_value, set()))
+        watched = len(watched_positions.get(season_number_value, set()))
+        total = season_ep_counts.get(season_number_value, 0)
+        effective_total = total if total > 0 else collected
+        season_states[season_number_value] = {
+            "in_library": collected > 0,
+            "collection_pct": min(100, int((collected / effective_total) * 100)) if effective_total > 0 else 0,
+            "watched": watched >= effective_total if effective_total > 0 else False,
+            "watch_pct": min(100, int((watched / effective_total) * 100)) if effective_total > 0 else 0,
+            "user_rating": season_ratings.get(season_number_value),
+        }
 
     in_library = bool(season_states and any(v["in_library"] for v in season_states.values()))
 
@@ -1288,8 +1560,17 @@ async def get_tvdb_show(
         except Exception:
             pass
 
-    # Where to watch (local media servers only; no TMDB streaming for TVDB-only shows)
-    where_to_watch = await get_where_to_watch(db, current_user.id, tvdb_id, MediaType.series, show=show) if show else []
+    where_to_watch = (
+        await get_where_to_watch(
+            db,
+            current_user.id,
+            series_tmdb_id,
+            MediaType.series,
+            show=show,
+        )
+        if show and series_tmdb_id
+        else []
+    )
 
     # Networks (name only; TVDB doesn't provide logos)
     networks = [{"id": None, "name": n.get("name"), "logo_path": None, "origin_country": None}
@@ -1298,12 +1579,13 @@ async def get_tvdb_show(
     return {
         **show_data,
         "id": show.id if show else None,
-        "tmdb_id": None,
+        "tmdb_id": series_tmdb_id,
         "type": "series",
         "tagline": None,
-        "tmdb_rating": None,
+        "tmdb_rating": tmdb_show.get("vote_average"),
         "imdb_id": show_data.get("imdb_id"),
         "tmdb_id_cross": show_data.get("tmdb_id_cross"),
+        "episode_order": "tvdb",
         "adult": False,
         "in_library": in_library,
         "watched": watched_overall,
@@ -1348,91 +1630,173 @@ async def get_tvdb_season(
     show_data = tvdb_client.format_series(raw_series, language=tvdb_lang)
     eps = [tvdb_client.format_episode(e) for e in raw_episodes]
 
-    # Look up local Show row and episode states
-    show_result = await db.execute(select(ShowModel).where(ShowModel.tvdb_id == tvdb_id))
-    show = show_result.scalar_one_or_none()
-
-    watched_ep_ids: set = set()
-    episode_ratings: dict = {}
-    user_collected_eps: set = set()
-
-    if show:
-        ep_result = await db.execute(
-            select(Media)
-            .where(
-                Media.show_id == show.id,
-                Media.media_type == MediaType.episode,
-                Media.season_number == season_number,
+    series_tmdb_id = show_data.get("tmdb_id_cross")
+    series_tmdb_id = int(series_tmdb_id) if series_tmdb_id else None
+    show_result = await db.execute(
+        select(ShowModel).where(
+            or_(
+                ShowModel.tvdb_id == tvdb_id,
+                ShowModel.tmdb_id == series_tmdb_id,
             )
         )
-        local_eps = ep_result.scalars().all()
-        local_media_ids = [m.id for m in local_eps]
+    )
+    show = show_result.scalar_one_or_none()
 
-        if local_media_ids:
-            watched_q = await db.execute(
-                select(WatchEvent.media_id)
-                .where(WatchEvent.user_id == current_user.id, WatchEvent.media_id.in_(local_media_ids))
-                .distinct()
+    mapping_result = await db.execute(
+        select(EpisodeOrderMapping).where(
+            EpisodeOrderMapping.series_tmdb_id == series_tmdb_id,
+            EpisodeOrderMapping.tvdb_season_number == season_number,
+        )
+    ) if series_tmdb_id else None
+    mappings = list(mapping_result.scalars().all()) if mapping_result else []
+    base_season_meta = next(
+        (
+            season
+            for season in show_data["seasons"]
+            if season["season_number"] == season_number
+        ),
+        {},
+    )
+    tmdb_api_key = await get_user_tmdb_key(db, current_user.id)
+    enriched_seasons, _ = await _enrich_tvdb_seasons(
+        [base_season_meta] if base_season_meta else [],
+        mappings,
+        tvdb_api_key=api_key,
+        tvdb_language=tvdb_lang,
+        series_tmdb_id=series_tmdb_id,
+        tmdb_api_key=tmdb_api_key,
+        metadata_language=metadata_lang,
+    )
+    season_meta = enriched_seasons[0] if enriched_seasons else base_season_meta
+    show_data["seasons"] = [
+        season_meta if season["season_number"] == season_number else season
+        for season in show_data["seasons"]
+    ]
+    mapping_by_tvdb_id = {mapping.tvdb_id: mapping for mapping in mappings}
+    mapping_by_position = {
+        (mapping.tvdb_season_number, mapping.tvdb_episode_number): mapping
+        for mapping in mappings
+    }
+
+    local_ep_map: dict[tuple[int, int], Media] = {}
+    if show:
+        ep_result = await db.execute(
+            select(Media).where(
+                Media.show_id == show.id,
+                Media.media_type == MediaType.episode,
             )
-            watched_ep_ids = {r[0] for r in watched_q.all()}
+        )
+        local_eps = list(ep_result.scalars().all())
+        local_ep_map = {
+            (episode.season_number, episode.episode_number): episode
+            for episode in local_eps
+            if episode.season_number is not None and episode.episode_number is not None
+        }
 
-            ep_ratings_q = await db.execute(
-                select(Rating.media_id, Rating.rating)
-                .where(
+    mapped_rows: list[tuple[dict, EpisodeOrderMapping | None, Media | None]] = []
+    for episode in eps:
+        mapping = mapping_by_tvdb_id.get(episode.get("tvdb_id"))
+        if not mapping:
+            mapping = mapping_by_position.get(
+                (season_number, episode.get("episode_number"))
+            )
+        if mapping:
+            local_episode = local_ep_map.get(
+                (mapping.tmdb_season_number, mapping.tmdb_episode_number)
+            )
+        elif not mappings:
+            local_episode = local_ep_map.get(
+                (season_number, episode.get("episode_number"))
+            )
+        else:
+            local_episode = None
+        mapped_rows.append((episode, mapping, local_episode))
+
+    local_media_ids = list({
+        local_episode.id
+        for _, _, local_episode in mapped_rows
+        if local_episode
+    })
+    watched_ep_ids: set[int] = set()
+    collected_ep_ids: set[int] = set()
+    episode_ratings: dict[int, float] = {}
+    if local_media_ids:
+        watched_q = await db.execute(
+            select(WatchEvent.media_id)
+            .where(
+                WatchEvent.user_id == current_user.id,
+                WatchEvent.media_id.in_(local_media_ids),
+            )
+            .distinct()
+        )
+        watched_ep_ids = {row[0] for row in watched_q.all()}
+        collected_q = await db.execute(
+            select(Collection.media_id)
+            .where(
+                Collection.user_id == current_user.id,
+                Collection.media_id.in_(local_media_ids),
+            )
+            .distinct()
+        )
+        collected_ep_ids = {row[0] for row in collected_q.all()}
+        episode_ratings_q = await db.execute(
+            select(Rating.media_id, Rating.rating).where(
+                Rating.user_id == current_user.id,
+                Rating.media_id.in_(local_media_ids),
+                Rating.season_number.is_(None),
+            )
+        )
+        episode_ratings = dict(episode_ratings_q.all())
+
+    season_user_rating = None
+    if series_tmdb_id:
+        show_media_result = await db.execute(
+            select(Media).where(
+                Media.tmdb_id == series_tmdb_id,
+                Media.media_type == MediaType.series,
+            )
+        )
+        show_media = show_media_result.scalar_one_or_none()
+        if show_media:
+            season_rating_result = await db.execute(
+                select(Rating.rating).where(
                     Rating.user_id == current_user.id,
-                    Rating.media_id.in_(local_media_ids),
-                    Rating.season_number.is_(None),
+                    Rating.media_id == show_media.id,
+                    Rating.season_number == season_number,
+                    Rating.episode_order == "tvdb",
                 )
             )
-            episode_ratings = {r[0]: r[1] for r in ep_ratings_q.all()}
-
-            coll_q = await db.execute(
-                select(Media.episode_number)
-                .join(Collection, Collection.media_id == Media.id)
-                .where(
-                    Media.show_id == show.id,
-                    Media.season_number == season_number,
-                    Collection.user_id == current_user.id,
-                    Media.media_type == MediaType.episode,
-                    Media.episode_number.isnot(None),
-                )
-                .distinct()
-            )
-            user_collected_eps = {r[0] for r in coll_q.all()}
-
-        # Build episode_number → local Media map
-        local_ep_map = {m.episode_number: m for m in local_eps}
-    else:
-        local_ep_map = {}
+            season_user_rating = season_rating_result.scalar_one_or_none()
 
     enriched_eps = []
-    for ep in eps:
-        ep_num = ep.get("episode_number")
-        local_m = local_ep_map.get(ep_num)
+    for episode, mapping, local_episode in mapped_rows:
         enriched_eps.append({
-            **ep,
-            "id": local_m.id if local_m else None,
-            "in_library": ep_num in user_collected_eps,
-            "watched": local_m.id in watched_ep_ids if local_m else False,
-            "user_rating": episode_ratings.get(local_m.id) if local_m else None,
+            **episode,
+            "id": local_episode.id if local_episode else None,
+            "tmdb_id": mapping.tmdb_episode_id if mapping else (
+                local_episode.tmdb_id if local_episode else None
+            ),
+            "show_tmdb_id": series_tmdb_id,
+            "tmdb_season_number": mapping.tmdb_season_number if mapping else season_number,
+            "tmdb_episode_number": mapping.tmdb_episode_number if mapping else episode.get("episode_number"),
+            "in_library": local_episode.id in collected_ep_ids if local_episode else False,
+            "watched": local_episode.id in watched_ep_ids if local_episode else False,
+            "user_rating": episode_ratings.get(local_episode.id) if local_episode else None,
             "in_lists": [],
         })
 
-    season_meta = next((s for s in show_data["seasons"] if s["season_number"] == season_number), {})
-
-    # Compute season-level stats
-    season_in_library = bool(user_collected_eps)
     total_eps = len(eps)
-    effective_total = total_eps if total_eps > 0 else len(user_collected_eps)
-    season_collection_pct = min(100, int((len(user_collected_eps) / effective_total) * 100)) if effective_total > 0 else 0
-    season_watched = bool(local_eps) and len(watched_ep_ids) >= len(local_eps) if show else False
-    season_watch_pct = min(100, int((len(watched_ep_ids) / effective_total) * 100)) if effective_total > 0 else 0
+    season_in_library = bool(collected_ep_ids)
+    season_collection_pct = min(100, int((len(collected_ep_ids) / total_eps) * 100)) if total_eps else 0
+    season_watched = total_eps > 0 and len(watched_ep_ids) >= total_eps
+    season_watch_pct = min(100, int((len(watched_ep_ids) / total_eps) * 100)) if total_eps else 0
 
     return {
         "tvdb_id": tvdb_id,
         "season_number": season_number,
         "name": season_meta.get("name") or f"Season {season_number}",
         "overview": season_meta.get("overview"),
+        "tmdb_rating": season_meta.get("tmdb_rating"),
         "poster_path": season_meta.get("poster_path"),
         "backdrop_path": show_data["backdrop_path"],
         "air_date": season_meta.get("air_date"),
@@ -1441,11 +1805,13 @@ async def get_tvdb_season(
         "season_watched": season_watched,
         "season_watch_pct": season_watch_pct,
         "season_collection_pct": season_collection_pct,
-        "season_user_rating": None,
+        "season_user_rating": season_user_rating,
         "show_in_library": show is not None,
         "show": {
             "id": show.id if show else None,
             "tvdb_id": tvdb_id,
+            "tmdb_id": series_tmdb_id,
+            "episode_order": "tvdb",
             "title": show_data["title"],
             "poster_path": show_data["poster_path"],
             "backdrop_path": show_data["backdrop_path"],
@@ -1483,13 +1849,38 @@ async def get_tvdb_episode(
     if not ep_data:
         raise HTTPException(status_code=404, detail="Episode not found")
 
-    show_result = await db.execute(select(ShowModel).where(ShowModel.tvdb_id == tvdb_id))
+    series_tmdb_id = show_data.get("tmdb_id_cross")
+    series_tmdb_id = int(series_tmdb_id) if series_tmdb_id else None
+    show_result = await db.execute(
+        select(ShowModel).where(
+            or_(
+                ShowModel.tvdb_id == tvdb_id,
+                ShowModel.tmdb_id == series_tmdb_id,
+            )
+        )
+    )
     show = show_result.scalar_one_or_none()
+    mapping_result = await db.execute(
+        select(EpisodeOrderMapping).where(
+            EpisodeOrderMapping.series_tmdb_id == series_tmdb_id,
+            or_(
+                EpisodeOrderMapping.tvdb_id == ep_data.get("tvdb_id"),
+                and_(
+                    EpisodeOrderMapping.tvdb_season_number == season_number,
+                    EpisodeOrderMapping.tvdb_episode_number == episode_number,
+                ),
+            ),
+        )
+    ) if series_tmdb_id else None
+    mapping = mapping_result.scalars().first() if mapping_result else None
+    canonical_season = mapping.tmdb_season_number if mapping else season_number
+    canonical_episode = mapping.tmdb_episode_number if mapping else episode_number
 
     in_library = False
     watched = False
     user_rating = None
     local_ep_id = None
+    local_ep = None
     library_info = None
     play_count = 0
 
@@ -1498,8 +1889,8 @@ async def get_tvdb_episode(
             select(Media).where(
                 Media.show_id == show.id,
                 Media.media_type == MediaType.episode,
-                Media.season_number == season_number,
-                Media.episode_number == episode_number,
+                Media.season_number == canonical_season,
+                Media.episode_number == canonical_episode,
             )
         )
         local_ep = local_ep_q.scalars().first()
@@ -1556,6 +1947,12 @@ async def get_tvdb_episode(
     return {
         **ep_data,
         "id": local_ep_id,
+        "tmdb_id": mapping.tmdb_episode_id if mapping else (
+            local_ep.tmdb_id if local_ep else None
+        ),
+        "show_tmdb_id": series_tmdb_id,
+        "tmdb_season_number": canonical_season,
+        "tmdb_episode_number": canonical_episode,
         "in_library": in_library,
         "watched": watched,
         "user_rating": user_rating,
@@ -1567,6 +1964,8 @@ async def get_tvdb_episode(
         "show": {
             "id": show.id if show else None,
             "tvdb_id": tvdb_id,
+            "tmdb_id": series_tmdb_id,
+            "episode_order": "tvdb",
             "title": show_data["title"],
             "poster_path": show_data["poster_path"],
             "backdrop_path": show_data["backdrop_path"],
@@ -1598,6 +1997,26 @@ async def refresh_tvdb_show_metadata(
         raw = await tvdb_client.get_series(tvdb_id, api_key)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"TVDB fetch failed: {e}")
+
+    if show.tmdb_id:
+        tmdb_api_key = await get_user_tmdb_key(db, current_user.id)
+        if not check_tmdb_key(tmdb_api_key):
+            raise HTTPException(status_code=400, detail="TMDB API key not configured")
+        try:
+            mapping = await ensure_episode_order_mapping(
+                db,
+                show.tmdb_id,
+                tmdb_api_key,
+                api_key,
+                force=True,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Episode mapping failed: {exc}")
+        await db.commit()
+        return {
+            "message": "Episode mapping refreshed successfully",
+            "mapping": mapping,
+        }
 
     show_fmt = tvdb_client.format_series(raw)
     show.title = show_fmt["title"] or show.title

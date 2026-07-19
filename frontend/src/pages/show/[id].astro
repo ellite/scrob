@@ -3,6 +3,7 @@ import Base from "../../layouts/Base.astro";
 import MediaRow from "../../components/MediaRow.astro";
 import ActionBar from "../../components/ActionBar.astro";
 import CommentsSection from "../../components/CommentsSection.astro";
+import EpisodeOrderSelector from "../../components/EpisodeOrderSelector.astro";
 import { api, type Show } from "../../lib/api";
 export const prerender = false;
 
@@ -21,6 +22,10 @@ try {
 
 if (!show && !error) {
     return Astro.redirect("/404");
+}
+
+if (show?.episode_order === "tvdb" && show.tvdb_id) {
+  return Astro.redirect(`/show/tvdb/${show.tvdb_id}`);
 }
 
 const seasons = Object.entries(show?.seasons ?? {}).sort(
@@ -167,6 +172,16 @@ const originalLanguage = show?.original_language
                 userRating={show.user_rating ?? null}
               />
             </div>
+            {show.tvdb_id && (
+              <div class="mb-6">
+                <EpisodeOrderSelector
+                  tmdbId={show.tmdb_id}
+                  tvdbId={show.tvdb_id}
+                  selected="tmdb"
+                  token={token}
+                />
+              </div>
+            )}
 
             {show.id && (
               <div class="mb-8">

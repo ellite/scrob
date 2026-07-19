@@ -638,6 +638,10 @@ export interface CollectionDetail {
 
 export interface TvdbEpisode {
   tvdb_id: number | null;
+  tmdb_id: number | null;
+  show_tmdb_id: number | null;
+  tmdb_season_number: number;
+  tmdb_episode_number: number;
   season_number: number;
   episode_number: number;
   name: string | null;
@@ -654,6 +658,10 @@ export interface TvdbEpisode {
 
 export interface TvdbEpisodeDetail {
   tvdb_id: number | null;
+  tmdb_id: number | null;
+  show_tmdb_id: number | null;
+  tmdb_season_number: number;
+  tmdb_episode_number: number;
   season_number: number;
   episode_number: number;
   name: string | null;
@@ -677,7 +685,7 @@ export interface TvdbEpisodeDetail {
   } | null;
   cast: { tmdb_id: null; person_id: number | null; name: string; character: string; profile_path: string | null }[];
   episodes: { episode_number: number; name: string | null }[];
-  show: { id: number | null; tvdb_id: number; title: string; poster_path: string | null; backdrop_path: string | null };
+  show: { id: number | null; tvdb_id: number; tmdb_id: number | null; episode_order: "tvdb"; title: string; poster_path: string | null; backdrop_path: string | null };
   season: { name: string; season_number: number; poster_path: string | null };
 }
 
@@ -686,11 +694,13 @@ export interface TvdbSeason {
   season_number: number;
   name: string;
   overview: string | null;
+  tmdb_rating: number | null;
   poster_path: string | null;
   backdrop_path: string | null;
   air_date: string | null;
   episodes: TvdbEpisode[];
   season_in_library: boolean;
+  season_watch_pct: number;
   season_watched: boolean;
   season_collection_pct: number;
   season_user_rating: number | null;
@@ -698,6 +708,8 @@ export interface TvdbSeason {
   show: {
     id: number | null;
     tvdb_id: number;
+    tmdb_id: number | null;
+    episode_order: "tvdb";
     title: string;
     poster_path: string | null;
     backdrop_path: string | null;
@@ -709,6 +721,7 @@ export interface TvdbSeasonMeta {
   season_number: number;
   name: string;
   overview: string | null;
+  tmdb_rating: number | null;
   poster_path: string | null;
   episode_count: number;
   air_date: string | null;
@@ -717,7 +730,7 @@ export interface TvdbSeasonMeta {
 export interface TvdbShow {
   id: number | null;
   tvdb_id: number;
-  tmdb_id: null;
+  tmdb_id: number | null;
   type: string;
   title: string;
   original_title: string | null;
@@ -728,11 +741,12 @@ export interface TvdbShow {
   last_air_date: string | null;
   status: string | null;
   tagline: null;
-  tmdb_rating: null;
+  tmdb_rating: number | null;
   age_rating: string | null;
   original_language: string | null;
   imdb_id: string | null;
   tmdb_id_cross: number | null;
+  episode_order: "tvdb";
   genres: string[];
   network: string | null;
   networks: { id: null; name: string; logo_path: null; origin_country: null }[];
@@ -754,6 +768,8 @@ export interface TvdbShow {
 export interface Show {
   id: number | null;
   tmdb_id: number;
+  tvdb_id?: number | null;
+  episode_order: "tmdb" | "tvdb";
   title: string;
   original_title: string | null;
   overview: string;
@@ -1115,6 +1131,19 @@ export const api = {
 
     refreshMetadata: (seriesTmdbId: number, token: string) =>
       post<{ message: string }>(`/shows/${seriesTmdbId}/refresh`, undefined, token),
+
+    setEpisodeOrder: (seriesTmdbId: number, episodeOrder: "tmdb" | "tvdb", token: string, forceRefresh = false) =>
+      post<{
+        episode_order: "tmdb" | "tvdb";
+        series_tmdb_id: number;
+        tvdb_id: number | null;
+        redirect: string;
+        mapping: { matched: number; tmdb_episodes: number; unmatched: number } | null;
+      }>(
+        `/shows/${seriesTmdbId}/episode-order`,
+        { episode_order: episodeOrder, force_refresh: forceRefresh },
+        token,
+      ),
 
     getTvdb: (tvdbId: number, token?: string) =>
       get<TvdbShow>(`/shows/tvdb/${tvdbId}`, undefined, token),
