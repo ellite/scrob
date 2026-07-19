@@ -155,30 +155,38 @@ async def validate_token(client_id: str, access_token: str) -> bool:
 
 # ── User Data Fetching ────────────────────────────────────────────────────────
 
-async def get_watched_movies(client_id: str, access_token: str) -> list[dict]:
-    """Fetch all watched movies.
+async def get_history_movies(client_id: str, access_token: str) -> list[dict]:
+    """Fetch every individual movie play from the user's watch history.
 
-    Returns list of: {plays, last_watched_at, movie: {title, ids: {tmdb, ...}}}
+    Unlike /sync/watched/movies (which collapses all plays of a title into a
+    single {plays, last_watched_at} row), /sync/history/movies returns one
+    entry per play, each with its own id and watched_at — required to import
+    more than the most recent play of a title.
+
+    Returns list of: {id, watched_at, movie: {title, ids: {tmdb, ...}}}
     """
     async with httpx.AsyncClient(timeout=60.0) as client:
         return await _get_all_pages(
             client,
-            "/sync/watched/movies",
+            "/sync/history/movies",
             _headers(client_id, access_token),
         )
 
 
-async def get_watched_shows(client_id: str, access_token: str) -> list[dict]:
-    """Fetch all watched shows with episode-level detail.
+async def get_history_episodes(client_id: str, access_token: str) -> list[dict]:
+    """Fetch every individual episode play from the user's watch history.
 
-    Returns list of: {show: {title, ids: {tmdb, ...}}, seasons: [{number, episodes: [{number, plays, last_watched_at}]}]}
+    See get_history_movies() for why /sync/history is used instead of the
+    aggregated /sync/watched/shows endpoint.
+
+    Returns list of: {id, watched_at, episode: {season, number, ids},
+                       show: {title, ids: {tmdb, ...}}}
     """
     async with httpx.AsyncClient(timeout=120.0) as client:
         return await _get_all_pages(
             client,
-            "/sync/watched/shows",
+            "/sync/history/episodes",
             _headers(client_id, access_token),
-            extra_params={"extended": "progress"},
         )
 
 

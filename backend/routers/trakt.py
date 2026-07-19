@@ -36,6 +36,16 @@ router = APIRouter()
 TMDB_CONCURRENCY = 10
 
 
+def _parse_trakt_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    from dateutil import parser as dt_parser
+    dt = dt_parser.isoparse(value)
+    if dt.tzinfo:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def _require_trakt_config(settings: UserSettings):
     if not settings.trakt_client_id or not settings.trakt_client_secret:
         raise HTTPException(
@@ -310,20 +320,26 @@ async def run_trakt_sync(user_id: int, job_id: int):
             watched_processed = 0
 
             # ── Watched Movies ────────────────────────────────────────────────
+            # Uses /sync/history (one row per play) rather than /sync/watched
+            # (one aggregated row per title) so every distinct play of a movie
+            # gets its own WatchEvent instead of only the most recent one.
             if sync_watched:
-                print(f"  Fetching watched movies from Trakt...")
-                watched_movies = await trakt_client.get_watched_movies(client_id, access_token)
-                print(f"  {len(watched_movies)} watched movies fetched from Trakt")
-                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(watched_movies)))
+                print(f"  Fetching movie watch history from Trakt...")
+                history_movies = await trakt_client.get_history_movies(client_id, access_token)
+                print(f"  {len(history_movies)} movie plays fetched from Trakt")
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(history_movies)))
                 await db.commit()
 
-                # Pre-load existing watch events for this user
+                # Pre-load existing watch events for this user, keyed by the
+                # exact play (media_id, watched_at) so re-syncing doesn't
+                # duplicate plays already imported, while still allowing
+                # multiple distinct plays of the same title.
                 we_res = await db.execute(
-                    select(WatchEvent.media_id).where(WatchEvent.user_id == user_id)
+                    select(WatchEvent.media_id, WatchEvent.watched_at).where(WatchEvent.user_id == user_id)
                 )
-                existing_watched: set[int] = {row[0] for row in we_res}
+                existing_watched: set[tuple[int, datetime]] = {(row[0], row[1]) for row in we_res}
 
-                for movie_index, item in enumerate(watched_movies, start=1):
+                for movie_index, item in enumerate(history_movies, start=1):
                     movie_data = item.get("movie", {})
                     tmdb_id = movie_data.get("ids", {}).get("tmdb")
                     try:
@@ -336,23 +352,17 @@ async def run_trakt_sync(user_id: int, job_id: int):
                                 if not media:
                                     stats["errors"] += 1
                                     continue
-                                if media.id not in existing_watched:
-                                    last_watched = item.get("last_watched_at")
-                                    watched_at = None
-                                    if last_watched:
-                                        from dateutil import parser as dt_parser
-                                        dt = dt_parser.isoparse(last_watched)
-                                        if dt.tzinfo:
-                                            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-                                        watched_at = dt
+                                watched_at = _parse_trakt_datetime(item.get("watched_at")) or datetime.utcnow()
+                                key = (media.id, watched_at)
+                                if key not in existing_watched:
                                     db.add(WatchEvent(
                                         user_id=user_id,
                                         media_id=media.id,
-                                        watched_at=watched_at or datetime.utcnow(),
+                                        watched_at=watched_at,
                                         completed=True,
-                                        play_count=item.get("plays", 1),
+                                        play_count=1,
                                     ))
-                                    existing_watched.add(media.id)
+                                    existing_watched.add(key)
                                     _new_watched.add(media.id)
                                     stats["movies"] += 1
                                 else:
@@ -362,7 +372,7 @@ async def run_trakt_sync(user_id: int, job_id: int):
                             stats["errors"] += 1
                     finally:
                         watched_processed = movie_index
-                        if movie_index % 25 == 0 or movie_index == len(watched_movies):
+                        if movie_index % 25 == 0 or movie_index == len(history_movies):
                             await db.execute(
                                 update(SyncJob)
                                 .where(SyncJob.id == job_id)
@@ -373,94 +383,86 @@ async def run_trakt_sync(user_id: int, job_id: int):
                 await db.commit()
 
             # ── Watched Shows / Episodes ──────────────────────────────────────
+            # Same rationale as movies above: /sync/history/episodes returns
+            # one row per play instead of one aggregated row per episode.
             if sync_watched:
-                print(f"  Fetching watched shows from Trakt...")
-                watched_shows = await trakt_client.get_watched_shows(client_id, access_token)
-                print(f"  {len(watched_shows)} watched shows fetched from Trakt")
+                print(f"  Fetching episode watch history from Trakt...")
+                history_episodes = await trakt_client.get_history_episodes(client_id, access_token)
+                print(f"  {len(history_episodes)} episode plays fetched from Trakt")
 
-                total_episodes = sum(
-                    sum(len(season.get("episodes", [])) for season in s.get("seasons", []) if season.get("number") not in (None, 0))
-                    for s in watched_shows
-                )
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
-                    total_items=len(watched_movies) + total_episodes,
+                    total_items=len(history_movies) + len(history_episodes),
                     processed_items=watched_processed,
                 ))
                 await db.commit()
 
                 # Re-fetch watched set (may have grown from movie sync)
                 we_res = await db.execute(
-                    select(WatchEvent.media_id).where(WatchEvent.user_id == user_id)
+                    select(WatchEvent.media_id, WatchEvent.watched_at).where(WatchEvent.user_id == user_id)
                 )
-                existing_watched = {row[0] for row in we_res}
+                existing_watched = {(row[0], row[1]) for row in we_res}
 
-                async def process_show(show_entry: dict):
-                    show_data = show_entry.get("show", {})
-                    show_tmdb_id = show_data.get("ids", {}).get("tmdb")
-                    if not show_tmdb_id:
+                # Group plays by show so _get_or_create_show only runs once per show
+                plays_by_show: dict[int, list[dict]] = {}
+                for entry in history_episodes:
+                    show_tmdb_id = entry.get("show", {}).get("ids", {}).get("tmdb")
+                    if show_tmdb_id:
+                        plays_by_show.setdefault(show_tmdb_id, []).append(entry)
+                    else:
                         stats["skipped"] += 1
-                        return
 
+                async def process_show(show_tmdb_id: int, entries: list[dict]):
+                    show_title = entries[0].get("show", {}).get("title", "")
                     try:
                         async with db.begin_nested():
-                            show = await _get_or_create_show(db, show_tmdb_id, show_data.get("title", ""), api_key)
+                            show = await _get_or_create_show(db, show_tmdb_id, show_title, api_key)
                             if not show:
                                 stats["errors"] += 1
                                 return
                             await db.flush()
 
-                        for season_entry in show_entry.get("seasons", []):
-                            season_num = season_entry.get("number")
-                            if season_num is None or season_num == 0:
+                        for entry in entries:
+                            ep_data = entry.get("episode", {})
+                            season_num = ep_data.get("season")
+                            ep_num = ep_data.get("number")
+                            if season_num is None or season_num == 0 or ep_num is None:
+                                stats["skipped"] += 1
                                 continue
-                            for ep_entry in season_entry.get("episodes", []):
-                                ep_num = ep_entry.get("number")
-                                if ep_num is None:
-                                    continue
-                                try:
-                                    async with db.begin_nested():
-                                        media = await _get_or_create_episode_media(
-                                            db, show.id, show_tmdb_id, season_num, ep_num, api_key
-                                        )
-                                        if not media:
-                                            stats["errors"] += 1
-                                            continue
-                                        if media.id not in existing_watched:
-                                            last_watched = ep_entry.get("last_watched_at")
-                                            watched_at = None
-                                            if last_watched:
-                                                from dateutil import parser as dt_parser
-                                                dt = dt_parser.isoparse(last_watched)
-                                                if dt.tzinfo:
-                                                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-                                                watched_at = dt
-                                            db.add(WatchEvent(
-                                                user_id=user_id,
-                                                media_id=media.id,
-                                                watched_at=watched_at or datetime.utcnow(),
-                                                completed=True,
-                                                play_count=ep_entry.get("plays", 1),
-                                            ))
-                                            existing_watched.add(media.id)
-                                            _new_watched.add(media.id)
-                                            stats["episodes"] += 1
-                                        else:
-                                            stats["skipped"] += 1
-                                except Exception as exc:
-                                    logger.warning("Error processing episode s%se%s for show tmdb=%s: %s", season_num, ep_num, show_tmdb_id, exc)
-                                    stats["errors"] += 1
+                            try:
+                                async with db.begin_nested():
+                                    media = await _get_or_create_episode_media(
+                                        db, show.id, show_tmdb_id, season_num, ep_num, api_key
+                                    )
+                                    if not media:
+                                        stats["errors"] += 1
+                                        continue
+                                    watched_at = _parse_trakt_datetime(entry.get("watched_at")) or datetime.utcnow()
+                                    key = (media.id, watched_at)
+                                    if key not in existing_watched:
+                                        db.add(WatchEvent(
+                                            user_id=user_id,
+                                            media_id=media.id,
+                                            watched_at=watched_at,
+                                            completed=True,
+                                            play_count=1,
+                                        ))
+                                        existing_watched.add(key)
+                                        _new_watched.add(media.id)
+                                        stats["episodes"] += 1
+                                    else:
+                                        stats["skipped"] += 1
+                            except Exception as exc:
+                                logger.warning("Error processing episode s%se%s for show tmdb=%s: %s", season_num, ep_num, show_tmdb_id, exc)
+                                stats["errors"] += 1
                     except Exception as exc:
                         logger.warning("Error processing Trakt show tmdb=%s: %s", show_tmdb_id, exc)
                         stats["errors"] += 1
 
-                for i, s in enumerate(watched_shows):
-                    await process_show(s)
-                    watched_processed += sum(
-                        len(season.get("episodes", []))
-                        for season in s.get("seasons", [])
-                        if season.get("number") not in (None, 0)
-                    )
-                    if (i + 1) % 10 == 0 or i + 1 == len(watched_shows):
+                show_plays = list(plays_by_show.items())
+                for i, (show_tmdb_id, entries) in enumerate(show_plays):
+                    await process_show(show_tmdb_id, entries)
+                    watched_processed += len(entries)
+                    if (i + 1) % 10 == 0 or i + 1 == len(show_plays):
                         await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
                             processed_items=watched_processed
                         ))
