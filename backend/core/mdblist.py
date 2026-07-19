@@ -151,6 +151,43 @@ async def remove_watched(api_key: str, payload: dict[str, list[dict[str, Any]]])
     return await _push("/sync/watched/remove", api_key, payload)
 
 
+async def push_collection(api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
+    return await _push("/sync/collection", api_key, payload)
+
+
+async def remove_collection(api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
+    return await _push("/sync/collection/remove", api_key, payload)
+
+
+async def scrobble_movie(api_key: str, action: str, tmdb_id: int, progress: float | None = None) -> dict[str, Any]:
+    """Start/pause/stop/clear a movie scrobble session on MDBList.
+
+    ``progress`` is omitted for ``action="clear"``, which takes no progress value."""
+    body: dict[str, Any] = {"movie": {"ids": {"tmdb": tmdb_id}}}
+    if progress is not None:
+        body["progress"] = round(min(100.0, max(0.0, progress)), 1)
+    return await _request("POST", f"/scrobble/{action}", api_key, payload=body)
+
+
+async def scrobble_episode(
+    api_key: str,
+    action: str,
+    show_tmdb_id: int,
+    season_number: int,
+    episode_number: int,
+    progress: float | None = None,
+) -> dict[str, Any]:
+    """Start/pause/stop/clear an episode scrobble session on MDBList.
+
+    ``progress`` is omitted for ``action="clear"``, which takes no progress value."""
+    body: dict[str, Any] = {
+        "show": {"ids": {"tmdb": show_tmdb_id}, "season": season_number, "episode": episode_number},
+    }
+    if progress is not None:
+        body["progress"] = round(min(100.0, max(0.0, progress)), 1)
+    return await _request("POST", f"/scrobble/{action}", api_key, payload=body)
+
+
 async def push_ratings(api_key: str, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
     return await _push("/sync/ratings", api_key, payload)
 

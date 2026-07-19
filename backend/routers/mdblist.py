@@ -16,6 +16,7 @@ from core.enrichment import enrich_media
 from db import engine, get_db
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
+from models.collection import Collection
 from models.events import WatchEvent
 from models.lists import List as ListModel, ListItem
 from models.media import Media
@@ -253,6 +254,7 @@ def _payload_item(
     rating: float | None = None,
     rated_at: datetime | None = None,
     season_number: int | None = None,
+    collected_at: datetime | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     if not media.tmdb_id:
         return None
@@ -288,6 +290,8 @@ def _payload_item(
     if rating is not None:
         item["rating"] = float(rating)
         item["rated_at"] = _iso_utc(rated_at or datetime.now(timezone.utc))
+    if collected_at is not None:
+        item["collected_at"] = _iso_utc(collected_at)
     return kind, item
 
 
@@ -649,6 +653,7 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
             watched_rows: list[tuple[int, datetime]] = []
             rating_rows: list[tuple[int, int | None, float, datetime | None]] = []
             watchlist_ids: set[int] = set()
+            collected_rows: list[tuple[int, datetime]] = []
 
             if settings.mdblist_push_watched:
                 watched_result = await db.execute(
@@ -657,6 +662,11 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                     .group_by(WatchEvent.media_id)
                 )
                 watched_rows = list(watched_result.all())
+            if settings.mdblist_push_collection:
+                collected_result = await db.execute(
+                    select(Collection.media_id, Collection.added_at).where(Collection.user_id == user_id)
+                )
+                collected_rows = list(collected_result.all())
             if settings.mdblist_push_ratings:
                 ratings_result = await db.execute(
                     select(Rating.media_id, Rating.season_number, Rating.rating, Rating.rated_at).where(
@@ -682,17 +692,28 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                     )
                     watchlist_ids = {row[0] for row in item_result.all()}
 
-            all_ids = {row[0] for row in watched_rows} | {row[0] for row in rating_rows} | watchlist_ids
+            all_ids = (
+                {row[0] for row in watched_rows}
+                | {row[0] for row in rating_rows}
+                | watchlist_ids
+                | {row[0] for row in collected_rows}
+            )
             media_by_id = await _load_payload_media(db, all_ids)
             watched_payload = _empty_payload()
             ratings_payload = _empty_payload()
             watchlist_payload = _empty_payload()
+            collection_payload = _empty_payload()
 
             for media_id, watched_at in watched_rows:
                 media = media_by_id.get(media_id)
                 item = _payload_item(media, watched_at=watched_at) if media else None
                 if item:
                     watched_payload[item[0]].append(item[1])
+            for media_id, added_at in collected_rows:
+                media = media_by_id.get(media_id)
+                item = _payload_item(media, collected_at=added_at) if media else None
+                if item:
+                    collection_payload[item[0]].append(item[1])
             for media_id, season_number, rating, rated_at in rating_rows:
                 media = media_by_id.get(media_id)
                 item = (
@@ -715,7 +736,7 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
 
             total_items = sum(
                 len(values)
-                for payload in (watched_payload, ratings_payload, watchlist_payload)
+                for payload in (watched_payload, ratings_payload, watchlist_payload, collection_payload)
                 for values in payload.values()
             )
             await db.execute(
@@ -736,6 +757,10 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
             if settings.mdblist_push_watchlist:
                 results["watchlist"] = await mdblist_client.push_watchlist(
                     settings.mdblist_api_key, watchlist_payload
+                )
+            if settings.mdblist_push_collection:
+                results["collection"] = await mdblist_client.push_collection(
+                    settings.mdblist_api_key, collection_payload
                 )
 
             submitted = sum(result["submitted"] for result in results.values())
@@ -797,7 +822,7 @@ async def push_mdblist(
 ):
     result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = _require_key(result.scalar_one_or_none())
-    if not any((settings.mdblist_push_watched, settings.mdblist_push_ratings, settings.mdblist_push_watchlist)):
+    if not any((settings.mdblist_push_watched, settings.mdblist_push_ratings, settings.mdblist_push_watchlist, settings.mdblist_push_collection)):
         raise HTTPException(status_code=400, detail="Enable at least one MDBList push option")
 
     job = SyncJob(

@@ -757,6 +757,7 @@ if (me.totp_enabled) {
                         {[
                           { key: "trakt_push_watched", label: "Watched status" },
                           { key: "trakt_push_ratings", label: "Ratings" },
+                          { key: "trakt_push_collection", label: "Collection" },
                           { key: "trakt_push_lists", label: "Lists" },
                         ].map(({ key, label }) => (
                           <label class="flex items-center gap-3 cursor-pointer group">
@@ -975,12 +976,19 @@ if (me.totp_enabled) {
                         { key: "mdblist_push_watched", label: "Watched status" },
                         { key: "mdblist_push_ratings", label: "Ratings" },
                         { key: "mdblist_push_watchlist", label: "Watchlist" },
+                        { key: "mdblist_push_collection", label: "Collection" },
                       ].map(({ key, label }) => (
                         <label class="flex items-center gap-3 cursor-pointer group">
                           <input type="checkbox" name={key} id={key} checked={!!settings[key as keyof typeof settings]} class="sync-pref-checkbox w-4 h-4 rounded accent-violet-500 cursor-pointer" />
                           <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
                         </label>
                       ))}
+                      <label class="flex items-center gap-3 cursor-pointer group">
+                        <input type="checkbox" name="mdblist_scrobble" id="mdblist_scrobble" checked={!!settings.mdblist_scrobble} class="sync-pref-checkbox w-4 h-4 rounded accent-violet-500 cursor-pointer" />
+                        <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">
+                          Now watching <span class="text-zinc-500 text-xs">(live scrobble on play/pause/stop)</span>
+                        </span>
+                      </label>
                       <button
                         type="button"
                         data-action="push_mdblist"
@@ -2839,6 +2847,7 @@ if (me.totp_enabled) {
             const traktPushLabels: Record<string, string> = {
               trakt_push_watched: 'watched history',
               trakt_push_ratings: 'ratings',
+              trakt_push_collection: 'collection',
               trakt_push_lists: 'lists',
             };
             const pushing: string[] = [];
@@ -2883,6 +2892,7 @@ if (me.totp_enabled) {
               mdblist_push_watched: 'watched history',
               mdblist_push_ratings: 'ratings',
               mdblist_push_watchlist: 'watchlist',
+              mdblist_push_collection: 'collection',
             };
             const selected = Array.from(document.querySelectorAll<HTMLInputElement>('.sync-pref-checkbox'))
               .filter(el => el.checked && labels[el.name])
@@ -3750,11 +3760,11 @@ if (me.totp_enabled) {
         // Collect boolean checkboxes (cloud sync preferences + app preferences)
         const syncKeys = [
           'trakt_sync_watched', 'trakt_sync_ratings', 'trakt_sync_lists', 'trakt_watchlist_split',
-          'trakt_push_watched', 'trakt_push_ratings', 'trakt_push_lists', 'trakt_scrobble',
+          'trakt_push_watched', 'trakt_push_ratings', 'trakt_push_collection', 'trakt_push_lists', 'trakt_scrobble',
           'simkl_sync_watched', 'simkl_sync_ratings', 'simkl_sync_lists',
           'simkl_push_watched', 'simkl_push_ratings', 'simkl_scrobble',
           'mdblist_sync_watched', 'mdblist_sync_ratings', 'mdblist_sync_watchlist',
-          'mdblist_push_watched', 'mdblist_push_ratings', 'mdblist_push_watchlist',
+          'mdblist_push_watched', 'mdblist_push_ratings', 'mdblist_push_watchlist', 'mdblist_push_collection', 'mdblist_scrobble',
           'blur_explicit',
           'time_format_24h',
           'use_hls_player',

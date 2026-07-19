@@ -20,6 +20,7 @@ from core.enrichment import enrich_media
 from db import get_db, engine
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
+from models.collection import Collection
 from models.events import WatchEvent
 from models.lists import List as ListModel, ListItem
 from models.media import Media
@@ -974,6 +975,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
 
             all_media_ids: set[int] = set()
             watched_ids: set[int] = set()
+            collected_ids: set[int] = set()
             ratings_map: RatingChanges = {}
 
             if settings.trakt_push_watched:
@@ -982,6 +984,13 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                 )
                 watched_ids = {row[0] for row in watched_result.all()}
                 all_media_ids |= watched_ids
+
+            if settings.trakt_push_collection:
+                collected_result = await db.execute(
+                    select(Collection.media_id).where(Collection.user_id == user_id)
+                )
+                collected_ids = {row[0] for row in collected_result.all()}
+                all_media_ids |= collected_ids
 
             if settings.trakt_push_ratings:
                 ratings_result = await db.execute(
@@ -1026,6 +1035,22 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                         show = shows_by_id.get(media.show_id)
                         if show and show.tmdb_id:
                             push_tasks.append(trakt_client.add_episode_to_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number))
+
+            if settings.trakt_push_collection:
+                collection_movies: list[int] = []
+                collection_episodes: list[tuple[int, int, int]] = []
+                for mid in collected_ids:
+                    media = media_by_id.get(mid)
+                    if not media or not media.tmdb_id:
+                        continue
+                    if media.media_type == MediaType.movie:
+                        collection_movies.append(media.tmdb_id)
+                    elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
+                        show = shows_by_id.get(media.show_id)
+                        if show and show.tmdb_id:
+                            collection_episodes.append((show.tmdb_id, media.season_number, media.episode_number))
+                if collection_movies or collection_episodes:
+                    push_tasks.append(trakt_client.add_to_collection_batch(settings.trakt_client_id, settings.trakt_access_token, collection_movies, collection_episodes))
 
             if settings.trakt_push_ratings:
                 from routers.sync import _get_effective_tmdb_key, _resolve_tmdb_season_ids
@@ -1100,7 +1125,7 @@ async def push_trakt(
     _require_trakt_config(settings)
     if not settings or not settings.trakt_access_token:
         raise HTTPException(status_code=400, detail="Trakt is not connected")
-    if not settings.trakt_push_watched and not settings.trakt_push_ratings:
+    if not settings.trakt_push_watched and not settings.trakt_push_ratings and not settings.trakt_push_collection:
         raise HTTPException(status_code=400, detail="Enable 'Scrob → Trakt' push flags first")
     job = SyncJob(user_id=current_user.id, source=CollectionSource.trakt, status=SyncStatus.pending, job_type="push")
     db.add(job)

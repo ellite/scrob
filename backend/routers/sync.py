@@ -626,6 +626,8 @@ async def _fan_out_changes_to_other_connections(
     settings: "UserSettings | None" = None,
     exclude_cloud_source: CollectionSource | None = None,
     removed_ratings: set[RatingKey] | None = None,
+    new_collected_ids: set[int] | None = None,
+    removed_collected_ids: set[int] | None = None,
 ) -> None:
     """Push an inbound sync delta to every enabled media server and cloud target.
 
@@ -633,13 +635,17 @@ async def _fan_out_changes_to_other_connections(
     prevents a cloud pull from writing the same delta back to its source.
     """
     removed_ratings = removed_ratings or set()
-    if not new_watched_ids and not new_ratings and not removed_ratings:
+    new_collected_ids = new_collected_ids or set()
+    removed_collected_ids = removed_collected_ids or set()
+    if not new_watched_ids and not new_ratings and not removed_ratings and not new_collected_ids and not removed_collected_ids:
         return
 
     all_changed_ids = (
         set(new_watched_ids)
         | {media_id for media_id, _ in new_ratings}
         | {media_id for media_id, _ in removed_ratings}
+        | new_collected_ids
+        | removed_collected_ids
     )
     media_items = await _select_in_chunks(
         db,
@@ -768,8 +774,9 @@ async def _fan_out_changes_to_other_connections(
     # ── Trakt fan-out ────────────────────────────────────────────────────────
     push_trakt_watched = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_watched and settings.trakt_access_token and settings.trakt_client_id
     push_trakt_ratings = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id
+    push_trakt_collection = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_collection and settings.trakt_access_token and settings.trakt_client_id
 
-    if (push_trakt_watched or push_trakt_ratings) and all_changed_ids:
+    if (push_trakt_watched or push_trakt_ratings or push_trakt_collection) and all_changed_ids:
         media_items = list(media_by_id.values())
 
         # Load shows for episode tmdb_id lookups
@@ -802,6 +809,45 @@ async def _fan_out_changes_to_other_connections(
                 settings.trakt_client_id, settings.trakt_access_token,
                 trakt_history_movies, trakt_history_episodes,
             ))
+
+        if push_trakt_collection:
+            trakt_collection_add_movies: list[int] = []
+            trakt_collection_add_episodes: list[tuple[int, int, int]] = []
+            for mid in new_collected_ids:
+                media = media_by_id.get(mid)
+                if not media or not media.tmdb_id:
+                    continue
+                if media.media_type == MediaType.movie:
+                    trakt_collection_add_movies.append(media.tmdb_id)
+                elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
+                    show = shows_by_id.get(media.show_id)
+                    if show and show.tmdb_id:
+                        trakt_collection_add_episodes.append((show.tmdb_id, media.season_number, media.episode_number))
+
+            if trakt_collection_add_movies or trakt_collection_add_episodes:
+                push_tasks.append(trakt_client.add_to_collection_batch(
+                    settings.trakt_client_id, settings.trakt_access_token,
+                    trakt_collection_add_movies, trakt_collection_add_episodes,
+                ))
+
+            trakt_collection_remove_movies: list[int] = []
+            trakt_collection_remove_episodes: list[tuple[int, int, int]] = []
+            for mid in removed_collected_ids:
+                media = media_by_id.get(mid)
+                if not media or not media.tmdb_id:
+                    continue
+                if media.media_type == MediaType.movie:
+                    trakt_collection_remove_movies.append(media.tmdb_id)
+                elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
+                    show = shows_by_id.get(media.show_id)
+                    if show and show.tmdb_id:
+                        trakt_collection_remove_episodes.append((show.tmdb_id, media.season_number, media.episode_number))
+
+            if trakt_collection_remove_movies or trakt_collection_remove_episodes:
+                push_tasks.append(trakt_client.remove_from_collection_batch(
+                    settings.trakt_client_id, settings.trakt_access_token,
+                    trakt_collection_remove_movies, trakt_collection_remove_episodes,
+                ))
 
         trakt_movie_ratings: list[tuple[int, float]] = []
         trakt_show_ratings: list[tuple[int, float]] = []
@@ -867,8 +913,9 @@ async def _fan_out_changes_to_other_connections(
     # ── MDBList fan-out ──────────────────────────────────────────────────────
     push_mdblist_watched = settings and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_watched and settings.mdblist_api_key
     push_mdblist_ratings = settings and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_ratings and settings.mdblist_api_key
+    push_mdblist_collection = settings and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_collection and settings.mdblist_api_key
 
-    if (push_mdblist_watched or push_mdblist_ratings) and all_changed_ids:
+    if (push_mdblist_watched or push_mdblist_ratings or push_mdblist_collection) and all_changed_ids:
         from core import mdblist as mdblist_client
         from routers.mdblist import _empty_payload, _merge_show_entries, _payload_item, _rating_removal_item
 
@@ -884,6 +931,36 @@ async def _fan_out_changes_to_other_connections(
                 if item:
                     watched_payload[item[0]].append(item[1])
             push_tasks.append(mdblist_client.push_watched(settings.mdblist_api_key, watched_payload))
+
+        if push_mdblist_collection and new_collected_ids:
+            collected_at_result = await db.execute(
+                select(Collection.media_id, Collection.added_at).where(
+                    Collection.user_id == user_id,
+                    Collection.media_id.in_(list(new_collected_ids)),
+                )
+            )
+            collected_at_by_media = {media_id: added_at for media_id, added_at in collected_at_result.all()}
+
+            collection_add_payload = _empty_payload()
+            for media_id in new_collected_ids:
+                media = mdblist_media_by_id.get(media_id)
+                item = (
+                    _payload_item(media, collected_at=collected_at_by_media.get(media_id, datetime.utcnow()))
+                    if media
+                    else None
+                )
+                if item:
+                    collection_add_payload[item[0]].append(item[1])
+            push_tasks.append(mdblist_client.push_collection(settings.mdblist_api_key, collection_add_payload))
+
+        if push_mdblist_collection and removed_collected_ids:
+            collection_remove_payload = _empty_payload()
+            for media_id in removed_collected_ids:
+                media = mdblist_media_by_id.get(media_id)
+                item = _payload_item(media) if media else None
+                if item:
+                    collection_remove_payload[item[0]].append(item[1])
+            push_tasks.append(mdblist_client.remove_collection(settings.mdblist_api_key, collection_remove_payload))
 
         if push_mdblist_ratings and new_ratings:
             rated_media_ids = list({media_id for media_id, _ in new_ratings})
@@ -1029,6 +1106,7 @@ async def sync_items(
     sync_ratings: bool = True,
     new_watched_ids: set[int] | None = None,  # accumulated across calls; mutated in-place
     new_ratings: RatingChanges | None = None,  # accumulated across calls; mutated in-place
+    new_collected_ids: set[int] | None = None,  # accumulated across calls; mutated in-place
     connection_id: int | None = None,
 ) -> list[dict]:  # returns warnings
     print(f"  Syncing {len(items)} {media_type.value}s from {source.value}...")
@@ -1401,6 +1479,8 @@ async def sync_items(
                                 existing_coll_by_media_id[media.id] = coll_id
                                 stat_key = "movies" if media_type == MediaType.movie else "series" if media_type == MediaType.series else "episodes"
                                 stats[stat_key] = stats.get(stat_key, 0) + 1
+                                if new_collected_ids is not None:
+                                    new_collected_ids.add(media.id)
                             # else: collection already exists from another source — just add the file
                             db.add(CollectionFile(
                                 collection_id=coll_id,
@@ -1565,6 +1645,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
             total_discovered = 0
             _new_watched: set[int] = set()
             _new_ratings: RatingChanges = {}
+            _new_collected: set[int] = set()
 
             for lib in libraries:
                 lib_type = (lib.get("CollectionType") or "").lower()
@@ -1621,7 +1702,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.jellyfin, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, connection_id=conn.id)
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id)
                     all_warnings.extend(w)
 
                 elif lib_type in ("tvshows", "tv"):
@@ -1663,7 +1744,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                         db, stats, user_id, job_id, show_map,
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, connection_id=conn.id,
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                     )
                     all_warnings.extend(w)
 
@@ -1673,12 +1754,12 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                             db, stats, user_id, job_id, {},
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                            new_watched_ids=_new_watched, new_ratings=_new_ratings, connection_id=conn.id,
+                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                         )
                         all_warnings.extend(w)
 
             print(f"Jellyfin sync job {job_id} completed. Stats: {stats}")
-            await _fan_out_changes_to_other_connections(db, user_id, conn.id, _new_watched, _new_ratings, settings=settings)
+            await _fan_out_changes_to_other_connections(db, user_id, conn.id, _new_watched, _new_ratings, settings=settings, new_collected_ids=_new_collected)
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
@@ -1752,6 +1833,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             total_discovered = 0
             _new_watched: set[int] = set()
             _new_ratings: RatingChanges = {}
+            _new_collected: set[int] = set()
 
             for lib in libraries:
                 lib_type = (lib.get("CollectionType") or "").lower()
@@ -1808,7 +1890,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.emby, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, connection_id=conn.id)
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id)
                     all_warnings.extend(w)
 
                 elif lib_type in ("tvshows", "tv"):
@@ -1852,7 +1934,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         db, stats, user_id, job_id, show_map,
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, connection_id=conn.id,
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                     )
                     all_warnings.extend(w)
 
@@ -1862,12 +1944,12 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                             db, stats, user_id, job_id, {},
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                            new_watched_ids=_new_watched, new_ratings=_new_ratings, connection_id=conn.id,
+                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                         )
                         all_warnings.extend(w)
 
             print(f"Emby sync job {job_id} completed. Stats: {stats}")
-            await _fan_out_changes_to_other_connections(db, user_id, conn.id, _new_watched, _new_ratings, settings=settings)
+            await _fan_out_changes_to_other_connections(db, user_id, conn.id, _new_watched, _new_ratings, settings=settings, new_collected_ids=_new_collected)
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
@@ -2010,6 +2092,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             total_discovered = 0
             _new_watched: set[int] = set()
             _new_ratings: RatingChanges = {}
+            _new_collected: set[int] = set()
             ratings_result = await db.execute(
                 select(Rating).where(Rating.user_id == user_id)
             )
@@ -2072,7 +2155,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.plex, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, connection_id=conn.id)
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id)
                     all_warnings.extend(w)
 
                 elif lib_type == "show":
@@ -2213,7 +2296,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         db, stats, user_id, job_id, show_map,
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, connection_id=conn.id,
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                     )
                     all_warnings.extend(w)
 
@@ -2223,7 +2306,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                             db, stats, user_id, job_id, {},
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                            new_watched_ids=_new_watched, new_ratings=_new_ratings, connection_id=conn.id,
+                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                         )
                         all_warnings.extend(w)
 
@@ -2354,7 +2437,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             if backfilled:
                 print(f"Plex sync job {job_id}: backfilled language data for {backfilled} file(s).")
             print(f"Plex sync job {job_id} completed. Stats: {stats}")
-            await _fan_out_changes_to_other_connections(db, user_id, conn.id, _new_watched, _new_ratings, settings=settings)
+            await _fan_out_changes_to_other_connections(db, user_id, conn.id, _new_watched, _new_ratings, settings=settings, new_collected_ids=_new_collected)
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
@@ -2751,6 +2834,7 @@ async def _run_nuvio_sync(
             stats = {"movies": 0, "series": 0, "episodes": 0, "skipped": skipped_nuvio_records, "errors": 0}
             warnings: list[dict] = []
             new_watched_ids: set[int] = set()
+            new_collected_ids: set[int] = set()
 
             async def sync_group(
                 entries: list[tuple[MediaType, dict]],
@@ -2777,6 +2861,7 @@ async def _run_nuvio_sync(
                     sync_watched=sync_watched,
                     sync_ratings=False,
                     new_watched_ids=new_watched_ids,
+                    new_collected_ids=new_collected_ids,
                     connection_id=conn.id,
                 )
                 warnings.extend(group_warnings)
@@ -2814,6 +2899,7 @@ async def _run_nuvio_sync(
                 {},
                 settings=settings,
                 exclude_cloud_source=CollectionSource.nuvio,
+                new_collected_ids=new_collected_ids,
             )
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
             await db.execute(

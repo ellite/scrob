@@ -104,6 +104,7 @@ class UserSettings(BaseModel):
     trakt_watchlist_split: Optional[bool] = None
     trakt_push_watched: Optional[bool] = None
     trakt_push_ratings: Optional[bool] = None
+    trakt_push_collection: Optional[bool] = None
     trakt_push_lists: Optional[bool] = None
     trakt_scrobble: Optional[bool] = None
 
@@ -126,6 +127,8 @@ class UserSettings(BaseModel):
     mdblist_push_watched: Optional[bool] = None
     mdblist_push_ratings: Optional[bool] = None
     mdblist_push_watchlist: Optional[bool] = None
+    mdblist_push_collection: Optional[bool] = None
+    mdblist_scrobble: Optional[bool] = None
 
     preferences: Optional[dict] = None
     blur_explicit: Optional[bool] = None

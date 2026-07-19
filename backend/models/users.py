@@ -82,6 +82,7 @@ class UserSettings(Base):
     # Trakt outbound push flags (Scrob → Trakt)
     trakt_push_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     trakt_push_ratings       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    trakt_push_collection    : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     trakt_scrobble           : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # Trakt list import/export
@@ -123,6 +124,8 @@ class UserSettings(Base):
     mdblist_push_watched: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     mdblist_push_ratings: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     mdblist_push_watchlist: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    mdblist_push_collection: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    mdblist_scrobble: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     user : Mapped["User"] = relationship(back_populates="settings")
 

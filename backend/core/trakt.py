@@ -249,6 +249,82 @@ async def add_to_history_batch(
         resp.raise_for_status()
 
 
+async def add_to_collection_batch(
+    client_id: str,
+    access_token: str,
+    movies: list[int],
+    episodes: list[tuple[int, int, int]],
+) -> None:
+    """Add multiple movies and/or episodes to Trakt collection in a single API call.
+
+    episodes: list of (show_tmdb_id, season_number, episode_number)
+    """
+    if not movies and not episodes:
+        return
+    body: dict = {}
+    if movies:
+        body["movies"] = [{"ids": {"tmdb": tmdb_id}} for tmdb_id in movies]
+    if episodes:
+        shows_map: dict[int, dict[int, list[int]]] = {}
+        for show_tmdb_id, season, ep_num in episodes:
+            shows_map.setdefault(show_tmdb_id, {}).setdefault(season, []).append(ep_num)
+        body["shows"] = [
+            {
+                "ids": {"tmdb": show_tmdb_id},
+                "seasons": [
+                    {"number": season, "episodes": [{"number": n} for n in eps]}
+                    for season, eps in seasons.items()
+                ],
+            }
+            for show_tmdb_id, seasons in shows_map.items()
+        ]
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{TRAKT_BASE}/sync/collection",
+            json=body,
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
+
+
+async def remove_from_collection_batch(
+    client_id: str,
+    access_token: str,
+    movies: list[int],
+    episodes: list[tuple[int, int, int]],
+) -> None:
+    """Remove multiple movies and/or episodes from Trakt collection in a single API call.
+
+    episodes: list of (show_tmdb_id, season_number, episode_number)
+    """
+    if not movies and not episodes:
+        return
+    body: dict = {}
+    if movies:
+        body["movies"] = [{"ids": {"tmdb": tmdb_id}} for tmdb_id in movies]
+    if episodes:
+        shows_map: dict[int, dict[int, list[int]]] = {}
+        for show_tmdb_id, season, ep_num in episodes:
+            shows_map.setdefault(show_tmdb_id, {}).setdefault(season, []).append(ep_num)
+        body["shows"] = [
+            {
+                "ids": {"tmdb": show_tmdb_id},
+                "seasons": [
+                    {"number": season, "episodes": [{"number": n} for n in eps]}
+                    for season, eps in seasons.items()
+                ],
+            }
+            for show_tmdb_id, seasons in shows_map.items()
+        ]
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{TRAKT_BASE}/sync/collection/remove",
+            json=body,
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
+
+
 async def set_ratings_batch(
     client_id: str,
     access_token: str,

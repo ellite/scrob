@@ -2362,13 +2362,33 @@ async def manually_collect(
     return {"status": "ok", "message": "Added to collection"}
 
 
+async def _push_collection_removal(db: AsyncSession, user_id: int, media_ids: set[int]) -> None:
+    """Fan out a local collection removal to Trakt/MDBList push targets."""
+    if not media_ids:
+        return
+    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+    settings = settings_result.scalar_one_or_none()
+    from routers.sync import _fan_out_changes_to_other_connections
+
+    await _fan_out_changes_to_other_connections(
+        db, user_id, None, set(), {}, settings=settings, removed_collected_ids=media_ids,
+    )
+
+
 @router.delete("/collect/all")
 async def clear_collection(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    media_ids_q = await db.execute(
+        select(Collection.media_id).where(Collection.user_id == current_user.id)
+    )
+    media_ids = {row[0] for row in media_ids_q.all()}
+
     await db.execute(delete(Collection).where(Collection.user_id == current_user.id))
     await db.commit()
+
+    await _push_collection_removal(db, current_user.id, media_ids)
     return {"status": "ok"}
 
 
@@ -2392,7 +2412,7 @@ async def manually_uncollect(
         media_q = await db.execute(
             select(Media).where(Media.id == media_id, Media.media_type == media_type)
         )
-    
+
     media = media_q.scalars().first()
     if not media:
         return {"status": "ok"}
@@ -2404,6 +2424,8 @@ async def manually_uncollect(
         )
     )
     await db.commit()
+
+    await _push_collection_removal(db, current_user.id, {media.id})
     return {"status": "ok", "message": "Removed from collection"}
 
 
@@ -2645,6 +2667,7 @@ async def uncollect_show(
             )
         )
         await db.commit()
+        await _push_collection_removal(db, current_user.id, set(episode_ids))
     return {"status": "ok"}
 
 
@@ -2681,6 +2704,8 @@ async def uncollect_season(
         )
     )
     await db.commit()
+
+    await _push_collection_removal(db, current_user.id, set(episode_ids))
     return {"status": "ok"}
 
 
