@@ -255,11 +255,15 @@ _LIBRARY_PUSH_FIELDS = (
 
 
 def _library_push_item(item: dict[str, Any]) -> dict[str, Any]:
-    return {
-        field: item[field]
-        for field in _LIBRARY_PUSH_FIELDS
-        if field in item and item[field] is not None
-    }
+    cleaned: dict[str, Any] = {}
+    for field in _LIBRARY_PUSH_FIELDS:
+        if field not in item:
+            continue
+        value = item[field]
+        if value is None or value == "" or (field == "genres" and not value):
+            continue
+        cleaned[field] = value
+    return cleaned
 
 
 async def push_library(

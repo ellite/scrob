@@ -20,6 +20,7 @@ from routers.sync import (
     _apply_nuvio_watch_history,
     _ensure_nuvio_imdb_ids,
     _normalize_nuvio_item,
+    _nuvio_library_item,
     _nuvio_progress_item,
     _nuvio_watched_item,
 )
@@ -337,6 +338,9 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
                             "content_type": "movie",
                             "name": "Old title",
                             "addon_base_url": "https://addon.example",
+                            "poster": "https://images.example/poster.jpg",
+                            "background": "https://images.example/background.jpg",
+                            "genres": ["Drama"],
                         },
                         {
                             "content_id": "tmdb:2",
@@ -361,7 +365,14 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
                 "old-refresh",
                 1,
                 additions=[
-                    {"content_id": "tmdb:1", "content_type": "movie", "name": "New title"},
+                    {
+                        "content_id": "tmdb:1",
+                        "content_type": "movie",
+                        "name": "New title",
+                        "poster": "",
+                        "background": None,
+                        "genres": [],
+                    },
                     {"content_id": "tmdb:3", "content_type": "movie", "name": "Added"},
                 ],
                 removed_content_ids=set(),
@@ -373,6 +384,9 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
         updated = next(item for item in pushed_items if item["content_id"] == "tmdb:1")
         self.assertEqual(updated["name"], "New title")
         self.assertEqual(updated["addon_base_url"], "https://addon.example")
+        self.assertEqual(updated["poster"], "https://images.example/poster.jpg")
+        self.assertEqual(updated["background"], "https://images.example/background.jpg")
+        self.assertEqual(updated["genres"], ["Drama"])
 
     async def test_push_library_replaces_snapshot_but_preserves_playback_metadata(self) -> None:
         pushed_items: list[dict] = []
@@ -562,6 +576,43 @@ class NuvioNormalizationTests(unittest.TestCase):
         self.assertEqual(item["UserData"]["Played"], True)
         self.assertEqual(item["UserData"]["PlayCount"], 1)
         self.assertIsNotNone(item["UserData"]["LastPlayedDate"])
+
+    def test_series_library_item_uses_canonical_show_artwork(self) -> None:
+        media = Media(
+            id=20,
+            tmdb_id=4607,
+            media_type=MediaType.series,
+            title="Lost : Les Disparus",
+            poster_path="",
+            backdrop_path="",
+        )
+        show = Show(
+            id=5,
+            tmdb_id=4607,
+            title="Lost",
+            poster_path="https://image.tmdb.org/t/p/w500/poster.jpg",
+            backdrop_path="https://image.tmdb.org/t/p/w1280/background.jpg",
+            overview="A mysterious island.",
+            first_air_date="2004-09-22",
+            tmdb_rating=8.0,
+            tmdb_data={"genres": [{"name": "Drama"}]},
+        )
+
+        item = _nuvio_library_item(
+            media,
+            datetime(2026, 7, 19, tzinfo=timezone.utc),
+            show,
+        )
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item["name"], "Lost : Les Disparus")
+        self.assertEqual(item["poster"], show.poster_path)
+        self.assertEqual(item["background"], show.backdrop_path)
+        self.assertEqual(item["description"], show.overview)
+        self.assertEqual(item["release_info"], "2004")
+        self.assertEqual(item["imdb_rating"], 8.0)
+        self.assertEqual(item["genres"], ["Drama"])
+
 
     def test_imdb_content_uses_resolved_tmdb_id(self) -> None:
         normalized = _normalize_nuvio_item(

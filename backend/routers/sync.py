@@ -468,7 +468,7 @@ def _nuvio_library_item(
     content_id = _nuvio_library_content_id(media, show)
     if not content_id:
         return None
-    entity: Media | Show = show if media.media_type == MediaType.episode and show else media
+    entity: Media | Show = show or media
     added = added_at if added_at.tzinfo else added_at.replace(tzinfo=timezone.utc)
     release_date = (
         entity.first_air_date
@@ -478,7 +478,7 @@ def _nuvio_library_item(
     return {
         "content_id": content_id,
         "content_type": "movie" if media.media_type == MediaType.movie else "series",
-        "name": entity.title,
+        "name": media.title if media.media_type == MediaType.series else entity.title,
         "poster": entity.poster_path,
         "poster_shape": "poster",
         "background": entity.backdrop_path,
@@ -506,7 +506,13 @@ async def _build_nuvio_library_items(
         for _, media in rows
         if media.media_type == MediaType.episode and media.show_id is not None
     }
+    series_tmdb_ids = {
+        media.tmdb_id
+        for _, media in rows
+        if media.media_type == MediaType.series and media.tmdb_id is not None
+    }
     shows_by_id: dict[int, Show] = {}
+    shows_by_tmdb: dict[int, Show] = {}
     if show_ids:
         shows = await _select_in_chunks(
             db,
@@ -514,10 +520,26 @@ async def _build_nuvio_library_items(
             list(show_ids),
         )
         shows_by_id = {show.id: show for show in shows}
+    if series_tmdb_ids:
+        series_shows = await _select_in_chunks(
+            db,
+            lambda chunk: select(Show).where(Show.tmdb_id.in_(chunk)),
+            list(series_tmdb_ids),
+        )
+        shows_by_tmdb = {
+            show.tmdb_id: show
+            for show in series_shows
+            if show.tmdb_id is not None
+        }
 
     items_by_content_id: dict[str, dict] = {}
     for added_at, media in rows:
-        item = _nuvio_library_item(media, added_at, shows_by_id.get(media.show_id))
+        show = (
+            shows_by_id.get(media.show_id)
+            if media.media_type == MediaType.episode
+            else shows_by_tmdb.get(media.tmdb_id)
+        )
+        item = _nuvio_library_item(media, added_at, show)
         if item:
             items_by_content_id.setdefault(item["content_id"], item)
     return list(items_by_content_id.values())
