@@ -274,7 +274,7 @@ Database migrations run automatically on startup - no manual steps required.
 |---|---|---|
 | `SECRET_KEY` | - | **Required.** JWT signing key. Generate with `openssl rand -hex 32`. |
 | `DATABASE_URL` | - | **Required** (standard image). PostgreSQL connection string (`postgresql+asyncpg://...`). Optional on the omnibus image — if omitted, the embedded database is used. |
-| `ENABLE_REGISTRATIONS` | `true` | Allow new users to register. The first user can always register regardless of this setting. |
+| `ENABLE_REGISTRATIONS` | `false` | Allow new users to register. The first user can always register regardless of this setting. |
 | `REGISTRATION_MAX_ALLOWED_USERS` | `0` | Maximum number of registered users. `0` = unlimited. |
 | `TZ` | `UTC` | Container timezone (e.g. `Europe/Lisbon`). |
 | `PUID` | `1000` | User ID to run the process as. |
