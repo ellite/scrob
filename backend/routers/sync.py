@@ -3576,11 +3576,17 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 async with lock:
                     token = conn.token
                     if conn.push_collection:
-                        session = await nuvio.push_library(
+                        # Merge rather than replace: a full/scheduled push only knows
+                        # the current local library, not what changed since last time,
+                        # so it must never drop remote-only items it can't account for.
+                        # Real removals still propagate through the real-time delta
+                        # push (_push_nuvio_library_delta) when an item is uncollected.
+                        session, _ = await nuvio.merge_library(
                             conn.url,
                             token,
                             _nuvio_profile_id(conn),
-                            library_items,
+                            additions=library_items,
+                            removed_content_ids=set(),
                         )
                         token = session.refresh_token
                     if watched_items or progress_items:

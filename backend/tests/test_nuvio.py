@@ -23,6 +23,7 @@ from routers.sync import (
     _nuvio_library_item,
     _nuvio_progress_item,
     _nuvio_watched_item,
+    _run_full_push,
 )
 
 
@@ -38,6 +39,24 @@ class _Result:
 
     def all(self):
         return self._rows
+
+    def scalar_one_or_none(self):
+        return self._scalars[0] if self._scalars else None
+
+
+class _SessionCM:
+    """Fakes the `async with async_sessionmaker(...)() as db:` pattern used by
+    background job functions that open their own session instead of taking
+    `db` as a parameter."""
+
+    def __init__(self, db):
+        self._db = db
+
+    async def __aenter__(self):
+        return self._db
+
+    async def __aexit__(self, *exc_info):
+        return False
 
 
 
@@ -759,6 +778,93 @@ class NuvioNormalizationTests(unittest.TestCase):
             title="Fight Club",
         )
         self.assertIsNone(_nuvio_watched_item(tmdb_only_movie, watched_at))
+
+
+class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_push_merges_instead_of_replacing_remote_library(self) -> None:
+        """Regression test: a scheduled/full push only knows the current local
+        library, not what changed since last time, so it must never drop a
+        remote-only item it can't account for — only the real-time delta push
+        (on an actual local removal) may do that."""
+        conn = SimpleNamespace(
+            id=4,
+            user_id=7,
+            type="nuvio",
+            url="https://api.nuvio.tv",
+            token="old-refresh",
+            server_user_id="1",
+            push_collection=True,
+            push_watched=False,
+            push_playback=False,
+        )
+        user_settings = SimpleNamespace(tmdb_api_key="tmdb-key")
+
+        db = SimpleNamespace(
+            execute=AsyncMock(
+                side_effect=[
+                    None,  # SyncJob status=running update
+                    _Result(scalars=[conn]),  # conn_result
+                    _Result(scalars=[user_settings]),  # settings_result
+                    None,  # SyncJob total_items update
+                    None,  # SyncJob status=completed update
+                ]
+            ),
+            commit=AsyncMock(),
+        )
+
+        pushed_items: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(
+                    200,
+                    json={
+                        "access_token": "access-token",
+                        "refresh_token": "rotated-refresh",
+                        "expires_in": 3600,
+                    },
+                )
+            if request.url.path.endswith("/sync_pull_library"):
+                return httpx.Response(
+                    200,
+                    json=[
+                        {"content_id": "tmdb:1", "content_type": "movie", "name": "Local movie"},
+                        {"content_id": "tt9999999", "content_type": "movie", "name": "Added on Nuvio directly"},
+                    ],
+                )
+            if request.url.path.endswith("/sync_push_library"):
+                pushed_items.extend(json.loads(request.content)["p_items"])
+                return httpx.Response(204)
+            return httpx.Response(404, json={"message": "unexpected request"})
+
+        transport = httpx.MockTransport(handler)
+
+        with (
+            patch(
+                "routers.sync.async_sessionmaker",
+                lambda *args, **kwargs: (lambda: _SessionCM(db)),
+            ),
+            patch(
+                "routers.sync._build_nuvio_library_items",
+                AsyncMock(return_value=[
+                    {"content_id": "tmdb:1", "content_type": "movie", "name": "Local movie"},
+                ]),
+            ),
+            patch.object(
+                nuvio.httpx,
+                "AsyncClient",
+                side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+            ),
+        ):
+            await _run_full_push(user_id=7, connection_id=4, job_id=99)
+
+        # The remote-only item ("tt9999999", never known locally) must survive
+        # the push alongside the locally-known item, instead of being wiped by
+        # a hard snapshot replace.
+        self.assertEqual(
+            {item["content_id"] for item in pushed_items},
+            {"tmdb:1", "tt9999999"},
+        )
 
 
 if __name__ == "__main__":
