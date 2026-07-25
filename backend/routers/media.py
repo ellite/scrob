@@ -39,6 +39,11 @@ from models.show import Show as ShowModel
 from models.global_settings import GlobalSettings
 
 router = APIRouter()
+_PLAYABLE_COLLECTION_SOURCES = {
+    CollectionSource.jellyfin,
+    CollectionSource.emby,
+    CollectionSource.plex,
+}
 
 
 class SessionReportRequest(BaseModel):
@@ -2361,11 +2366,18 @@ async def manually_collect(
         source_id=str(body.tmdb_id),
     ))
     await db.commit()
+    await _push_collection_change(db, current_user.id, {media.id}, added=True)
     return {"status": "ok", "message": "Added to collection"}
 
 
-async def _push_collection_removal(db: AsyncSession, user_id: int, media_ids: set[int]) -> None:
-    """Fan out a local collection removal to Trakt/MDBList push targets."""
+async def _push_collection_change(
+    db: AsyncSession,
+    user_id: int,
+    media_ids: set[int],
+    *,
+    added: bool,
+) -> None:
+    """Fan out a local collection mutation to enabled push targets."""
     if not media_ids:
         return
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
@@ -2373,7 +2385,14 @@ async def _push_collection_removal(db: AsyncSession, user_id: int, media_ids: se
     from routers.sync import _fan_out_changes_to_other_connections
 
     await _fan_out_changes_to_other_connections(
-        db, user_id, None, set(), {}, settings=settings, removed_collected_ids=media_ids,
+        db,
+        user_id,
+        None,
+        set(),
+        {},
+        settings=settings,
+        new_collected_ids=media_ids if added else set(),
+        removed_collected_ids=set() if added else media_ids,
     )
 
 
@@ -2390,7 +2409,7 @@ async def clear_collection(
     await db.execute(delete(Collection).where(Collection.user_id == current_user.id))
     await db.commit()
 
-    await _push_collection_removal(db, current_user.id, media_ids)
+    await _push_collection_change(db, current_user.id, media_ids, added=False)
     return {"status": "ok"}
 
 
@@ -2427,7 +2446,7 @@ async def manually_uncollect(
     )
     await db.commit()
 
-    await _push_collection_removal(db, current_user.id, {media.id})
+    await _push_collection_change(db, current_user.id, {media.id}, added=False)
     return {"status": "ok", "message": "Removed from collection"}
 
 
@@ -2619,6 +2638,12 @@ async def collect_season(
 
     added = await _collect_episodes(db, current_user.id, episodes)
     await db.commit()
+    await _push_collection_change(
+        db,
+        current_user.id,
+        {episode.id for episode in episodes},
+        added=True,
+    )
     return {"status": "ok", "count": added}
 
 
@@ -2669,11 +2694,14 @@ async def collect_show(
     ]
 
     total_added = 0
+    collected_media_ids: set[int] = set()
     for sn in season_numbers:
         episodes = await _resolve_season_episodes(db, show, body.tmdb_id, sn, tmdb_key)
         total_added += await _collect_episodes(db, current_user.id, episodes)
+        collected_media_ids.update(episode.id for episode in episodes)
 
     await db.commit()
+    await _push_collection_change(db, current_user.id, collected_media_ids, added=True)
     return {"status": "ok", "count": total_added}
 
 
@@ -2704,7 +2732,7 @@ async def uncollect_show(
             )
         )
         await db.commit()
-        await _push_collection_removal(db, current_user.id, set(episode_ids))
+        await _push_collection_change(db, current_user.id, set(episode_ids), added=False)
     return {"status": "ok"}
 
 
@@ -2760,7 +2788,7 @@ async def uncollect_season(
     )
     await db.commit()
 
-    await _push_collection_removal(db, current_user.id, set(episode_ids))
+    await _push_collection_change(db, current_user.id, set(episode_ids), added=False)
     return {"status": "ok"}
 
 
@@ -4161,6 +4189,7 @@ async def get_media_details(
                 await db.commit()
             # Check local info for library tags
             library_info = None
+            playable = False
             if local_ep:
                 coll_q = (
                     select(CollectionFile)
@@ -4169,7 +4198,14 @@ async def get_media_details(
                     .order_by(CollectionFile.added_at.desc())
                 )
                 coll_res = await db.execute(coll_q)
-                coll_file = coll_res.scalars().first()
+                coll_files = coll_res.scalars().all()
+                playable = any(
+                    coll_file.source in _PLAYABLE_COLLECTION_SOURCES
+                    and coll_file.connection_id is not None
+                    and coll_file.source_id is not None
+                    for coll_file in coll_files
+                )
+                coll_file = coll_files[0] if coll_files else None
                 if coll_file:
                     library_info = {
                         "resolution": coll_file.resolution,
@@ -4213,6 +4249,7 @@ async def get_media_details(
                 ],
                 "genres": (show.tmdb_data or {}).get("genres", []),
                 "in_library": ep_state.get("in_library", False),
+                "playable": playable,
                 "watched": ep_state.get("watched", False),
                 "in_lists": ep_state.get("in_lists", []),
                 "user_rating": ep_state.get("user_rating"),
@@ -4233,7 +4270,7 @@ async def get_media_details(
         media = all_media[0] if all_media else None
         all_media_ids = [m.id for m in all_media]
 
-        local_info = {"in_library": False, "library": None, "id": None}
+        local_info = {"in_library": False, "playable": False, "library": None, "id": None}
         if all_media:
             local_info["in_library"] = True
             local_info["id"] = media.id
@@ -4252,7 +4289,14 @@ async def get_media_details(
                 .order_by(CollectionFile.added_at.desc())
             )
             coll_res = await db.execute(coll_q)
-            coll_file = coll_res.scalars().first()
+            coll_files = coll_res.scalars().all()
+            local_info["playable"] = any(
+                coll_file.source in _PLAYABLE_COLLECTION_SOURCES
+                and coll_file.connection_id is not None
+                and coll_file.source_id is not None
+                for coll_file in coll_files
+            )
+            coll_file = coll_files[0] if coll_files else None
             if coll_file:
                 local_info["library"] = {
                     "resolution": coll_file.resolution,

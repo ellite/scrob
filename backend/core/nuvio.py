@@ -238,6 +238,121 @@ async def pull_sync_data(
     return session, {"library": library, "watched": watched, "progress": progress}
 
 
+_LIBRARY_PUSH_FIELDS = (
+    "content_id",
+    "content_type",
+    "name",
+    "poster",
+    "poster_shape",
+    "background",
+    "description",
+    "release_info",
+    "imdb_rating",
+    "genres",
+    "addon_base_url",
+    "added_at",
+)
+
+
+def _library_push_item(item: dict[str, Any]) -> dict[str, Any]:
+    cleaned: dict[str, Any] = {}
+    for field in _LIBRARY_PUSH_FIELDS:
+        if field not in item:
+            continue
+        value = item[field]
+        if value is None or value == "" or (field == "genres" and not value):
+            continue
+        cleaned[field] = value
+    return cleaned
+
+
+async def push_library(
+    url: str,
+    refresh_token: str,
+    profile_id: int,
+    items: list[dict[str, Any]],
+) -> NuvioSession:
+    """Replace a Nuvio library while preserving remote playback metadata."""
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+        session = await refresh_session(url, refresh_token, client=client)
+        remote_items = await _pull_library(
+            client,
+            url,
+            session.access_token,
+            profile_id,
+        )
+        remote_by_id = {
+            str(item.get("content_id")): _library_push_item(item)
+            for item in remote_items
+            if item.get("content_id")
+        }
+        snapshot: list[dict[str, Any]] = []
+        for item in items:
+            content_id = str(item.get("content_id") or "")
+            if not content_id:
+                continue
+            snapshot.append({
+                **remote_by_id.get(content_id, {}),
+                **_library_push_item(item),
+            })
+        await _rpc(
+            client,
+            url,
+            session.access_token,
+            "sync_push_library",
+            {"p_profile_id": profile_id, "p_items": snapshot},
+        )
+    return session
+
+
+async def merge_library(
+    url: str,
+    refresh_token: str,
+    profile_id: int,
+    *,
+    additions: list[dict[str, Any]],
+    removed_content_ids: set[str],
+) -> tuple[NuvioSession, int]:
+    """Read, merge, and safely replace a Nuvio library snapshot."""
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+        session = await refresh_session(url, refresh_token, client=client)
+        remote_items = await _pull_library(
+            client,
+            url,
+            session.access_token,
+            profile_id,
+        )
+        merged = {
+            str(item.get("content_id")): _library_push_item(item)
+            for item in remote_items
+            if item.get("content_id")
+        }
+        for content_id in removed_content_ids:
+            merged.pop(content_id, None)
+        for item in additions:
+            content_id = str(item.get("content_id") or "")
+            if not content_id:
+                continue
+            existing = merged.get(content_id, {})
+            merged[content_id] = {
+                **existing,
+                **_library_push_item(item),
+            }
+        await _rpc(
+            client,
+            url,
+            session.access_token,
+            "sync_push_library",
+            {
+                "p_profile_id": profile_id,
+                "p_items": list(merged.values()),
+            },
+        )
+    return session, len(merged)
+
+
+
+
 async def _push_sync_items(
     url: str,
     refresh_token: str,

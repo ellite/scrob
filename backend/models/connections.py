@@ -28,11 +28,13 @@ class MediaServerConnection(Base):
 
     # Outbound push flags (Scrob → source)
     push_watched     : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    push_collection  : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     push_playback    : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     push_ratings     : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # Auto sync interval in hours (null = disabled)
     auto_sync_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    auto_push_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Plex watchlist → Radarr/Sonarr auto-request (Plex connections only)
     watchlist_to_radarr       : Mapped[bool]           = mapped_column(Boolean, nullable=False, default=False, server_default="false")

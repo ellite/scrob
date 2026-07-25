@@ -268,14 +268,16 @@ const refreshUrl = isEpisode
                     <span id="refresh-label">Refresh Metadata</span>
                   </button>
                 )}
-                <VideoPlayer
-                  tmdbId={item.tmdb_id}
-                  mediaType={item.type}
-                  inLibrary={item.in_library ?? false}
-                  title={item.title}
-                  token={token}
-                  secondary
-                />
+                {item.playable && (
+                  <VideoPlayer
+                    tmdbId={item.tmdb_id}
+                    mediaType={item.type}
+                    inLibrary={item.in_library ?? false}
+                    title={item.title}
+                    token={token}
+                    secondary
+                  />
+                )}
               </div>
             )}
 
