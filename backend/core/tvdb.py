@@ -134,6 +134,42 @@ async def get_series(tvdb_id: int, api_key: str) -> dict:
     return data.get("data") or {}
 
 
+async def get_season(season_id: int, api_key: str) -> dict:
+    """Fetch extended season metadata, including translated names and overviews."""
+    data = await _get(
+        f"/seasons/{season_id}/extended",
+        api_key,
+        params={"meta": "translations"},
+    )
+    return data.get("data") or {}
+
+
+def format_season(raw: dict, language: str | None = None) -> dict:
+    """Normalise extended TVDB season metadata."""
+    translations = raw.get("translations") or {}
+
+    def _pick(key: str, field: str) -> str | None:
+        entries = translations.get(key) or []
+        fallback = None
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if language and entry.get("language") == language:
+                return entry.get(field) or None
+            if entry.get("language") == "eng":
+                fallback = entry.get(field) or None
+        return fallback
+
+    return {
+        "season_number": raw.get("number"),
+        "name": _pick("nameTranslations", "name") or raw.get("name"),
+        "overview": _pick("overviewTranslations", "overview") or raw.get("overview"),
+        "poster_path": _image_url(raw.get("image")),
+        "air_date": raw.get("premiereDate"),
+        "id": raw.get("id"),
+    }
+
+
 async def get_series_episodes(tvdb_id: int, season_number: int, api_key: str, language: str | None = None) -> list[dict]:
     """Fetch episodes for a specific season (season_type=official)."""
     episodes = []

@@ -542,7 +542,10 @@ async def run_trakt_sync(user_id: int, job_id: int):
                 ratings_data = await trakt_client.get_ratings(client_id, access_token)
 
                 ratings_result = await db.execute(
-                    select(Rating).where(Rating.user_id == user_id)
+                    select(Rating).where(
+                        Rating.user_id == user_id,
+                        Rating.episode_order.is_(None),
+                    )
                 )
                 existing_ratings = {
                     (rating.media_id, rating.season_number): rating
@@ -997,6 +1000,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                     select(Rating.media_id, Rating.season_number, Rating.rating).where(
                         Rating.user_id == user_id,
                         Rating.rating.isnot(None),
+                        Rating.episode_order.is_(None),
                     )
                 )
                 ratings_map = {

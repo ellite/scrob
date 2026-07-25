@@ -24,6 +24,7 @@ from models.ratings import Rating
 from models.base import MediaType, CollectionSource
 from models.lists import List as UserList, ListItem
 from models.media_request import MediaRequest, RequestStatus
+from models.episode_order import EpisodeOrderMapping
 from models.profile import UserProfileData
 from core import tmdb
 from core.translations import (
@@ -1691,6 +1692,7 @@ class CollectRequest(PydanticModel):
 class CollectSeasonRequest(PydanticModel):
     series_tmdb_id: int
     season_number: int
+    episode_order: Optional[str] = None
 
 
 def _enrich_movie_list(results: list[dict], library_ids: set[int]) -> list[dict]:
@@ -2576,7 +2578,42 @@ async def collect_season(
         db.add(show)
         await db.flush()
 
-    episodes = await _resolve_season_episodes(db, show, body.series_tmdb_id, body.season_number, tmdb_key)
+    if body.episode_order == "tvdb":
+        mapping_result = await db.execute(
+            select(EpisodeOrderMapping).where(
+                EpisodeOrderMapping.series_tmdb_id == body.series_tmdb_id,
+                EpisodeOrderMapping.tvdb_season_number == body.season_number,
+            )
+        )
+        mappings = list(mapping_result.scalars().all())
+        if not mappings:
+            raise HTTPException(status_code=400, detail="TVDB episode mapping is not available")
+        target_positions = {
+            (mapping.tmdb_season_number, mapping.tmdb_episode_number)
+            for mapping in mappings
+        }
+        episodes = []
+        for canonical_season in sorted({season for season, _ in target_positions}):
+            resolved = await _resolve_season_episodes(
+                db,
+                show,
+                body.series_tmdb_id,
+                canonical_season,
+                tmdb_key,
+            )
+            episodes.extend(
+                episode
+                for episode in resolved
+                if (episode.season_number, episode.episode_number) in target_positions
+            )
+    else:
+        episodes = await _resolve_season_episodes(
+            db,
+            show,
+            body.series_tmdb_id,
+            body.season_number,
+            tmdb_key,
+        )
     if not episodes:
         return {"status": "ok", "count": 0}
 
@@ -2675,6 +2712,7 @@ async def uncollect_show(
 async def uncollect_season(
     series_tmdb_id: int = Query(...),
     season_number: int = Query(...),
+    episode_order: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -2686,13 +2724,30 @@ async def uncollect_season(
     if not show:
         return {"status": "ok"}
 
-    episodes_q = await db.execute(
-        select(Media.id).where(
-            Media.show_id == show.id,
-            Media.media_type == MediaType.episode,
-            Media.season_number == season_number,
+    media_filters = [
+        Media.show_id == show.id,
+        Media.media_type == MediaType.episode,
+    ]
+    if episode_order == "tvdb":
+        mapping_result = await db.execute(
+            select(EpisodeOrderMapping).where(
+                EpisodeOrderMapping.series_tmdb_id == series_tmdb_id,
+                EpisodeOrderMapping.tvdb_season_number == season_number,
+            )
         )
-    )
+        positions = [
+            and_(
+                Media.season_number == mapping.tmdb_season_number,
+                Media.episode_number == mapping.tmdb_episode_number,
+            )
+            for mapping in mapping_result.scalars().all()
+        ]
+        if not positions:
+            return {"status": "ok"}
+        media_filters.append(or_(*positions))
+    else:
+        media_filters.append(Media.season_number == season_number)
+    episodes_q = await db.execute(select(Media.id).where(*media_filters))
     episode_ids = [r[0] for r in episodes_q.all()]
     if not episode_ids:
         return {"status": "ok"}

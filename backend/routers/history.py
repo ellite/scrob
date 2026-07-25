@@ -15,6 +15,7 @@ from models.collection import Collection, CollectionFile
 from models.base import MediaType, CollectionSource
 from models.users import UserSettings
 from models.connections import MediaServerConnection
+from models.episode_order import EpisodeOrderMapping
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations
 
@@ -627,6 +628,7 @@ async def unhide_next_up_show(
 class SeasonWatchRequest(BaseModel):
     series_tmdb_id: int
     season_number: int
+    episode_order: str | None = None
 
 
 class ShowWatchRequest(BaseModel):
@@ -874,46 +876,79 @@ async def mark_season_watched(
         db.add(show)
         await db.flush()
 
-    # 2. Fetch season episodes from TMDB to ensure we know about all of them
+    target_positions: set[tuple[int, int]] | None = None
+    canonical_seasons = [body.season_number]
+    if body.episode_order == "tvdb":
+        mapping_result = await db.execute(
+            select(EpisodeOrderMapping).where(
+                EpisodeOrderMapping.series_tmdb_id == body.series_tmdb_id,
+                EpisodeOrderMapping.tvdb_season_number == body.season_number,
+            )
+        )
+        mappings = list(mapping_result.scalars().all())
+        if not mappings:
+            raise HTTPException(status_code=400, detail="TVDB episode mapping is not available")
+        target_positions = {
+            (mapping.tmdb_season_number, mapping.tmdb_episode_number)
+            for mapping in mappings
+        }
+        canonical_seasons = sorted({season for season, _ in target_positions})
+
     try:
-        season_data = await tmdb.get_season(body.series_tmdb_id, body.season_number, api_key=api_key)
+        season_payloads = await asyncio.gather(
+            *(
+                tmdb.get_season(
+                    body.series_tmdb_id,
+                    canonical_season,
+                    api_key=api_key,
+                )
+                for canonical_season in canonical_seasons
+            )
+        )
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Season not found: {e}")
 
-    # 3. Ensure Media rows exist for all aired episodes in this season
     now = datetime.utcnow()
     today = now.date()
-    
-    # Get existing episodes for this season
     existing_q = await db.execute(
         select(Media).where(
             Media.show_id == show.id,
             Media.media_type == MediaType.episode,
-            Media.season_number == body.season_number
+            Media.season_number.in_(canonical_seasons),
         )
     )
-    existing_map = {m.episode_number: m for m in existing_q.scalars().all()}
-    
+    existing_map = {
+        (media.season_number, media.episode_number): media
+        for media in existing_q.scalars().all()
+    }
+
     all_season_episodes = []
-    for ep in season_data.get("episodes", []):
-        air_date_str = ep.get("air_date")
-        if not air_date_str: continue
-        try:
-            air_date = datetime.strptime(air_date_str, "%Y-%m-%d").date()
-            if air_date > today: continue # Skip unaired
-        except Exception: continue
-        
-        ep_num = ep["episode_number"]
-        if ep_num in existing_map:
-            all_season_episodes.append(existing_map[ep_num])
-        else:
+    for canonical_season, season_data in zip(canonical_seasons, season_payloads):
+        for ep in season_data.get("episodes", []):
+            position = (canonical_season, ep["episode_number"])
+            if target_positions is not None and position not in target_positions:
+                continue
+            air_date_str = ep.get("air_date")
+            if not air_date_str:
+                continue
+            try:
+                air_date = datetime.strptime(air_date_str, "%Y-%m-%d").date()
+                if air_date > today:
+                    continue
+            except Exception:
+                continue
+
+            existing = existing_map.get(position)
+            if existing:
+                all_season_episodes.append(existing)
+                continue
             new_ep = Media(
                 show_id=show.id,
                 tmdb_id=ep["id"],
                 media_type=MediaType.episode,
-                title=ep.get("name") or f"Episode {ep_num}",
-                season_number=body.season_number,
-                episode_number=ep_num,
+                title=ep.get("name") or f"Episode {ep['episode_number']}",
+                season_number=canonical_season,
+                episode_number=ep["episode_number"],
                 poster_path=tmdb.poster_url(ep.get("still_path"), size="w500"),
                 release_date=air_date_str,
                 tmdb_rating=ep.get("vote_average"),
@@ -965,6 +1000,7 @@ async def mark_season_watched(
 async def unwatch_season(
     series_tmdb_id: int = Query(...),
     season_number: int = Query(...),
+    episode_order: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -974,14 +1010,32 @@ async def unwatch_season(
     if not show:
         return {"status": "ok", "count": 0}
 
-    episodes_q = await db.execute(
-        select(Media.id).where(
-            Media.show_id == show.id,
-            Media.media_type == MediaType.episode,
-            Media.season_number == season_number,
+    media_filters = [
+        Media.show_id == show.id,
+        Media.media_type == MediaType.episode,
+    ]
+    if episode_order == "tvdb":
+        mapping_result = await db.execute(
+            select(EpisodeOrderMapping).where(
+                EpisodeOrderMapping.series_tmdb_id == series_tmdb_id,
+                EpisodeOrderMapping.tvdb_season_number == season_number,
+            )
         )
-    )
-    episode_ids = [r[0] for r in episodes_q.all()]
+        positions = [
+            and_(
+                Media.season_number == mapping.tmdb_season_number,
+                Media.episode_number == mapping.tmdb_episode_number,
+            )
+            for mapping in mapping_result.scalars().all()
+        ]
+        if not positions:
+            return {"status": "ok", "count": 0}
+        media_filters.append(or_(*positions))
+    else:
+        media_filters.append(Media.season_number == season_number)
+
+    episodes_q = await db.execute(select(Media.id).where(*media_filters))
+    episode_ids = [row[0] for row in episodes_q.all()]
     if not episode_ids:
         return {"status": "ok", "count": 0}
 

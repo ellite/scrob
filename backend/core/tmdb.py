@@ -95,6 +95,18 @@ async def get_episode(tmdb_id: int, season_number: int, episode_number: int, api
     )
 
 
+async def get_episode_external_ids(
+    tmdb_id: int,
+    season_number: int,
+    episode_number: int,
+    api_key: str = None,
+) -> dict:
+    return await _get(
+        f"{TMDB_BASE}/tv/{tmdb_id}/season/{season_number}/episode/{episode_number}/external_ids",
+        headers=get_headers(api_key),
+    )
+
+
 async def get_trending_movies(time_window: str = "day", page: int = 1, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/trending/movie/{time_window}", headers=get_headers(api_key), params={"page": page})
 

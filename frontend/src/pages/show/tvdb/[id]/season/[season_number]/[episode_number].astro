@@ -157,15 +157,18 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
 
             <div class="mb-4">
               <ActionBar
-                tmdbId={episode.tvdb_id ?? Number(id)}
+                tmdbId={episode.tmdb_id ?? episode.tvdb_id ?? Number(id)}
                 mediaType="episode"
                 watched={episode.watched}
                 inLists={episode.in_lists}
                 inLibrary={episode.in_library}
                 collectionPct={episode.in_library ? 100 : 0}
-                showTmdbId={Number(id)}
-                seasonNumber={Number(season_number)}
-                episodeNumber={Number(episode_number)}
+                showTmdbId={episode.show_tmdb_id ?? episode.show.tmdb_id ?? undefined}
+                seasonNumber={episode.tmdb_season_number}
+                episodeNumber={episode.tmdb_episode_number}
+                displaySeasonNumber={Number(season_number)}
+                episodeOrder="tvdb"
+                tvdbId={Number(id)}
                 mediaId={episode.id}
                 hideRequest={true}
                 userRating={episode.user_rating}
@@ -173,13 +176,14 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
             </div>
 
             <ManualScrobble
-              tmdbId={null}
+              tmdbId={episode.tmdb_id}
               mediaId={episode.id}
               mediaType="episode"
               runtime={episode.runtime}
               title={episode.name ?? `Episode ${episode_number}`}
-              seasonNumber={Number(season_number)}
-              episodeNumber={Number(episode_number)}
+              showTmdbId={episode.show_tmdb_id ?? episode.show.tmdb_id ?? undefined}
+              seasonNumber={episode.tmdb_season_number}
+              episodeNumber={episode.tmdb_episode_number}
             />
 
             <!-- Library info -->
@@ -228,7 +232,7 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
                   <span id="refresh-label">Refresh Metadata</span>
                 </button>
                 <VideoPlayer
-                  tmdbId={episode.tvdb_id ?? Number(id)}
+                  tmdbId={episode.tmdb_id ?? episode.tvdb_id ?? Number(id)}
                   mediaId={episode.id}
                   mediaType="episode"
                   inLibrary={episode.in_library}
@@ -255,9 +259,9 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
 
         <CommentsSection
           mediaType="series"
-          tmdbId={Number(id)}
-          seasonNumber={Number(season_number)}
-          episodeNumber={Number(episode_number)}
+          tmdbId={episode.show_tmdb_id ?? episode.show.tmdb_id ?? Number(id)}
+          seasonNumber={episode.tmdb_season_number}
+          episodeNumber={episode.tmdb_episode_number}
         />
 
         <!-- Cast -->

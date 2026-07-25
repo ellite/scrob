@@ -1,0 +1,90 @@
+---
+interface Props {
+  tmdbId: number;
+  tvdbId: number;
+  selected: "tmdb" | "tvdb";
+  token: string;
+}
+
+const { tmdbId, tvdbId, selected, token } = Astro.props;
+---
+
+<div
+  data-episode-order-selector
+  data-tmdb-id={String(tmdbId)}
+  data-tvdb-id={String(tvdbId)}
+  data-selected={selected}
+  data-token={token}
+  class="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-4 py-3"
+>
+  <div>
+    <p class="text-xs font-black uppercase tracking-wider text-zinc-300">Episode order</p>
+    <p class="text-[11px] text-zinc-500">Choose how seasons are grouped for this show.</p>
+  </div>
+  <div class="ml-auto flex rounded-xl border border-zinc-700 bg-zinc-950 p-1" role="group" aria-label="Episode order">
+    <button
+      type="button"
+      data-order="tmdb"
+      aria-pressed={selected === "tmdb"}
+      class:list={[
+        "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors",
+        selected === "tmdb" ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-100",
+      ]}
+    >
+      TMDB
+    </button>
+    <button
+      type="button"
+      data-order="tvdb"
+      aria-pressed={selected === "tvdb"}
+      class:list={[
+        "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors",
+        selected === "tvdb" ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-100",
+      ]}
+    >
+      TVDB
+    </button>
+  </div>
+  <p data-order-error class="hidden w-full text-xs font-medium text-red-400"></p>
+</div>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-episode-order-selector]').forEach((selector) => {
+    if (selector.dataset.bound === 'true') return;
+    selector.dataset.bound = 'true';
+
+    selector.querySelectorAll<HTMLButtonElement>('[data-order]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const episodeOrder = button.dataset.order as 'tmdb' | 'tvdb';
+        if (episodeOrder === selector.dataset.selected) return;
+
+        const buttons = selector.querySelectorAll<HTMLButtonElement>('[data-order]');
+        const error = selector.querySelector<HTMLElement>('[data-order-error]');
+        buttons.forEach((item) => { item.disabled = true; });
+        if (error) error.classList.add('hidden');
+        button.textContent = episodeOrder === 'tvdb' ? 'Mapping…' : 'Saving…';
+
+        try {
+          const response = await fetch(`/api/proxy/shows/${selector.dataset.tmdbId}/episode-order`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${selector.dataset.token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ episode_order: episodeOrder }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || 'Unable to update episode order');
+          window.location.href = data.redirect;
+        } catch (exception) {
+          button.textContent = episodeOrder.toUpperCase();
+          buttons.forEach((item) => { item.disabled = false; });
+          if (error) {
+            error.textContent = exception instanceof Error ? exception.message : 'Unable to update episode order';
+            error.classList.remove('hidden');
+          }
+        }
+      });
+    });
+  });
+</script>
