@@ -81,20 +81,23 @@ def upgrade() -> None:
 
     op.add_column("ratings", sa.Column("episode_order", sa.String(length=20), nullable=True))
     op.drop_index("uq_rating_user_media_season", table_name="ratings")
-    op.execute(
-        "CREATE UNIQUE INDEX uq_rating_user_media_season_order "
-        "ON ratings (user_id, media_id, COALESCE(season_number, -1), "
-        "COALESCE(episode_order, 'tmdb'))"
-    )
+    with op.get_context().autocommit_block():
+        op.execute(
+            "CREATE UNIQUE INDEX CONCURRENTLY uq_rating_user_media_season_order "
+            "ON ratings (user_id, media_id, COALESCE(season_number, -1), "
+            "COALESCE(episode_order, 'tmdb'))"
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("uq_rating_user_media_season_order", table_name="ratings")
+    with op.get_context().autocommit_block():
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS uq_rating_user_media_season_order")
     op.execute("DELETE FROM ratings WHERE episode_order IS NOT NULL")
-    op.execute(
-        "CREATE UNIQUE INDEX uq_rating_user_media_season "
-        "ON ratings (user_id, media_id, COALESCE(season_number, -1))"
-    )
+    with op.get_context().autocommit_block():
+        op.execute(
+            "CREATE UNIQUE INDEX CONCURRENTLY uq_rating_user_media_season "
+            "ON ratings (user_id, media_id, COALESCE(season_number, -1))"
+        )
     op.drop_column("ratings", "episode_order")
     op.drop_index("idx_episode_order_mapping_tvdb_position", table_name="episode_order_mappings")
     op.drop_index(op.f("ix_episode_order_mappings_series_tmdb_id"), table_name="episode_order_mappings")

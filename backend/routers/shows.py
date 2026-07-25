@@ -1472,11 +1472,11 @@ async def get_tvdb_show(
             if mapping:
                 target_season = mapping.tvdb_season_number
                 target_episode = mapping.tvdb_episode_number
-            elif not mappings:
+            else:
+                # No mapping for this specific episode — fall back to its own
+                # TMDB position rather than dropping it from the counts entirely.
                 target_season = episode.season_number
                 target_episode = episode.episode_number
-            else:
-                continue
             if target_season is None or target_episode is None:
                 continue
             if episode.id in collected_ids:
@@ -1704,12 +1704,12 @@ async def get_tvdb_season(
             local_episode = local_ep_map.get(
                 (mapping.tmdb_season_number, mapping.tmdb_episode_number)
             )
-        elif not mappings:
+        else:
+            # No mapping for this specific TVDB episode — fall back to matching
+            # by raw position rather than reporting it as missing from the library.
             local_episode = local_ep_map.get(
                 (season_number, episode.get("episode_number"))
             )
-        else:
-            local_episode = None
         mapped_rows.append((episode, mapping, local_episode))
 
     local_media_ids = list({
