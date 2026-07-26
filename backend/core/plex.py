@@ -514,12 +514,13 @@ async def scan_libraries(url: str, token: str, section_keys: list[str]) -> bool:
 async def set_rating(url: str, token: str, rating_key: str, rating: float, client: httpx.AsyncClient | None = None) -> bool:
     """Set a star rating on a Plex item (0–10 scale)."""
     headers = {"X-Plex-Token": token, "Accept": "application/json"}
+    params = {"key": rating_key, "identifier": "com.plexapp.plugins.library", "rating": rating}
     try:
         if client:
-            r = await client.put(f"{url.rstrip('/')}/library/metadata/{rating_key}/userRating", headers=headers, params={"rating": rating})
+            r = await client.put(f"{url.rstrip('/')}/:/rate", headers=headers, params=params)
             return r.status_code < 400
         async with httpx.AsyncClient(timeout=PUSH_TIMEOUT, follow_redirects=False) as c:
-            r = await c.put(f"{url.rstrip('/')}/library/metadata/{rating_key}/userRating", headers=headers, params={"rating": rating})
+            r = await c.put(f"{url.rstrip('/')}/:/rate", headers=headers, params=params)
             return r.status_code < 400
     except Exception:
         return False

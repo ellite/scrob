@@ -70,6 +70,8 @@ class PlexSeasonRatingTests(unittest.IsolatedAsyncioTestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             request_data["path"] = request.url.path
+            request_data["key"] = request.url.params["key"]
+            request_data["identifier"] = request.url.params["identifier"]
             request_data["rating"] = request.url.params["rating"]
             return httpx.Response(200, json={})
 
@@ -84,7 +86,15 @@ class PlexSeasonRatingTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(result)
-        self.assertEqual(request_data, {"path": "/library/metadata/103/userRating", "rating": "0"})
+        self.assertEqual(
+            request_data,
+            {
+                "path": "/:/rate",
+                "key": "103",
+                "identifier": "com.plexapp.plugins.library",
+                "rating": "0",
+            },
+        )
 
 
 if __name__ == "__main__":
