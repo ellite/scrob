@@ -78,6 +78,7 @@ class UserSettings(Base):
     # Trakt inbound sync flags (Trakt → Scrob)
     trakt_sync_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     trakt_sync_ratings       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    trakt_history_cursor_at  : Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     # Trakt outbound push flags (Scrob → Trakt)
     trakt_push_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

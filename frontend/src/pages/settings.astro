@@ -789,13 +789,22 @@ if (me.totp_enabled) {
                             </label>
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          data-action="sync_trakt"
-                          disabled={!hasTmdbKey}
-                          title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : "Pull watched history and ratings from Trakt"}
-                          class={`js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${hasTmdbKey ? "bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30" : "bg-zinc-800 text-zinc-400 border border-zinc-700 opacity-50"}`}
-                        >Pull</button>
+                        <div class="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            data-action="sync_trakt"
+                            disabled={!hasTmdbKey}
+                            title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : "Pull new Trakt history since the last successful sync"}
+                            class={`js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${hasTmdbKey ? "bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30" : "bg-zinc-800 text-zinc-400 border border-zinc-700 opacity-50"}`}
+                          >Pull</button>
+                          <button
+                            type="button"
+                            data-action="full_sync_trakt"
+                            disabled={!hasTmdbKey}
+                            title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : "Scan all Trakt watch history again"}
+                            class="js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border border-zinc-700"
+                          >Full resync</button>
+                        </div>
                       </div>
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
                         <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → Trakt</p>
@@ -2927,7 +2936,8 @@ if (me.totp_enabled) {
             setConnStatus('sonarr-conn-status', 'connected');
             showMessage('Sonarr connection successful and profiles fetched!');
             return;
-          } else if (action === 'sync_trakt') {
+          } else if (action === 'sync_trakt' || action === 'full_sync_trakt') {
+            const fullResync = action === 'full_sync_trakt';
             const traktPullLabels: Record<string, string> = {
               trakt_sync_watched: 'watched history',
               trakt_sync_ratings: 'ratings',
@@ -2940,15 +2950,17 @@ if (me.totp_enabled) {
             });
             const noPull = pulling.length === 0;
             const ok = await showConfirmModal(
-              noPull ? 'Nothing to pull' : 'Pull from Trakt?',
+              noPull ? 'Nothing to pull' : fullResync ? 'Full resync from Trakt?' : 'Pull from Trakt?',
               noPull
                 ? 'Your current settings have nothing selected to pull from Trakt. Enable at least one option in the "Trakt → Scrob" section.'
-                : `This will import your ${formatList(pulling)} from Trakt into Scrob.`,
-              noPull ? 'Got it' : 'Pull',
+                : fullResync
+                  ? `This will scan your complete ${formatList(pulling)} on Trakt again. Existing Scrob events are retained and deduplicated.`
+                  : `This will import new ${formatList(pulling)} from Trakt since the last successful pull.`,
+              noPull ? 'Got it' : fullResync ? 'Full resync' : 'Pull',
               noPull
             );
             if (!ok) return;
-            url = `/api/proxy/trakt/sync`;
+            url = `/api/proxy/trakt/sync${fullResync ? '?full=true' : ''}`;
           } else if (action === 'sync_simkl') {
             const simklPullLabels: Record<string, string> = {
               simkl_sync_watched: 'watched history',
@@ -3068,12 +3080,12 @@ if (me.totp_enabled) {
 
           if (res.ok) {
             const showsProgressBar = !!syncConnId || [
-              'sync_trakt', 'push_trakt', 'sync_simkl', 'push_simkl', 'sync_mdblist', 'push_mdblist',
+              'sync_trakt', 'full_sync_trakt', 'push_trakt', 'sync_simkl', 'push_simkl', 'sync_mdblist', 'push_mdblist',
             ].includes(action);
             showMessage(data.message || 'Action successful!', 'success', { scroll: !showsProgressBar });
             if (syncConnId) startConnPoller(syncConnId);
             if (action === 'sync_simkl' || action === 'push_simkl') startSimklPoller();
-            if (action === 'sync_trakt' || action === 'push_trakt') startTraktPoller();
+            if (action === 'sync_trakt' || action === 'full_sync_trakt' || action === 'push_trakt') startTraktPoller();
             if (action === 'sync_mdblist' || action === 'push_mdblist') startMdblistPoller();
           } else {
             if (syncConnId) renderConnProgress(syncConnId, null);

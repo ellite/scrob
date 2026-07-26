@@ -19,18 +19,18 @@ TRAKT_BASE = "https://api.trakt.tv"
 TIMEOUT = 30.0
 PAGE_SIZE = 250
 
-
 def _iso_utc(value: datetime) -> str:
-    """Format a datetime as an ISO-8601 UTC string with a Z suffix.
+    """Format a datetime as ISO-8601 UTC with millisecond precision.
 
-    WatchEvent.watched_at is stored naive but always represents UTC, so a
-    naive value is treated as already-UTC rather than the local timezone.
+    WatchEvent timestamps are stored as naive UTC values. Millisecond precision
+    matches Trakt's history responses and keeps local/remote idempotency keys stable.
     """
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     else:
         value = value.astimezone(timezone.utc)
-    return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
 
 
 async def _get_all_pages(
@@ -169,38 +169,45 @@ async def validate_token(client_id: str, access_token: str) -> bool:
 
 # ── User Data Fetching ────────────────────────────────────────────────────────
 
-async def get_history_movies(client_id: str, access_token: str) -> list[dict]:
-    """Fetch every individual movie play from the user's watch history.
-
-    Unlike /sync/watched/movies (which collapses all plays of a title into a
-    single {plays, last_watched_at} row), /sync/history/movies returns one
-    entry per play, each with its own id and watched_at — required to import
-    more than the most recent play of a title.
-
-    Returns list of: {id, watched_at, movie: {title, ids: {tmdb, ...}}}
-    """
+async def get_history_movies(
+    client_id: str,
+    access_token: str,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+) -> list[dict]:
+    """Fetch individual movie plays, optionally bounded by a UTC time window."""
+    params = {
+        key: _iso_utc(value)
+        for key, value in (("start_at", start_at), ("end_at", end_at))
+        if value is not None
+    }
     async with httpx.AsyncClient(timeout=60.0) as client:
         return await _get_all_pages(
             client,
             "/sync/history/movies",
             _headers(client_id, access_token),
+            params,
         )
 
 
-async def get_history_episodes(client_id: str, access_token: str) -> list[dict]:
-    """Fetch every individual episode play from the user's watch history.
-
-    See get_history_movies() for why /sync/history is used instead of the
-    aggregated /sync/watched/shows endpoint.
-
-    Returns list of: {id, watched_at, episode: {season, number, ids},
-                       show: {title, ids: {tmdb, ...}}}
-    """
+async def get_history_episodes(
+    client_id: str,
+    access_token: str,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+) -> list[dict]:
+    """Fetch individual episode plays, optionally bounded by a UTC time window."""
+    params = {
+        key: _iso_utc(value)
+        for key, value in (("start_at", start_at), ("end_at", end_at))
+        if value is not None
+    }
     async with httpx.AsyncClient(timeout=120.0) as client:
         return await _get_all_pages(
             client,
             "/sync/history/episodes",
             _headers(client_id, access_token),
+            params,
         )
 
 
@@ -271,6 +278,7 @@ async def add_to_history_batch(
             headers=_headers(client_id, access_token),
         )
         resp.raise_for_status()
+
 
 
 async def add_to_collection_batch(
