@@ -3637,6 +3637,69 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 return
 
             conn_source = CollectionSource(conn.type)
+
+            if conn.type == "plex" and conn.plex_push_watchlist:
+                from models.lists import List as ListModel, ListItem
+                PLEX_WATCHLIST_SLUG = "__plex_watchlist__"
+                try:
+                    watchlist_result = await db.execute(
+                        select(ListModel).where(
+                            ListModel.user_id == user_id,
+                            ListModel.trakt_slug == PLEX_WATCHLIST_SLUG,
+                        )
+                    )
+                    watchlist = watchlist_result.scalar_one_or_none()
+                    local_watchlist_items: list[Media] = []
+                    if watchlist:
+                        local_items_result = await db.execute(
+                            select(Media)
+                            .join(ListItem, ListItem.media_id == Media.id)
+                            .where(
+                                ListItem.list_id == watchlist.id,
+                                Media.tmdb_id.isnot(None),
+                                Media.media_type.in_([MediaType.movie, MediaType.series]),
+                            )
+                        )
+                        local_watchlist_items = list(local_items_result.scalars().all())
+
+                    watchlist_pushed = 0
+                    if local_watchlist_items:
+                        # Additive only: a full push only knows the current local
+                        # watchlist list, not what changed since last time, so it
+                        # must never remove items from the user's real Plex
+                        # watchlist — only the explicit add/remove action on the
+                        # local list (_push_list_item_to_plex_watchlist) does that.
+                        remote_items = await plex.get_watchlist(conn.token)
+                        remote_tmdb_ids: set[int] = set()
+                        for item in remote_items:
+                            for guid in item.get("Guid", []) or []:
+                                gid = guid.get("id", "")
+                                if gid.startswith("tmdb://"):
+                                    try:
+                                        remote_tmdb_ids.add(int(gid[7:]))
+                                    except ValueError:
+                                        pass
+                        for media in local_watchlist_items:
+                            if media.tmdb_id in remote_tmdb_ids:
+                                continue
+                            plex_type = "movie" if media.media_type == MediaType.movie else "show"
+                            rating_key = await plex.resolve_tmdb_ratingkey(conn.token, media.tmdb_id, plex_type)
+                            if not rating_key:
+                                logger.warning(
+                                    "Full push: could not resolve Plex ratingKey for tmdb_id=%s (%s), connection %s",
+                                    media.tmdb_id, plex_type, connection_id,
+                                )
+                                continue
+                            if await plex.add_to_watchlist(conn.token, rating_key):
+                                watchlist_pushed += 1
+                    logger.info(
+                        "Full push for connection %s: pushed %s item(s) to Plex watchlist",
+                        connection_id,
+                        watchlist_pushed,
+                    )
+                except Exception as exc:
+                    logger.warning("Full push: Plex watchlist push failed for connection %s: %s", connection_id, exc)
+
             watched_ids: set[int] = set()
             ratings_map: RatingChanges = {}
 

@@ -2732,6 +2732,7 @@ if (me.totp_enabled) {
               sync_watched: 'watched status',
               sync_ratings: 'ratings',
               sync_playback: 'playback events',
+              plex_sync_watchlist: 'watchlist',
             };
             const pulling: string[] = [];
             card?.querySelectorAll('.conn-pref-checkbox').forEach((el: any) => {
@@ -2760,6 +2761,7 @@ if (me.totp_enabled) {
               push_watched: 'watched status',
               push_ratings: 'ratings',
               push_playback: 'playback progress',
+              plex_push_watchlist: 'watchlist',
             };
             const pushing: string[] = [];
             card?.querySelectorAll('.conn-pref-checkbox').forEach((el: any) => {
