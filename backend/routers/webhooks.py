@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -265,6 +265,29 @@ async def _find_or_create_show(db: AsyncSession, series_tmdb_id: int, api_key: s
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
+# Best-effort guard against a webhook delivery being processed twice in quick
+# succession — media servers (and any relay/proxy in front of them) retry
+# deliveries that don't get a fast 2xx, and nothing upstream de-duplicates
+# those retries for us. This only catches immediate repeats within the same
+# process; it's not a substitute for a persistent idempotency key, but it's
+# low-risk and stops a retried `media.stop`/`media.scrobble` from re-firing
+# the outbound Trakt/Simkl/MDBList scrobble calls.
+_recent_webhook_deliveries: dict[str, datetime] = {}
+_WEBHOOK_DEDUP_WINDOW = timedelta(seconds=15)
+
+
+def _is_duplicate_webhook_delivery(dedup_key: str) -> bool:
+    now = datetime.utcnow()
+    if len(_recent_webhook_deliveries) > 2000:
+        cutoff = now - _WEBHOOK_DEDUP_WINDOW
+        for key, seen_at in list(_recent_webhook_deliveries.items()):
+            if seen_at < cutoff:
+                del _recent_webhook_deliveries[key]
+    last_seen = _recent_webhook_deliveries.get(dedup_key)
+    _recent_webhook_deliveries[dedup_key] = now
+    return last_seen is not None and (now - last_seen) < _WEBHOOK_DEDUP_WINDOW
+
+
 async def _get_or_open_session(
     db: AsyncSession,
     session_key: str,
@@ -351,6 +374,20 @@ async def _write_watch_event(
     completed: bool,
 ) -> None:
     if completed:
+        # A single completed viewing is often reported by more than one webhook
+        # event for the same session (e.g. Plex sends both `media.scrobble` at
+        # ~90% and `media.stop` when the session actually closes) — without this
+        # guard each one adds its own WatchEvent row.
+        recent_cutoff = datetime.utcnow() - timedelta(minutes=5)
+        existing = await db.execute(
+            select(WatchEvent.id).where(
+                WatchEvent.user_id == user_id,
+                WatchEvent.media_id == media_id,
+                WatchEvent.watched_at >= recent_cutoff,
+            ).limit(1)
+        )
+        if existing.scalar_one_or_none() is not None:
+            return
         db.add(WatchEvent(
             user_id=user_id,
             media_id=media_id,
@@ -1369,6 +1406,10 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
 
     session_key = f"plex:{user.id}:{data['session_key']}"
 
+    if event in ("media.play", "media.resume", "media.pause", "media.stop", "media.scrobble", "media.rate"):
+        if _is_duplicate_webhook_delivery(f"{session_key}:{event}"):
+            return {"status": "ignored", "reason": "duplicate webhook delivery"}
+
     if event in ("media.play", "media.resume", "media.pause", "media.stop", "media.scrobble"):
         media = await find_or_create_media_plex(data, db, api_key=tmdb_key, conn=conn)
         if media is None:
@@ -1664,6 +1705,8 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
     session_key = f"plex:scrobble:{user.id}:{data['session_key']}"
 
     if event in ("media.play", "media.resume", "media.pause", "media.stop", "media.scrobble"):
+        if _is_duplicate_webhook_delivery(f"{session_key}:{event}"):
+            return {"status": "ignored", "reason": "duplicate webhook delivery"}
         media = await find_or_create_media_plex(data, db, api_key=tmdb_key, conn=None)
         if media is None:
             return {"status": "ignored", "reason": "episode could not be identified (no season/episode/tmdb_id)"}
