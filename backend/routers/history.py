@@ -474,6 +474,26 @@ def _format_media_item(media: Media) -> dict:
     return data
 
 
+def _compute_next_episode(seasons: list[dict], season: int, episode: int) -> tuple[int, int] | None:
+    """Given a show's TMDB season metadata and the last-watched (season, episode),
+    returns the next (season, episode), or None if the show has no more aired/
+    known episodes after it. Specials (season 0) are never returned."""
+    real_seasons = sorted(
+        (s for s in seasons if s.get("season_number", 0) > 0),
+        key=lambda s: s["season_number"],
+    )
+    current_season = next((s for s in real_seasons if s["season_number"] == season), None)
+    if current_season and episode < current_season.get("episode_count", 0):
+        return season, episode + 1
+    upcoming = next(
+        (s for s in real_seasons if s["season_number"] > season and s.get("episode_count", 0) > 0),
+        None,
+    )
+    if upcoming:
+        return upcoming["season_number"], 1
+    return None
+
+
 @router.get("/next-up")
 async def get_next_up(
     db: AsyncSession = Depends(get_db),
@@ -534,6 +554,42 @@ async def get_next_up(
     for media in candidates:
         if media.show_id not in next_per_show:
             next_per_show[media.show_id] = media
+
+    # Fallback for shows with no local row for the next episode yet — e.g. Kodi,
+    # which has no library sync, only ever creates a Media row for an episode
+    # once it's actually played. Compute the next episode from the show's TMDB
+    # season metadata and create/enrich it on demand instead of requiring it to
+    # already exist locally.
+    missing_show_ids = set(last_per_show) - set(next_per_show)
+    if missing_show_ids:
+        api_key = await get_user_tmdb_key(db, current_user.id)
+        if check_tmdb_key(api_key):
+            shows_result = await db.execute(select(Show).where(Show.id.in_(missing_show_ids)))
+            shows_by_id = {s.id: s for s in shows_result.scalars().all()}
+            for show_id in missing_show_ids:
+                show = shows_by_id.get(show_id)
+                if not show or not show.tmdb_id:
+                    continue
+                season, episode = last_per_show[show_id]
+                next_ep = _compute_next_episode((show.tmdb_data or {}).get("seasons", []), season, episode)
+                if next_ep is None:
+                    continue
+                next_season_num, next_episode_num = next_ep
+
+                media = Media(
+                    media_type=MediaType.episode,
+                    show_id=show.id,
+                    season_number=next_season_num,
+                    episode_number=next_episode_num,
+                )
+                await enrich_media(media, api_key=api_key, series_tmdb_id=show.tmdb_id)
+                if not media.tmdb_id:
+                    continue  # TMDB lookup failed (e.g. unreleased episode) — nothing to show yet
+                media.show = show
+                db.add(media)
+                await db.flush()
+                next_per_show[show_id] = media
+            await db.commit()
 
     if not next_per_show:
         return {"next_up": []}
