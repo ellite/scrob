@@ -365,7 +365,7 @@ https://your-scrob-url/api/proxy/webhooks/kodi?api_key=YOUR_API_KEY
 1. In Jellyfin, go to **Dashboard → Plugins → Catalogue**, install **Webhook**, then restart.
 2. Go to **Dashboard → Plugins → Webhook → Add Generic Destination**.
 3. Paste your Scrob Jellyfin webhook URL.
-4. Enable notification types: `Playback Start`, `Playback Progress`, `Playback Stop`, `Mark Played`.
+4. Enable notification types: `Playback Start`, `Playback Progress`, `Playback Stop`, `User Data Saved` (this is what fires when you manually mark something watched/unwatched - the plugin has no separate "Mark Played" event).
 5. Enable item types: `Movies` and `Episodes`.
 6. **Leave the Template field blank** and check **"Send all properties (ignore templates)"**.
 

@@ -482,6 +482,10 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
         "session_id": payload.get("PlaySessionId") or payload.get("DeviceId"),
         "username": payload.get("UserName") or payload.get("NotificationUsername", ""),
         "quality": {},
+        # Only present on UserDataSaved events (manual watched/unwatched toggle,
+        # rating change, favorite, etc. all raise this same notification type).
+        "save_reason": payload.get("SaveReason"),
+        "played": payload.get("Played"),
     }
 
 
@@ -718,6 +722,32 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
         await _maybe_trakt_scrobble(settings, media, "stop", 1.0, db=db)
         await _maybe_mdblist_scrobble(settings, media, "stop", 1.0, db=db)
         await _maybe_simkl_scrobble(settings, media, "stop", db=db)
+
+    elif notification_type == "UserDataSaved":
+        # Jellyfin's official Webhook plugin has no dedicated "mark played"
+        # event — manually toggling watched/unwatched (and rating changes,
+        # favorites, imports, and every playback tick) all raise this same
+        # UserDataSaved notification. SaveReason is the only way to tell a
+        # manual watched-state toggle apart from the rest.
+        if data.get("save_reason") == "TogglePlayed" and (not conn or conn.sync_watched):
+            played = data.get("played")
+            if played:
+                await _close_session(db, session_key)
+                await _write_watch_event(db, user.id, media.id, 1.0, data["progress_seconds"], True)
+                await db.commit()
+                await _maybe_trakt_scrobble(settings, media, "stop", 1.0, db=db)
+                await _maybe_mdblist_scrobble(settings, media, "stop", 1.0, db=db)
+                await _maybe_simkl_scrobble(settings, media, "stop", db=db)
+            elif played is False:
+                await db.execute(
+                    delete(WatchEvent).where(
+                        WatchEvent.user_id == user.id,
+                        WatchEvent.media_id == media.id,
+                    )
+                )
+                await db.commit()
+                from routers.history import _push_watch_state
+                await _push_watch_state(db, user.id, [media.id], watched=False)
 
     return {"status": "ok", "event": notification_type, "title": data["title"]}
 
