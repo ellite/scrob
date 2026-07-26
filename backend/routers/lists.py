@@ -304,6 +304,10 @@ async def _push_list_item_to_plex_watchlist(
         try:
             rating_key = await plex_client.resolve_tmdb_ratingkey(conn.token, media.tmdb_id, plex_type)
             if not rating_key:
+                logger.warning(
+                    "Could not resolve Plex ratingKey for tmdb_id=%s (%s), connection %s — skipping watchlist %s",
+                    media.tmdb_id, plex_type, conn.id, "removal" if remove else "add",
+                )
                 continue
             if remove:
                 await plex_client.remove_from_watchlist(conn.token, rating_key)
