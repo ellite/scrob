@@ -9,6 +9,7 @@ const sort = Astro.url.searchParams.get("sort") ?? "title";
 const genre = Astro.url.searchParams.get("genre") ?? "";
 const year = Astro.url.searchParams.get("year") ? Number(Astro.url.searchParams.get("year")) : undefined;
 const status = Astro.url.searchParams.get("status") ?? "";
+const watched = Astro.url.searchParams.get("watched") ?? "";
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -19,6 +20,7 @@ const data = await api.shows.list({
   ...(genre ? { genre } : {}),
   ...(year ? { year } : {}),
   ...(status ? { status } : {}),
+  ...(watched ? { watched: watched === "true" } : {}),
 }, token);
 
 const TV_GENRES = [
@@ -38,6 +40,7 @@ baseParams.set("sort", sort);
 if (genre) baseParams.set("genre", genre);
 if (year) baseParams.set("year", String(year));
 if (status) baseParams.set("status", status);
+if (watched) baseParams.set("watched", watched);
 const baseUrl = `/collection/shows?${baseParams.toString()}`;
 ---
 
@@ -92,7 +95,13 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
       ))}
     </select>
 
-    {(genre || year || status) && (
+    <select id="filter-watched" class="bg-zinc-900 border border-zinc-700 text-zinc-300 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+      <option value="">Watched & Unwatched</option>
+      <option value="false" selected={watched === "false"}>Not Started</option>
+      <option value="true" selected={watched === "true"}>Started</option>
+    </select>
+
+    {(genre || year || status || watched) && (
       <a href={`/collection/shows?sort=${sort}`} class="text-sm text-zinc-500 hover:text-zinc-300 transition">
         Clear filters
       </a>
@@ -102,9 +111,9 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
   {data.results.length === 0 ? (
     <div class="bg-zinc-900/50 rounded-2xl p-12 text-center border border-dashed border-zinc-800">
       <div class="text-zinc-500 mb-4 text-lg">
-        {(genre || year || status) ? "No shows match the selected filters" : "Your library is empty"}
+        {(genre || year || status || watched) ? "No shows match the selected filters" : "Your library is empty"}
       </div>
-      {!(genre || year || status) && (
+      {!(genre || year || status || watched) && (
         <a href="/settings" class="inline-flex items-center px-6 py-3 bg-zinc-100 text-zinc-950 font-bold rounded-xl hover:bg-zinc-200 transition">
           Set up Sync
         </a>
@@ -125,22 +134,25 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
   )}
 </Base>
 
-<script define:vars={{ sort, genre, year, status }}>
+<script define:vars={{ sort, genre, year, status, watched }}>
   function navigate() {
     const params = new URLSearchParams();
     params.set("sort", document.getElementById("sort-select").value);
     const g = document.getElementById("filter-genre").value;
     const y = document.getElementById("filter-year").value;
     const st = document.getElementById("filter-status").value;
+    const w = document.getElementById("filter-watched").value;
     if (g) params.set("genre", g);
     if (y) params.set("year", y);
     if (st) params.set("status", st);
+    if (w) params.set("watched", w);
     window.location.href = `/collection/shows?${params.toString()}`;
   }
 
   document.getElementById("filter-genre")?.addEventListener("change", navigate);
   document.getElementById("filter-year")?.addEventListener("change", navigate);
   document.getElementById("filter-status")?.addEventListener("change", navigate);
+  document.getElementById("filter-watched")?.addEventListener("change", navigate);
   document.getElementById("sort-select")?.addEventListener("change", navigate);
 
 </script>

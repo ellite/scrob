@@ -654,6 +654,7 @@ async def list_media(
     page_size: int = Query(30, ge=1, le=100),
     genre: str | None = Query(None),
     year: int | None = Query(None),
+    watched: bool | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -666,6 +667,13 @@ async def list_media(
         filters.append(sa_cast(Media.tmdb_data["genres"], Text).contains(f'"{genre}"'))
     if year:
         filters.append(Media.release_date.like(f'{year}%'))
+    if watched is not None:
+        watched_exists = (
+            select(WatchEvent.id)
+            .where(WatchEvent.media_id == Media.id, WatchEvent.user_id == current_user.id, WatchEvent.completed == True)
+            .exists()
+        )
+        filters.append(watched_exists if watched else ~watched_exists)
 
     base_query = (
         select(Media)

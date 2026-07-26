@@ -1045,7 +1045,7 @@ export const api = {
   },
 
   media: {
-    list: (params?: { type?: string; sort?: string; page?: number; genre?: string; year?: number }, token?: string) =>
+    list: (params?: { type?: string; sort?: string; page?: number; genre?: string; year?: number; watched?: boolean }, token?: string) =>
       get<{ page: number; page_size: number; total_pages: number; total_results: number; results: MediaItem[] }>("/media", params, token),
 
     get: (type: string, tmdbId: number, token?: string) =>
@@ -1119,7 +1119,7 @@ export const api = {
   },
 
   shows: {
-    list: (params?: { sort?: string; page?: number; page_size?: number; genre?: string; year?: number; status?: string }, token?: string) =>
+    list: (params?: { sort?: string; page?: number; page_size?: number; genre?: string; year?: number; status?: string; watched?: boolean }, token?: string) =>
       get<{ page: number; page_size: number; total_results: number; total_pages: number; results: any[] }>("/shows", params, token),
 
     get: (seriesTmdbId: number, token?: string) =>

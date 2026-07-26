@@ -186,6 +186,7 @@ async def list_shows(
     genre: str | None = Query(None),
     year: int | None = Query(None),
     status: str | None = Query(None),
+    watched: bool | None = Query(None),
 ):
     offset = (page - 1) * page_size
 
@@ -230,6 +231,30 @@ async def list_shows(
         base_query = base_query.where(ShowModel.first_air_date.like(f'{year}%'))
     if status:
         base_query = base_query.where(ShowModel.status == status)
+    if watched is not None:
+        # "Watched" here means the user has watched at least one episode
+        # (started); "unwatched" means zero episodes watched (not started).
+        # This is deliberately not "fully watched" — that needs per-show aired
+        # counts from TMDB, which enrich_with_state only computes for the
+        # current page, not the full filtered/paginated set.
+        watched_show_ids = (
+            select(Media.show_id)
+            .join(WatchEvent, WatchEvent.media_id == Media.id)
+            .where(
+                WatchEvent.user_id == current_user.id,
+                WatchEvent.completed == True,
+                Media.media_type == MediaType.episode,
+                Media.show_id.isnot(None),
+                Media.season_number.isnot(None),
+                Media.season_number != 0,
+            )
+            .distinct()
+            .subquery()
+        )
+        if watched:
+            base_query = base_query.where(ShowModel.id.in_(select(watched_show_ids)))
+        else:
+            base_query = base_query.where(ShowModel.id.notin_(select(watched_show_ids)))
 
     # Count total
     count_query = select(func.count()).select_from(base_query.subquery())
