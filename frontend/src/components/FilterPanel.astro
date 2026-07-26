@@ -1,0 +1,228 @@
+---
+interface FilterOption {
+  value: string;
+  label: string;
+}
+
+interface FilterSection {
+  key: string; // query param name
+  label: string; // accordion heading
+  options?: FilterOption[]; // static options, rendered server-side
+  selected: string[]; // currently active values for this section
+  dynamic?: boolean; // if true, options are fetched client-side on load
+  endpoint?: string; // proxy API path to fetch { years: number[] } from — required when dynamic
+  multi?: boolean; // false renders radios (single-select) instead of checkboxes; default true
+}
+
+interface Props {
+  id: string;
+  basePath: string;
+  currentSort?: string;
+  sections: FilterSection[];
+  extraParams?: Record<string, string>; // static params (e.g. category) always preserved on Apply
+}
+
+const { id, basePath, currentSort, sections, extraParams } = Astro.props;
+const activeCount = sections.reduce((sum, s) => sum + s.selected.length, 0);
+---
+
+<div class="relative inline-flex items-stretch bg-zinc-900 border border-zinc-700 rounded-lg hover:border-zinc-600 transition" id={id} data-filter-panel-root data-base-path={basePath} data-current-sort={currentSort ?? ""} data-extra-params={JSON.stringify(extraParams ?? {})}>
+  <button
+    type="button"
+    data-role="trigger"
+    class="flex items-center gap-2 text-zinc-300 text-sm px-3 py-2 cursor-pointer"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m9 12h3.75M13.5 18a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 18H10.5M6 12h9.75M6 12a1.5 1.5 0 1 0-3 0m3 0a1.5 1.5 0 1 1-3 0m15.75 0H18" />
+    </svg>
+    Filters
+    {activeCount > 0 && (
+      <span class="flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-blue-600 text-white text-xs font-semibold">{activeCount}</span>
+    )}
+  </button>
+  {activeCount > 0 && (
+    <button
+      type="button"
+      data-role="clear-trigger"
+      aria-label="Clear filters"
+      class="flex items-center px-2 border-l border-zinc-700 text-zinc-500 hover:text-zinc-100 transition cursor-pointer"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+      </svg>
+    </button>
+  )}
+
+  <div data-role="overlay" class="fixed inset-0 z-50 hidden flex items-end sm:items-center justify-center">
+    <div data-role="backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer"></div>
+
+    <div
+      data-role="panel"
+      class="relative w-full sm:w-96 max-h-[85vh] sm:max-h-[80vh] bg-zinc-900 border border-zinc-800 rounded-t-2xl sm:rounded-2xl flex flex-col max-sm:translate-y-full sm:scale-95 sm:opacity-0 transition-all duration-300"
+    >
+      <div class="flex items-center justify-between p-4 border-b border-zinc-800 flex-shrink-0">
+        <h2 class="font-semibold text-zinc-100">Filters</h2>
+        <button type="button" data-role="close" class="p-1 text-zinc-500 hover:text-zinc-200 transition cursor-pointer" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="filter-panel-scroll overflow-y-auto flex-1 divide-y divide-zinc-800">
+        {sections.map((section) => (
+          <div data-dynamic-section={section.dynamic ? "true" : undefined} data-key={section.key} data-endpoint={section.endpoint} data-selected={section.selected.join(",")}>
+            <button type="button" data-role="accordion-toggle" class="w-full flex items-center justify-between p-4 text-left text-sm font-medium text-zinc-200 cursor-pointer">
+              <span>{section.label}{section.selected.length > 0 && <span class="text-blue-500 font-normal"> ({section.selected.length})</span>}</span>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class:list={["chevron w-4 h-4 transition-transform text-zinc-500", { "rotate-180": section.selected.length > 0 }]}>
+                <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+              </svg>
+            </button>
+            <div data-role="accordion-content" class:list={["pb-2", { hidden: section.selected.length === 0 }]}>
+              {section.dynamic ? (
+                <div class="px-4 py-3 text-sm text-zinc-500">Loading…</div>
+              ) : (section.options ?? []).map((opt) => (
+                <label class="flex items-center gap-3 px-4 py-3 text-sm text-zinc-300 cursor-pointer transition-colors hover:bg-zinc-800/60 has-[:checked]:text-zinc-100">
+                  <input
+                    type={section.multi === false ? "radio" : "checkbox"}
+                    name={section.multi === false ? `${id}__${section.key}` : undefined}
+                    value={opt.value}
+                    checked={section.selected.includes(opt.value)}
+                    data-filter-key={section.key}
+                    class="peer sr-only"
+                  />
+                  <span class="flex-1">{opt.label}</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-5 h-5 flex-shrink-0 text-blue-500 opacity-0 peer-checked:opacity-100 transition-opacity">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                  </svg>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div class="flex items-center gap-3 p-4 border-t border-zinc-800 flex-shrink-0">
+        <button type="button" data-role="clear" class="text-sm text-zinc-500 hover:text-zinc-300 transition cursor-pointer">Clear all</button>
+        <button type="button" data-role="apply" class="ml-auto px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition cursor-pointer active:scale-95">Apply Filters</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function renderYearCheckboxes(content: Element, years: number[], selected: Set<string>) {
+    if (years.length === 0) {
+      content.innerHTML = '<div class="px-4 py-3 text-sm text-zinc-500">No years available</div>';
+      return;
+    }
+    content.innerHTML = years.map((y) => `
+      <label class="flex items-center gap-3 px-4 py-3 text-sm text-zinc-300 cursor-pointer transition-colors hover:bg-zinc-800/60 has-[:checked]:text-zinc-100">
+        <input type="checkbox" value="${y}" data-filter-key="year" ${selected.has(String(y)) ? "checked" : ""} class="peer sr-only" />
+        <span class="flex-1">${y}</span>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-5 h-5 flex-shrink-0 text-blue-500 opacity-0 peer-checked:opacity-100 transition-opacity">
+          <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+        </svg>
+      </label>
+    `).join("");
+  }
+
+  async function loadDynamicSections(root: HTMLElement) {
+    const sections = root.querySelectorAll<HTMLElement>("[data-dynamic-section]");
+    for (const section of Array.from(sections)) {
+      const endpoint = section.dataset.endpoint;
+      const content = section.querySelector('[data-role="accordion-content"]');
+      if (!endpoint || !content) continue;
+      const selected = new Set((section.dataset.selected || "").split(",").filter(Boolean));
+      try {
+        const res = await fetch(endpoint);
+        const data = await res.json();
+        renderYearCheckboxes(content, data.years ?? [], selected);
+      } catch (e) {
+        content.innerHTML = '<div class="text-sm text-red-400">Failed to load</div>';
+      }
+    }
+  }
+
+  function initFilterPanel(root: HTMLElement) {
+    if (root.dataset.initialized) return;
+    root.dataset.initialized = "true";
+
+    const trigger = root.querySelector<HTMLElement>('[data-role="trigger"]');
+    const overlay = root.querySelector<HTMLElement>('[data-role="overlay"]');
+    const panel = root.querySelector<HTMLElement>('[data-role="panel"]');
+    const backdrop = root.querySelector<HTMLElement>('[data-role="backdrop"]');
+    const closeBtn = root.querySelector<HTMLElement>('[data-role="close"]');
+    const clearBtn = root.querySelector<HTMLElement>('[data-role="clear"]');
+    const clearTrigger = root.querySelector<HTMLElement>('[data-role="clear-trigger"]');
+    const applyBtn = root.querySelector<HTMLElement>('[data-role="apply"]');
+    const basePath = root.dataset.basePath || "";
+    const currentSort = root.dataset.currentSort || "";
+    let extraParams: Record<string, string> = {};
+    try {
+      extraParams = JSON.parse(root.dataset.extraParams || "{}");
+    } catch (e) { /* ignore malformed data */ }
+
+    function open() {
+      overlay?.classList.remove("hidden");
+      requestAnimationFrame(() => {
+        panel?.classList.remove("max-sm:translate-y-full", "sm:scale-95", "sm:opacity-0");
+      });
+      document.body.style.overflow = "hidden";
+    }
+    function close() {
+      panel?.classList.add("max-sm:translate-y-full", "sm:scale-95", "sm:opacity-0");
+      document.body.style.overflow = "";
+      setTimeout(() => overlay?.classList.add("hidden"), 300);
+    }
+
+    trigger?.addEventListener("click", open);
+    closeBtn?.addEventListener("click", close);
+    backdrop?.addEventListener("click", close);
+
+    clearTrigger?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const params = new URLSearchParams();
+      if (currentSort) params.set("sort", currentSort);
+      Object.entries(extraParams).forEach(([k, v]) => { if (v) params.set(k, v); });
+      window.location.href = `${basePath}?${params.toString()}`;
+    });
+
+    root.querySelectorAll<HTMLElement>('[data-role="accordion-toggle"]').forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const content = btn.nextElementSibling;
+        content?.classList.toggle("hidden");
+        btn.querySelector(".chevron")?.classList.toggle("rotate-180");
+      });
+    });
+
+    clearBtn?.addEventListener("click", () => {
+      root.querySelectorAll<HTMLInputElement>('input[type="checkbox"], input[type="radio"]').forEach((cb) => (cb.checked = false));
+    });
+
+    applyBtn?.addEventListener("click", () => {
+      const params = new URLSearchParams();
+      if (currentSort) params.set("sort", currentSort);
+      Object.entries(extraParams).forEach(([k, v]) => { if (v) params.set(k, v); });
+      root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked, input[type="radio"]:checked').forEach((cb) => {
+        const key = cb.dataset.filterKey;
+        if (key) params.append(key, cb.value);
+      });
+      window.location.href = `${basePath}?${params.toString()}`;
+    });
+
+    loadDynamicSections(root);
+  }
+
+  document.querySelectorAll<HTMLElement>("[data-filter-panel-root]").forEach(initFilterPanel);
+</script>
+
+<style>
+  .filter-panel-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .filter-panel-scroll::-webkit-scrollbar {
+    display: none;
+  }
+</style>

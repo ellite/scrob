@@ -2,6 +2,8 @@
 import Base from "../layouts/Base.astro";
 import MediaCard from "../components/MediaCard.astro";
 import Pagination from "../components/Pagination.astro";
+import FilterPanel from "../components/FilterPanel.astro";
+import SortButton from "../components/SortButton.astro";
 import { api, type MediaItem } from "../lib/api";
 export const prerender = false;
 
@@ -55,28 +57,36 @@ const baseUrl = `/movies?${baseParams.toString()}`;
     <a href="/movies" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors active:scale-95 active:opacity-70">Explore</a>
     <a href="/collection/movies" class="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors active:scale-95 active:opacity-70">My Collection</a>
   </div>
-  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
     <h1 class="page-title">Explore Movies</h1>
 
     {hasTmdbKey && (
-      <div class="flex flex-wrap gap-2 text-sm bg-zinc-900/50 p-1 rounded-xl border border-zinc-800">
-        {[
-          { value: "popular", label: "Popular" },
-          { value: "top_rated", label: "Top Rated" },
-          { value: "trending", label: "Trending" },
-        ].map(({ value, label }) => {
-          const tabParams = new URLSearchParams(baseParams);
-          tabParams.set("category", value);
-          tabParams.delete("page");
-          return (
-            <a
-              href={`/movies?${tabParams.toString()}`}
-              class={`px-4 py-2 rounded-lg transition-all font-medium active:scale-95 active:opacity-70 ${category === value ? "bg-blue-600 text-white shadow-lg" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"}`}
-            >
-              {label}
-            </a>
-          );
-        })}
+      <div class="flex items-center gap-3">
+        <SortButton
+          id="explore-movie-category"
+          current={category}
+          paramKey="category"
+          label="Category"
+          iconPaths={[
+            "M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.169.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z",
+            "M6 6h.008v.008H6V6Z",
+          ]}
+          options={[
+            { value: "popular", label: "Popular" },
+            { value: "top_rated", label: "Top Rated" },
+            { value: "trending", label: "Trending" },
+          ]}
+        />
+        <FilterPanel
+          id="explore-movie-filters"
+          basePath="/movies"
+          extraParams={{ category }}
+          sections={[
+            { key: "genre", label: "Genre", options: MOVIE_GENRES.map((g) => ({ value: g, label: g })), selected: genre ? [genre] : [], multi: false },
+            { key: "year", label: "Year", options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year ? [String(year)] : [], multi: false },
+            { key: "min_rating", label: "Rating", options: [9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: `${r}+ Stars` })), selected: minRating ? [String(minRating)] : [], multi: false },
+          ]}
+        />
       </div>
     )}
   </div>
@@ -92,36 +102,6 @@ const baseUrl = `/movies?${baseParams.toString()}`;
     </div>
   ) : (
     <>
-      <!-- Filter bar -->
-      <div class="flex flex-wrap gap-3 mb-8 items-center">
-        <select id="filter-genre" class="bg-zinc-900 border border-zinc-700 text-zinc-300 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
-          <option value="">All Genres</option>
-          {MOVIE_GENRES.map(g => (
-            <option value={g} selected={genre === g}>{g}</option>
-          ))}
-        </select>
-
-        <select id="filter-year" class="bg-zinc-900 border border-zinc-700 text-zinc-300 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
-          <option value="">All Years</option>
-          {years.map(y => (
-            <option value={y} selected={year === y}>{y}</option>
-          ))}
-        </select>
-
-        <select id="filter-rating" class="bg-zinc-900 border border-zinc-700 text-zinc-300 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
-          <option value="">Any Rating</option>
-          {[9, 8, 7, 6, 5].map(r => (
-            <option value={r} selected={minRating === r}>{r}+ Stars</option>
-          ))}
-        </select>
-
-        {(genre || year || minRating) && (
-          <a href={`/movies?category=${category}`} class="text-sm text-zinc-500 hover:text-zinc-300 transition">
-            Clear filters
-          </a>
-        )}
-      </div>
-
       <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
         {data.results.map(item => <MediaCard item={item} />)}
       </div>
@@ -134,22 +114,3 @@ const baseUrl = `/movies?${baseParams.toString()}`;
     </>
   )}
 </Base>
-
-<script define:vars={{ category, genre, year, minRating }}>
-  function navigate() {
-    const params = new URLSearchParams();
-    params.set("category", category);
-    const g = document.getElementById("filter-genre").value;
-    const y = document.getElementById("filter-year").value;
-    const r = document.getElementById("filter-rating").value;
-    if (g) params.set("genre", g);
-    if (y) params.set("year", y);
-    if (r) params.set("min_rating", r);
-    window.location.href = `/movies?${params.toString()}`;
-  }
-
-  document.getElementById("filter-genre")?.addEventListener("change", navigate);
-  document.getElementById("filter-year")?.addEventListener("change", navigate);
-  document.getElementById("filter-rating")?.addEventListener("change", navigate);
-
-</script>

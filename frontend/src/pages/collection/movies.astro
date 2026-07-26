@@ -2,13 +2,15 @@
 import Base from "../../layouts/Base.astro";
 import MediaCard from "../../components/MediaCard.astro";
 import Pagination from "../../components/Pagination.astro";
+import FilterPanel from "../../components/FilterPanel.astro";
+import SortButton from "../../components/SortButton.astro";
 import { api } from "../../lib/api";
 export const prerender = false;
 
 const sort = Astro.url.searchParams.get("sort") ?? "title";
-const genre = Astro.url.searchParams.get("genre") ?? "";
-const year = Astro.url.searchParams.get("year") ? Number(Astro.url.searchParams.get("year")) : undefined;
-const watched = Astro.url.searchParams.get("watched") ?? "";
+const genres = Astro.url.searchParams.getAll("genre");
+const years = Astro.url.searchParams.getAll("year").map(Number).filter((n) => !Number.isNaN(n));
+const watched = Astro.url.searchParams.getAll("watched");
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -17,9 +19,9 @@ const data = await api.media.list({
   type: "movie",
   sort,
   page,
-  ...(genre ? { genre } : {}),
-  ...(year ? { year } : {}),
-  ...(watched ? { watched: watched === "true" } : {}),
+  genre: genres,
+  year: years,
+  watched,
 }, token);
 
 const MOVIE_GENRES = [
@@ -28,15 +30,14 @@ const MOVIE_GENRES = [
   "Romance", "Science Fiction", "Thriller", "War", "Western",
 ];
 
-const currentYear = new Date().getFullYear();
-const years = Array.from({ length: currentYear - 1899 }, (_, i) => currentYear - i);
+const hasFilters = genres.length > 0 || years.length > 0 || watched.length > 0;
 
 // Build base URL preserving active filters (without page)
 const baseParams = new URLSearchParams();
 baseParams.set("sort", sort);
-if (genre) baseParams.set("genre", genre);
-if (year) baseParams.set("year", String(year));
-if (watched) baseParams.set("watched", watched);
+genres.forEach((g) => baseParams.append("genre", g));
+years.forEach((y) => baseParams.append("year", String(y)));
+watched.forEach((w) => baseParams.append("watched", w));
 const baseUrl = `/collection/movies?${baseParams.toString()}`;
 ---
 
@@ -45,64 +46,44 @@ const baseUrl = `/collection/movies?${baseParams.toString()}`;
     <a href="/movies" class="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors active:scale-95 active:opacity-70">Explore</a>
     <a href="/collection/movies" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors active:scale-95 active:opacity-70">My Collection</a>
   </div>
-  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
     <div class="flex items-baseline gap-3">
       <h1 class="page-title">My Movies</h1>
       <span class="text-zinc-500 font-medium">{data.total_results.toLocaleString()} total</span>
     </div>
 
-    <!-- Sort controls -->
-    <select
-      id="sort-select"
-      class="bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-    >
-      {[
-        { value: "title", label: "A–Z" },
-        { value: "rating", label: "Top" },
-        { value: "release_date", label: "Newest" },
-        { value: "created_at", label: "Recently Added" },
-        { value: "last_watched", label: "Recently Watched" },
-      ].map(({ value, label }) => (
-        <option value={value} selected={sort === value}>{label}</option>
-      ))}
-    </select>
-  </div>
-
-  <!-- Filter bar -->
-  <div class="flex flex-wrap gap-3 mb-8 items-center">
-    <select id="filter-genre" class="bg-zinc-900 border border-zinc-700 text-zinc-300 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
-      <option value="">All Genres</option>
-      {MOVIE_GENRES.map(g => (
-        <option value={g} selected={genre === g}>{g}</option>
-      ))}
-    </select>
-
-    <select id="filter-year" class="bg-zinc-900 border border-zinc-700 text-zinc-300 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
-      <option value="">All Years</option>
-      {years.map(y => (
-        <option value={y} selected={year === y}>{y}</option>
-      ))}
-    </select>
-
-    <select id="filter-watched" class="bg-zinc-900 border border-zinc-700 text-zinc-300 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
-      <option value="">Watched & Unwatched</option>
-      <option value="false" selected={watched === "false"}>Unwatched</option>
-      <option value="true" selected={watched === "true"}>Watched</option>
-    </select>
-
-    {(genre || year || watched) && (
-      <a href={`/collection/movies?sort=${sort}`} class="text-sm text-zinc-500 hover:text-zinc-300 transition">
-        Clear filters
-      </a>
-    )}
+    <!-- Sort & filter controls -->
+    <div class="flex items-center gap-3">
+      <SortButton
+        id="movie-sort"
+        current={sort}
+        options={[
+          { value: "title", label: "A–Z" },
+          { value: "rating", label: "Top" },
+          { value: "release_date", label: "Newest" },
+          { value: "created_at", label: "Recently Added" },
+          { value: "last_watched", label: "Recently Watched" },
+        ]}
+      />
+      <FilterPanel
+        id="movie-filters"
+        basePath="/collection/movies"
+        currentSort={sort}
+        sections={[
+          { key: "genre", label: "Genre", options: MOVIE_GENRES.map((g) => ({ value: g, label: g })), selected: genres },
+          { key: "year", label: "Year", selected: years.map(String), dynamic: true, endpoint: "/api/proxy/media/years?type=movie" },
+          { key: "watched", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }], selected: watched },
+        ]}
+      />
+    </div>
   </div>
 
   {data.results.length === 0 ? (
     <div class="bg-zinc-900/50 rounded-2xl p-12 text-center border border-dashed border-zinc-800">
       <div class="text-zinc-500 mb-4 text-lg">
-        {(genre || year || watched) ? "No movies match the selected filters" : "Your library is empty"}
+        {hasFilters ? "No movies match the selected filters" : "Your library is empty"}
       </div>
-      {!(genre || year || watched) && (
+      {!hasFilters && (
         <a href="/settings" class="inline-flex items-center px-6 py-3 bg-zinc-100 text-zinc-950 font-bold rounded-xl hover:bg-zinc-200 transition">
           Set up Sync
         </a>
@@ -122,23 +103,3 @@ const baseUrl = `/collection/movies?${baseParams.toString()}`;
     </>
   )}
 </Base>
-
-<script define:vars={{ sort, genre, year, watched }}>
-  function navigate() {
-    const params = new URLSearchParams();
-    params.set("sort", document.getElementById("sort-select").value);
-    const g = document.getElementById("filter-genre").value;
-    const y = document.getElementById("filter-year").value;
-    const w = document.getElementById("filter-watched").value;
-    if (g) params.set("genre", g);
-    if (y) params.set("year", y);
-    if (w) params.set("watched", w);
-    window.location.href = `/collection/movies?${params.toString()}`;
-  }
-
-  document.getElementById("filter-genre")?.addEventListener("change", navigate);
-  document.getElementById("filter-year")?.addEventListener("change", navigate);
-  document.getElementById("filter-watched")?.addEventListener("change", navigate);
-  document.getElementById("sort-select")?.addEventListener("change", navigate);
-
-</script>

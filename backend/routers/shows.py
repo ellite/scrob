@@ -183,10 +183,10 @@ async def list_shows(
     sort: str = Query(default="title"),
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=1, le=100),
-    genre: str | None = Query(None),
-    year: int | None = Query(None),
-    status: str | None = Query(None),
-    watched: bool | None = Query(None),
+    genre: list[str] = Query(default=[]),
+    year: list[int] = Query(default=[]),
+    status: list[str] = Query(default=[]),
+    watched: list[str] = Query(default=[]),
 ):
     offset = (page - 1) * page_size
 
@@ -226,12 +226,15 @@ async def list_shows(
         )
     )
     if genre:
-        base_query = base_query.where(sa_cast(ShowModel.tmdb_data["genres"], Text).contains(f'"{genre}"'))
+        base_query = base_query.where(or_(*[
+            sa_cast(ShowModel.tmdb_data["genres"], Text).contains(f'"{g}"') for g in genre
+        ]))
     if year:
-        base_query = base_query.where(ShowModel.first_air_date.like(f'{year}%'))
+        base_query = base_query.where(or_(*[ShowModel.first_air_date.like(f'{y}%') for y in year]))
     if status:
-        base_query = base_query.where(ShowModel.status == status)
-    if watched is not None:
+        base_query = base_query.where(ShowModel.status.in_(status))
+    watched_states = set(watched)
+    if watched_states and watched_states != {"watched", "unwatched"}:
         # "Watched" here means the user has watched at least one episode
         # (started); "unwatched" means zero episodes watched (not started).
         # This is deliberately not "fully watched" — that needs per-show aired
@@ -251,7 +254,7 @@ async def list_shows(
             .distinct()
             .subquery()
         )
-        if watched:
+        if "watched" in watched_states:
             base_query = base_query.where(ShowModel.id.in_(select(watched_show_ids)))
         else:
             base_query = base_query.where(ShowModel.id.notin_(select(watched_show_ids)))
@@ -300,6 +303,56 @@ async def list_shows(
         "total_pages": total_pages,
         "results": results,
     }
+
+
+@router.get("/years")
+async def list_show_years(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Distinct first-air-date years present in the user's show collection, for the year filter."""
+    episode_show_ids = (
+        select(Media.show_id)
+        .join(Collection, Collection.media_id == Media.id)
+        .where(
+            Collection.user_id == current_user.id,
+            Media.show_id.isnot(None),
+            Media.media_type == MediaType.episode,
+            Media.season_number.isnot(None),
+            Media.season_number != 0,
+            Media.episode_number.isnot(None),
+        )
+        .distinct()
+        .subquery()
+    )
+    direct_series_tmdb_ids = (
+        select(Media.tmdb_id)
+        .join(Collection, Collection.media_id == Media.id)
+        .where(
+            Collection.user_id == current_user.id,
+            Media.media_type == MediaType.series,
+            Media.tmdb_id.isnot(None),
+        )
+        .distinct()
+        .subquery()
+    )
+    result = await db.execute(
+        select(func.substr(ShowModel.first_air_date, 1, 4))
+        .where(
+            or_(
+                ShowModel.id.in_(select(episode_show_ids)),
+                ShowModel.tmdb_id.in_(select(direct_series_tmdb_ids)),
+            ),
+            ShowModel.first_air_date.isnot(None),
+            ShowModel.first_air_date != "",
+        )
+        .distinct()
+    )
+    years = sorted(
+        {int(row[0]) for row in result.all() if row[0] and row[0].isdigit()},
+        reverse=True,
+    )
+    return {"years": years}
 
 
 class EpisodeOrderRequest(BaseModel):

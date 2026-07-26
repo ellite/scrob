@@ -1,0 +1,122 @@
+---
+interface SortOption {
+  value: string;
+  label: string;
+}
+
+interface Props {
+  id: string;
+  options: SortOption[];
+  current: string;
+  paramKey?: string; // query param to set on selection; default "sort"
+  label?: string; // popup title; default "Sort By"
+  iconPaths?: string[]; // trigger icon SVG path "d" strings; default arrows-up-down (sort)
+}
+
+const SORT_ICON = ["M3 7.5 7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5"];
+
+const { id, options, current, paramKey = "sort", label = "Sort By", iconPaths = SORT_ICON } = Astro.props;
+const currentLabel = options.find((o) => o.value === current)?.label ?? label;
+---
+
+<div class="relative inline-block" id={id} data-sort-panel-root data-param-key={paramKey}>
+  <button
+    type="button"
+    data-role="trigger"
+    class="flex items-center gap-2 bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm rounded-lg px-3 py-2 hover:border-zinc-600 transition cursor-pointer"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+      {iconPaths.map((d) => <path stroke-linecap="round" stroke-linejoin="round" d={d} />)}
+    </svg>
+    {currentLabel}
+  </button>
+
+  <div data-role="overlay" class="fixed inset-0 z-50 hidden flex items-end sm:items-center justify-center">
+    <div data-role="backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer"></div>
+
+    <div
+      data-role="panel"
+      class="relative w-full sm:w-80 max-h-[85vh] sm:max-h-[80vh] bg-zinc-900 border border-zinc-800 rounded-t-2xl sm:rounded-2xl flex flex-col max-sm:translate-y-full sm:scale-95 sm:opacity-0 transition-all duration-300"
+    >
+      <div class="flex items-center justify-between p-4 border-b border-zinc-800 flex-shrink-0">
+        <h2 class="font-semibold text-zinc-100">{label}</h2>
+        <button type="button" data-role="close" class="p-1 text-zinc-500 hover:text-zinc-200 transition cursor-pointer" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="sort-panel-scroll overflow-y-auto flex-1 py-2">
+        {options.map((opt) => (
+          <label class="flex items-center gap-3 px-4 py-3 text-sm text-zinc-300 cursor-pointer transition-colors hover:bg-zinc-800/60 has-[:checked]:text-zinc-100">
+            <input
+              type="radio"
+              name={`${id}__${paramKey}`}
+              value={opt.value}
+              checked={current === opt.value}
+              data-role="option"
+              class="peer sr-only"
+            />
+            <span class="flex-1">{opt.label}</span>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-5 h-5 flex-shrink-0 text-blue-500 opacity-0 peer-checked:opacity-100 transition-opacity">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+            </svg>
+          </label>
+        ))}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function initSortPanel(root: HTMLElement) {
+    if (root.dataset.initialized) return;
+    root.dataset.initialized = "true";
+
+    const trigger = root.querySelector<HTMLElement>('[data-role="trigger"]');
+    const overlay = root.querySelector<HTMLElement>('[data-role="overlay"]');
+    const panel = root.querySelector<HTMLElement>('[data-role="panel"]');
+    const backdrop = root.querySelector<HTMLElement>('[data-role="backdrop"]');
+    const closeBtn = root.querySelector<HTMLElement>('[data-role="close"]');
+    const paramKey = root.dataset.paramKey || "sort";
+
+    function open() {
+      overlay?.classList.remove("hidden");
+      requestAnimationFrame(() => {
+        panel?.classList.remove("max-sm:translate-y-full", "sm:scale-95", "sm:opacity-0");
+      });
+      document.body.style.overflow = "hidden";
+    }
+    function close() {
+      panel?.classList.add("max-sm:translate-y-full", "sm:scale-95", "sm:opacity-0");
+      document.body.style.overflow = "";
+      setTimeout(() => overlay?.classList.add("hidden"), 300);
+    }
+
+    trigger?.addEventListener("click", open);
+    closeBtn?.addEventListener("click", close);
+    backdrop?.addEventListener("click", close);
+
+    root.querySelectorAll<HTMLInputElement>('[data-role="option"]').forEach((input) => {
+      input.addEventListener("change", () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set(paramKey, input.value);
+        url.searchParams.delete("page");
+        window.location.href = url.toString();
+      });
+    });
+  }
+
+  document.querySelectorAll<HTMLElement>("[data-sort-panel-root]").forEach(initSortPanel);
+</script>
+
+<style>
+  .sort-panel-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .sort-panel-scroll::-webkit-scrollbar {
+    display: none;
+  }
+</style>

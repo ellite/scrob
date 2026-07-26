@@ -1,17 +1,24 @@
 const BACKEND_PORT = (import.meta.env.BACKEND_PORT as string | undefined) ?? "7331";
 const BASE = `http://localhost:${BACKEND_PORT}`;
 
+type ParamValue = string | number | boolean | undefined;
+
 async function request<T>(
   path: string,
   method: string = "GET",
-  params?: Record<string, string | number | boolean | undefined>,
+  params?: Record<string, ParamValue | ParamValue[]>,
   body?: unknown,
   token?: string
 ): Promise<T> {
   const url = new URL(path.startsWith("/") ? path.slice(1) : path, BASE.endsWith("/") ? BASE : BASE + "/");
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
-      if (v !== undefined) url.searchParams.set(k, String(v));
+      if (v === undefined) return;
+      if (Array.isArray(v)) {
+        v.forEach((item) => { if (item !== undefined) url.searchParams.append(k, String(item)); });
+      } else {
+        url.searchParams.set(k, String(v));
+      }
     });
   }
 
@@ -45,7 +52,7 @@ async function request<T>(
   return res.json();
 }
 
-async function get<T>(path: string, params?: Record<string, string | number | boolean | undefined>, token?: string): Promise<T> {
+async function get<T>(path: string, params?: Record<string, ParamValue | ParamValue[]>, token?: string): Promise<T> {
   return request<T>(path, "GET", params, undefined, token);
 }
 
@@ -1045,8 +1052,11 @@ export const api = {
   },
 
   media: {
-    list: (params?: { type?: string; sort?: string; page?: number; genre?: string; year?: number; watched?: boolean }, token?: string) =>
+    list: (params?: { type?: string; sort?: string; page?: number; genre?: string[]; year?: number[]; watched?: string[] }, token?: string) =>
       get<{ page: number; page_size: number; total_pages: number; total_results: number; results: MediaItem[] }>("/media", params, token),
+
+    years: (type: string, token?: string) =>
+      get<{ years: number[] }>("/media/years", { type }, token),
 
     get: (type: string, tmdbId: number, token?: string) =>
       get<MediaItem>(`/media/${type}/${tmdbId}`, undefined, token),
@@ -1119,8 +1129,11 @@ export const api = {
   },
 
   shows: {
-    list: (params?: { sort?: string; page?: number; page_size?: number; genre?: string; year?: number; status?: string; watched?: boolean }, token?: string) =>
+    list: (params?: { sort?: string; page?: number; page_size?: number; genre?: string[]; year?: number[]; status?: string[]; watched?: string[] }, token?: string) =>
       get<{ page: number; page_size: number; total_results: number; total_pages: number; results: any[] }>("/shows", params, token),
+
+    years: (token?: string) =>
+      get<{ years: number[] }>("/shows/years", undefined, token),
 
     get: (seriesTmdbId: number, token?: string) =>
       get<Show>(`/shows/${seriesTmdbId}`, undefined, token),

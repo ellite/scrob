@@ -652,9 +652,9 @@ async def list_media(
     sort: str = Query(default="created_at"),
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=1, le=100),
-    genre: str | None = Query(None),
-    year: int | None = Query(None),
-    watched: bool | None = Query(None),
+    genre: list[str] = Query(default=[]),
+    year: list[int] = Query(default=[]),
+    watched: list[str] = Query(default=[]),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -664,16 +664,19 @@ async def list_media(
     if type:
         filters.append(Media.media_type == type)
     if genre:
-        filters.append(sa_cast(Media.tmdb_data["genres"], Text).contains(f'"{genre}"'))
+        filters.append(or_(*[
+            sa_cast(Media.tmdb_data["genres"], Text).contains(f'"{g}"') for g in genre
+        ]))
     if year:
-        filters.append(Media.release_date.like(f'{year}%'))
-    if watched is not None:
+        filters.append(or_(*[Media.release_date.like(f'{y}%') for y in year]))
+    watched_states = set(watched)
+    if watched_states and watched_states != {"watched", "unwatched"}:
         watched_exists = (
             select(WatchEvent.id)
             .where(WatchEvent.media_id == Media.id, WatchEvent.user_id == current_user.id, WatchEvent.completed == True)
             .exists()
         )
-        filters.append(watched_exists if watched else ~watched_exists)
+        filters.append(watched_exists if "watched" in watched_states else ~watched_exists)
 
     base_query = (
         select(Media)
@@ -733,6 +736,31 @@ async def list_media(
         "total_pages": total_pages,
         "results": results,
     }
+
+
+@router.get("/years")
+async def list_media_years(
+    type: MediaType = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Distinct release years present in the user's collection, for the year filter."""
+    result = await db.execute(
+        select(func.substr(Media.release_date, 1, 4))
+        .join(Collection, Collection.media_id == Media.id)
+        .where(
+            Collection.user_id == current_user.id,
+            Media.media_type == type,
+            Media.release_date.isnot(None),
+            Media.release_date != "",
+        )
+        .distinct()
+    )
+    years = sorted(
+        {int(row[0]) for row in result.all() if row[0] and row[0].isdigit()},
+        reverse=True,
+    )
+    return {"years": years}
 
 
 @router.get("/find-by-imdb")
