@@ -1,6 +1,7 @@
 import asyncio
 import re
 import unicodedata
+from collections.abc import Awaitable, Callable
 from datetime import date
 
 from sqlalchemy import delete, select
@@ -80,6 +81,7 @@ async def ensure_episode_order_mapping(
     tvdb_api_key: str,
     *,
     force: bool = False,
+    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> dict:
     existing_result = await db.execute(
         select(EpisodeOrderMapping).where(
@@ -148,9 +150,53 @@ async def ensure_episode_order_mapping(
         if episode.get("id") is not None
     }
 
+    # Neither side has anything to match against — fail immediately instead of
+    # burning API calls on a per-episode loop that's guaranteed to find nothing.
+    if not tmdb_episodes or not tvdb_episodes:
+        raise ValueError("No TMDB episodes could be matched to TVDB")
+
+    async def _would_match(episode: dict) -> bool:
+        ids = await tmdb.get_episode_external_ids(
+            series_tmdb_id,
+            int(episode["season_number"]),
+            int(episode["episode_number"]),
+            api_key=tmdb_api_key,
+        )
+        external_tvdb_id = ids.get("tvdb_id")
+        if external_tvdb_id and tvdb_by_id.get(int(external_tvdb_id)):
+            return True
+        title = _normalise_title(episode.get("name"))
+        if not title:
+            return False
+        return any(
+            _normalise_title(candidate.get("name")) == title
+            and (_date_distance(episode.get("air_date"), candidate.get("aired")) or 0) <= 1
+            for candidate in tvdb_episodes
+        )
+
+    # A show-wide numbering/title mismatch (the usual cause of a total match
+    # failure) shows up regardless of which episode is checked — probe a small
+    # sample spread across the whole series (not just season 1, which is the
+    # most likely place for one-off numbering quirks) so a doomed mapping fails
+    # in a handful of requests instead of after fetching external IDs for every
+    # episode.
+    PROBE_SIZE = 10
+    if len(tmdb_episodes) > PROBE_SIZE:
+        sample_indices = sorted({(i * len(tmdb_episodes)) // PROBE_SIZE for i in range(PROBE_SIZE)})
+        probe_matches = await asyncio.gather(*(_would_match(tmdb_episodes[i]) for i in sample_indices))
+        if not any(probe_matches):
+            raise ValueError("No TMDB episodes could be matched to TVDB")
+
+    total_episodes = len(tmdb_episodes)
+    if on_progress:
+        await on_progress(0, total_episodes)
+
     semaphore = asyncio.Semaphore(5)
+    progress_lock = asyncio.Lock()
+    completed = 0
 
     async def load_external_ids(episode: dict) -> tuple[dict, dict]:
+        nonlocal completed
         async with semaphore:
             ids = await tmdb.get_episode_external_ids(
                 series_tmdb_id,
@@ -158,6 +204,12 @@ async def ensure_episode_order_mapping(
                 int(episode["episode_number"]),
                 api_key=tmdb_api_key,
             )
+        if on_progress:
+            async with progress_lock:
+                completed += 1
+                snapshot = completed
+            if snapshot % 10 == 0 or snapshot == total_episodes:
+                await on_progress(snapshot, total_episodes)
         return episode, ids
 
     external_rows = await asyncio.gather(

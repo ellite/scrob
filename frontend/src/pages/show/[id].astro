@@ -20,6 +20,12 @@ try {
   error = e.message;
 }
 
+let hasTvdbKey = false;
+try {
+  const settings = await api.auth.getSettings(token!);
+  hasTvdbKey = !!settings?.has_effective_tvdb_key;
+} catch {}
+
 if (!show && !error) {
     return Astro.redirect("/404");
 }
@@ -172,7 +178,7 @@ const originalLanguage = show?.original_language
                 userRating={show.user_rating ?? null}
               />
             </div>
-            {show.tvdb_id && (
+            {show.tvdb_id && hasTvdbKey && (
               <div class="mb-6">
                 <EpisodeOrderSelector
                   tmdbId={show.tmdb_id}

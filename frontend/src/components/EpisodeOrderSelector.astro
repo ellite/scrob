@@ -27,8 +27,8 @@ const { tmdbId, tvdbId, selected, token } = Astro.props;
       data-order="tmdb"
       aria-pressed={selected === "tmdb"}
       class:list={[
-        "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors",
-        selected === "tmdb" ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-100",
+        "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
+        selected === "tmdb" ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800",
       ]}
     >
       TMDB
@@ -38,12 +38,24 @@ const { tmdbId, tvdbId, selected, token } = Astro.props;
       data-order="tvdb"
       aria-pressed={selected === "tvdb"}
       class:list={[
-        "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors",
-        selected === "tvdb" ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-100",
+        "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
+        selected === "tvdb" ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800",
       ]}
     >
       TVDB
     </button>
+  </div>
+  <div data-order-progress class="hidden w-full">
+    <div class="flex justify-between items-center mb-1.5">
+      <span data-order-progress-label class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Mapping…</span>
+      <span data-order-progress-pct class="text-xs font-bold text-zinc-400"></span>
+    </div>
+    <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+      <div data-order-progress-bar class="h-1.5 rounded-full transition-all duration-500 bg-blue-600 animate-pulse" style="width: 100%"></div>
+    </div>
+    <div class="flex justify-between text-xs text-zinc-500 mt-1">
+      <span data-order-progress-items></span>
+    </div>
   </div>
   <p data-order-error class="hidden w-full text-xs font-medium text-red-400"></p>
 </div>
@@ -53,16 +65,75 @@ const { tmdbId, tvdbId, selected, token } = Astro.props;
     if (selector.dataset.bound === 'true') return;
     selector.dataset.bound = 'true';
 
-    selector.querySelectorAll<HTMLButtonElement>('[data-order]').forEach((button) => {
+    const buttons = selector.querySelectorAll<HTMLButtonElement>('[data-order]');
+    const error = selector.querySelector<HTMLElement>('[data-order-error]');
+    const progress = selector.querySelector<HTMLElement>('[data-order-progress]');
+    const progressBar = selector.querySelector<HTMLElement>('[data-order-progress-bar]');
+    const progressPct = selector.querySelector<HTMLElement>('[data-order-progress-pct]');
+    const progressItems = selector.querySelector<HTMLElement>('[data-order-progress-items]');
+
+    function setBusy(busy: boolean) {
+      buttons.forEach((item) => { item.disabled = busy; });
+    }
+
+    function renderProgress(job: any) {
+      if (!progress) return;
+      progress.classList.remove('hidden');
+      const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
+      const indeterminate = job.status === 'pending' || pct === 0;
+      if (progressBar) {
+        progressBar.className = `h-1.5 rounded-full transition-all duration-500 bg-blue-600${indeterminate ? ' animate-pulse' : ''}`;
+        progressBar.style.width = indeterminate ? '100%' : `${pct}%`;
+      }
+      if (progressPct) progressPct.textContent = pct > 0 ? `${pct}%` : '';
+      if (progressItems) {
+        progressItems.textContent = job.total_items > 0
+          ? `${job.processed_items} / ${job.total_items} episodes`
+          : (job.status === 'pending' ? 'Queued…' : 'Loading…');
+      }
+    }
+
+    function fail(message: string) {
+      setBusy(false);
+      progress?.classList.add('hidden');
+      if (error) {
+        error.textContent = message;
+        error.classList.remove('hidden');
+      }
+    }
+
+    // TVDB mapping can take minutes for long-running shows (one TMDB request per
+    // episode), so it runs as a background job — poll until it finishes instead
+    // of blocking the request and risking a reverse-proxy gateway timeout.
+    async function pollEpisodeOrderJob(jobId: number) {
+      try {
+        const response = await fetch(`/api/proxy/shows/episode-order/jobs/${jobId}`, {
+          headers: { Authorization: `Bearer ${selector.dataset.token}` },
+        });
+        if (!response.ok) throw new Error('Unable to check episode order progress');
+        const job = await response.json();
+        if (job.status === 'completed') {
+          window.location.href = job.stats?.redirect ?? `/show/${selector.dataset.tmdbId}`;
+          return;
+        }
+        if (job.status === 'failed' || job.status === 'cancelled') {
+          throw new Error(job.error_message || 'Unable to update episode order');
+        }
+        setBusy(true);
+        renderProgress(job);
+        setTimeout(() => pollEpisodeOrderJob(jobId), 1500);
+      } catch (exception) {
+        fail(exception instanceof Error ? exception.message : 'Unable to update episode order');
+      }
+    }
+
+    buttons.forEach((button) => {
       button.addEventListener('click', async () => {
         const episodeOrder = button.dataset.order as 'tmdb' | 'tvdb';
         if (episodeOrder === selector.dataset.selected) return;
 
-        const buttons = selector.querySelectorAll<HTMLButtonElement>('[data-order]');
-        const error = selector.querySelector<HTMLElement>('[data-order-error]');
-        buttons.forEach((item) => { item.disabled = true; });
+        setBusy(true);
         if (error) error.classList.add('hidden');
-        button.textContent = episodeOrder === 'tvdb' ? 'Mapping…' : 'Saving…';
 
         try {
           const response = await fetch(`/api/proxy/shows/${selector.dataset.tmdbId}/episode-order`, {
@@ -75,16 +146,32 @@ const { tmdbId, tvdbId, selected, token } = Astro.props;
           });
           const data = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(data.detail || 'Unable to update episode order');
+          if (data.status === 'started' && data.job_id) {
+            pollEpisodeOrderJob(data.job_id);
+            return;
+          }
           window.location.href = data.redirect;
         } catch (exception) {
-          button.textContent = episodeOrder.toUpperCase();
-          buttons.forEach((item) => { item.disabled = false; });
-          if (error) {
-            error.textContent = exception instanceof Error ? exception.message : 'Unable to update episode order';
-            error.classList.remove('hidden');
-          }
+          fail(exception instanceof Error ? exception.message : 'Unable to update episode order');
         }
       });
     });
+
+    // Resume polling if a mapping job for this show is already in flight — e.g.
+    // the page was refreshed mid-run — instead of silently losing track of it.
+    (async () => {
+      try {
+        const response = await fetch(`/api/proxy/shows/${selector.dataset.tmdbId}/episode-order/job`, {
+          headers: { Authorization: `Bearer ${selector.dataset.token}` },
+        });
+        if (!response.ok) return;
+        const job = await response.json();
+        if (job && (job.status === 'pending' || job.status === 'running')) {
+          setBusy(true);
+          renderProgress(job);
+          pollEpisodeOrderJob(job.id);
+        }
+      } catch {}
+    })();
   });
 </script>

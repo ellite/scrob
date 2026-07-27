@@ -1,9 +1,9 @@
 import asyncio
 from datetime import datetime, date
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, case, cast as sa_cast, Text, or_, and_
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import select, update, func, case, cast as sa_cast, Text, or_, and_
 from sqlalchemy.orm import aliased
 
 from models.events import WatchEvent
@@ -11,11 +11,12 @@ from models.collection import Collection, CollectionFile
 from models.ratings import Rating
 from models.lists import List as UserList, ListItem
 
-from db import get_db
+from db import get_db, engine
 from models.media import Media
 from models.collection import Collection, CollectionFile
-from models.base import MediaType
+from models.base import CollectionSource, MediaType
 from models.show import Show as ShowModel
+from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch, _effective_sonarr, _get_global_settings
@@ -360,10 +361,99 @@ class EpisodeOrderRequest(BaseModel):
     force_refresh: bool = False
 
 
+async def _run_episode_order_mapping(
+    user_id: int,
+    job_id: int,
+    series_tmdb_id: int,
+    tmdb_api_key: str,
+    tvdb_api_key: str,
+    force_refresh: bool,
+) -> None:
+    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+    # Called concurrently (up to 5 in flight) from ensure_episode_order_mapping's
+    # per-episode fetch loop — each call gets its own short-lived session/connection
+    # so concurrent progress writes never share a single AsyncSession.
+    async def report_progress(done: int, total: int) -> None:
+        async with async_session() as pdb:
+            await pdb.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                processed_items=done, total_items=total, updated_at=func.now(),
+            ))
+            await pdb.commit()
+
+    async with async_session() as db:
+        try:
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.running))
+            await db.commit()
+
+            mapping_summary = await ensure_episode_order_mapping(
+                db,
+                series_tmdb_id,
+                tmdb_api_key,
+                tvdb_api_key,
+                force=force_refresh,
+                on_progress=report_progress,
+            )
+            tvdb_id = mapping_summary["tvdb_id"]
+
+            preference = await get_episode_order(db, user_id, series_tmdb_id)
+            if preference:
+                preference.episode_order = "tvdb"
+                preference.tvdb_id = tvdb_id
+            else:
+                db.add(UserShowEpisodeOrder(
+                    user_id=user_id,
+                    series_tmdb_id=series_tmdb_id,
+                    episode_order="tvdb",
+                    tvdb_id=tvdb_id,
+                ))
+
+            show_result = await db.execute(
+                select(ShowModel).where(ShowModel.tmdb_id == series_tmdb_id)
+            )
+            local_show = show_result.scalar_one_or_none()
+            if local_show:
+                local_show.tvdb_id = tvdb_id
+
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                status=SyncStatus.completed,
+                stats={
+                    "episode_order": "tvdb",
+                    "series_tmdb_id": series_tmdb_id,
+                    "tvdb_id": tvdb_id,
+                    "mapping": mapping_summary,
+                    "redirect": f"/show/tvdb/{tvdb_id}",
+                },
+            ))
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                status=SyncStatus.failed, error_message=str(exc)[:900],
+            ))
+            await db.commit()
+
+
+@router.get("/episode-order/jobs/{job_id}")
+async def get_episode_order_job(
+    job_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(SyncJob).where(SyncJob.id == job_id, SyncJob.user_id == current_user.id)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
 @router.post("/{series_tmdb_id}/episode-order")
 async def set_show_episode_order(
     series_tmdb_id: int,
     body: EpisodeOrderRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -372,11 +462,10 @@ async def set_show_episode_order(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    preference = await get_episode_order(db, current_user.id, series_tmdb_id)
-    mapping_summary = None
-    tvdb_id = preference.tvdb_id if preference else None
-
     if selected_order == "tvdb":
+        # Building the TVDB mapping fans out one TMDB request per episode and can
+        # take minutes for long-running shows — always run it in the background so
+        # the request never risks hitting the reverse proxy's read timeout.
         tmdb_api_key, tvdb_api_key = await asyncio.gather(
             get_user_tmdb_key(db, current_user.id),
             get_user_tvdb_key(db, current_user.id),
@@ -385,51 +474,65 @@ async def set_show_episode_order(
             raise HTTPException(status_code=400, detail="TMDB API key not configured")
         if not tvdb_api_key:
             raise HTTPException(status_code=400, detail="TVDB API key not configured")
-        try:
-            mapping_summary = await ensure_episode_order_mapping(
-                db,
-                series_tmdb_id,
-                tmdb_api_key,
-                tvdb_api_key,
-                force=body.force_refresh,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Episode mapping failed: {exc}")
-        tvdb_id = mapping_summary["tvdb_id"]
 
+        job = SyncJob(
+            user_id=current_user.id,
+            source=CollectionSource.tmdb,
+            job_type="episode_order",
+            status=SyncStatus.pending,
+            stats={"series_tmdb_id": series_tmdb_id},
+        )
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+
+        background_tasks.add_task(
+            _run_episode_order_mapping,
+            current_user.id, job.id, series_tmdb_id, tmdb_api_key, tvdb_api_key, body.force_refresh,
+        )
+        return {"status": "started", "job_id": job.id}
+
+    preference = await get_episode_order(db, current_user.id, series_tmdb_id)
     if preference:
         preference.episode_order = selected_order
-        preference.tvdb_id = tvdb_id
     else:
-        preference = UserShowEpisodeOrder(
+        db.add(UserShowEpisodeOrder(
             user_id=current_user.id,
             series_tmdb_id=series_tmdb_id,
             episode_order=selected_order,
-            tvdb_id=tvdb_id,
-        )
-        db.add(preference)
-
-    if tvdb_id:
-        show_result = await db.execute(
-            select(ShowModel).where(ShowModel.tmdb_id == series_tmdb_id)
-        )
-        local_show = show_result.scalar_one_or_none()
-        if local_show:
-            local_show.tvdb_id = tvdb_id
+            tvdb_id=None,
+        ))
 
     await db.commit()
     return {
         "episode_order": selected_order,
         "series_tmdb_id": series_tmdb_id,
-        "tvdb_id": tvdb_id,
-        "mapping": mapping_summary,
-        "redirect": (
-            f"/show/tvdb/{tvdb_id}" if selected_order == "tvdb"
-            else f"/show/{series_tmdb_id}"
-        ),
+        "tvdb_id": None,
+        "mapping": None,
+        "redirect": f"/show/{series_tmdb_id}",
     }
+
+
+@router.get("/{series_tmdb_id}/episode-order/job")
+async def get_active_episode_order_job(
+    series_tmdb_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Look up an in-flight TVDB mapping job for this show, if any — lets the
+    page recover its progress after a refresh instead of losing track of it."""
+    result = await db.execute(
+        select(SyncJob)
+        .where(
+            SyncJob.user_id == current_user.id,
+            SyncJob.job_type == "episode_order",
+            SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]),
+            SyncJob.stats["series_tmdb_id"].astext == str(series_tmdb_id),
+        )
+        .order_by(SyncJob.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 @router.get("/{series_tmdb_id}")
