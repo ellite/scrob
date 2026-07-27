@@ -13,6 +13,7 @@ class SyncStatus(str, enum.Enum):
     running = "running"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
 
 class SyncJob(Base):
     __tablename__ = "sync_jobs"

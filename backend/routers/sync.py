@@ -35,6 +35,25 @@ logger = logging.getLogger("uvicorn.error")
 
 
 
+class SyncCancelled(Exception):
+    """Raised internally to unwind a background sync loop once its SyncJob has been cancelled."""
+
+
+async def _raise_if_cancelled(db: AsyncSession, job_id: int | None) -> None:
+    """Re-read a job's status from the DB and raise SyncCancelled if the user cancelled it.
+
+    Background sync loops run in their own DB session, separate from the one the
+    cancel endpoint commits to, so cancellation can only be observed by polling —
+    call this at natural checkpoints (per page/batch/item) inside long-running loops.
+    """
+    if job_id is None:
+        return
+    result = await db.execute(select(SyncJob.status).where(SyncJob.id == job_id))
+    status = result.scalar_one_or_none()
+    if status == SyncStatus.cancelled:
+        raise SyncCancelled()
+
+
 async def _get_effective_tmdb_key(db: AsyncSession, user_settings: UserSettings | None) -> str | None:
     if user_settings and user_settings.tmdb_api_key:
         return user_settings.tmdb_api_key
@@ -1004,19 +1023,21 @@ async def _fan_out_changes_to_other_connections(
     push_trakt_collection = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_collection and settings.trakt_access_token and settings.trakt_client_id
 
     if (push_trakt_watched or push_trakt_ratings or push_trakt_collection) and all_changed_ids:
-        trakt_history_movies: list[int] = []
-        trakt_history_episodes: list[tuple[int, int, int]] = []
+        trakt_history_movies: list[tuple[int, datetime | None]] = []
+        trakt_history_episodes: list[tuple[int, int, int, datetime | None]] = []
         if push_trakt_watched:
+            trakt_watched_at_by_media = await _latest_watched_at(db, user_id, list(new_watched_ids))
             for mid in new_watched_ids:
                 media = media_by_id.get(mid)
                 if not media or not media.tmdb_id:
                     continue
+                watched_at = trakt_watched_at_by_media.get(mid)
                 if media.media_type == MediaType.movie:
-                    trakt_history_movies.append(media.tmdb_id)
+                    trakt_history_movies.append((media.tmdb_id, watched_at))
                 elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
                     show = shows_by_id.get(media.show_id)
                     if show and show.tmdb_id:
-                        trakt_history_episodes.append((show.tmdb_id, media.season_number, media.episode_number))
+                        trakt_history_episodes.append((show.tmdb_id, media.season_number, media.episode_number, watched_at))
 
         if trakt_history_movies or trakt_history_episodes:
             push_tasks.append(trakt_client.add_to_history_batch(
@@ -1249,6 +1270,13 @@ async def _fan_out_changes_to_other_connections(
             )
 
     # ── Simkl fan-out ────────────────────────────────────────────────────────
+    push_simkl_watched = (
+        settings
+        and exclude_cloud_source != CollectionSource.simkl
+        and settings.simkl_push_watched
+        and settings.simkl_access_token
+        and settings.simkl_client_id
+    )
     push_simkl_ratings = (
         settings
         and exclude_cloud_source != CollectionSource.simkl
@@ -1256,8 +1284,31 @@ async def _fan_out_changes_to_other_connections(
         and settings.simkl_access_token
         and settings.simkl_client_id
     )
-    if push_simkl_ratings:
+    if push_simkl_watched or push_simkl_ratings:
         from core import simkl as simkl_client
+
+        if push_simkl_watched and new_watched_ids:
+            simkl_watched_at_by_media = await _latest_watched_at(db, user_id, list(new_watched_ids))
+            for mid in new_watched_ids:
+                media = media_by_id.get(mid)
+                if not media or not media.tmdb_id:
+                    continue
+                watched_at = simkl_watched_at_by_media.get(mid)
+                if media.media_type == MediaType.movie:
+                    push_tasks.append(
+                        simkl_client.add_movie_to_history(
+                            settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, watched_at,
+                        )
+                    )
+                elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
+                    show = shows_by_id.get(media.show_id)
+                    if show and show.tmdb_id:
+                        push_tasks.append(
+                            simkl_client.add_episode_to_history(
+                                settings.simkl_client_id, settings.simkl_access_token,
+                                show.tmdb_id, media.season_number, media.episode_number, watched_at,
+                            )
+                        )
 
         for key, rating in new_ratings.items():
             media_id, season_number = key
@@ -1311,7 +1362,7 @@ async def _fan_out_changes_to_other_connections(
         target_count = len(push_candidates)
         target_count += 1 if (push_trakt_watched or push_trakt_ratings) else 0
         target_count += 1 if (push_mdblist_watched or push_mdblist_ratings) else 0
-        target_count += 1 if push_simkl_ratings else 0
+        target_count += 1 if (push_simkl_watched or push_simkl_ratings) else 0
         print(f"  Fanning out {len(push_tasks)} changes to {target_count} other connection(s)...")
         results = await asyncio.gather(*push_tasks, return_exceptions=True)
         failed = sum(1 for r in results if isinstance(r, Exception))
@@ -1786,6 +1837,7 @@ async def sync_items(
                     .values(processed_items=SyncJob.processed_items + BATCH_SIZE, updated_at=func.now())
                 )
                 await db.commit()
+                await _raise_if_cancelled(db, job_id)
             print(f"    Processed {i+1}/{len(items)} items...")
 
     await db.commit()
@@ -1797,6 +1849,7 @@ async def sync_items(
             .values(processed_items=SyncJob.processed_items + processed_remainder, updated_at=func.now())
         )
         await db.commit()
+        await _raise_if_cancelled(db, job_id)
 
     # ── Phase 3: Batch enrich newly created media ─────────────────────────────
     warnings: list[dict] = []
@@ -2001,6 +2054,11 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
+        except SyncCancelled:
+            print(f"Jellyfin sync job {job_id} cancelled")
+            await db.rollback()
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.cancelled, stats=stats, updated_at=func.now()))
+            await db.commit()
         except Exception as e:
             print(f"Jellyfin sync job {job_id} failed: {e}")
             import traceback
@@ -2191,6 +2249,11 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
+        except SyncCancelled:
+            print(f"Emby sync job {job_id} cancelled")
+            await db.rollback()
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.cancelled, stats=stats, updated_at=func.now()))
+            await db.commit()
         except Exception as e:
             print(f"Emby sync job {job_id} failed: {e}")
             import traceback
@@ -2682,6 +2745,11 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
+        except SyncCancelled:
+            print(f"Plex sync job {job_id} cancelled")
+            await db.rollback()
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.cancelled, stats=stats, updated_at=func.now()))
+            await db.commit()
         except Exception as e:
             print(f"Plex sync job {job_id} failed: {e}")
             import traceback
@@ -3268,6 +3336,15 @@ async def _run_nuvio_sync(
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
             logger.info("Nuvio sync job %s completed. Stats: %s", job_id, stats)
+        except SyncCancelled:
+            logger.info("Nuvio sync job %s cancelled", job_id)
+            await db.rollback()
+            await db.execute(
+                update(SyncJob)
+                .where(SyncJob.id == job_id)
+                .values(status=SyncStatus.cancelled, stats=stats, updated_at=func.now())
+            )
+            await db.commit()
         except Exception as exc:
             logger.exception("Nuvio sync job %s failed", job_id)
             await db.rollback()
@@ -3941,6 +4018,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     if done % _PROGRESS_INTERVAL == 0:
                         await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=done))
                         await db.commit()
+                        await _raise_if_cancelled(db, job_id)
 
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
                 status=SyncStatus.completed,
@@ -3949,6 +4027,11 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             ))
             await db.commit()
             print(f"Full push for connection {connection_id}: {succeeded}/{total} succeeded, {failed_count} failed")
+
+        except SyncCancelled:
+            print(f"Full push for connection {connection_id} cancelled")
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.cancelled))
+            await db.commit()
 
         except Exception as e:
             import traceback
@@ -4129,6 +4212,7 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
 
         try:
             await _update_job(status=SyncStatus.running)
+            await _raise_if_cancelled(db, job_id)
 
             # ── Phase 1: Re-enrich items that have show linkage but missing poster ──
             coll_q = await db.execute(
@@ -4166,6 +4250,8 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
             else:
                 print(f"Heal: nothing to re-enrich for user {user_id}")
                 await _update_job(total_items=0, processed_items=0)
+
+            await _raise_if_cancelled(db, job_id)
 
             # ── Phase 2: Recover orphaned episodes via Jellyfin/Emby ─────────────
             # Webhook-created episodes may have show_id=None if the show wasn't in
@@ -4221,6 +4307,10 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
             await _update_job(status=SyncStatus.completed, stats={"healed": True})
             asyncio.create_task(pre_cache_all_collected_bg())
 
+        except SyncCancelled:
+            print(f"Heal job {job_id} cancelled for user {user_id}")
+            await _update_job(status=SyncStatus.cancelled)
+
         except Exception as e:
             print(f"Heal failed for user {user_id}: {e}")
             import traceback
@@ -4238,10 +4328,35 @@ async def abort_sync(
         update(SyncJob)
         .where(SyncJob.user_id == current_user.id)
         .where(SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]))
-        .values(status=SyncStatus.failed, error_message="Aborted by user", updated_at=func.now())
+        .values(status=SyncStatus.cancelled, error_message="Cancelled by user", updated_at=func.now())
     )
     await db.commit()
-    return {"status": "ok", "message": "All active sync jobs have been marked as aborted"}
+    return {"status": "ok", "message": "All active sync jobs have been cancelled"}
+
+
+@router.post("/{job_id}/cancel")
+async def cancel_sync_job(
+    job_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Cancel a single pending or running sync job owned by the current user.
+
+    The background loop only notices on its next cooperative checkpoint (see
+    _raise_if_cancelled), so the job may keep running briefly after this returns.
+    """
+    result = await db.execute(
+        update(SyncJob)
+        .where(SyncJob.id == job_id, SyncJob.user_id == current_user.id)
+        .where(SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]))
+        .values(status=SyncStatus.cancelled, error_message="Cancelled by user", updated_at=func.now())
+        .returning(SyncJob.id)
+    )
+    cancelled_id = result.scalar_one_or_none()
+    await db.commit()
+    if cancelled_id is None:
+        raise HTTPException(status_code=404, detail="No active sync job with that id")
+    return {"status": "ok", "job_id": job_id}
 
 
 async def _stamp_matched_show_warnings(db: AsyncSession, user_id: int, warnings: list[dict]) -> list[dict]:

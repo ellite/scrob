@@ -578,6 +578,7 @@ async def _import_watchlist(
 
 
 async def run_mdblist_sync(user_id: int, job_id: int) -> None:
+    from routers.sync import SyncCancelled, _raise_if_cancelled
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with session_factory() as db:
         try:
@@ -638,10 +639,12 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
                 new_watched = await _import_watched(
                     db, user_id, snapshots["watched"], tmdb_key, external_cache, stats
                 )
+                await _raise_if_cancelled(db, job_id)
             if "ratings" in snapshots:
                 new_ratings = await _import_ratings(
                     db, user_id, snapshots["ratings"], tmdb_key, external_cache, stats
                 )
+                await _raise_if_cancelled(db, job_id)
             if "watchlist" in snapshots:
                 await _import_watchlist(
                     db, user_id, snapshots["watchlist"], tmdb_key, external_cache, stats
@@ -666,6 +669,13 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
                     errors=stats["errors"],
                     stats=stats,
                 )
+            )
+            await db.commit()
+        except SyncCancelled:
+            logger.info("MDBList pull job %s cancelled", job_id)
+            await db.rollback()
+            await db.execute(
+                update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.cancelled)
             )
             await db.commit()
         except Exception as exc:
@@ -709,6 +719,7 @@ async def _load_shows_for_episodes(db: AsyncSession, media_by_id: dict[int, Medi
 
 
 async def run_mdblist_push(user_id: int, job_id: int) -> None:
+    from routers.sync import SyncCancelled, _raise_if_cancelled
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with session_factory() as db:
         try:
@@ -847,6 +858,7 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                     update(SyncJob).where(SyncJob.id == job_id).values(processed_items=processed_so_far)
                 )
                 await db.commit()
+                await _raise_if_cancelled(db, job_id)
 
             results: dict[str, Any] = {}
             if settings.mdblist_push_watched:
@@ -885,6 +897,16 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                     processed_items=submitted,
                     errors=not_found,
                     stats={"submitted": submitted, "not_found": not_found, "targets": results},
+                )
+            )
+            await db.commit()
+        except SyncCancelled:
+            logger.info("MDBList push job %s cancelled", job_id)
+            await db.rollback()
+            await db.execute(
+                update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.cancelled,
+                    processed_items=processed_so_far,
                 )
             )
             await db.commit()

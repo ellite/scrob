@@ -172,7 +172,10 @@ if (me.totp_enabled) {
                 <div id={`conn-progress-${conn.id}`} class="hidden border-t border-zinc-800 px-6 py-3">
                   <div class="flex justify-between items-center mb-1.5">
                     <span id={`conn-job-label-${conn.id}`} class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Working…</span>
-                    <span id={`conn-job-pct-${conn.id}`} class="text-xs font-bold text-zinc-400">0%</span>
+                    <div class="flex items-center gap-3">
+                      <span id={`conn-job-pct-${conn.id}`} class="text-xs font-bold text-zinc-400">0%</span>
+                      <button type="button" id={`conn-job-cancel-${conn.id}`} class="hidden cursor-pointer text-xs font-semibold text-zinc-400 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 px-2 py-0.5 rounded-md transition-colors">Cancel</button>
+                    </div>
                   </div>
                   <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
                     <div id={`conn-job-bar-${conn.id}`} class="h-1.5 rounded-full transition-all duration-500 bg-blue-600" style="width: 0%"></div>
@@ -703,7 +706,10 @@ if (me.totp_enabled) {
               <div id="trakt-progress" class="hidden border-t border-zinc-800 px-6 py-3">
                 <div class="flex justify-between items-center mb-1.5">
                   <span id="trakt-job-label" class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Working…</span>
-                  <span id="trakt-job-pct" class="text-xs font-bold text-zinc-400"></span>
+                  <div class="flex items-center gap-3">
+                    <span id="trakt-job-pct" class="text-xs font-bold text-zinc-400"></span>
+                    <button type="button" id="trakt-job-cancel" class="hidden cursor-pointer text-xs font-semibold text-zinc-400 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 px-2 py-0.5 rounded-md transition-colors">Cancel</button>
+                  </div>
                 </div>
                 <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
                   <div id="trakt-job-bar" class="h-1.5 rounded-full transition-all duration-500 bg-red-500 animate-pulse" style="width: 100%"></div>
@@ -849,7 +855,10 @@ if (me.totp_enabled) {
               <div id="simkl-progress" class="hidden border-t border-zinc-800 px-6 py-3">
                 <div class="flex justify-between items-center mb-1.5">
                   <span id="simkl-job-label" class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Working…</span>
-                  <span id="simkl-job-pct" class="text-xs font-bold text-zinc-400"></span>
+                  <div class="flex items-center gap-3">
+                    <span id="simkl-job-pct" class="text-xs font-bold text-zinc-400"></span>
+                    <button type="button" id="simkl-job-cancel" class="hidden cursor-pointer text-xs font-semibold text-zinc-400 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 px-2 py-0.5 rounded-md transition-colors">Cancel</button>
+                  </div>
                 </div>
                 <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
                   <div id="simkl-job-bar" class="h-1.5 rounded-full transition-all duration-500 bg-blue-600 animate-pulse" style="width: 100%"></div>
@@ -963,7 +972,10 @@ if (me.totp_enabled) {
               <div id="mdblist-progress" class="hidden border-t border-zinc-800 px-6 py-3">
                 <div class="flex justify-between items-center mb-1.5">
                   <span id="mdblist-job-label" class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Working…</span>
-                  <span id="mdblist-job-pct" class="text-xs font-bold text-zinc-400"></span>
+                  <div class="flex items-center gap-3">
+                    <span id="mdblist-job-pct" class="text-xs font-bold text-zinc-400"></span>
+                    <button type="button" id="mdblist-job-cancel" class="hidden cursor-pointer text-xs font-semibold text-zinc-400 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 px-2 py-0.5 rounded-md transition-colors">Cancel</button>
+                  </div>
                 </div>
                 <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
                   <div id="mdblist-job-bar" class="h-1.5 rounded-full transition-all duration-500 bg-violet-500 animate-pulse" style="width: 100%"></div>
@@ -1306,7 +1318,10 @@ if (me.totp_enabled) {
             <div id="heal-progress" class="hidden border-t border-zinc-800 px-5 py-3">
               <div class="flex justify-between items-center mb-1.5">
                 <span id="heal-job-label" class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Working…</span>
-                <span id="heal-job-pct" class="text-xs font-bold text-zinc-400"></span>
+                <div class="flex items-center gap-3">
+                  <span id="heal-job-pct" class="text-xs font-bold text-zinc-400"></span>
+                  <button type="button" id="heal-job-cancel" class="hidden cursor-pointer text-xs font-semibold text-zinc-400 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 px-2 py-0.5 rounded-md transition-colors">Cancel</button>
+                </div>
               </div>
               <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
                 <div id="heal-job-bar" class="h-1.5 rounded-full transition-all duration-500 bg-blue-600 animate-pulse" style="width: 100%"></div>
@@ -1833,6 +1848,29 @@ if (me.totp_enabled) {
     window._messageTimeout = setTimeout(() => msg.classList.add('hidden'), 4000);
   }
 
+  // ── Shared sync-job cancellation ──────────────────────────────────────────
+  // The background job only notices on its next cooperative checkpoint, so the
+  // strip keeps showing "Cancelling…" until the next poll reflects status=cancelled.
+  async function cancelSyncJob(jobId: number, btn: HTMLButtonElement | null) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
+    try {
+      await fetch(`/api/proxy/sync/${jobId}/cancel`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+    } catch {
+      // best-effort — the next poll reflects the real state either way
+    }
+  }
+
+  function wireCancelButton(btn: HTMLButtonElement | null, job: any) {
+    if (!btn) return;
+    btn.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = 'Cancel';
+    btn.onclick = () => cancelSyncJob(job.id, btn);
+  }
+
   // ── Per-connection progress tracking ─────────────────────────────────────
   const connPollers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -1843,6 +1881,7 @@ if (me.totp_enabled) {
     const label = document.getElementById(`conn-job-label-${connId}`);
     const items = document.getElementById(`conn-job-items-${connId}`);
     const statusEl = document.getElementById(`conn-job-status-${connId}`);
+    const cancelBtn = document.getElementById(`conn-job-cancel-${connId}`) as HTMLButtonElement | null;
     if (!strip) return;
 
     if (!job) { strip.classList.add('hidden'); return; }
@@ -1851,19 +1890,22 @@ if (me.totp_enabled) {
 
     const isPush = job.job_type === 'push';
     const isFailed = job.status === 'failed';
+    const isCancelled = job.status === 'cancelled';
     const isCompleted = job.status === 'completed';
     const isPending = job.status === 'pending';
 
-    if (isFailed) {
+    if (isFailed || isCancelled) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isPush ? 'Push failed' : 'Pull failed';
+      if (label) label.textContent = isCancelled ? (isPush ? 'Push cancelled' : 'Pull cancelled') : (isPush ? 'Push failed' : 'Pull failed');
       if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = esc(job.error_message || 'Unknown error');
+      if (items) items.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
       if (statusEl) statusEl.textContent = '';
       return;
     }
 
     if (isCompleted) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
       if (bar) { bar.className = `h-1.5 rounded-full transition-all duration-500 ${isPush ? 'bg-amber-500' : 'bg-blue-600'}`; bar.style.width = '100%'; }
       if (label) label.textContent = isPush ? 'Push complete' : 'Pull complete';
       if (pctEl) pctEl.textContent = '100%';
@@ -1873,6 +1915,7 @@ if (me.totp_enabled) {
       return;
     }
 
+    wireCancelButton(cancelBtn, job);
     // pending / running
     const pct = job.total_items > 0
       ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100))
@@ -1905,7 +1948,7 @@ if (me.totp_enabled) {
       const job = jobs.find(j => String(j.connection_id) === connId);
 
       const isActive = job && (job.status === 'pending' || job.status === 'running');
-      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed')
+      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
         && new Date(job.updated_at).getTime() > Date.now() - 8000;
 
       renderConnProgress(connId, (isActive || isRecentDone) ? job : null);
@@ -1944,6 +1987,7 @@ if (me.totp_enabled) {
     const pctEl  = document.getElementById('simkl-job-pct');
     const label  = document.getElementById('simkl-job-label');
     const items  = document.getElementById('simkl-job-items');
+    const cancelBtn = document.getElementById('simkl-job-cancel') as HTMLButtonElement | null;
     if (!strip) return;
 
     if (!job) { strip.classList.add('hidden'); return; }
@@ -1951,18 +1995,21 @@ if (me.totp_enabled) {
 
     const isPush     = job.job_type === 'push';
     const isFailed   = job.status === 'failed';
+    const isCancelled = job.status === 'cancelled';
     const isCompleted = job.status === 'completed';
     const isPending  = job.status === 'pending';
 
-    if (isFailed) {
+    if (isFailed || isCancelled) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isPush ? 'Push failed' : 'Pull failed';
+      if (label) label.textContent = isCancelled ? (isPush ? 'Push cancelled' : 'Pull cancelled') : (isPush ? 'Push failed' : 'Pull failed');
       if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = esc(job.error_message || 'Unknown error');
+      if (items) items.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
       return;
     }
 
     if (isCompleted) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
       if (bar) { bar.className = `h-1.5 rounded-full transition-all duration-500 ${isPush ? 'bg-amber-500' : 'bg-blue-600'}`; bar.style.width = '100%'; }
       if (label) label.textContent = isPush ? 'Push complete' : 'Pull complete';
       if (pctEl) pctEl.textContent = '100%';
@@ -1973,6 +2020,7 @@ if (me.totp_enabled) {
       return;
     }
 
+    wireCancelButton(cancelBtn, job);
     const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
     const barColor = isPush ? 'bg-amber-500' : 'bg-blue-600';
     const indeterminate = isPending || pct === 0;
@@ -1992,7 +2040,7 @@ if (me.totp_enabled) {
       const jobs: any[] = await res.json();
       const job = jobs.find(j => j.source === 'simkl');
       const isActive = job && (job.status === 'pending' || job.status === 'running');
-      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed')
+      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
         && new Date(job.updated_at).getTime() > Date.now() - 8000;
       renderSimklProgress((isActive || isRecentDone) ? job : null);
       if (isActive) {
@@ -2021,6 +2069,7 @@ if (me.totp_enabled) {
     const pctEl  = document.getElementById('trakt-job-pct');
     const label  = document.getElementById('trakt-job-label');
     const items  = document.getElementById('trakt-job-items');
+    const cancelBtn = document.getElementById('trakt-job-cancel') as HTMLButtonElement | null;
     if (!strip) return;
 
     if (!job) { strip.classList.add('hidden'); return; }
@@ -2028,18 +2077,21 @@ if (me.totp_enabled) {
 
     const isPush      = job.job_type === 'push';
     const isFailed    = job.status === 'failed';
+    const isCancelled = job.status === 'cancelled';
     const isCompleted = job.status === 'completed';
     const isPending   = job.status === 'pending';
 
-    if (isFailed) {
+    if (isFailed || isCancelled) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isPush ? 'Push failed' : 'Pull failed';
+      if (label) label.textContent = isCancelled ? (isPush ? 'Push cancelled' : 'Pull cancelled') : (isPush ? 'Push failed' : 'Pull failed');
       if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = esc(job.error_message || 'Unknown error');
+      if (items) items.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
       return;
     }
 
     if (isCompleted) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
       if (label) label.textContent = isPush ? 'Push complete' : 'Pull complete';
       if (pctEl) pctEl.textContent = '100%';
@@ -2050,6 +2102,7 @@ if (me.totp_enabled) {
       return;
     }
 
+    wireCancelButton(cancelBtn, job);
     const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
     const indeterminate = isPending || pct === 0;
     if (bar) {
@@ -2068,7 +2121,7 @@ if (me.totp_enabled) {
       const jobs: any[] = await res.json();
       const job = jobs.find(j => j.source === 'trakt');
       const isActive = job && (job.status === 'pending' || job.status === 'running');
-      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed')
+      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
         && new Date(job.updated_at).getTime() > Date.now() - 8000;
       renderTraktProgress((isActive || isRecentDone) ? job : null);
       if (isActive) {
@@ -2105,23 +2158,27 @@ if (me.totp_enabled) {
     const pctEl = document.getElementById('mdblist-job-pct');
     const label = document.getElementById('mdblist-job-label');
     const items = document.getElementById('mdblist-job-items');
+    const cancelBtn = document.getElementById('mdblist-job-cancel') as HTMLButtonElement | null;
     if (!strip) return;
     if (!job) { strip.classList.add('hidden'); return; }
     strip.classList.remove('hidden');
 
     const isPush = job.job_type === 'push';
     const isFailed = job.status === 'failed';
+    const isCancelled = job.status === 'cancelled';
     const isCompleted = job.status === 'completed';
     const isPending = job.status === 'pending';
 
-    if (isFailed) {
+    if (isFailed || isCancelled) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isPush ? 'Push failed' : 'Pull failed';
+      if (label) label.textContent = isCancelled ? (isPush ? 'Push cancelled' : 'Pull cancelled') : (isPush ? 'Push failed' : 'Pull failed');
       if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = esc(job.error_message || 'Unknown error');
+      if (items) items.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
       return;
     }
     if (isCompleted) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-violet-500'; bar.style.width = '100%'; }
       if (label) label.textContent = isPush ? 'Push complete' : 'Pull complete';
       if (pctEl) pctEl.textContent = '100%';
@@ -2129,6 +2186,7 @@ if (me.totp_enabled) {
       return;
     }
 
+    wireCancelButton(cancelBtn, job);
     const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
     const indeterminate = isPending || pct === 0;
     if (bar) {
@@ -2147,7 +2205,7 @@ if (me.totp_enabled) {
       const jobs: any[] = await res.json();
       const job = jobs.find(j => j.source === 'mdblist');
       const isActive = job && (job.status === 'pending' || job.status === 'running');
-      const isDone = job && (job.status === 'completed' || job.status === 'failed');
+      const isDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled');
       const isFresh = job && new Date(job.updated_at).getTime() > Date.now() - 8000;
       const isTrackedJobDone = isDone && job.id === mdblistTrackedJobId;
 
@@ -2197,24 +2255,28 @@ if (me.totp_enabled) {
     const pctEl = document.getElementById('heal-job-pct');
     const label = document.getElementById('heal-job-label');
     const items = document.getElementById('heal-job-items');
+    const cancelBtn = document.getElementById('heal-job-cancel') as HTMLButtonElement | null;
     if (!strip) return;
 
     if (!job) { strip.classList.add('hidden'); return; }
     strip.classList.remove('hidden');
 
     const isFailed    = job.status === 'failed';
+    const isCancelled = job.status === 'cancelled';
     const isCompleted = job.status === 'completed';
     const isPending   = job.status === 'pending';
 
-    if (isFailed) {
+    if (isFailed || isCancelled) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = 'Heal failed';
+      if (label) label.textContent = isCancelled ? 'Heal cancelled' : 'Heal failed';
       if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = esc(job.error_message || 'Unknown error');
+      if (items) items.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
       return;
     }
 
     if (isCompleted) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-blue-600'; bar.style.width = '100%'; }
       if (label) label.textContent = 'Heal complete';
       if (pctEl) pctEl.textContent = '100%';
@@ -2222,6 +2284,7 @@ if (me.totp_enabled) {
       return;
     }
 
+    wireCancelButton(cancelBtn, job);
     const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
     const indeterminate = isPending || pct === 0;
     if (bar) {
@@ -2240,7 +2303,7 @@ if (me.totp_enabled) {
       const jobs: any[] = await res.json();
       const job = jobs.find((j: any) => j.source === 'tmdb' && j.job_type === 'heal');
       const isActive = job && (job.status === 'pending' || job.status === 'running');
-      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed')
+      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
         && new Date(job.updated_at).getTime() > Date.now() - 8000;
       renderHealProgress((isActive || isRecentDone) ? job : null);
       if (isActive) {

@@ -8,6 +8,7 @@ Rate limits: 1000 requests per 5 minutes per user.
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -17,6 +18,19 @@ logger = logging.getLogger(__name__)
 TRAKT_BASE = "https://api.trakt.tv"
 TIMEOUT = 30.0
 PAGE_SIZE = 250
+
+
+def _iso_utc(value: datetime) -> str:
+    """Format a datetime as an ISO-8601 UTC string with a Z suffix.
+
+    WatchEvent.watched_at is stored naive but always represents UTC, so a
+    naive value is treated as already-UTC rather than the local timezone.
+    """
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 async def _get_all_pages(
@@ -214,27 +228,37 @@ async def get_ratings(client_id: str, access_token: str) -> dict:
 async def add_to_history_batch(
     client_id: str,
     access_token: str,
-    movies: list[int],
-    episodes: list[tuple[int, int, int]],
+    movies: list[tuple[int, Optional[datetime]]],
+    episodes: list[tuple[int, int, int, Optional[datetime]]],
 ) -> None:
     """Add multiple movies and/or episodes to Trakt history in a single API call.
 
-    episodes: list of (show_tmdb_id, season_number, episode_number)
+    movies: list of (tmdb_id, watched_at) — watched_at=None lets Trakt stamp the play as now.
+    episodes: list of (show_tmdb_id, season_number, episode_number, watched_at)
     """
     if not movies and not episodes:
         return
     body: dict = {}
     if movies:
-        body["movies"] = [{"ids": {"tmdb": tmdb_id}} for tmdb_id in movies]
+        body["movies"] = [
+            {"ids": {"tmdb": tmdb_id}, **({"watched_at": _iso_utc(watched_at)} if watched_at else {})}
+            for tmdb_id, watched_at in movies
+        ]
     if episodes:
-        shows_map: dict[int, dict[int, list[int]]] = {}
-        for show_tmdb_id, season, ep_num in episodes:
-            shows_map.setdefault(show_tmdb_id, {}).setdefault(season, []).append(ep_num)
+        shows_map: dict[int, dict[int, list[tuple[int, Optional[datetime]]]]] = {}
+        for show_tmdb_id, season, ep_num, watched_at in episodes:
+            shows_map.setdefault(show_tmdb_id, {}).setdefault(season, []).append((ep_num, watched_at))
         body["shows"] = [
             {
                 "ids": {"tmdb": show_tmdb_id},
                 "seasons": [
-                    {"number": season, "episodes": [{"number": n} for n in eps]}
+                    {
+                        "number": season,
+                        "episodes": [
+                            {"number": n, **({"watched_at": _iso_utc(watched_at)} if watched_at else {})}
+                            for n, watched_at in eps
+                        ],
+                    }
                     for season, eps in seasons.items()
                 ],
             }

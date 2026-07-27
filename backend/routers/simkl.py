@@ -248,6 +248,7 @@ def _parse_watched_at(raw: str | None) -> datetime | None:
 # ── Background sync job ───────────────────────────────────────────────────────
 
 async def run_simkl_sync(user_id: int, job_id: int) -> None:
+    from routers.sync import SyncCancelled, _raise_if_cancelled
     print(f"Starting Simkl sync for user {user_id}, job {job_id}")
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
@@ -327,6 +328,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                         logger.warning("Error processing Simkl movie tmdb=%s: %s", tmdb_id, exc)
                         stats["errors"] += 1
                 await db.commit()
+                await _raise_if_cancelled(db, job_id)
 
             # ── Shows / Episodes ──────────────────────────────────────────────
             if settings.simkl_sync_watched:
@@ -391,6 +393,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                         stats["errors"] += 1
 
                 await db.commit()
+                await _raise_if_cancelled(db, job_id)
 
             # ── Ratings ───────────────────────────────────────────────────────
             if settings.simkl_sync_ratings:
@@ -461,6 +464,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                         stats["errors"] += 1
 
                 await db.commit()
+                await _raise_if_cancelled(db, job_id)
 
             # ── Watchlist / plan-to-watch ─────────────────────────────────────
             if settings.simkl_sync_lists:
@@ -566,6 +570,17 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
             )
             await db.commit()
 
+        except SyncCancelled:
+            print(f"Simkl sync job {job_id} cancelled")
+            await db.execute(
+                update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.cancelled,
+                    stats=stats,
+                    processed_items=stats["movies"] + stats["episodes"] + stats["ratings"],
+                )
+            )
+            await db.commit()
+
         except Exception as exc:
             print(f"Simkl sync job {job_id} failed: {exc}")
             await db.execute(
@@ -610,6 +625,7 @@ async def sync_simkl(
 # ── Push (Scrob → Simkl) ──────────────────────────────────────────────────────
 
 async def _run_simkl_push(user_id: int, job_id: int) -> None:
+    from routers.sync import SyncCancelled, _raise_if_cancelled
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
@@ -635,6 +651,9 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                 )
                 watched_ids = {row[0] for row in watched_result.all()}
                 all_media_ids |= watched_ids
+
+                from routers.sync import _latest_watched_at
+                watched_at_by_media = await _latest_watched_at(db, user_id, list(watched_ids))
 
             if settings.simkl_push_ratings:
                 ratings_result = await db.execute(
@@ -672,12 +691,13 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                     media = media_by_id.get(mid)
                     if not media or not media.tmdb_id:
                         continue
+                    watched_at = watched_at_by_media.get(mid)
                     if media.media_type == MediaType.movie:
-                        push_tasks.append(simkl_client.add_movie_to_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id))
+                        push_tasks.append(simkl_client.add_movie_to_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, watched_at))
                     elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
                         show = shows_by_id.get(media.show_id)
                         if show and show.tmdb_id:
-                            push_tasks.append(simkl_client.add_episode_to_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number))
+                            push_tasks.append(simkl_client.add_episode_to_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number, watched_at))
 
             if settings.simkl_push_ratings:
                 for mid, rating in ratings_map.items():
@@ -707,6 +727,7 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                 failed    += sum(1 for r in results if isinstance(r, Exception))
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=succeeded + failed))
                 await db.commit()
+                await _raise_if_cancelled(db, job_id)
             print(f"Simkl full push: {succeeded}/{total} succeeded")
 
             await db.execute(
@@ -716,6 +737,15 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                     processed_items=succeeded + failed,
                 )
             )
+            await db.commit()
+
+        except SyncCancelled:
+            print(f"Simkl push job {job_id} cancelled")
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                status=SyncStatus.cancelled,
+                stats={"succeeded": succeeded, "failed": failed},
+                processed_items=succeeded + failed,
+            ))
             await db.commit()
 
         except Exception as exc:

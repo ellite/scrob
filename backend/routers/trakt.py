@@ -323,6 +323,7 @@ async def _get_or_create_episode_media(
 
 
 async def run_trakt_sync(user_id: int, job_id: int):
+    from routers.sync import SyncCancelled, _raise_if_cancelled
     print(f"Starting Trakt sync for user {user_id}, job {job_id}")
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
@@ -446,6 +447,7 @@ async def run_trakt_sync(user_id: int, job_id: int):
                                 .values(processed_items=watched_processed)
                             )
                             await db.commit()
+                            await _raise_if_cancelled(db, job_id)
 
                 await db.commit()
 
@@ -534,7 +536,10 @@ async def run_trakt_sync(user_id: int, job_id: int):
                             processed_items=watched_processed
                         ))
                         await db.commit()
+                        await _raise_if_cancelled(db, job_id)
                 await db.commit()
+
+            await _raise_if_cancelled(db, job_id)
 
             # ── Ratings ───────────────────────────────────────────────────────
             if sync_ratings:
@@ -609,6 +614,8 @@ async def run_trakt_sync(user_id: int, job_id: int):
                             stats["errors"] += 1
 
                 await db.commit()
+
+            await _raise_if_cancelled(db, job_id)
 
             # ── Lists (watchlist + personal lists) ───────────────────────────
             if settings.trakt_sync_lists:
@@ -920,6 +927,15 @@ async def run_trakt_sync(user_id: int, job_id: int):
             )
             await db.commit()
 
+        except SyncCancelled:
+            print(f"Trakt sync job {job_id} cancelled")
+            await db.execute(
+                update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.cancelled, processed_items=watched_processed
+                )
+            )
+            await db.commit()
+
         except Exception as exc:
             print(f"Trakt sync job {job_id} failed: {exc}")
             await db.execute(
@@ -961,6 +977,7 @@ async def sync_trakt(
 
 
 async def _run_trakt_push(user_id: int, job_id: int) -> None:
+    from routers.sync import SyncCancelled, _raise_if_cancelled
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
@@ -987,6 +1004,9 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                 )
                 watched_ids = {row[0] for row in watched_result.all()}
                 all_media_ids |= watched_ids
+
+                from routers.sync import _latest_watched_at
+                watched_at_by_media = await _latest_watched_at(db, user_id, list(watched_ids))
 
             if settings.trakt_push_collection:
                 collected_result = await db.execute(
@@ -1029,16 +1049,24 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
             push_tasks: list[tuple[str, "Coroutine"]] = []
 
             if settings.trakt_push_watched:
+                trakt_watched_movies: list[tuple[int, datetime | None]] = []
+                trakt_watched_episodes: list[tuple[int, int, int, datetime | None]] = []
                 for mid in watched_ids:
                     media = media_by_id.get(mid)
                     if not media or not media.tmdb_id:
                         continue
+                    watched_at = watched_at_by_media.get(mid)
                     if media.media_type == MediaType.movie:
-                        push_tasks.append(("watched", trakt_client.add_movie_to_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id)))
+                        trakt_watched_movies.append((media.tmdb_id, watched_at))
                     elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
                         show = shows_by_id.get(media.show_id)
                         if show and show.tmdb_id:
-                            push_tasks.append(("watched", trakt_client.add_episode_to_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number)))
+                            trakt_watched_episodes.append((show.tmdb_id, media.season_number, media.episode_number, watched_at))
+                if trakt_watched_movies or trakt_watched_episodes:
+                    push_tasks.append(("watched", trakt_client.add_to_history_batch(
+                        settings.trakt_client_id, settings.trakt_access_token,
+                        trakt_watched_movies, trakt_watched_episodes,
+                    )))
 
             if settings.trakt_push_collection:
                 collection_movies: list[int] = []
@@ -1118,6 +1146,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                         succeeded_by_category[category] = succeeded_by_category.get(category, 0) + 1
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=succeeded + failed))
                 await db.commit()
+                await _raise_if_cancelled(db, job_id)
             breakdown = ", ".join(
                 f"{cat}: {succeeded_by_category.get(cat, 0)} succeeded"
                 + (f", {failed_by_category[cat]} failed" if failed_by_category.get(cat) else "")
@@ -1132,6 +1161,15 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                     processed_items=succeeded + failed,
                 )
             )
+            await db.commit()
+
+        except SyncCancelled:
+            print(f"Trakt push job {job_id} cancelled")
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                status=SyncStatus.cancelled,
+                stats={"succeeded": succeeded, "failed": failed},
+                processed_items=succeeded + failed,
+            ))
             await db.commit()
 
         except Exception as exc:

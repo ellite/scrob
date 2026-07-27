@@ -8,6 +8,7 @@ Rate limits: 1000 requests per 10 minutes per user.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -16,6 +17,19 @@ logger = logging.getLogger(__name__)
 
 SIMKL_BASE = "https://api.simkl.com"
 TIMEOUT = 30.0
+
+
+def _iso_utc(value: datetime) -> str:
+    """Format a datetime as an ISO-8601 UTC string with a Z suffix.
+
+    WatchEvent.watched_at is stored naive but always represents UTC, so a
+    naive value is treated as already-UTC rather than the local timezone.
+    """
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _headers(client_id: str, access_token: Optional[str] = None) -> dict:
@@ -124,12 +138,20 @@ async def get_ratings(client_id: str, access_token: str) -> dict:
 
 # ── Outbound Push ─────────────────────────────────────────────────────────────
 
-async def add_movie_to_history(client_id: str, access_token: str, tmdb_id: int) -> None:
-    """Mark a movie as watched on Simkl."""
+async def add_movie_to_history(
+    client_id: str,
+    access_token: str,
+    tmdb_id: int,
+    watched_at: Optional[datetime] = None,
+) -> None:
+    """Mark a movie as watched on Simkl. watched_at=None lets Simkl stamp the play as now."""
+    movie: dict = {"ids": {"tmdb": tmdb_id}}
+    if watched_at:
+        movie["watched_at"] = _iso_utc(watched_at)
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
             f"{SIMKL_BASE}/sync/history",
-            json={"movies": [{"ids": {"tmdb": tmdb_id}}]},
+            json={"movies": [movie]},
             headers=_headers(client_id, access_token),
         )
         resp.raise_for_status()
@@ -152,8 +174,12 @@ async def add_episode_to_history(
     show_tmdb_id: int,
     season_number: int,
     episode_number: int,
+    watched_at: Optional[datetime] = None,
 ) -> None:
-    """Mark an episode as watched on Simkl."""
+    """Mark an episode as watched on Simkl. watched_at=None lets Simkl stamp the play as now."""
+    episode: dict = {"number": episode_number}
+    if watched_at:
+        episode["watched_at"] = _iso_utc(watched_at)
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
             f"{SIMKL_BASE}/sync/history",
@@ -162,7 +188,7 @@ async def add_episode_to_history(
                     "ids": {"tmdb": show_tmdb_id},
                     "seasons": [{
                         "number": season_number,
-                        "episodes": [{"number": episode_number}],
+                        "episodes": [episode],
                     }],
                 }]
             },
