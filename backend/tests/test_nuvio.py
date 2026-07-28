@@ -744,6 +744,7 @@ class NuvioNormalizationTests(unittest.TestCase):
                 "watched_at": int(watched_at.timestamp() * 1000),
             },
         )
+        self.assertIsNone(_nuvio_watched_item(movie, None))
 
         episode = Media(
             id=11,

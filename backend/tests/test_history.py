@@ -1,12 +1,13 @@
 import os
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from models.base import MediaType
+from models.events import WatchEvent
 from models.media import Media
 from routers import history
 from schemas import WatchEventCreate
@@ -82,7 +83,13 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         find_show.assert_awaited_once_with(db, 277439, "tmdb-key")
         get_episode.assert_awaited_once_with(277439, 1, 1, api_key="tmdb-key")
         enrich.assert_awaited_once_with(media, api_key="tmdb-key", series_tmdb_id=277439)
-        push_state.assert_awaited_once_with(db, 7, [media.id], watched=True)
+        push_state.assert_awaited_once_with(
+            db,
+            7,
+            [media.id],
+            watched=True,
+            watched_at_by_media={media.id: ANY},
+        )
         get_key.assert_awaited_once()
         db.commit.assert_awaited_once()
 
@@ -136,7 +143,79 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(mapped_media.tmdb_id)
         get_episode.assert_not_awaited()
         enrich.assert_not_awaited()
-        push_state.assert_awaited_once_with(db, 7, [303], watched=True)
+        push_state.assert_awaited_once_with(
+            db,
+            7,
+            [303],
+            watched=True,
+            watched_at_by_media={303: ANY},
+        )
+
+class _UnknownResult:
+    def __init__(self, value=None):
+        self.value = value
+
+    def scalars(self):
+        return _Scalars(self.value)
+
+
+class _Session:
+    def __init__(self, media: Media):
+        self.media = media
+        self.added = []
+        self.execute_count = 0
+        self.commit = AsyncMock()
+
+    async def execute(self, statement):
+        self.execute_count += 1
+        return _UnknownResult(self.media if self.execute_count == 1 else None)
+
+    def add(self, value):
+        self.added.append(value)
+
+
+class UnknownWatchDateTests(unittest.IsolatedAsyncioTestCase):
+    async def _mark(self, payload: dict):
+        media = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club")
+        db = _Session(media)
+        with patch("routers.history._push_watch_state", new_callable=AsyncMock) as push:
+            await history.mark_as_watched(
+                WatchEventCreate(**payload),
+                db=db,
+                current_user=SimpleNamespace(id=7),
+            )
+        return db.added[0], push
+
+    async def test_explicit_null_marks_watched_without_a_date(self) -> None:
+        event, push = await self._mark({
+            "tmdb_id": 550,
+            "media_type": "movie",
+            "watched_at": None,
+        })
+
+        self.assertIsNone(event.watched_at)
+        self.assertEqual(push.await_args.kwargs["watched_at_by_media"], {10: None})
+
+    async def test_omitted_date_keeps_existing_now_default(self) -> None:
+        event, _ = await self._mark({
+            "tmdb_id": 550,
+            "media_type": "movie",
+        })
+
+        self.assertIsNotNone(event.watched_at)
+
+    def test_history_response_preserves_unknown_date(self) -> None:
+        media = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club")
+        event = WatchEvent(
+            id=20,
+            user_id=7,
+            media_id=10,
+            watched_at=None,
+            completed=True,
+            play_count=1,
+        )
+
+        self.assertIsNone(history.format_event(event, media)["watched_at"])
 
 
 if __name__ == "__main__":

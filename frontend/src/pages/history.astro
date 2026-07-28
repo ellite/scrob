@@ -14,12 +14,14 @@ const history = await api.history.list({ page, page_size: 40, type }, token);
 
 // Grouping logic
 const groupedHistory = history.results.reduce<Record<string, WatchEvent[]>>((acc, event) => {
-  const dateStr = new Date(event.watched_at + 'Z').toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric'
-  });
+  const dateStr = event.watched_at
+    ? new Date(event.watched_at + 'Z').toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+      })
+    : 'Date unknown';
   
   if (!acc[dateStr]) {
     acc[dateStr] = [];

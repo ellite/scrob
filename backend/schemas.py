@@ -244,7 +244,7 @@ class PasswordUpdate(BaseModel):
 class WatchEventCreate(BaseModel):
     tmdb_id: int
     media_type: MediaType
-    watched_at: Optional[datetime] = None
+    watched_at: Optional[datetime] = None  # omitted = now; explicit null = unknown
     completed: bool = True
     series_tmdb_id: Optional[int] = None
     season_number: Optional[int] = None

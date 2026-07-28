@@ -36,6 +36,7 @@ async def _push_watch_state(
     user_id: int,
     media_ids: list[int],
     watched: bool,
+    watched_at_by_media: dict[int, datetime | None] | None = None,
 ) -> None:
     """Fan-out watched/unwatched state to all connections with push_watched enabled."""
     if not media_ids:
@@ -54,6 +55,11 @@ async def _push_watch_state(
     push_trakt = settings and settings.trakt_push_watched and settings.trakt_access_token
     push_mdblist = settings and settings.mdblist_push_watched and settings.mdblist_api_key
 
+
+    if watched and watched_at_by_media is None:
+        from routers.sync import _latest_watched_at
+
+        watched_at_by_media = await _latest_watched_at(db, user_id, media_ids)
     tasks = []
 
     if connections:
@@ -102,7 +108,14 @@ async def _push_watch_state(
                 continue
             if media.media_type == MediaType.movie:
                 if watched:
-                    tasks.append(simkl_client.add_movie_to_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id))
+                    watched_at = (watched_at_by_media or {}).get(media.id)
+                    if watched_at is not None:
+                        tasks.append(simkl_client.add_movie_to_history(
+                            settings.simkl_client_id,
+                            settings.simkl_access_token,
+                            media.tmdb_id,
+                            watched_at,
+                        ))
                 else:
                     tasks.append(simkl_client.remove_movie_from_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id))
             elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
@@ -110,7 +123,16 @@ async def _push_watch_state(
                 show = show_res.scalar_one_or_none()
                 if show and show.tmdb_id:
                     if watched:
-                        tasks.append(simkl_client.add_episode_to_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number))
+                        watched_at = (watched_at_by_media or {}).get(media.id)
+                        if watched_at is not None:
+                            tasks.append(simkl_client.add_episode_to_history(
+                                settings.simkl_client_id,
+                                settings.simkl_access_token,
+                                show.tmdb_id,
+                                media.season_number,
+                                media.episode_number,
+                                watched_at,
+                            ))
                     else:
                         tasks.append(simkl_client.remove_episode_from_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number))
 
@@ -124,7 +146,12 @@ async def _push_watch_state(
                 continue
             if media.media_type == MediaType.movie:
                 if watched:
-                    tasks.append(trakt_client.add_movie_to_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id))
+                    tasks.append(trakt_client.add_movie_to_history(
+                        settings.trakt_client_id,
+                        settings.trakt_access_token,
+                        media.tmdb_id,
+                        watched_at_by_media.get(media.id) if watched_at_by_media else None,
+                    ))
                 else:
                     tasks.append(trakt_client.remove_movie_from_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id))
             elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
@@ -132,7 +159,14 @@ async def _push_watch_state(
                 show = show_res.scalar_one_or_none()
                 if show and show.tmdb_id:
                     if watched:
-                        tasks.append(trakt_client.add_episode_to_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number))
+                        tasks.append(trakt_client.add_episode_to_history(
+                            settings.trakt_client_id,
+                            settings.trakt_access_token,
+                            show.tmdb_id,
+                            media.season_number,
+                            media.episode_number,
+                            watched_at_by_media.get(media.id) if watched_at_by_media else None,
+                        ))
                     else:
                         tasks.append(trakt_client.remove_episode_from_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number))
 
@@ -141,8 +175,8 @@ async def _push_watch_state(
         from routers.mdblist import _empty_payload, _merge_show_entries, _payload_item
         from routers.sync import _latest_watched_at
 
-        mdblist_watched_at: dict[int, datetime] = {}
-        if watched:
+        mdblist_watched_at = watched_at_by_media
+        if watched and mdblist_watched_at is None:
             mdblist_watched_at = await _latest_watched_at(db, user_id, media_ids)
 
         mdblist_payload = _empty_payload()
@@ -156,7 +190,7 @@ async def _push_watch_state(
         for media in media_list:
             show = mdblist_shows_by_id.get(media.show_id)
             item = (
-                _payload_item(media, show=show, watched_at=mdblist_watched_at.get(media.id, datetime.utcnow()))
+                _payload_item(media, show=show, watched_at=(mdblist_watched_at or {}).get(media.id))
                 if watched
                 else _payload_item(media, show=show)
             )
@@ -183,16 +217,16 @@ async def _push_watch_state(
         api_key = await get_user_tmdb_key(db, user_id)
         await _ensure_nuvio_imdb_ids(media_items, shows_by_id, api_key)
 
-        watched_at_by_media: dict[int, datetime] = {}
-        if watched:
-            watched_at_by_media = await _latest_watched_at(db, user_id, media_ids)
+        nuvio_watched_at = watched_at_by_media
+        if watched and nuvio_watched_at is None:
+            nuvio_watched_at = await _latest_watched_at(db, user_id, media_ids)
 
         nuvio_items: list[dict] = []
         nuvio_keys: list[dict] = []
         for media in media_items:
             payload = _nuvio_watched_item(
                 media,
-                watched_at_by_media.get(media.id, datetime.utcnow()),
+                (nuvio_watched_at or {}).get(media.id) if watched else datetime.utcnow(),
                 shows_by_id.get(media.show_id),
             )
             if not payload:
@@ -228,9 +262,9 @@ async def _push_watch_state(
 
 
 def format_event(event: WatchEvent | PlaybackProgress, media: Media) -> dict:
-    # Handle both WatchEvent (history) and PlaybackProgress (continue watching)
-    watched_at = getattr(event, "watched_at", None) or getattr(event, "updated_at", datetime.utcnow())
-    
+    # Playback progress has no watched_at; its updated_at remains the display timestamp.
+    watched_at = event.watched_at if isinstance(event, WatchEvent) else event.updated_at
+
     data = {
         "id": event.id,
         "media": {
@@ -251,7 +285,7 @@ def format_event(event: WatchEvent | PlaybackProgress, media: Media) -> dict:
             "genres": (media.tmdb_data or {}).get("genres", []),
         },
         "user_id": event.user_id,
-        "watched_at": watched_at.isoformat(),
+        "watched_at": watched_at.isoformat() if watched_at else None,
         "progress_seconds": event.progress_seconds,
         "progress_percent": event.progress_percent,
         "completed": getattr(event, "completed", False),
@@ -297,7 +331,7 @@ async def get_history(
         .options(selectinload(WatchEvent.media).selectinload(Media.show))
         .where(WatchEvent.user_id == current_user.id)
         .where(WatchEvent.completed == True)
-        .order_by(desc(WatchEvent.watched_at))
+        .order_by(WatchEvent.watched_at.desc().nulls_last(), WatchEvent.id.desc())
     )
     if type and type in ("movie", "episode"):
         query = query.where(Media.media_type == type)
@@ -783,11 +817,18 @@ async def mark_as_watched(
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"TMDB Media not found: {e}")
 
-    # 3. Create WatchEvent
+    # Omitted watched_at retains the existing API default ("now"); explicit
+    # null marks the play watched without a known date.
+    watched_at = (
+        event_in.watched_at.replace(tzinfo=None)
+        if event_in.watched_at is not None
+        else None if "watched_at" in event_in.model_fields_set
+        else datetime.utcnow()
+    )
     event = WatchEvent(
         user_id=current_user.id,
         media_id=media.id,
-        watched_at=(event_in.watched_at.replace(tzinfo=None) if event_in.watched_at else datetime.utcnow()),
+        watched_at=watched_at,
         completed=event_in.completed,
         play_count=1,
         progress_percent=1.0 if event_in.completed else 0.0,
@@ -804,7 +845,13 @@ async def mark_as_watched(
 
     # 4. Push to media servers if outbound push is enabled
     if event_in.completed:
-        await _push_watch_state(db, current_user.id, [media.id], watched=True)
+        await _push_watch_state(
+            db,
+            current_user.id,
+            [media.id],
+            watched=True,
+            watched_at_by_media={media.id: watched_at},
+        )
 
     return {"status": "ok", "message": f"Marked {media.title} as watched"}
 
@@ -826,11 +873,14 @@ async def get_item_events(
             Media.tmdb_id == tmdb_id,
             Media.media_type == media_type,
         )
-        .order_by(desc(WatchEvent.watched_at))
+        .order_by(WatchEvent.watched_at.desc().nulls_last(), WatchEvent.id.desc())
     )
     result = await db.execute(query)
     events = result.scalars().all()
-    return [{"id": e.id, "watched_at": e.watched_at.isoformat()} for e in events]
+    return [
+        {"id": event.id, "watched_at": event.watched_at.isoformat() if event.watched_at else None}
+        for event in events
+    ]
 
 
 @router.delete("/event/{event_id}")

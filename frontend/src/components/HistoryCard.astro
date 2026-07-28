@@ -10,8 +10,9 @@ interface Props {
 const { event, use24h = false } = Astro.props;
 const { media, watched_at } = event;
 
-const date = new Date(watched_at + 'Z');
-const timeString = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: !use24h });
+const timeString = watched_at
+  ? new Date(watched_at + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: !use24h })
+  : 'Unknown';
 
 const isEpisode = media.type === 'episode';
 const showOrMovieTitle = isEpisode ? (media.show_title || media.title) : media.title;

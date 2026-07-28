@@ -596,6 +596,54 @@ class TraktHistorySafetyTests(unittest.IsolatedAsyncioTestCase):
             await trakt_router._run_trakt_push(user_id=1, job_id=14)
 
         add_batch.assert_not_awaited()
+    async def test_history_batch_marks_missing_dates_as_unknown(self) -> None:
+        payloads: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payloads.append(json.loads(request.content))
+            return httpx.Response(201, json={"added": {"movies": 1, "episodes": 1}})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            trakt.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            await trakt.add_to_history_batch(
+                "client-id",
+                "access-token",
+                [(550, None)],
+                [(1396, 1, 2, None)],
+            )
+
+        self.assertEqual(payloads[0]["movies"][0]["watched_at"], "unknown")
+        self.assertEqual(
+            payloads[0]["shows"][0]["seasons"][0]["episodes"][0]["watched_at"],
+            "unknown",
+        )
+
+
+    async def test_single_history_writes_mark_missing_dates_as_unknown(self) -> None:
+        payloads: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payloads.append(json.loads(request.content))
+            return httpx.Response(201, json={"added": {}})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            trakt.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            await trakt.add_movie_to_history("client-id", "access-token", 550, None)
+            await trakt.add_episode_to_history("client-id", "access-token", 1396, 1, 2, None)
+
+        self.assertEqual(payloads[0]["movies"][0]["watched_at"], "unknown")
+        self.assertEqual(
+            payloads[1]["shows"][0]["seasons"][0]["episodes"][0]["watched_at"],
+            "unknown",
+        )
 
 if __name__ == "__main__":
     unittest.main()
