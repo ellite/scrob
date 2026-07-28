@@ -38,6 +38,7 @@ def _settings() -> SimpleNamespace:
         mdblist_push_ratings=True,
         mdblist_push_collection=False,
         mdblist_api_key="mdblist-key",
+        simkl_push_watched=False,
         simkl_push_ratings=False,
         simkl_access_token=None,
         simkl_client_id=None,
