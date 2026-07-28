@@ -39,7 +39,9 @@ TRAKT_HISTORY_OVERLAP = timedelta(minutes=5)
 TRAKT_HISTORY_PUSH_BATCH_SIZE = 100
 
 
-def _normalize_history_time(value: datetime) -> datetime:
+def _normalize_history_time(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
     if value.tzinfo is not None:
         value = value.astimezone(timezone.utc).replace(tzinfo=None)
     return value.replace(microsecond=(value.microsecond // 1000) * 1000)
@@ -62,7 +64,7 @@ def _remote_history_keys(
     for item in movies:
         tmdb_id = item.get("movie", {}).get("ids", {}).get("tmdb")
         watched_at = _parse_trakt_datetime(item.get("watched_at"))
-        if tmdb_id and watched_at:
+        if tmdb_id:
             keys.add(("movie", int(tmdb_id), _normalize_history_time(watched_at)))
     for item in episodes:
         show_tmdb_id = item.get("show", {}).get("ids", {}).get("tmdb")
@@ -70,7 +72,7 @@ def _remote_history_keys(
         season = episode.get("season")
         number = episode.get("number")
         watched_at = _parse_trakt_datetime(item.get("watched_at"))
-        if show_tmdb_id and season is not None and number is not None and watched_at:
+        if show_tmdb_id and season is not None and number is not None:
             keys.add((
                 "episode",
                 int(show_tmdb_id),
@@ -81,13 +83,22 @@ def _remote_history_keys(
     return keys
 
 
+_TRAKT_UNKNOWN_DATE_EPOCH = datetime(1970, 1, 1)
+
+
 def _parse_trakt_datetime(value: str | None) -> datetime | None:
-    if not value:
+    if not value or value == "unknown":
         return None
     from dateutil import parser as dt_parser
     dt = dt_parser.isoparse(value)
     if dt.tzinfo:
         dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    # Trakt doesn't preserve a literal "unknown" marker on read — a history
+    # entry submitted with watched_at="unknown" is silently stored (and
+    # returned) as the Unix epoch. Treat that the same as unknown, rather
+    # than importing/dedup-keying it as a real (wrong) 1970-01-01 watch date.
+    if dt == _TRAKT_UNKNOWN_DATE_EPOCH:
+        return None
     return dt
 
 
@@ -480,7 +491,11 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
                                 if not media:
                                     stats["errors"] += 1
                                     continue
-                                watched_at = _parse_trakt_datetime(item.get("watched_at")) or datetime.utcnow()
+                                # A dateless play (submitted with watched_at="unknown", which Trakt
+                                # silently stores/returns as the Unix epoch — see
+                                # _TRAKT_UNKNOWN_DATE_EPOCH) is stored as unknown locally too,
+                                # rather than fabricating a "now" timestamp or importing 1970-01-01.
+                                watched_at = _parse_trakt_datetime(item.get("watched_at"))
                                 key = (media.id, watched_at)
                                 if key not in existing_watched:
                                     db.add(WatchEvent(
@@ -570,7 +585,9 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
                                     if not media:
                                         stats["errors"] += 1
                                         continue
-                                    watched_at = _parse_trakt_datetime(entry.get("watched_at")) or datetime.utcnow()
+                                    # See the movie-import branch above: preserve an unknown
+                                    # date as unknown rather than fabricating "now".
+                                    watched_at = _parse_trakt_datetime(entry.get("watched_at"))
                                     key = (media.id, watched_at)
                                     if key not in existing_watched:
                                         db.add(WatchEvent(
@@ -1175,18 +1192,27 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
 
                 if local_keys:
                     timestamps = [key[-1] for key in local_keys]
+                    known_timestamps = [t for t in timestamps if t is not None]
+                    if len(known_timestamps) < len(timestamps):
+                        # At least one candidate has no known date — an unbounded
+                        # fetch is required to find any existing "unknown" remote
+                        # entry it might already match (there's no window to scope it to).
+                        dedup_start_at, dedup_end_at = None, None
+                    else:
+                        dedup_start_at = min(known_timestamps) - TRAKT_HISTORY_OVERLAP
+                        dedup_end_at = max(known_timestamps) + TRAKT_HISTORY_OVERLAP
                     remote_movies, remote_episodes = await asyncio.gather(
                         trakt_client.get_history_movies(
                             settings.trakt_client_id,
                             settings.trakt_access_token,
-                            start_at=min(timestamps) - TRAKT_HISTORY_OVERLAP,
-                            end_at=max(timestamps) + TRAKT_HISTORY_OVERLAP,
+                            start_at=dedup_start_at,
+                            end_at=dedup_end_at,
                         ),
                         trakt_client.get_history_episodes(
                             settings.trakt_client_id,
                             settings.trakt_access_token,
-                            start_at=min(timestamps) - TRAKT_HISTORY_OVERLAP,
-                            end_at=max(timestamps) + TRAKT_HISTORY_OVERLAP,
+                            start_at=dedup_start_at,
+                            end_at=dedup_end_at,
                         ),
                     )
                     remote_keys = _remote_history_keys(remote_movies, remote_episodes)

@@ -7,6 +7,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from models.base import MediaType
+from models.events import WatchEvent
 from models.media import Media
 from routers import history
 from schemas import WatchEventCreate
@@ -82,7 +83,11 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         find_show.assert_awaited_once_with(db, 277439, "tmdb-key")
         get_episode.assert_awaited_once_with(277439, 1, 1, api_key="tmdb-key")
         enrich.assert_awaited_once_with(media, api_key="tmdb-key", series_tmdb_id=277439)
-        push_state.assert_awaited_once_with(db, 7, [media.id], watched=True)
+        push_state.assert_awaited_once()
+        push_call = push_state.await_args
+        self.assertEqual(push_call.args, (db, 7, [media.id]))
+        self.assertEqual(push_call.kwargs["watched"], True)
+        self.assertIn(media.id, push_call.kwargs["watched_at_by_media"])
         get_key.assert_awaited_once()
         db.commit.assert_awaited_once()
 
@@ -136,7 +141,49 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(mapped_media.tmdb_id)
         get_episode.assert_not_awaited()
         enrich.assert_not_awaited()
-        push_state.assert_awaited_once_with(db, 7, [303], watched=True)
+        push_state.assert_awaited_once()
+        push_call = push_state.await_args
+        self.assertEqual(push_call.args, (db, 7, [303]))
+        self.assertEqual(push_call.kwargs["watched"], True)
+        self.assertIn(303, push_call.kwargs["watched_at_by_media"])
+
+
+class UnknownWatchDateTests(unittest.IsolatedAsyncioTestCase):
+    async def _mark(self, payload: dict):
+        media = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club")
+        # Two execute() calls: the media lookup, then the PlaybackProgress delete.
+        db = _FakeSession([media, None])
+        with patch("routers.history._push_watch_state", new_callable=AsyncMock) as push:
+            response = await history.mark_as_watched(
+                WatchEventCreate(**payload), db, SimpleNamespace(id=7)
+            )
+        event = next(value for value in db.added if isinstance(value, WatchEvent))
+        return response, event, push
+
+    async def test_explicit_null_marks_watched_without_a_date(self) -> None:
+        response, event, push = await self._mark({
+            "tmdb_id": 550,
+            "media_type": "movie",
+            "watched_at": None,
+        })
+
+        self.assertEqual(response["status"], "ok")
+        self.assertIsNone(event.watched_at)
+        push.assert_awaited_once()
+        self.assertEqual(push.await_args.kwargs["watched_at_by_media"], {10: None})
+
+    async def test_omitted_watched_at_defaults_to_now(self) -> None:
+        response, event, push = await self._mark({
+            "tmdb_id": 550,
+            "media_type": "movie",
+        })
+
+        self.assertEqual(response["status"], "ok")
+        self.assertIsNotNone(event.watched_at)
+        self.assertEqual(
+            push.await_args.kwargs["watched_at_by_media"],
+            {10: event.watched_at},
+        )
 
 
 if __name__ == "__main__":

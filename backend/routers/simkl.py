@@ -691,7 +691,11 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                     media = media_by_id.get(mid)
                     if not media or not media.tmdb_id:
                         continue
+                    # Simkl has no unknown-date representation, and watched_at=None
+                    # means "stamp as now" on its side — skip rather than fabricate.
                     watched_at = watched_at_by_media.get(mid)
+                    if watched_at is None:
+                        continue
                     if media.media_type == MediaType.movie:
                         push_tasks.append(simkl_client.add_movie_to_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, watched_at))
                     elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:

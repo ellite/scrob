@@ -17,7 +17,7 @@ class WatchEvent(Base):
     id               : Mapped[int]             = mapped_column(Integer, primary_key=True)
     user_id          : Mapped[int]             = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     media_id         : Mapped[int]             = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
-    watched_at       : Mapped[datetime]        = mapped_column(DateTime, nullable=False)
+    watched_at       : Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     progress_seconds : Mapped[Optional[int]]   = mapped_column(Integer)
     progress_percent : Mapped[Optional[float]] = mapped_column(Float)
     completed        : Mapped[bool]            = mapped_column(Boolean, default=False, nullable=False)

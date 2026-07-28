@@ -32,6 +32,10 @@ def _iso_utc(value: datetime) -> str:
     return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def _history_watched_at(value: Optional[datetime]) -> str:
+    """Serialize a Trakt history date, preserving an explicitly unknown date."""
+    return _iso_utc(value) if value is not None else "unknown"
+
 
 async def _get_all_pages(
     client: httpx.AsyncClient,
@@ -240,15 +244,15 @@ async def add_to_history_batch(
 ) -> None:
     """Add multiple movies and/or episodes to Trakt history in a single API call.
 
-    movies: list of (tmdb_id, watched_at) — watched_at=None lets Trakt stamp the play as now.
-    episodes: list of (show_tmdb_id, season_number, episode_number, watched_at)
+    ``watched_at=None`` is serialized as Trakt's ``unknown`` sentinel so the
+    item is marked watched without inventing a watch date.
     """
     if not movies and not episodes:
         return
     body: dict = {}
     if movies:
         body["movies"] = [
-            {"ids": {"tmdb": tmdb_id}, **({"watched_at": _iso_utc(watched_at)} if watched_at else {})}
+            {"ids": {"tmdb": tmdb_id}, "watched_at": _history_watched_at(watched_at)}
             for tmdb_id, watched_at in movies
         ]
     if episodes:
@@ -262,7 +266,7 @@ async def add_to_history_batch(
                     {
                         "number": season,
                         "episodes": [
-                            {"number": n, **({"watched_at": _iso_utc(watched_at)} if watched_at else {})}
+                            {"number": n, "watched_at": _history_watched_at(watched_at)}
                             for n, watched_at in eps
                         ],
                     }
@@ -423,12 +427,17 @@ async def remove_ratings_batch(
         resp.raise_for_status()
 
 
-async def add_movie_to_history(client_id: str, access_token: str, tmdb_id: int) -> None:
-    """Mark a movie as watched on Trakt."""
+async def add_movie_to_history(
+    client_id: str,
+    access_token: str,
+    tmdb_id: int,
+    watched_at: Optional[datetime] = None,
+) -> None:
+    """Mark a movie as watched on Trakt, optionally without a known date."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
             f"{TRAKT_BASE}/sync/history",
-            json={"movies": [{"ids": {"tmdb": tmdb_id}}]},
+            json={"movies": [{"ids": {"tmdb": tmdb_id}, "watched_at": _history_watched_at(watched_at)}]},
             headers=_headers(client_id, access_token),
         )
         resp.raise_for_status()
@@ -451,8 +460,9 @@ async def add_episode_to_history(
     show_tmdb_id: int,
     season_number: int,
     episode_number: int,
+    watched_at: Optional[datetime] = None,
 ) -> None:
-    """Mark an episode as watched on Trakt."""
+    """Mark an episode as watched on Trakt, optionally without a known date."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
             f"{TRAKT_BASE}/sync/history",
@@ -461,7 +471,10 @@ async def add_episode_to_history(
                     "ids": {"tmdb": show_tmdb_id},
                     "seasons": [{
                         "number": season_number,
-                        "episodes": [{"number": episode_number}],
+                        "episodes": [{
+                            "number": episode_number,
+                            "watched_at": _history_watched_at(watched_at),
+                        }],
                     }],
                 }]
             },

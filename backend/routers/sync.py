@@ -87,8 +87,10 @@ async def _select_in_chunks(db: AsyncSession, stmt_builder, ids: list):
 
 
 async def _latest_watched_at(db: AsyncSession, user_id: int, media_ids: list) -> dict:
-    """Latest completed WatchEvent.watched_at per media_id, chunked to avoid the 32767-parameter limit."""
-    watched_at_by_media: dict[int, datetime] = {}
+    """Latest known completed watch date per media, chunked to avoid the 32767-parameter
+    limit. An unknown-dated (None) play never masks an actual known date for the same
+    media — only returned when it's the only play on record."""
+    watched_at_by_media: dict[int, datetime | None] = {}
     for i in range(0, len(media_ids), _MAX_IN_PARAMS):
         chunk = media_ids[i : i + _MAX_IN_PARAMS]
         result = await db.execute(
@@ -98,7 +100,7 @@ async def _latest_watched_at(db: AsyncSession, user_id: int, media_ids: list) ->
                 WatchEvent.media_id.in_(chunk),
                 WatchEvent.completed == True,
             )
-            .order_by(WatchEvent.watched_at.desc())
+            .order_by(WatchEvent.watched_at.desc().nulls_last())
         )
         for media_id, watched_at in result.all():
             watched_at_by_media.setdefault(media_id, watched_at)
@@ -605,9 +607,13 @@ async def _push_nuvio_library_delta(
 
 def _nuvio_watched_item(
     media: Media,
-    watched_at: datetime,
+    watched_at: datetime | None,
     show: Show | None = None,
 ) -> dict | None:
+    # Nuvio requires a timestamp for watched entries and has no unknown-date
+    # representation. Do not fabricate one for a date-less local event.
+    if watched_at is None:
+        return None
     if watched_at.tzinfo is None:
         watched_at = watched_at.replace(tzinfo=timezone.utc)
     watched_epoch_ms = int(watched_at.timestamp() * 1000)
@@ -652,14 +658,14 @@ async def _build_nuvio_watched_items(
     event_query = (
         select(WatchEvent.media_id, WatchEvent.watched_at)
         .where(WatchEvent.user_id == user_id, WatchEvent.completed == True)
-        .order_by(WatchEvent.watched_at.desc())
+        .order_by(WatchEvent.watched_at.desc().nulls_last())
     )
     if media_ids is not None:
         if not media_ids:
             return []
         event_query = event_query.where(WatchEvent.media_id.in_(media_ids))
     event_result = await db.execute(event_query)
-    latest_watched_at: dict[int, datetime] = {}
+    latest_watched_at: dict[int, datetime | None] = {}
     for media_id, watched_at in event_result.all():
         latest_watched_at.setdefault(media_id, watched_at)
     if not latest_watched_at:
@@ -1293,7 +1299,11 @@ async def _fan_out_changes_to_other_connections(
                 media = media_by_id.get(mid)
                 if not media or not media.tmdb_id:
                     continue
+                # Simkl has no unknown-date representation, and watched_at=None means
+                # "stamp as now" on its side — skip rather than fabricate a date.
                 watched_at = simkl_watched_at_by_media.get(mid)
+                if watched_at is None:
+                    continue
                 if media.media_type == MediaType.movie:
                     push_tasks.append(
                         simkl_client.add_movie_to_history(

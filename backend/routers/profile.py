@@ -538,7 +538,12 @@ async def get_public_profile(
     rw_movies_q = await db.execute(
         select(WatchEvent, Media)
         .join(Media, WatchEvent.media_id == Media.id)
-        .where(WatchEvent.user_id == user_id, WatchEvent.completed == True, Media.media_type == "movie")
+        .where(
+            WatchEvent.user_id == user_id,
+            WatchEvent.completed == True,
+            Media.media_type == "movie",
+            WatchEvent.watched_at.isnot(None),
+        )
         .order_by(WatchEvent.watched_at.desc())
         .limit(12)
     )
@@ -558,7 +563,12 @@ async def get_public_profile(
         select(WatchEvent, Media, ShowModel)
         .join(Media, WatchEvent.media_id == Media.id)
         .outerjoin(ShowModel, Media.show_id == ShowModel.id)
-        .where(WatchEvent.user_id == user_id, WatchEvent.completed == True, Media.media_type == "episode")
+        .where(
+            WatchEvent.user_id == user_id,
+            WatchEvent.completed == True,
+            Media.media_type == "episode",
+            WatchEvent.watched_at.isnot(None),
+        )
         .order_by(WatchEvent.watched_at.desc())
         .limit(12)
     )
@@ -840,6 +850,10 @@ async def get_user_stats(
         date_filters.append(WatchEvent.watched_at >= since)
     if until:
         date_filters.append(WatchEvent.watched_at < until + TimeDelta(days=1))
+    # Additional filter for anything bucketed/grouped by watched_at (activity charts,
+    # weekday distribution, weeks-active count) — an unknown-dated event can't be
+    # placed on a timeline, so it's excluded there while still counting in plain totals.
+    dated_event_filters = [*date_filters, WatchEvent.watched_at.isnot(None)]
 
     # Activity granularity: daily for ranges ≤ 62 days, monthly otherwise
     if since and until:
@@ -910,7 +924,7 @@ async def get_user_stats(
             func.count(func.distinct(WatchEvent.media_id)).label("cnt"),
         )
         .join(Media, WatchEvent.media_id == Media.id)
-        .where(WatchEvent.user_id == user_id, Media.media_type.in_(["movie", "episode"]), *date_filters)
+        .where(WatchEvent.user_id == user_id, Media.media_type.in_(["movie", "episode"]), *dated_event_filters)
         .group_by(activity_expr, Media.media_type)
         .order_by(activity_expr)
     )
@@ -933,7 +947,7 @@ async def get_user_stats(
             func.coalesce(func.sum(effective_runtime), 0).label("minutes"),
         )
         .join(WatchEvent, WatchEvent.media_id == Media.id)
-        .where(WatchEvent.user_id == user_id, Media.media_type.in_(["movie", "episode"]), *date_filters)
+        .where(WatchEvent.user_id == user_id, Media.media_type.in_(["movie", "episode"]), *dated_event_filters)
         .group_by(activity_expr, Media.media_type)
         .order_by(activity_expr)
     )
@@ -956,7 +970,7 @@ async def get_user_stats(
             func.count(func.distinct(WatchEvent.media_id)).label("cnt"),
         )
         .join(Media, WatchEvent.media_id == Media.id)
-        .where(WatchEvent.user_id == user_id, Media.media_type.in_(["movie", "episode"]), *date_filters)
+        .where(WatchEvent.user_id == user_id, Media.media_type.in_(["movie", "episode"]), *dated_event_filters)
         .group_by(dow_expr)
         .order_by(dow_expr)
     )
@@ -966,7 +980,7 @@ async def get_user_stats(
     weeks_q = await db.execute(
         select(func.count(func.distinct(func.to_char(WatchEvent.watched_at, "IYYY-IW"))))
         .join(Media, WatchEvent.media_id == Media.id)
-        .where(WatchEvent.user_id == user_id, Media.media_type.in_(["movie", "episode"]), *date_filters)
+        .where(WatchEvent.user_id == user_id, Media.media_type.in_(["movie", "episode"]), *dated_event_filters)
     )
     total_weeks = max(weeks_q.scalar_one() or 1, 1)
     day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]

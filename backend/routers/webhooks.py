@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, or_
 
 from db import get_db
 from models.media import Media
@@ -383,7 +383,10 @@ async def _write_watch_event(
             select(WatchEvent.id).where(
                 WatchEvent.user_id == user_id,
                 WatchEvent.media_id == media_id,
-                WatchEvent.watched_at >= recent_cutoff,
+                # NULL >= cutoff is false in SQL, so an unknown-dated event
+                # (manually logged without a date) needs an explicit OR here
+                # to still be recognized by this guard.
+                or_(WatchEvent.watched_at.is_(None), WatchEvent.watched_at >= recent_cutoff),
             ).limit(1)
         )
         if existing.scalar_one_or_none() is not None:

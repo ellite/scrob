@@ -249,6 +249,35 @@ class TraktClientTests(unittest.IsolatedAsyncioTestCase):
             [{"number": 3, "watched_at": "2024-03-29T08:13:20.000Z"}],
         )
 
+    async def test_history_batch_serializes_none_as_unknown_sentinel(self) -> None:
+        payloads: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payloads.append(json.loads(request.content))
+            return httpx.Response(201, json={"added": {"movies": 1, "episodes": 1}})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            trakt.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            await trakt.add_to_history_batch(
+                "client-id",
+                "access-token",
+                [(550, None)],
+                [(1396, 1, 3, None)],
+            )
+
+        self.assertEqual(
+            payloads[0]["movies"],
+            [{"ids": {"tmdb": 550}, "watched_at": "unknown"}],
+        )
+        self.assertEqual(
+            payloads[0]["shows"][0]["seasons"][0]["episodes"],
+            [{"number": 3, "watched_at": "unknown"}],
+        )
+
     async def test_rating_batches_preserve_season_tmdb_ids(self) -> None:
         requests: list[tuple[str, dict]] = []
 
@@ -596,6 +625,95 @@ class TraktHistorySafetyTests(unittest.IsolatedAsyncioTestCase):
             await trakt_router._run_trakt_push(user_id=1, job_id=14)
 
         add_batch.assert_not_awaited()
+
+    def test_normalize_history_time_preserves_none(self) -> None:
+        self.assertIsNone(trakt_router._normalize_history_time(None))
+
+    def test_parse_trakt_datetime_treats_unknown_sentinel_as_none(self) -> None:
+        self.assertIsNone(trakt_router._parse_trakt_datetime("unknown"))
+        self.assertIsNone(trakt_router._parse_trakt_datetime(None))
+        self.assertIsNone(trakt_router._parse_trakt_datetime(""))
+
+    def test_parse_trakt_datetime_treats_unix_epoch_as_none(self) -> None:
+        """Regression test: verified against the live Trakt API — a history
+        entry submitted with watched_at="unknown" is not echoed back as the
+        literal string on read, it comes back as 1970-01-01T00:00:00.000Z.
+        That must be recognized as unknown too, or a pulled/deduped entry
+        would silently get a fabricated real (wrong) watch date."""
+        self.assertIsNone(trakt_router._parse_trakt_datetime("1970-01-01T00:00:00.000Z"))
+        self.assertIsNone(trakt_router._parse_trakt_datetime("1970-01-01T00:00:00Z"))
+        # A genuine (if extremely unlikely) play at a non-zero time on that
+        # same date is not the sentinel and must still parse normally.
+        self.assertIsNotNone(trakt_router._parse_trakt_datetime("1970-01-01T00:00:01.000Z"))
+
+    def test_remote_history_keys_includes_unknown_dated_entries(self) -> None:
+        # Covers both shapes: the literal sentinel (documented write value,
+        # defensive-only since Trakt doesn't echo it back) and the Unix epoch
+        # (what Trakt actually returns on read for the same entry, verified
+        # against the live API).
+        remote_movies = [
+            {"watched_at": "unknown", "movie": {"ids": {"tmdb": 550}}},
+            {"watched_at": "1970-01-01T00:00:00.000Z", "movie": {"ids": {"tmdb": 13}}},
+        ]
+        remote_episodes = [{
+            "watched_at": "1970-01-01T00:00:00.000Z",
+            "show": {"ids": {"tmdb": 1396}},
+            "episode": {"season": 1, "number": 3},
+        }]
+
+        keys = trakt_router._remote_history_keys(remote_movies, remote_episodes)
+
+        self.assertIn(("movie", 550, None), keys)
+        self.assertIn(("movie", 13, None), keys)
+        self.assertIn(("episode", 1396, 1, 3, None), keys)
+
+    async def test_full_push_handles_mix_of_known_and_unknown_dates(self) -> None:
+        """Regression test: before the None-guards, a single unknown-dated local
+        watch event crashed the entire push job (AttributeError in
+        _normalize_history_time), silently dropping every other pending push too."""
+        known_at = datetime(2024, 3, 28, 6, 40, 0)
+        settings = SimpleNamespace(
+            trakt_access_token="access-token",
+            trakt_client_id="client-id",
+            trakt_push_watched=True,
+            trakt_push_collection=False,
+            trakt_push_ratings=False,
+        )
+        movie1 = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club")
+        movie2 = Media(id=11, tmdb_id=680, media_type=MediaType.movie, title="Pulp Fiction")
+        session = _FakeSession(
+            settings,
+            [(movie1.id, known_at), (movie2.id, None)],
+            [movie1, movie2],
+            [],
+        )
+        add_batch = AsyncMock(return_value=None)
+        get_movies = AsyncMock(return_value=[])
+        get_episodes = AsyncMock(return_value=[])
+
+        with (
+            patch.object(
+                trakt_router,
+                "async_sessionmaker",
+                return_value=lambda: session,
+            ),
+            patch.object(trakt_router.trakt_client, "get_history_movies", get_movies),
+            patch.object(trakt_router.trakt_client, "get_history_episodes", get_episodes),
+            patch.object(trakt_router.trakt_client, "add_to_history_batch", add_batch),
+        ):
+            await trakt_router._run_trakt_push(user_id=1, job_id=15)
+
+        add_batch.assert_awaited_once_with(
+            "client-id",
+            "access-token",
+            [(550, known_at), (680, None)],
+            [],
+        )
+        # A mix of known and unknown local candidates can't be scoped to a time
+        # window, so the remote-dedup fetch falls back to unbounded.
+        self.assertIsNone(get_movies.await_args.kwargs["start_at"])
+        self.assertIsNone(get_movies.await_args.kwargs["end_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

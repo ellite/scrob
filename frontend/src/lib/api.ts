@@ -222,7 +222,7 @@ export interface WatchEvent {
   id: number;
   media: MediaItem;
   user_id: number;
-  watched_at: string;
+  watched_at: string | null;
   completed: boolean;
   progress_percent: number | null;
 }
@@ -1181,7 +1181,7 @@ export const api = {
     list: (params?: { page?: number; page_size?: number; type?: string }, token?: string) =>
       get<{ page: number; page_size: number; total_pages: number; total_results: number; results: WatchEvent[] }>("/history", params, token),
 
-    markAsWatched: (body: { tmdb_id: number; media_type: string; watched_at?: string; completed?: boolean }, token: string) =>
+    markAsWatched: (body: { tmdb_id: number; media_type: string; watched_at?: string | null; completed?: boolean }, token: string) =>
       post<{ message: string }>("/history", body, token),
 
     unwatchItem: (tmdbId: number, mediaType: string, token: string) =>

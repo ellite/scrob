@@ -308,6 +308,7 @@ const bottomNavItem = (active: boolean) =>
         <div class="flex gap-2">
           <button id="watch-history-now-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white">Just now</button>
           <button id="watch-history-custom-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Custom</button>
+          <button id="watch-history-unknown-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Unknown</button>
         </div>
         <input type="datetime-local" id="watch-history-date-input" class="hidden w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-sm text-zinc-200 focus:outline-none focus:border-green-500 [color-scheme:dark]" />
         <button id="watch-history-log-btn" class="w-full px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
@@ -984,7 +985,7 @@ const bottomNavItem = (active: boolean) =>
     // ── Watch history modal ────────────────────────────────────────────────────
     let _watchHistoryTmdbId = '';
     let _watchHistoryMediaType = '';
-    let _watchHistoryUseNow = true;
+    let _watchHistoryDateMode: 'now' | 'custom' | 'unknown' = 'now';
     let _watchHistoryShowTmdbId = '';
     let _watchHistorySeasonNumber = '';
     let _watchHistoryEpisodeNumber = '';
@@ -1007,14 +1008,16 @@ const bottomNavItem = (active: boolean) =>
       _watchHistoryEpisodeNumber = episodeNumber;
 
       // Reset "add play" form to "Just now"
-      _watchHistoryUseNow = true;
+      _watchHistoryDateMode = 'now';
       const nowBtn = document.getElementById('watch-history-now-btn')!;
       const customBtn = document.getElementById('watch-history-custom-btn')!;
+      const unknownBtn = document.getElementById('watch-history-unknown-btn')!;
       const dateInput = document.getElementById('watch-history-date-input') as HTMLInputElement;
       const activeClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white';
       const inactiveClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200';
       nowBtn.className = activeClass;
       customBtn.className = inactiveClass;
+      unknownBtn.className = inactiveClass;
       dateInput.classList.add('hidden');
       dateInput.value = toLocal(new Date());
       dateInput.max = toLocal(new Date());
@@ -1030,15 +1033,16 @@ const bottomNavItem = (active: boolean) =>
       const unwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
       unwatchBtn.classList.add('hidden');
       try {
-        const events: Array<{ id: number; watched_at: string }> = await apiFetch(
+        const events: Array<{ id: number; watched_at: string | null }> = await apiFetch(
           `/history/item-events?tmdb_id=${_watchHistoryTmdbId}&media_type=${_watchHistoryMediaType}`
         );
         if (events.length === 0) {
           eventsEl.innerHTML = '<div class="px-4 py-3 text-sm text-zinc-500 italic">No plays recorded yet</div>';
         } else {
           eventsEl.innerHTML = events.map(ev => {
-            const d = new Date(ev.watched_at + 'Z');
-            const fmt = d.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: !(window as any).__USE_24H__ });
+            const fmt = ev.watched_at
+              ? new Date(ev.watched_at + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: !(window as any).__USE_24H__ })
+              : 'Unknown date';
             return `<div class="flex items-center justify-between px-4 py-2.5 hover:bg-zinc-800/50 group">
               <span class="text-sm text-zinc-200">${esc(fmt)}</span>
               <button class="text-zinc-600 group-hover:text-zinc-400 hover:!text-red-400 transition-colors cursor-pointer" data-delete-event="${ev.id}" aria-label="Remove">
@@ -1106,25 +1110,39 @@ const bottomNavItem = (active: boolean) =>
       const inactiveClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200';
 
       document.getElementById('watch-history-now-btn')!.addEventListener('click', () => {
-        _watchHistoryUseNow = true;
+        _watchHistoryDateMode = 'now';
         (document.getElementById('watch-history-now-btn') as HTMLElement).className = activeClass;
         (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
+        (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
         document.getElementById('watch-history-date-input')!.classList.add('hidden');
       });
 
       document.getElementById('watch-history-custom-btn')!.addEventListener('click', () => {
-        _watchHistoryUseNow = false;
+        _watchHistoryDateMode = 'custom';
         (document.getElementById('watch-history-now-btn') as HTMLElement).className = inactiveClass;
         (document.getElementById('watch-history-custom-btn') as HTMLElement).className = activeClass;
+        (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
         const input = document.getElementById('watch-history-date-input') as HTMLInputElement;
         input.max = toLocal(new Date());
         input.classList.remove('hidden');
         input.focus();
       });
 
+      document.getElementById('watch-history-unknown-btn')!.addEventListener('click', () => {
+        _watchHistoryDateMode = 'unknown';
+        (document.getElementById('watch-history-now-btn') as HTMLElement).className = inactiveClass;
+        (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
+        (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = activeClass;
+        document.getElementById('watch-history-date-input')!.classList.add('hidden');
+      });
+
       document.getElementById('watch-history-log-btn')!.addEventListener('click', async () => {
         const input = document.getElementById('watch-history-date-input') as HTMLInputElement;
-        const watchedAt = _watchHistoryUseNow ? toUTC(new Date()) : toUTC(new Date(input.value || toLocal(new Date())));
+        const watchedAt = _watchHistoryDateMode === 'unknown'
+          ? null
+          : _watchHistoryDateMode === 'now'
+            ? toUTC(new Date())
+            : toUTC(new Date(input.value || toLocal(new Date())));
         const logBtn = document.getElementById('watch-history-log-btn') as HTMLButtonElement;
         const idleLabel = logBtn.textContent || 'Mark as watched';
         logBtn.disabled = true;
@@ -1144,9 +1162,10 @@ const bottomNavItem = (active: boolean) =>
           await apiFetch('/history', 'POST', watchBody);
           await loadWatchHistoryEvents();
           // Reset to "Just now" after logging
-          _watchHistoryUseNow = true;
+          _watchHistoryDateMode = 'now';
           (document.getElementById('watch-history-now-btn') as HTMLElement).className = activeClass;
           (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
+          (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
           input.classList.add('hidden');
         } catch { logBtn.textContent = idleLabel; }
         logBtn.disabled = false;
