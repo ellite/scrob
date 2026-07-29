@@ -652,20 +652,23 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   });
 
   // ── Test & Fetch ──
+  const postIntegrationCredentials = (path: string, credentials: { url: string; token: string }) =>
+    fetch(path, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(credentials),
+    });
+
   document.getElementById('test-radarr-btn')?.addEventListener('click', async () => {
     const u = (document.getElementById('radarr_url') as HTMLInputElement).value.trim();
     const t = (document.getElementById('radarr_token') as HTMLInputElement).value.trim();
     if (!u || !t) { showMessage('Enter Radarr URL and API key first.', 'error'); return; }
     setConnStatus('radarr-conn-status', 'checking');
     try {
-      const testRes = await fetch(`/api/proxy/auth/test-radarr?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`, {
-        method: 'POST', headers: { 'Authorization': `Bearer ${token}` },
-      });
+      const testRes = await postIntegrationCredentials('/api/proxy/auth/test-radarr', { url: u, token: t });
       if (!testRes.ok) { setConnStatus('radarr-conn-status', 'disconnected'); throw new Error((await testRes.json()).detail || 'Failed to connect'); }
 
-      const profRes = await fetch(`/api/proxy/auth/radarr/profiles?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
+      const profRes = await postIntegrationCredentials('/api/proxy/auth/radarr/profiles', { url: u, token: t });
       const profData = await profRes.json();
 
       const rootSelect = document.getElementById('radarr_root_folder') as HTMLSelectElement;
@@ -696,14 +699,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     if (!u || !t) { showMessage('Enter Sonarr URL and API key first.', 'error'); return; }
     setConnStatus('sonarr-conn-status', 'checking');
     try {
-      const testRes = await fetch(`/api/proxy/auth/test-sonarr?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`, {
-        method: 'POST', headers: { 'Authorization': `Bearer ${token}` },
-      });
+      const testRes = await postIntegrationCredentials('/api/proxy/auth/test-sonarr', { url: u, token: t });
       if (!testRes.ok) { setConnStatus('sonarr-conn-status', 'disconnected'); throw new Error((await testRes.json()).detail || 'Failed to connect'); }
 
-      const profRes = await fetch(`/api/proxy/auth/sonarr/profiles?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
+      const profRes = await postIntegrationCredentials('/api/proxy/auth/sonarr/profiles', { url: u, token: t });
       const profData = await profRes.json();
 
       const rootSelect = document.getElementById('sonarr_root_folder') as HTMLSelectElement;
@@ -741,13 +740,15 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       setConnStatus('radarr-conn-status', 'checking');
       checks.push((async () => {
         try {
-          const testRes = await fetch(`/api/proxy/auth/test-radarr?url=${encodeURIComponent(radarrUrl)}&token=${encodeURIComponent(radarrToken)}`, {
-            method: 'POST', headers: { 'Authorization': `Bearer ${token}` },
-          });
+          const testRes = await postIntegrationCredentials(
+            '/api/proxy/auth/test-radarr',
+            { url: radarrUrl, token: radarrToken },
+          );
           if (!testRes.ok) { setConnStatus('radarr-conn-status', 'disconnected'); return; }
-          const profRes = await fetch(`/api/proxy/auth/radarr/profiles?url=${encodeURIComponent(radarrUrl)}&token=${encodeURIComponent(radarrToken)}`, {
-            headers: { 'Authorization': `Bearer ${token}` },
-          });
+          const profRes = await postIntegrationCredentials(
+            '/api/proxy/auth/radarr/profiles',
+            { url: radarrUrl, token: radarrToken },
+          );
           const profData = await profRes.json();
           const rootSelect = document.getElementById('radarr_root_folder') as HTMLSelectElement;
           const qualSelect = document.getElementById('radarr_quality_profile') as HTMLSelectElement;
@@ -771,13 +772,15 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       setConnStatus('sonarr-conn-status', 'checking');
       checks.push((async () => {
         try {
-          const testRes = await fetch(`/api/proxy/auth/test-sonarr?url=${encodeURIComponent(sonarrUrl)}&token=${encodeURIComponent(sonarrToken)}`, {
-            method: 'POST', headers: { 'Authorization': `Bearer ${token}` },
-          });
+          const testRes = await postIntegrationCredentials(
+            '/api/proxy/auth/test-sonarr',
+            { url: sonarrUrl, token: sonarrToken },
+          );
           if (!testRes.ok) { setConnStatus('sonarr-conn-status', 'disconnected'); return; }
-          const profRes = await fetch(`/api/proxy/auth/sonarr/profiles?url=${encodeURIComponent(sonarrUrl)}&token=${encodeURIComponent(sonarrToken)}`, {
-            headers: { 'Authorization': `Bearer ${token}` },
-          });
+          const profRes = await postIntegrationCredentials(
+            '/api/proxy/auth/sonarr/profiles',
+            { url: sonarrUrl, token: sonarrToken },
+          );
           const profData = await profRes.json();
           const rootSelect = document.getElementById('sonarr_root_folder') as HTMLSelectElement;
           const qualSelect = document.getElementById('sonarr_quality_profile') as HTMLSelectElement;

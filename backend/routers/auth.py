@@ -2,7 +2,7 @@ import secrets
 import pyotp
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +44,12 @@ def _generate_api_key() -> str:
     return secrets.token_urlsafe(32)
 
 router = APIRouter()
+
+
+def _prevent_sensitive_response_caching(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+
+
 def _parse_nuvio_profile_id(value: str | None) -> int:
     try:
         return parse_profile_id(value)
@@ -672,63 +678,76 @@ async def regenerate_api_key(
 
 @router.post("/test-tmdb")
 async def test_tmdb(
-    key: str = Query(...),
+    body: schemas.ApiKeyTestRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     from core import tmdb
-    success = await tmdb.validate_api_key(key)
+    _prevent_sensitive_response_caching(response)
+    success = await tmdb.validate_api_key(body.key.get_secret_value())
     if not success:
         raise HTTPException(status_code=400, detail="Invalid TMDB API Key")
     return {"status": "ok", "message": "TMDB API key is valid."}
 
 @router.post("/test-tvdb")
 async def test_tvdb(
-    key: str = Query(...),
+    body: schemas.ApiKeyTestRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     from core import tvdb
-    success = await tvdb.validate_api_key(key)
+    _prevent_sensitive_response_caching(response)
+    success = await tvdb.validate_api_key(body.key.get_secret_value())
     if not success:
         raise HTTPException(status_code=400, detail="Invalid TVDB API Key")
     return {"status": "ok", "message": "TVDB API key is valid."}
 
 @router.post("/test-jellyfin")
 async def test_jellyfin(
-    url: str = Query(...),
-    token: str = Query(...),
-    user_id: Optional[str] = Query(None),
+    body: schemas.ServiceConnectionTestRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     from core import jellyfin
-    url = await validate_service_url(url, "Jellyfin URL")
-    success = await jellyfin.validate_connection(url, token, user_id)
+    _prevent_sensitive_response_caching(response)
+    url = await validate_service_url(body.url, "Jellyfin URL")
+    success = await jellyfin.validate_connection(
+        url,
+        body.token.get_secret_value(),
+        body.user_id,
+    )
     if not success:
         raise HTTPException(status_code=400, detail="Failed to connect to Jellyfin or invalid User ID")
     return {"status": "ok"}
 
 @router.post("/test-emby")
 async def test_emby(
-    url: str = Query(...),
-    token: str = Query(...),
-    user_id: Optional[str] = Query(None),
+    body: schemas.ServiceConnectionTestRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     from core import emby
-    url = await validate_service_url(url, "Emby URL")
-    success = await emby.validate_connection(url, token, user_id)
+    _prevent_sensitive_response_caching(response)
+    url = await validate_service_url(body.url, "Emby URL")
+    success = await emby.validate_connection(
+        url,
+        body.token.get_secret_value(),
+        body.user_id,
+    )
     if not success:
         raise HTTPException(status_code=400, detail="Failed to connect to Emby or invalid User ID")
     return {"status": "ok"}
 
 @router.post("/test-plex")
 async def test_plex(
-    url: str = Query(...),
-    token: str = Query(...),
+    body: schemas.ServiceConnectionTestRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     from core import plex
-    url = await validate_service_url(url, "Plex URL")
-    success = await plex.validate_connection(url, token)
+    _prevent_sensitive_response_caching(response)
+    url = await validate_service_url(body.url, "Plex URL")
+    success = await plex.validate_connection(url, body.token.get_secret_value())
     if not success:
         raise HTTPException(status_code=400, detail="Failed to connect to Plex")
     return {"status": "ok"}
@@ -775,25 +794,28 @@ async def test_nuvio(
 
 @router.post("/test-radarr")
 async def test_radarr(
-    url: str = Query(...),
-    token: str = Query(...),
+    body: schemas.ServiceConnectionTestRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     from core import radarr
-    url = await validate_service_url(url, "Radarr URL")
-    success = await radarr.validate_connection(url, token)
+    _prevent_sensitive_response_caching(response)
+    url = await validate_service_url(body.url, "Radarr URL")
+    success = await radarr.validate_connection(url, body.token.get_secret_value())
     if not success:
         raise HTTPException(status_code=400, detail="Failed to connect to Radarr")
     return {"status": "ok"}
 
-@router.get("/radarr/profiles")
+@router.post("/radarr/profiles")
 async def get_radarr_profiles(
-    url: str = Query(...),
-    token: str = Query(...),
+    body: schemas.ServiceConnectionTestRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     from core import radarr
-    url = await validate_service_url(url, "Radarr URL")
+    _prevent_sensitive_response_caching(response)
+    url = await validate_service_url(body.url, "Radarr URL")
+    token = body.token.get_secret_value()
     quality_profiles = await radarr.get_quality_profiles(url, token)
     root_folders = await radarr.get_root_folders(url, token)
     tags = await radarr.get_tags(url, token)
@@ -805,13 +827,14 @@ async def get_radarr_profiles(
 
 @router.post("/test-sonarr")
 async def test_sonarr(
-    url: str = Query(...),
-    token: str = Query(...),
+    body: schemas.ServiceConnectionTestRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     from core import sonarr
-    url = await validate_service_url(url, "Sonarr URL")
-    success = await sonarr.validate_connection(url, token)
+    _prevent_sensitive_response_caching(response)
+    url = await validate_service_url(body.url, "Sonarr URL")
+    success = await sonarr.validate_connection(url, body.token.get_secret_value())
     if not success:
         raise HTTPException(status_code=400, detail="Failed to connect to Sonarr")
     return {"status": "ok"}
@@ -934,14 +957,16 @@ async def get_connection_status(
     return {"radarr": rdr_status, "sonarr": snr_status, "trakt": trakt_status, "simkl": simkl_status, "mdblist": mdblist_status, "connections": ms_statuses}
 
 
-@router.get("/sonarr/profiles")
+@router.post("/sonarr/profiles")
 async def get_sonarr_profiles(
-    url: str = Query(...),
-    token: str = Query(...),
+    body: schemas.ServiceConnectionTestRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     from core import sonarr
-    url = await validate_service_url(url, "Sonarr URL")
+    _prevent_sensitive_response_caching(response)
+    url = await validate_service_url(body.url, "Sonarr URL")
+    token = body.token.get_secret_value()
     quality_profiles = await sonarr.get_quality_profiles(url, token)
     root_folders = await sonarr.get_root_folders(url, token)
     tags = await sonarr.get_tags(url, token)

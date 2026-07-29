@@ -2618,6 +2618,13 @@ if (me.totp_enabled) {
   }
 
 
+  const postIntegrationCredentials = (path: string, credentials: Record<string, string>) =>
+    fetch(path, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(credentials),
+    });
+
   function setupActions() {
     const btns = document.querySelectorAll('.js-action-btn');
     btns.forEach(btn => {
@@ -2636,14 +2643,17 @@ if (me.totp_enabled) {
         try {
           let url = '';
           let method = 'POST';
+          let requestBody: Record<string, string> | undefined;
           let syncConnId: string | null = null; // set for sync/push actions to start progress poller
 
           if (action === 'test_tmdb') {
             const val = (document.getElementById('tmdb_api_key') as HTMLInputElement).value;
-            url = `/api/proxy/auth/test-tmdb?key=${encodeURIComponent(val)}`;
+            url = '/api/proxy/auth/test-tmdb';
+            requestBody = { key: val };
           } else if (action === 'test_tvdb') {
             const val = (document.getElementById('tvdb_api_key') as HTMLInputElement).value;
-            url = `/api/proxy/auth/test-tvdb?key=${encodeURIComponent(val)}`;
+            url = '/api/proxy/auth/test-tvdb';
+            requestBody = { key: val };
           } else if (action === 'test_connection') {
             const connId = newBtn.getAttribute('data-conn-id');
             const connType = newBtn.getAttribute('data-conn-type');
@@ -2659,15 +2669,11 @@ if (me.totp_enabled) {
                 body: JSON.stringify({ url: u, token: t, profile_id: parseInt(ui) }),
               });
             } else {
-              let testEndpoint: string;
-              if (connType === 'plex') {
-                testEndpoint = `/api/proxy/auth/test-plex?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`;
-              } else if (connType === 'emby') {
-                testEndpoint = `/api/proxy/auth/test-emby?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
-              } else {
-                testEndpoint = `/api/proxy/auth/test-jellyfin?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
-              }
-              testRes = await fetch(testEndpoint, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+              const testEndpoint = `/api/proxy/auth/test-${connType === 'plex' ? 'plex' : connType === 'emby' ? 'emby' : 'jellyfin'}`;
+              const credentials = connType === 'plex'
+                ? { url: u, token: t }
+                : { url: u, token: t, user_id: ui };
+              testRes = await postIntegrationCredentials(testEndpoint, credentials);
             }
             const testData = await testRes.json();
             if (testRes.ok) {
@@ -2857,19 +2863,14 @@ if (me.totp_enabled) {
             const t = document.getElementById('radarr_token').value;
             setConnStatus('radarr-conn-status', 'checking');
             // First test connection
-            const testRes = await fetch(`/api/proxy/auth/test-radarr?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`, {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const testRes = await postIntegrationCredentials('/api/proxy/auth/test-radarr', { url: u, token: t });
             if (!testRes.ok) {
               setConnStatus('radarr-conn-status', 'disconnected');
               throw new Error((await testRes.json()).detail || 'Failed to connect to Radarr');
             }
             
             // Then fetch profiles
-            const profRes = await fetch(`/api/proxy/auth/radarr/profiles?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`, {
-              headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const profRes = await postIntegrationCredentials('/api/proxy/auth/radarr/profiles', { url: u, token: t });
             const profData = await profRes.json();
             
             // Populate selects
@@ -2899,19 +2900,14 @@ if (me.totp_enabled) {
             const t = document.getElementById('sonarr_token').value;
             setConnStatus('sonarr-conn-status', 'checking');
             // First test connection
-            const testRes = await fetch(`/api/proxy/auth/test-sonarr?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`, {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const testRes = await postIntegrationCredentials('/api/proxy/auth/test-sonarr', { url: u, token: t });
             if (!testRes.ok) {
               setConnStatus('sonarr-conn-status', 'disconnected');
               throw new Error((await testRes.json()).detail || 'Failed to connect to Sonarr');
             }
             
             // Then fetch profiles
-            const profRes = await fetch(`/api/proxy/auth/sonarr/profiles?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`, {
-              headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const profRes = await postIntegrationCredentials('/api/proxy/auth/sonarr/profiles', { url: u, token: t });
             const profData = await profRes.json();
             
             // Populate selects
@@ -3074,7 +3070,11 @@ if (me.totp_enabled) {
 
           const res = await fetch(url, {
             method,
-            headers: { 'Authorization': `Bearer ${token}` }
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              ...(requestBody ? { 'Content-Type': 'application/json' } : {}),
+            },
+            body: requestBody ? JSON.stringify(requestBody) : undefined,
           });
           const data = await res.json();
 
@@ -3692,15 +3692,11 @@ if (me.totp_enabled) {
             await authenticateNuvio();
             showMessage('Nuvio connection successful. Select the profile to sync.');
           } else {
-            let ep: string;
-            if (type === 'plex') {
-              ep = `/api/proxy/auth/test-plex?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}`;
-            } else if (type === 'emby') {
-              ep = `/api/proxy/auth/test-emby?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
-            } else {
-              ep = `/api/proxy/auth/test-jellyfin?url=${encodeURIComponent(u)}&token=${encodeURIComponent(t)}&user_id=${encodeURIComponent(ui)}`;
-            }
-            const res = await fetch(ep, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+            const endpoint = `/api/proxy/auth/test-${type === 'plex' ? 'plex' : type === 'emby' ? 'emby' : 'jellyfin'}`;
+            const credentials = type === 'plex'
+              ? { url: u, token: t }
+              : { url: u, token: t, user_id: ui };
+            const res = await postIntegrationCredentials(endpoint, credentials);
             const data = await res.json();
             if (res.ok) showMessage(data.message || 'Connection successful!');
             else throw new Error(data.detail || 'Connection test failed');

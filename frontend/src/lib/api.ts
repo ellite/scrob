@@ -989,21 +989,21 @@ export const api = {
     deleteScrobbleConnection: (id: number, token: string) =>
       del<{ status: string }>(`/auth/scrobble-connections/${id}`, token),
     testJellyfin: (url: string, token: string, jellyfinUserId: string | null, userToken: string) =>
-      post<{ success: boolean; message: string }>(`/auth/test-jellyfin?url=${encodeURIComponent(url)}&token=${encodeURIComponent(token)}${jellyfinUserId ? `&user_id=${encodeURIComponent(jellyfinUserId)}` : ""}`, undefined, userToken),
+      post<{ success: boolean; message: string }>("/auth/test-jellyfin", { url, token, user_id: jellyfinUserId }, userToken),
     testEmby: (url: string, token: string, embyUserId: string | null, userToken: string) =>
-      post<{ success: boolean; message: string }>(`/auth/test-emby?url=${encodeURIComponent(url)}&token=${encodeURIComponent(token)}${embyUserId ? `&user_id=${encodeURIComponent(embyUserId)}` : ""}`, undefined, userToken),
+      post<{ success: boolean; message: string }>("/auth/test-emby", { url, token, user_id: embyUserId }, userToken),
     testPlex: (url: string, token: string, userToken: string) =>
-      post<{ success: boolean; message: string }>(`/auth/test-plex?url=${encodeURIComponent(url)}&token=${encodeURIComponent(token)}`, undefined, userToken),
+      post<{ success: boolean; message: string }>("/auth/test-plex", { url, token }, userToken),
     testRadarr: (url: string, token: string, userToken: string) =>
-      post<{ success: boolean; message: string }>(`/auth/test-radarr?url=${encodeURIComponent(url)}&token=${encodeURIComponent(token)}`, undefined, userToken),
+      post<{ success: boolean; message: string }>("/auth/test-radarr", { url, token }, userToken),
     getRadarrProfiles: (url: string, token: string, userToken: string) =>
-      get<{ quality_profiles: any[]; root_folders: any[] }>(`/auth/radarr/profiles?url=${encodeURIComponent(url)}&token=${encodeURIComponent(token)}`, undefined, userToken),
+      post<{ quality_profiles: any[]; root_folders: any[] }>("/auth/radarr/profiles", { url, token }, userToken),
     testSonarr: (url: string, token: string, userToken: string) =>
-      post<{ success: boolean; message: string }>(`/auth/test-sonarr?url=${encodeURIComponent(url)}&token=${encodeURIComponent(token)}`, undefined, userToken),
+      post<{ success: boolean; message: string }>("/auth/test-sonarr", { url, token }, userToken),
     getSonarrProfiles: (url: string, token: string, userToken: string) =>
-      get<{ quality_profiles: any[]; root_folders: any[]; language_profiles: any[] }>(`/auth/sonarr/profiles?url=${encodeURIComponent(url)}&token=${encodeURIComponent(token)}`, undefined, userToken),
+      post<{ quality_profiles: any[]; root_folders: any[]; language_profiles: any[] }>("/auth/sonarr/profiles", { url, token }, userToken),
     testTmdb: (key: string, userToken: string) =>
-      post<{ success: boolean; message: string }>(`/auth/test-tmdb?key=${encodeURIComponent(key)}`, undefined, userToken),
+      post<{ success: boolean; message: string }>("/auth/test-tmdb", { key }, userToken),
     getConnectionStatus: (token: string) =>
       get<ConnectionStatus>("/auth/connection-status", undefined, token),
     totp2faSetup: (token: string) =>
@@ -1321,4 +1321,3 @@ export function tmdbImageUrl(path: string | null | undefined, size: string = "w5
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
   return `/api/proxy/media/image/${size}${cleanPath}`;
 }
-
