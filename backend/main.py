@@ -1,7 +1,10 @@
 import asyncio
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import JSONResponse
+from dependencies import require_admin
+from models.users import User
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from db import engine, Base
@@ -343,10 +346,28 @@ async def lifespan(app: FastAPI):
 from core.config import settings
 
 # Rate limiter — keyed by client IP, in-memory storage (suitable for single-instance deploy).
-app = FastAPI(title="Scrob", version="0.1.0", lifespan=lifespan)
+# API docs (docs_url/redoc_url/openapi_url) are disabled here and re-added below behind
+# require_admin — the schema reveals the full endpoint surface and exact app version,
+# which shouldn't be public on a self-hosted instance that may be internet-facing.
+app = FastAPI(title="Scrob", version=settings.app_version, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+
+
+@app.get("/openapi.json", include_in_schema=False)
+async def get_openapi_schema(_: User = Depends(require_admin)):
+    return JSONResponse(app.openapi())
+
+
+@app.get("/docs", include_in_schema=False)
+async def get_docs(_: User = Depends(require_admin)):
+    return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} - Swagger UI")
+
+
+@app.get("/redoc", include_in_schema=False)
+async def get_redoc(_: User = Depends(require_admin)):
+    return get_redoc_html(openapi_url="/openapi.json", title=f"{app.title} - ReDoc")
 
 # The backend is internal-only (localhost), but lock CORS to the configured
 # frontend origin as defence-in-depth. The backend uses Bearer token auth only
