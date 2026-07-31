@@ -216,6 +216,7 @@ export interface PersonDetail {
   page: number;
   page_size: number;
   in_lists: number[];
+  collection: "in" | "out" | null;
 }
 
 export interface WatchEvent {
@@ -1068,8 +1069,19 @@ export const api = {
     getRecommendations: (type: string, tmdbId: number, token?: string) =>
       get<{ results: MediaItem[] }>(`/media/${type}/${tmdbId}/recommendations`, undefined, token),
 
-    getPerson: (personId: number, page: number = 1, token?: string) =>
-      get<PersonDetail>(`/media/person/${personId}`, { page }, token),
+    getPerson: (
+      personId: number,
+      page: number = 1,
+      token?: string,
+      filters?: { collection?: "in" | "out" | ""; genre?: string[]; year?: number[]; minRating?: string },
+    ) =>
+      get<PersonDetail>(`/media/person/${personId}`, {
+        page,
+        collection: filters?.collection || undefined,
+        genre: filters?.genre?.length ? filters.genre : undefined,
+        year: filters?.year?.length ? filters.year : undefined,
+        min_rating: filters?.minRating || undefined,
+      }, token),
 
     getCollection: (collectionId: number, token?: string) =>
       get<CollectionDetail>(`/media/collection/${collectionId}`, undefined, token),

@@ -1420,6 +1420,10 @@ _PERSON_PAGE_SIZE = 20
 async def get_person_details(
     person_id: int,
     page: int = Query(1, ge=1),
+    collection: str | None = Query(None),  # "in" | "out" | None (no filter)
+    genre: list[str] = Query(default=[]),  # OR'd together — any selected genre matches
+    year: list[int] = Query(default=[]),  # OR'd together — any selected year matches
+    min_rating: str | None = Query(None),  # "9".."5" (N+ stars) or "lt5" (under 5 stars)
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1448,6 +1452,8 @@ async def get_person_details(
                 "character": c.get("character"),
                 "popularity": popularity,
                 "adult": c.get("adult", False),
+                "genre_ids": c.get("genre_ids", []),
+                "vote_average": c.get("vote_average") or 0,
                 "_score": popularity * max(role_weight, 0.05),
             })
         _crew_dept_weight = {"Directing": 1.0, "Writing": 0.9, "Production": 0.7, "Creator": 1.0}
@@ -1464,6 +1470,8 @@ async def get_person_details(
                 "character": c.get("job"),
                 "popularity": popularity,
                 "adult": c.get("adult", False),
+                "genre_ids": c.get("genre_ids", []),
+                "vote_average": c.get("vote_average") or 0,
                 "_score": popularity * role_weight,
             })
         # Deduplicate by tmdb_id — a person may appear in multiple episodes of the
@@ -1481,10 +1489,48 @@ async def get_person_details(
         deduped.sort(key=lambda x: x["_score"], reverse=True)
         for credit in deduped:
             del credit["_score"]
+
+        # Cheap in-memory filters first (no DB work) to shrink the list before
+        # the collection cross-reference below, which does need a DB round-trip.
+        # Selections within a filter are OR'd (any selected genre/year matches);
+        # the different filters are AND'd together.
+        if genre:
+            def _matches_any_genre(credit: dict) -> bool:
+                genre_map = MOVIE_GENRE_IDS if credit["type"] == "movie" else TV_GENRE_IDS
+                target_ids = {genre_map[g] for g in genre if g in genre_map}
+                return bool(target_ids & set(credit.get("genre_ids", [])))
+            deduped = [c for c in deduped if _matches_any_genre(c)]
+        if year:
+            year_strs = {str(y) for y in year}
+            deduped = [c for c in deduped if (c.get("release_date") or "")[:4] in year_strs]
+        if min_rating == "lt5":
+            deduped = [c for c in deduped if c.get("vote_average", 0) < 5]
+        elif min_rating:
+            try:
+                threshold = float(min_rating)
+            except ValueError:
+                threshold = None
+            if threshold is not None:
+                deduped = [c for c in deduped if c.get("vote_average", 0) >= threshold]
+
+        for credit in deduped:
+            credit.pop("genre_ids", None)
+            credit.pop("vote_average", None)
+
+        if collection in ("in", "out"):
+            # Filter before paginating so total_credits/page counts reflect the
+            # filtered set, not the full filmography (enrich_with_state is a
+            # handful of batched queries regardless of list size, same as any
+            # other listing endpoint here).
+            await enrich_with_state(db, current_user.id, deduped)
+            wants_in_library = collection == "in"
+            deduped = [c for c in deduped if bool(c.get("in_library")) == wants_in_library]
+
         total_credits = len(deduped)
         start = (page - 1) * _PERSON_PAGE_SIZE
         top_credits = deduped[start:start + _PERSON_PAGE_SIZE]
-        await enrich_with_state(db, current_user.id, top_credits)
+        if collection not in ("in", "out"):
+            await enrich_with_state(db, current_user.id, top_credits)
 
         # Which of the user's lists contain this person?
         user_list_ids_q = await db.execute(select(UserList.id).where(UserList.user_id == current_user.id))
@@ -1514,6 +1560,7 @@ async def get_person_details(
             "total_credits": total_credits,
             "page": page,
             "page_size": _PERSON_PAGE_SIZE,
+            "collection": collection,
             "in_lists": person_in_lists,
         }
     except Exception as e:
