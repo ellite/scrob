@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
+from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, or_, select, desc, func, delete
@@ -63,7 +64,10 @@ async def _push_watch_state(
             from routers.sync import _latest_watched_at
             resolved_watched_at = await _latest_watched_at(db, user_id, media_ids)
 
-    tasks = []
+    # Each entry is (label, coroutine) so a failure can be logged with which
+    # provider/connection it came from — asyncio.gather(return_exceptions=True)
+    # would otherwise swallow errors here silently.
+    tasks: list[tuple[str, Any]] = []
 
     if connections:
         files_result = await db.execute(
@@ -86,20 +90,23 @@ async def _push_watch_state(
             source_type = coll_file.source.value if hasattr(coll_file.source, "value") else str(coll_file.source)
             for conn in conn_by_type.get(source_type, []):
                 if coll_file.source == CollectionSource.plex:
+                    label = f"plex connection {conn.id}"
                     if watched:
-                        tasks.append(plex_client.mark_watched(conn.url, conn.token, coll_file.source_id))
+                        tasks.append((label, plex_client.mark_watched(conn.url, conn.token, coll_file.source_id)))
                     else:
-                        tasks.append(plex_client.mark_unwatched(conn.url, conn.token, coll_file.source_id))
+                        tasks.append((label, plex_client.mark_unwatched(conn.url, conn.token, coll_file.source_id)))
                 elif coll_file.source == CollectionSource.jellyfin:
+                    label = f"jellyfin connection {conn.id}"
                     if watched:
-                        tasks.append(jellyfin_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id))
+                        tasks.append((label, jellyfin_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
                     else:
-                        tasks.append(jellyfin_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id))
+                        tasks.append((label, jellyfin_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
                 elif coll_file.source == CollectionSource.emby:
+                    label = f"emby connection {conn.id}"
                     if watched:
-                        tasks.append(emby_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id))
+                        tasks.append((label, emby_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
                     else:
-                        tasks.append(emby_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id))
+                        tasks.append((label, emby_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
 
     push_simkl = settings and settings.simkl_push_watched and settings.simkl_access_token
     if push_simkl and settings.simkl_client_id:
@@ -113,9 +120,9 @@ async def _push_watch_state(
                 if watched:
                     watched_at = resolved_watched_at.get(media.id)
                     if watched_at is not None:
-                        tasks.append(simkl_client.add_movie_to_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, watched_at))
+                        tasks.append((f"simkl add movie {media.tmdb_id}", simkl_client.add_movie_to_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, watched_at)))
                 else:
-                    tasks.append(simkl_client.remove_movie_from_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id))
+                    tasks.append((f"simkl remove movie {media.tmdb_id}", simkl_client.remove_movie_from_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id)))
             elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
                 show_res = await db.execute(select(Show).where(Show.id == media.show_id))
                 show = show_res.scalar_one_or_none()
@@ -123,9 +130,9 @@ async def _push_watch_state(
                     if watched:
                         watched_at = resolved_watched_at.get(media.id)
                         if watched_at is not None:
-                            tasks.append(simkl_client.add_episode_to_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number, watched_at))
+                            tasks.append((f"simkl add episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", simkl_client.add_episode_to_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number, watched_at)))
                     else:
-                        tasks.append(simkl_client.remove_episode_from_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number))
+                        tasks.append((f"simkl remove episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", simkl_client.remove_episode_from_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number)))
 
     if push_trakt and settings.trakt_client_id:
         media_res = await db.execute(
@@ -137,17 +144,17 @@ async def _push_watch_state(
                 continue
             if media.media_type == MediaType.movie:
                 if watched:
-                    tasks.append(trakt_client.add_movie_to_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, resolved_watched_at.get(media.id)))
+                    tasks.append((f"trakt add movie {media.tmdb_id}", trakt_client.add_movie_to_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, resolved_watched_at.get(media.id))))
                 else:
-                    tasks.append(trakt_client.remove_movie_from_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id))
+                    tasks.append((f"trakt remove movie {media.tmdb_id}", trakt_client.remove_movie_from_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id)))
             elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
                 show_res = await db.execute(select(Show).where(Show.id == media.show_id))
                 show = show_res.scalar_one_or_none()
                 if show and show.tmdb_id:
                     if watched:
-                        tasks.append(trakt_client.add_episode_to_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number, resolved_watched_at.get(media.id)))
+                        tasks.append((f"trakt add episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", trakt_client.add_episode_to_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number, resolved_watched_at.get(media.id))))
                     else:
-                        tasks.append(trakt_client.remove_episode_from_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number))
+                        tasks.append((f"trakt remove episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", trakt_client.remove_episode_from_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number)))
 
     if push_mdblist:
         from core import mdblist as mdblist_client
@@ -171,11 +178,18 @@ async def _push_watch_state(
             if item:
                 mdblist_payload[item[0]].append(item[1])
         mdblist_payload["shows"] = _merge_show_entries(mdblist_payload["shows"])
+        # MDBList's /sync/watched/remove has no per-item removal feed — it bumps
+        # a removal timestamp on /sync/last_activities and expects clients to
+        # re-fetch the whole watched snapshot rather than confirming per item,
+        # so removal on their end can lag visibly behind this call returning.
         operation = mdblist_client.push_watched if watched else mdblist_client.remove_watched
-        tasks.append(operation(settings.mdblist_api_key, mdblist_payload))
+        tasks.append((f"mdblist {'push' if watched else 'remove'} watched", operation(settings.mdblist_api_key, mdblist_payload)))
 
     if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*(coro for _, coro in tasks), return_exceptions=True)
+        for (label, _), result in zip(tasks, results):
+            if isinstance(result, Exception):
+                logger.exception("Failed to push watch state to %s", label, exc_info=result)
 
     nuvio_connections = [conn for conn in connections if conn.type == "nuvio"]
     if nuvio_connections:
