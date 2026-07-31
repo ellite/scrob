@@ -127,6 +127,10 @@ const refreshUrl = isEpisode
             
             <h1 class="text-4xl md:text-6xl font-black text-zinc-100 mb-3 tracking-tight leading-none">{item.title}</h1>
 
+            {item.original_title && item.original_title !== item.title && (
+              <p class="text-sm text-zinc-500 mb-3">Original title: <span class="text-zinc-400">{item.original_title}</span></p>
+            )}
+
             {item.tagline && (
               <p class="text-xl italic text-zinc-400 mb-8 font-light leading-relaxed">"{item.tagline}"</p>
             )}
