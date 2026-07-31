@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 MAX_ENTRY_SIZE = 100 * 1024 * 1024
 MAX_TOTAL_SIZE = 500 * 1024 * 1024
+_READ_CHUNK_SIZE = 1024 * 1024
 
 _HISTORY_RE = re.compile(r"^watched-history-\d+\.json$")
 _LIST_ITEMS_RE = re.compile(r"^lists-list-(\d+)-(.+)\.json$")
@@ -41,11 +42,6 @@ def parse_trakt_export(content: bytes) -> TraktExportData:
     except zipfile.BadZipFile:
         raise ValueError("This file doesn't look like a valid Trakt export (.zip).")
 
-    infos = zf.infolist()
-    total_size = sum(i.file_size for i in infos)
-    if total_size > MAX_TOTAL_SIZE or any(i.file_size > MAX_ENTRY_SIZE for i in infos):
-        raise ValueError("Export file is too large to import.")
-
     names = set(zf.namelist())
 
     if not any(_HISTORY_RE.match(n) for n in names):
@@ -53,11 +49,36 @@ def parse_trakt_export(content: bytes) -> TraktExportData:
             "This doesn't look like a Trakt data export — watched-history files are missing."
         )
 
+    # ZipInfo.file_size is metadata declared inside the zip itself — an attacker
+    # can freely lie about it (e.g. declare 100 bytes while the entry actually
+    # inflates to hundreds of MB), so it must never be trusted as a decompression
+    # cap. Enforce the limits against bytes actually produced while streaming
+    # each entry out, aborting mid-read the moment either cap is exceeded.
+    total_read = 0
+
+    def _read_limited(name: str) -> bytes:
+        nonlocal total_read
+        chunks: list[bytes] = []
+        entry_read = 0
+        try:
+            with zf.open(name) as f:
+                while True:
+                    chunk = f.read(_READ_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    entry_read += len(chunk)
+                    total_read += len(chunk)
+                    if entry_read > MAX_ENTRY_SIZE or total_read > MAX_TOTAL_SIZE:
+                        raise ValueError("Export file is too large to import.")
+                    chunks.append(chunk)
+        except zipfile.BadZipFile:
+            raise ValueError(f"'{name}' in the export is corrupted or inconsistent.")
+        return b"".join(chunks)
+
     def _load(name: str) -> list:
         if name not in names:
             return []
-        with zf.open(name) as f:
-            data = json.load(f)
+        data = json.loads(_read_limited(name))
         return data if isinstance(data, list) else []
 
     def _load_history() -> list[dict]:

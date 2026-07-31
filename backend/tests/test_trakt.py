@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
 
+from fastapi import HTTPException
+
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault(
     "DATABASE_URL",
@@ -801,6 +803,41 @@ class _RatingsFakeDB:
 
     async def execute(self, statement):
         return _Result(rows=[])
+
+
+class TraktImportUploadSizeCapTests(unittest.IsolatedAsyncioTestCase):
+    async def test_oversized_upload_is_rejected_without_buffering_it_all(self) -> None:
+        # Regression: trakt_import_upload used to do a single unbounded
+        # `await file.read()`, buffering the entire request body into memory
+        # before any size check ran at all. It must now bail out mid-read.
+        chunk = b"0" * (2 * 1024 * 1024)  # 2MB per read() call
+        read_calls = 0
+
+        class _FakeUploadFile:
+            filename = "export.zip"
+
+            async def read(self, size: int = -1) -> bytes:
+                nonlocal read_calls
+                read_calls += 1
+                # If the cap weren't enforced mid-loop, this would run forever.
+                return chunk
+
+        with patch.object(trakt_router, "MAX_TOTAL_SIZE", 1024 * 1024):  # 1MB cap
+            with self.assertRaises(HTTPException) as ctx:
+                await trakt_router.trakt_import_upload(
+                    background_tasks=SimpleNamespace(add_task=lambda *a, **k: None),
+                    file=_FakeUploadFile(),
+                    sync_watched=True,
+                    sync_ratings=True,
+                    sync_lists=True,
+                    db=None,
+                    current_user=SimpleNamespace(id=1),
+                )
+
+        self.assertEqual(ctx.exception.status_code, 413)
+        # Stopped after the first chunk pushed it past the (mocked) 1MB cap —
+        # not after buffering gigabytes.
+        self.assertEqual(read_calls, 1)
 
 
 class TraktExportSyncTests(unittest.IsolatedAsyncioTestCase):

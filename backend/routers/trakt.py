@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import trakt as trakt_client
 from core.enrichment import enrich_media
-from core.trakt_export import TraktExportData, parse_trakt_export
+from core.trakt_export import MAX_TOTAL_SIZE, TraktExportData, parse_trakt_export
 from db import get_db, engine
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
@@ -1281,7 +1281,20 @@ async def trakt_import_upload(
     if not (sync_watched or sync_ratings or sync_lists):
         raise HTTPException(status_code=400, detail="Select at least one item to import.")
 
-    content = await file.read()
+    # Read in bounded chunks rather than a single file.read() — otherwise an
+    # oversized request body gets buffered into memory in full before the zip
+    # is ever opened, regardless of what parse_trakt_export's own caps enforce.
+    chunks: list[bytes] = []
+    total_read = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total_read += len(chunk)
+        if total_read > MAX_TOTAL_SIZE:
+            raise HTTPException(status_code=413, detail="Export file is too large to import.")
+        chunks.append(chunk)
+    content = b"".join(chunks)
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 

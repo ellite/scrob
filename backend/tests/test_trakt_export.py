@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import struct
 import unittest
 import unittest.mock
 import zipfile
@@ -104,6 +105,37 @@ class ParseTraktExportTests(unittest.TestCase):
         with unittest.mock.patch("core.trakt_export.MAX_TOTAL_SIZE", 10):
             with self.assertRaises(ValueError):
                 parse_trakt_export(content)
+
+    def test_declared_size_lie_cannot_bypass_the_size_cap(self) -> None:
+        # ZipInfo.file_size is metadata the zip itself declares — an attacker can
+        # lie about it. Build an entry whose real (compressible) content is much
+        # bigger than what its central directory / local header claim, and
+        # confirm the cap still catches it from bytes actually read, not the
+        # declared value.
+        real_payload = b"0" * (2 * 1024 * 1024)  # 2MB, highly compressible
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("watched-history-1.json", b"[]")
+            zf.writestr("watched-history-2.json", real_payload)
+        raw = bytes(buf.getvalue())
+
+        true_size_bytes = struct.pack("<I", len(real_payload))
+        fake_size_bytes = struct.pack("<I", 10)
+        self.assertEqual(raw.count(true_size_bytes), 2)  # local header + central directory
+        tampered = raw.replace(true_size_bytes, fake_size_bytes)
+
+        with unittest.mock.patch("core.trakt_export.MAX_ENTRY_SIZE", 1024):
+            with self.assertRaises(ValueError):
+                parse_trakt_export(tampered)
+
+    def test_corrupted_entry_raises_a_clean_error(self) -> None:
+        content = _make_zip({"watched-history-1.json": [_MOVIE_PLAY]})
+        with unittest.mock.patch.object(
+            zipfile.ZipExtFile, "read", side_effect=zipfile.BadZipFile("Bad CRC-32 for file 'x'")
+        ):
+            with self.assertRaises(ValueError) as ctx:
+                parse_trakt_export(content)
+        self.assertIn("corrupted", str(ctx.exception))
 
 
 if __name__ == "__main__":
