@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -9,6 +10,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from models.base import MediaType
 from models.events import WatchEvent
 from models.media import Media
+from models.show import Show
 from routers import history
 from schemas import WatchEventCreate
 
@@ -18,7 +20,14 @@ class _Scalars:
         self.item = item
 
     def first(self):
+        if isinstance(self.item, list):
+            return self.item[0] if self.item else None
         return self.item
+
+    def all(self):
+        if isinstance(self.item, list):
+            return self.item
+        return [] if self.item is None else [self.item]
 
 
 class _Result:
@@ -28,10 +37,19 @@ class _Result:
     def scalars(self):
         return _Scalars(self.item)
 
+    def scalar_one_or_none(self):
+        return self.item
+
+    def all(self):
+        if isinstance(self.item, list):
+            return self.item
+        return [] if self.item is None else [self.item]
+
 
 class _FakeSession:
     def __init__(self, results):
         self.added = []
+        self.info = {}
         self.execute = AsyncMock(side_effect=[_Result(item) for item in results])
         self.flush = AsyncMock()
         self.commit = AsyncMock()
@@ -184,6 +202,89 @@ class UnknownWatchDateTests(unittest.IsolatedAsyncioTestCase):
             push.await_args.kwargs["watched_at_by_media"],
             {10: event.watched_at},
         )
+
+
+_SEASON_PAYLOAD = {
+    "episodes": [
+        {"episode_number": 1, "id": 999, "name": "Ep 1", "air_date": "2020-01-01", "vote_average": 8.0, "still_path": None},
+    ]
+}
+
+
+class MarkSeasonWatchedDateTests(unittest.IsolatedAsyncioTestCase):
+    """Regression test for issue #92: marking a season watched had no way to
+    pick a custom date or leave it unknown — every episode got watched_at=now()."""
+
+    async def _mark_season(self, **watched_at_kwargs) -> tuple[dict, WatchEvent]:
+        show = Show(id=55, tmdb_id=100, title="Test Show")
+        # execute() call order: show lookup, existing-episode lookup,
+        # already-watched lookup, PlaybackProgress delete.
+        db = _FakeSession([show, [], [], None])
+        db.info["tmdb_key_7"] = "test-key"  # pre-cache so get_user_tmdb_key skips its own query
+        with (
+            patch.object(history.tmdb, "get_season", AsyncMock(return_value=_SEASON_PAYLOAD)),
+            patch("routers.history._push_watch_state", new_callable=AsyncMock),
+        ):
+            body = history.SeasonWatchRequest(series_tmdb_id=100, season_number=1, **watched_at_kwargs)
+            response = await history.mark_season_watched(body, db, SimpleNamespace(id=7))
+        event = next(v for v in db.added if isinstance(v, WatchEvent))
+        return response, event
+
+    async def test_explicit_null_marks_season_watched_without_a_date(self) -> None:
+        response, event = await self._mark_season(watched_at=None)
+        self.assertEqual(response["count"], 1)
+        self.assertIsNone(event.watched_at)
+
+    async def test_omitted_watched_at_defaults_to_now(self) -> None:
+        response, event = await self._mark_season()
+        self.assertEqual(response["count"], 1)
+        self.assertIsNotNone(event.watched_at)
+
+    async def test_explicit_custom_date_is_used(self) -> None:
+        custom = datetime(2020, 6, 15, 12, 0, 0)
+        response, event = await self._mark_season(watched_at=custom)
+        self.assertEqual(response["count"], 1)
+        self.assertEqual(event.watched_at, custom)
+
+
+class MarkShowWatchedDateTests(unittest.IsolatedAsyncioTestCase):
+    """Same regression as MarkSeasonWatchedDateTests, but for mark_show_watched."""
+
+    async def _mark_show(self, **watched_at_kwargs) -> tuple[dict, WatchEvent]:
+        show = Show(
+            id=55,
+            tmdb_id=100,
+            title="Test Show",
+            tmdb_data={"seasons": [{"season_number": 1, "episode_count": 1, "name": "Season 1"}]},
+        )
+        # execute() call order: show lookup, existing-episode lookup,
+        # already-watched lookup, PlaybackProgress delete.
+        db = _FakeSession([show, [], [], None])
+        db.info["tmdb_key_7"] = "test-key"
+        with (
+            patch.object(history.tmdb, "get_season", AsyncMock(return_value=_SEASON_PAYLOAD)),
+            patch("routers.history._push_watch_state", new_callable=AsyncMock),
+        ):
+            body = history.ShowWatchRequest(series_tmdb_id=100, **watched_at_kwargs)
+            response = await history.mark_show_watched(body, db, SimpleNamespace(id=7))
+        event = next(v for v in db.added if isinstance(v, WatchEvent))
+        return response, event
+
+    async def test_explicit_null_marks_show_watched_without_a_date(self) -> None:
+        response, event = await self._mark_show(watched_at=None)
+        self.assertEqual(response["count"], 1)
+        self.assertIsNone(event.watched_at)
+
+    async def test_omitted_watched_at_defaults_to_now(self) -> None:
+        response, event = await self._mark_show()
+        self.assertEqual(response["count"], 1)
+        self.assertIsNotNone(event.watched_at)
+
+    async def test_explicit_custom_date_is_used(self) -> None:
+        custom = datetime(2020, 6, 15, 12, 0, 0)
+        response, event = await self._mark_show(watched_at=custom)
+        self.assertEqual(response["count"], 1)
+        self.assertEqual(event.watched_at, custom)
 
 
 if __name__ == "__main__":

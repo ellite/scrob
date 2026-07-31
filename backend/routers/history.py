@@ -698,10 +698,12 @@ class SeasonWatchRequest(BaseModel):
     series_tmdb_id: int
     season_number: int
     episode_order: str | None = None
+    watched_at: datetime | None = None  # omitted = now; explicit null = unknown date
 
 
 class ShowWatchRequest(BaseModel):
     series_tmdb_id: int
+    watched_at: datetime | None = None  # omitted = now; explicit null = unknown date
 
 
 @router.post("", response_model=dict)
@@ -1015,6 +1017,14 @@ async def mark_season_watched(
 
     now = datetime.utcnow()
     today = now.date()
+    # "Has this episode aired yet" stays tied to the real current date, independent
+    # of what date the user says they watched it. Omitted watched_at retains the
+    # existing API default ("now"); explicit null marks it watched without a known date.
+    resolved_watched_at = (
+        body.watched_at.replace(tzinfo=None) if body.watched_at is not None
+        else None if "watched_at" in body.model_fields_set
+        else now
+    )
     existing_q = await db.execute(
         select(Media).where(
             Media.show_id == show.id,
@@ -1082,7 +1092,7 @@ async def mark_season_watched(
             db.add(WatchEvent(
                 user_id=current_user.id,
                 media_id=ep.id,
-                watched_at=now,
+                watched_at=resolved_watched_at,
                 completed=True,
                 play_count=1,
                 progress_percent=1.0,
@@ -1211,9 +1221,16 @@ async def mark_show_watched(
     # 2. For each season, fetch episodes and ensure they exist + mark watched
     seasons = [s["season_number"] for s in show.tmdb_data["seasons"] if s["season_number"] > 0]
     all_newly_watched_ids = []
-    
+
     now = datetime.utcnow()
     today = now.date()
+    # See mark_season_watched: aired-cutoff stays tied to the real current date;
+    # omitted watched_at retains "now", explicit null means unknown watch date.
+    resolved_watched_at = (
+        body.watched_at.replace(tzinfo=None) if body.watched_at is not None
+        else None if "watched_at" in body.model_fields_set
+        else now
+    )
 
     for sn in seasons:
         try:
@@ -1274,7 +1291,7 @@ async def mark_show_watched(
                 db.add(WatchEvent(
                     user_id=current_user.id,
                     media_id=ep.id,
-                    watched_at=now,
+                    watched_at=resolved_watched_at,
                     completed=True,
                     play_count=1,
                     progress_percent=1.0,
