@@ -30,7 +30,7 @@ import core.trakt as trakt_client
 from core.enrichment import enrich_media
 from core.image_cache import pre_cache_all_collected_bg
 
-from dependencies import get_current_user
+from dependencies import get_current_user, get_current_user_or_api_key
 logger = logging.getLogger("uvicorn.error")
 
 
@@ -3391,7 +3391,7 @@ async def _get_connection_or_404(db: AsyncSession, connection_id: int, user_id: 
 async def get_plex_friends(
     connection_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
     if conn.type != "plex":
@@ -3405,7 +3405,7 @@ async def get_plex_friends(
 async def get_connection_libraries(
     connection_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
 
@@ -4176,7 +4176,7 @@ async def sync_plex(
 @router.get("/status")
 async def get_sync_status(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     # A high enough limit that a long-running job (e.g. a large MDBList push) doesn't
     # fall out of the window just because other sync jobs (connection scans, etc.)
@@ -4440,7 +4440,7 @@ class SeasonOverrideBody(BaseModel):
 @router.get("/season-overrides")
 async def list_season_overrides(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(ShowSeasonOverride).where(ShowSeasonOverride.user_id == current_user.id)
@@ -5335,7 +5335,7 @@ async def unmatch_movie(
 @router.get("/matched-shows")
 async def list_matched_shows(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Return all matched shows (TMDB or TVDB) for the current user.
 

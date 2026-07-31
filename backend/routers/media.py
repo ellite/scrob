@@ -33,7 +33,7 @@ from core.translations import (
     upsert_media_translation,
     apply_media_translations,
 )
-from dependencies import get_current_user
+from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User, UserSettings
 from models.show import Show as ShowModel
 from models.global_settings import GlobalSettings
@@ -656,7 +656,7 @@ async def list_media(
     year: list[int] = Query(default=[]),
     watched: list[str] = Query(default=[]),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     offset = (page - 1) * page_size
 
@@ -742,7 +742,7 @@ async def list_media(
 async def list_media_years(
     type: MediaType = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Distinct release years present in the user's collection, for the year filter."""
     result = await db.execute(
@@ -767,7 +767,7 @@ async def list_media_years(
 async def find_by_imdb(
     imdb_id: str = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Resolve an IMDB ID to a TMDB TV show via the TMDB /find endpoint."""
     imdb_id = imdb_id.strip()
@@ -795,7 +795,7 @@ async def find_by_imdb(
 async def search_tvdb(
     q: str = Query(..., min_length=2),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     from routers.shows import get_user_tvdb_key
     from core import tvdb as tvdb_client
@@ -819,7 +819,7 @@ async def search_media(
     page: int = Query(1, ge=1),
     in_library: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     valid_types = {m.value for m in MediaType} | {"person", "collection"}
     if type is not None and type not in valid_types:
@@ -1135,7 +1135,7 @@ async def _sync_trending(
 async def trending_movies(
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     data = await _sync_trending(MediaType.movie, page, api_key=tmdb_key)
@@ -1185,7 +1185,7 @@ async def trending_movies(
 async def trending_shows(
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     data = await _sync_trending(MediaType.series, page, api_key=tmdb_key)
@@ -1235,7 +1235,7 @@ async def trending_shows(
 @router.get("/on-air-today")
 async def on_air_today(
     page: int = Query(default=1, ge=1),
-    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user_or_api_key)
 ):
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(tmdb_key):
@@ -1267,7 +1267,7 @@ async def on_air_today(
 async def airing_today_collected(
     timezone: str = Query(default="UTC"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Return shows airing today on TMDB that the user has in their collection."""
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
@@ -1376,7 +1376,7 @@ async def recently_added(
     type: MediaType | None = Query(None),
     limit: int = Query(default=20, le=100),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     # Subquery: latest added_at per media for this user (deduplicates movies in both Plex+Jellyfin)
     coll_subq = (
@@ -1425,7 +1425,7 @@ async def get_person_details(
     year: list[int] = Query(default=[]),  # OR'd together — any selected year matches
     min_rating: str | None = Query(None),  # "9".."5" (N+ stars) or "lt5" (under 5 stars)
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     try:
         tmdb_key = await get_user_tmdb_key(db, current_user.id)
@@ -1573,7 +1573,7 @@ async def get_person_details(
 async def get_collection_details(
     collection_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     try:
         tmdb_key = await get_user_tmdb_key(db, current_user.id)
@@ -1663,7 +1663,7 @@ async def get_tmdb_list(
     min_rating: float | None = Query(None),
     status: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     try:
         tmdb_key = await get_user_tmdb_key(db, current_user.id)
@@ -1843,7 +1843,7 @@ async def _show_library_ids(db: AsyncSession, user_id: int, tmdb_ids: list[int])
 @router.get("/now-playing")
 async def now_playing(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(tmdb_key):
@@ -1863,7 +1863,7 @@ async def now_playing(
 @router.get("/trending/trailers")
 async def trending_trailers(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(tmdb_key):
@@ -1904,7 +1904,7 @@ async def trending_trailers(
 @router.get("/upcoming")
 async def upcoming_movies(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(tmdb_key):
@@ -1924,7 +1924,7 @@ async def upcoming_movies(
 @router.get("/on-air-this-week")
 async def on_air_this_week(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(tmdb_key):
@@ -1945,7 +1945,7 @@ async def on_air_this_week(
 async def hidden_gems(
     type: MediaType = Query(MediaType.movie),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     import random
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
@@ -1984,7 +1984,7 @@ async def hidden_gems(
 @router.get("/top-rated-movies")
 async def top_rated_movies(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(tmdb_key):
@@ -2004,7 +2004,7 @@ async def top_rated_movies(
 @router.get("/top-rated-shows")
 async def top_rated_shows(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(tmdb_key):
@@ -2026,7 +2026,7 @@ async def top_rated_shows(
 @router.get("/for-you")
 async def for_you(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     import random
     from models.profile import UserProfileData
@@ -2143,7 +2143,7 @@ async def streaming(
     type: MediaType = Query(MediaType.movie),
     watch_region: str = Query("US"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(tmdb_key):
@@ -2178,7 +2178,7 @@ async def streaming(
 @router.get("/new-episodes")
 async def new_episodes(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(tmdb_key):
@@ -2880,7 +2880,7 @@ async def get_request_status(
     tmdb_id: int = Query(...),
     media_type: MediaType = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Check whether a movie/series is already monitored in Radarr/Sonarr."""
     settings_q = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
@@ -4218,7 +4218,7 @@ async def get_media_details(
     type: MediaType,
     tmdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Unified endpoint for Movies and Episodes details."""
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
@@ -4508,7 +4508,7 @@ async def get_media_recommendations(
     type: MediaType,
     tmdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Fetch movie/series recommendations from TMDB and enrich with state."""
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
@@ -4556,7 +4556,7 @@ def _normalize_path(path: str | None, size: str = "w500") -> str | None:
 async def pick_for_me(
     type: str = Query("movie"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     import random
     from models.profile import UserProfileData

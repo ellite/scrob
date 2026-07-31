@@ -14,7 +14,7 @@ from db import get_db, AsyncSessionLocal
 from core import tmdb as tmdb_client
 from core.translations import upsert_media_translation, upsert_show_translation
 
-from dependencies import get_current_user, get_optional_user
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user
 from models.users import User
 from models.profile import UserProfileData, PrivacyLevel
 from models.events import WatchEvent
@@ -67,7 +67,7 @@ async def _check_profile_access(user_id: int, current_user, db: AsyncSession):
 
 @router.get("/me", response_model=schemas.UserProfileResponse)
 async def get_profile(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -196,7 +196,7 @@ async def start_translation_backfill(
 
 
 @router.get("/me/translations/backfill/status")
-async def get_backfill_status(current_user: User = Depends(get_current_user)):
+async def get_backfill_status(current_user: User = Depends(get_current_user_or_api_key)):
     state = _TRANSLATION_BACKFILL.get(current_user.id)
     if not state:
         return {"running": False, "progress": 0, "total": 0, "done": False, "error": None}

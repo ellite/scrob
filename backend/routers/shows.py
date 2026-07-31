@@ -21,7 +21,7 @@ from models.users import User, UserSettings
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch, _effective_sonarr, _get_global_settings
 
-from dependencies import get_current_user
+from dependencies import get_current_user, get_current_user_or_api_key
 from core import tmdb
 from core import tvdb as tvdb_client
 from core.episode_order import ensure_episode_order_mapping, get_episode_order, validate_episode_order
@@ -180,7 +180,7 @@ def format_show(show: ShowModel) -> dict:
 @router.get("")
 async def list_shows(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
     sort: str = Query(default="title"),
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=1, le=100),
@@ -309,7 +309,7 @@ async def list_shows(
 @router.get("/years")
 async def list_show_years(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Distinct first-air-date years present in the user's show collection, for the year filter."""
     episode_show_ids = (
@@ -438,7 +438,7 @@ async def _run_episode_order_mapping(
 async def get_episode_order_job(
     job_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(SyncJob).where(SyncJob.id == job_id, SyncJob.user_id == current_user.id)
@@ -517,7 +517,7 @@ async def set_show_episode_order(
 async def get_active_episode_order_job(
     series_tmdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Look up an in-flight TVDB mapping job for this show, if any — lets the
     page recover its progress after a refresh instead of losing track of it."""
@@ -539,7 +539,7 @@ async def get_active_episode_order_job(
 async def get_show(
     series_tmdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     # 1. Try to find locally
     show_result = await db.execute(
@@ -906,7 +906,7 @@ async def get_show(
 async def get_show_recommendations(
     series_tmdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Fetch series recommendations from TMDB and enrich with state."""
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
@@ -942,7 +942,7 @@ async def get_show_season(
     series_tmdb_id: int,
     season_number: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     # 1. Try to find show and local episodes for this season
     show_result = await db.execute(
@@ -1285,7 +1285,7 @@ async def get_episode_detail(
     season_number: int,
     episode_number: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     api_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(api_key):
@@ -1566,7 +1566,7 @@ async def refresh_show_metadata(
 async def get_tvdb_show(
     tvdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     api_key = await get_user_tvdb_key(db, current_user.id)
     if not api_key:
@@ -1791,7 +1791,7 @@ async def get_tvdb_season(
     tvdb_id: int,
     season_number: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     api_key = await get_user_tvdb_key(db, current_user.id)
     if not api_key:
@@ -2007,7 +2007,7 @@ async def get_tvdb_episode(
     season_number: int,
     episode_number: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     api_key = await get_user_tvdb_key(db, current_user.id)
     if not api_key:

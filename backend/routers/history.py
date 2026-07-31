@@ -19,7 +19,7 @@ from models.episode_order import EpisodeOrderMapping
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations
 
-from dependencies import get_current_user
+from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
 import core.plex as plex_client
 import core.jellyfin as jellyfin_client
@@ -278,7 +278,7 @@ async def get_history(
     page_size: int = Query(20, ge=1, le=100),
     type: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     offset = (page - 1) * page_size
 
@@ -339,7 +339,7 @@ async def get_history(
 @router.get("/now-playing")
 async def get_now_playing(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Active playback sessions for the current user."""
     result = await db.execute(
@@ -405,7 +405,7 @@ async def clear_now_playing_sessions(
 @router.get("/continue-watching")
 async def get_continue_watching(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Items currently in progress."""
     result = await db.execute(
@@ -502,7 +502,7 @@ def _compute_next_episode(seasons: list[dict], season: int, episode: int) -> tup
 @router.get("/next-up")
 async def get_next_up(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
     limit: int | None = None,
     include_hidden: bool = Query(False),
 ):
@@ -839,7 +839,7 @@ async def get_item_events(
     tmdb_id: int = Query(...),
     media_type: MediaType = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Return all completed watch events for a specific movie or episode."""
     query = (
