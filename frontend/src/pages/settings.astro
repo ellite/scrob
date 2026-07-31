@@ -142,8 +142,8 @@ if (me.totp_enabled) {
             <!-- Connections list (server-side rendered, managed client-side) -->
             <div id="connections-list" class="space-y-3">
             {connections.map((conn) => {
-              const typeColor = conn.type === "jellyfin" ? "bg-purple-500" : conn.type === "emby" ? "bg-green-500" : conn.type === "plex" ? "bg-yellow-500" : "bg-cyan-500";
-              const typeLabel = conn.type === "jellyfin" ? "Jellyfin" : conn.type === "emby" ? "Emby" : conn.type === "plex" ? "Plex" : "Nuvio";
+              const typeColor = conn.type === "jellyfin" ? "bg-purple-500" : conn.type === "emby" ? "bg-green-500" : conn.type === "plex" ? "bg-yellow-500" : conn.type === "stremio" ? "bg-blue-500" : "bg-cyan-500";
+              const typeLabel = conn.type === "jellyfin" ? "Jellyfin" : conn.type === "emby" ? "Emby" : conn.type === "plex" ? "Plex" : conn.type === "stremio" ? "Stremio" : "Nuvio";
               return (
               <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden" data-connection-id={conn.id}>
                 <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target={`conn-body-${conn.id}`}>
@@ -190,11 +190,11 @@ if (me.totp_enabled) {
                   <div class="grid md:grid-cols-2 gap-8 px-6 py-6">
                     <!-- Left: Connection details -->
                     <div class="space-y-4">
-                      <div class="space-y-2">
+                      <div class={`space-y-2 ${conn.type === "stremio" ? "hidden" : ""}`}>
                         <label class="block text-sm font-medium text-zinc-400">{conn.type === "nuvio" ? "Cloud API URL" : "Server URL"}</label>
                         <input type="url" class="conn-url-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all disabled:opacity-70" value={conn.url} data-conn-id={conn.id} disabled={conn.type === "nuvio"} />
                       </div>
-                      <div class="space-y-2">
+                      <div class={`space-y-2 ${conn.type === "stremio" ? "hidden" : ""}`}>
                         <label class="block text-sm font-medium text-zinc-400">{conn.type === "plex" ? "X-Plex-Token" : conn.type === "nuvio" ? "Refresh Token" : "API Token"}</label>
                         <div class="relative">
                           <input type="password" class="conn-token-input w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={conn.token} data-conn-id={conn.id} />
@@ -204,6 +204,13 @@ if (me.totp_enabled) {
                           </button>
                         </div>
                       </div>
+                      {conn.type === "stremio" && (
+                        <div class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 space-y-1">
+                          <p class="text-sm font-medium text-zinc-200">Connected Stremio account</p>
+                          <p class="text-sm text-zinc-400">{conn.server_username || "Account connected"}</p>
+                          <p class="text-xs text-zinc-500">The account key is stored server-side and is never exposed here.</p>
+                        </div>
+                      )}
                       {conn.type === "nuvio" ? (
                         <div class="space-y-2">
                           <label class="block text-sm font-medium text-zinc-400">Nuvio Profile</label>
@@ -211,7 +218,7 @@ if (me.totp_enabled) {
                             <option value={conn.server_user_id || ""}>{conn.server_username || `Profile ${conn.server_user_id}`} (#{conn.server_user_id})</option>
                           </select>
                         </div>
-                      ) : conn.type !== "plex" && (
+                      ) : conn.type !== "plex" && conn.type !== "stremio" && (
                         <div class="space-y-2">
                           <label class="block text-sm font-medium text-zinc-400">User ID</label>
                           <input type="text" class="conn-user-id-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={conn.server_user_id || ""} data-conn-id={conn.id} />
@@ -224,7 +231,7 @@ if (me.totp_enabled) {
                           <input type="text" class="conn-username-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={conn.server_username || ""} data-conn-id={conn.id} />
                         </div>
                       )}
-                      {conn.type !== "nuvio" && (
+                      {conn.type !== "nuvio" && conn.type !== "stremio" && (
                         <>
                           <div class="space-y-2">
                             <label class="block text-sm font-medium text-zinc-400">Libraries to sync</label>
@@ -255,8 +262,8 @@ if (me.totp_enabled) {
                         {[
                           { key: "sync_collection", label: "Collection status" },
                           { key: "sync_watched", label: "Watched status" },
-                          ...(conn.type === "nuvio" ? [] : [{ key: "sync_ratings", label: "Ratings" }]),
-                          { key: "sync_playback", label: conn.type === "nuvio" ? "Playback progress" : "Playback events" },
+                          ...(conn.type === "nuvio" || conn.type === "stremio" ? [] : [{ key: "sync_ratings", label: "Ratings" }]),
+                          { key: "sync_playback", label: conn.type === "nuvio" || conn.type === "stremio" ? "Playback progress" : "Playback events" },
                           ...(conn.type === "plex" ? [{ key: "plex_sync_watchlist", label: "Watchlist" }] : []),
                         ].map(({ key, label }) => (
                           <label class="flex items-center gap-3 cursor-pointer group">
@@ -267,19 +274,25 @@ if (me.totp_enabled) {
                         <div class="flex items-center gap-3">
                           <button type="button" data-action="sync_connection" data-conn-id={conn.id} data-conn-type={conn.type} data-conn-name={conn.name}
                             disabled={!hasTmdbKey}
-                            title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : conn.type === "nuvio" ? "Sync Nuvio library, watch history, and playback progress" : `Pull from ${conn.name}`}
+                            title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : conn.type === "nuvio" || conn.type === "stremio" ? `Sync ${typeLabel} library, watched status, and playback progress` : `Pull from ${conn.name}`}
                             class={`js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${hasTmdbKey ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700" : "bg-zinc-800 text-zinc-400 border border-zinc-700 opacity-50"}`}
-                          >{conn.type === "nuvio" ? "Sync now" : "Pull"}</button>
+                          >{conn.type === "nuvio" || conn.type === "stremio" ? "Sync now" : "Pull"}</button>
+                          {conn.type === "stremio" && (
+                            <button type="button" data-action="full_resync_connection" data-conn-id={conn.id} data-conn-name={conn.name}
+                              disabled={!hasTmdbKey}
+                              class="js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
+                            >Full resync</button>
+                          )}
                           <span id={`${conn.type}-last-sync`} class="hidden text-xs text-zinc-500"></span>
                         </div>
                       </div>
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
                         <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → {typeLabel}</p>
                         {[
-                          ...(conn.type === "nuvio" ? [{ key: "push_collection", label: "Collection status" }] : []),
+                          ...(conn.type === "nuvio" || conn.type === "stremio" ? [{ key: "push_collection", label: "Collection status" }] : []),
                           { key: "push_watched", label: "Watched status" },
-                          ...(conn.type === "nuvio" ? [{ key: "push_playback", label: "Playback progress" }] : []),
-                          ...(conn.type === "nuvio" ? [] : [{ key: "push_ratings", label: "Ratings" }]),
+                          ...(conn.type === "nuvio" || conn.type === "stremio" ? [{ key: "push_playback", label: "Playback progress" }] : []),
+                          ...(conn.type === "nuvio" || conn.type === "stremio" ? [] : [{ key: "push_ratings", label: "Ratings" }]),
                           ...(conn.type === "plex" ? [{ key: "plex_push_watchlist", label: "Watchlist" }] : []),
                         ].map(({ key, label }) => (
                           <label class="flex items-center gap-3 cursor-pointer group">
@@ -399,6 +412,7 @@ if (me.totp_enabled) {
                         <option value="emby">Emby</option>
                         <option value="plex">Plex</option>
                         <option value="nuvio">Nuvio</option>
+                        <option value="stremio">Stremio</option>
                       </select>
                     </div>
                     <div id="new-conn-url-row" class="space-y-2">
@@ -409,7 +423,7 @@ if (me.totp_enabled) {
                       <label for="new-nuvio-email" class="block text-sm font-medium text-zinc-400">Nuvio Email</label>
                       <input type="email" id="new-nuvio-email" autocomplete="username" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                     </div>
-                    <div class="space-y-2">
+                    <div id="new-conn-token-row" class="space-y-2">
                       <label id="new-conn-token-label" for="new-conn-token" class="block text-sm font-medium text-zinc-400">Token</label>
                       <div class="relative">
                         <input type="password" id="new-conn-token" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
@@ -429,11 +443,21 @@ if (me.totp_enabled) {
                         <option value="">Sign in to load profiles</option>
                       </select>
                     </div>
+                    <div id="new-stremio-link-row" class="hidden rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 space-y-3">
+                      <p class="text-sm text-zinc-300">Authorize Scrob from Stremio without sharing your password.</p>
+                      <button type="button" id="connect-stremio-btn" class="text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer">Connect Stremio</button>
+                      <div id="stremio-link-details" class="hidden space-y-3">
+                        <a id="stremio-link-url" href="#" target="_blank" rel="noopener noreferrer" class="block text-sm text-blue-400 hover:text-blue-300 underline">Open Stremio authorization</a>
+                        <p class="text-sm text-zinc-400">Code: <strong id="stremio-link-code" class="font-mono text-zinc-100"></strong></p>
+                        <img id="stremio-link-qr" alt="Stremio authorization QR code" class="w-40 h-40 rounded-lg bg-white p-2" />
+                        <p id="stremio-link-status" class="text-xs text-zinc-500">Waiting for authorization…</p>
+                      </div>
+                    </div>
                     <div id="new-conn-username-row" class="space-y-2 hidden">
                       <label for="new-conn-username" class="block text-sm font-medium text-zinc-400">Plex Username</label>
                       <input type="text" id="new-conn-username" placeholder="e.g. john_doe" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                     </div>
-                    <div class="flex gap-2">
+                    <div id="new-connection-actions" class="flex gap-2">
                       <button type="button" id="create-connection-btn" class="text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer">Add</button>
                       <button type="button" id="test-new-connection-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-4 py-2 rounded-lg transition-colors cursor-pointer">Test</button>
                       <button type="button" id="cancel-add-connection-btn" class="text-sm text-zinc-500 hover:text-zinc-300 px-4 py-2 cursor-pointer">Cancel</button>
@@ -2873,6 +2897,23 @@ if (me.totp_enabled) {
             const u = (card?.querySelector('.conn-url-input') as HTMLInputElement)?.value || '';
             const t = (card?.querySelector('.conn-token-input') as HTMLInputElement)?.value || '';
             const ui = (card?.querySelector('.conn-user-id-input') as HTMLInputElement)?.value || '';
+            if (connType === 'stremio') {
+              const statusResponse = await fetch('/api/proxy/auth/connection-status', {
+                headers: { 'Authorization': `Bearer ${token}` },
+              });
+              const statusData = await statusResponse.json();
+              const connectionStatus = (statusData.connections || []).find(
+                (entry: any) => String(entry.id) === String(connId)
+              );
+              if (statusResponse.ok && connectionStatus?.connected) {
+                showMessage('Stremio connection successful!');
+                if (connId) setConnStatus(`conn-status-${connId}`, 'connected');
+              } else {
+                if (connId) setConnStatus(`conn-status-${connId}`, 'disconnected');
+                throw new Error('Stremio connection test failed');
+              }
+              return;
+            }
             let testRes: Response;
             if (connType === 'nuvio') {
               testRes = await fetch('/api/proxy/auth/test-nuvio', {
@@ -3017,6 +3058,18 @@ if (me.totp_enabled) {
           } else if (action === 'scan_libraries') {
             const connId = newBtn.getAttribute('data-conn-id');
             url = `/api/proxy/sync/connection/${connId}/scan`;
+          } else if (action === 'full_resync_connection') {
+            const connId = newBtn.getAttribute('data-conn-id');
+            const connName = newBtn.getAttribute('data-conn-name') || 'Stremio';
+            const ok = await showConfirmModal(
+              `Full resync from ${connName}?`,
+              'This reads the complete Stremio library and safely reconciles provider-specific removals. Other collection sources are preserved.',
+              'Full resync',
+            );
+            if (!ok) return;
+            renderConnProgress(connId, { status: 'pending', job_type: 'pull', processed_items: 0, total_items: 0, updated_at: new Date().toISOString() });
+            url = `/api/proxy/sync/connection/${connId}?full=true`;
+            syncConnId = connId;
           } else if (action === 'sync_connection') {
             const connId = newBtn.getAttribute('data-conn-id');
             const connName = newBtn.getAttribute('data-conn-name') || 'this server';
@@ -3053,6 +3106,7 @@ if (me.totp_enabled) {
             const card = document.querySelector(`[data-connection-id="${connId}"]`);
             const pushPrefLabels: Record<string, string> = {
               push_watched: 'watched status',
+              push_collection: 'collection status',
               push_ratings: 'ratings',
               push_playback: 'playback progress',
               plex_push_watchlist: 'watchlist',
@@ -3912,13 +3966,26 @@ if (me.totp_enabled) {
     const addBtn = document.getElementById('add-connection-btn');
     const addForm = document.getElementById('add-connection-form');
     const cancelBtn = document.getElementById('cancel-add-connection-btn');
+    const connectStremioBtn = document.getElementById('connect-stremio-btn') as HTMLButtonElement | null;
+    let stremioPollTimer: number | null = null;
     if (addBtn && addForm) {
       addBtn.addEventListener('click', () => {
         addForm.classList.toggle('hidden');
       });
     }
     if (cancelBtn && addForm) {
-      cancelBtn.addEventListener('click', () => addForm.classList.add('hidden'));
+      cancelBtn.addEventListener('click', () => {
+        addForm.classList.add('hidden');
+        if (stremioPollTimer !== null) {
+          window.clearTimeout(stremioPollTimer);
+          stremioPollTimer = null;
+        }
+        document.getElementById('stremio-link-details')?.classList.add('hidden');
+        if (connectStremioBtn) {
+          connectStremioBtn.disabled = false;
+          connectStremioBtn.textContent = 'Connect Stremio';
+        }
+      });
     }
 
     // Provider-specific fields for a new connection
@@ -3927,6 +3994,9 @@ if (me.totp_enabled) {
     const usernameRow = document.getElementById('new-conn-username-row');
     const nuvioEmailRow = document.getElementById('new-nuvio-email-row');
     const nuvioProfileRow = document.getElementById('new-nuvio-profile-row');
+    const stremioLinkRow = document.getElementById('new-stremio-link-row');
+    const urlRow = document.getElementById('new-conn-url-row');
+    const tokenRow = document.getElementById('new-conn-token-row');
     const urlInput = document.getElementById('new-conn-url') as HTMLInputElement | null;
     const urlLabel = document.getElementById('new-conn-url-label');
     const tokenInput = document.getElementById('new-conn-token') as HTMLInputElement | null;
@@ -3939,16 +4009,26 @@ if (me.totp_enabled) {
       const type = typeSelect?.value ?? 'jellyfin';
       const isPlex = type === 'plex';
       const isNuvio = type === 'nuvio';
-      userIdRow?.classList.toggle('hidden', isPlex || isNuvio);
+      const isStremio = type === 'stremio';
+      const isCloud = isNuvio || isStremio;
+      userIdRow?.classList.toggle('hidden', isPlex || isCloud);
       usernameRow?.classList.toggle('hidden', !isPlex);
       nuvioEmailRow?.classList.toggle('hidden', !isNuvio);
       nuvioProfileRow?.classList.toggle('hidden', !isNuvio);
+      stremioLinkRow?.classList.toggle('hidden', !isStremio);
+      urlRow?.classList.toggle('hidden', isStremio);
+      tokenRow?.classList.toggle('hidden', isStremio);
+      document.getElementById('create-connection-btn')?.classList.toggle('hidden', isStremio);
+      document.getElementById('test-new-connection-btn')?.classList.toggle('hidden', isStremio);
       if (urlInput) {
         if (isNuvio) {
           urlInput.value = 'https://api.nuvio.tv';
           urlInput.disabled = true;
+        } else if (isStremio) {
+          urlInput.value = 'https://api.strem.io';
+          urlInput.disabled = true;
         } else {
-          if (previousType === 'nuvio' && urlInput.value === 'https://api.nuvio.tv') urlInput.value = '';
+          if (previousType === 'nuvio' || previousType === 'stremio') urlInput.value = '';
           urlInput.disabled = false;
         }
       }
@@ -3958,22 +4038,30 @@ if (me.totp_enabled) {
       const syncRatings = document.getElementById('new-sync-ratings') as HTMLInputElement | null;
       const pushRatings = document.getElementById('new-push-ratings') as HTMLInputElement | null;
       const pushPlayback = document.getElementById('new-push-playback') as HTMLInputElement | null;
-      pushPlayback?.closest('label')?.classList.toggle('hidden', !isNuvio);
-      if (pushPlayback) pushPlayback.disabled = !isNuvio;
+      pushPlayback?.closest('label')?.classList.toggle('hidden', !isCloud);
+      if (pushPlayback) pushPlayback.disabled = !isCloud;
       const pushCollection = document.getElementById('new-push-collection') as HTMLInputElement | null;
-      pushCollection?.closest('label')?.classList.toggle('hidden', !isNuvio);
-      if (pushCollection) pushCollection.disabled = !isNuvio;
+      pushCollection?.closest('label')?.classList.toggle('hidden', !isCloud);
+      if (pushCollection) pushCollection.disabled = !isCloud;
       for (const checkbox of [syncRatings, pushRatings]) {
-        checkbox?.closest('label')?.classList.toggle('hidden', isNuvio);
-        if (checkbox) checkbox.disabled = isNuvio;
+        checkbox?.closest('label')?.classList.toggle('hidden', isCloud);
+        if (checkbox) checkbox.disabled = isCloud;
       }
       const playbackLabel = document.getElementById('new-sync-playback-label');
-      if (playbackLabel) playbackLabel.textContent = isNuvio ? 'Playback progress' : 'Playback events';
+      if (playbackLabel) playbackLabel.textContent = isCloud ? 'Playback progress' : 'Playback events';
       const pullHeading = document.getElementById('new-pull-heading');
       const pushHeading = document.getElementById('new-push-heading');
-      if (pullHeading) pullHeading.textContent = isNuvio ? 'Nuvio → Scrob' : 'Server → Scrob';
-      if (pushHeading) pushHeading.textContent = isNuvio ? 'Scrob → Nuvio' : 'Scrob → Server';
-      if (type !== previousType) pendingNuvioRefreshToken = '';
+      const providerName = isNuvio ? 'Nuvio' : isStremio ? 'Stremio' : 'Server';
+      if (pullHeading) pullHeading.textContent = `${providerName} → Scrob`;
+      if (pushHeading) pushHeading.textContent = `Scrob → ${providerName}`;
+      if (type !== previousType) {
+        pendingNuvioRefreshToken = '';
+        if (stremioPollTimer !== null) {
+          window.clearTimeout(stremioPollTimer);
+          stremioPollTimer = null;
+          document.getElementById('stremio-link-details')?.classList.add('hidden');
+        }
+      }
       previousType = type;
     };
     typeSelect?.addEventListener('change', updateTypeFields);
@@ -4004,6 +4092,94 @@ if (me.totp_enabled) {
       if (!nuvioProfileSelect?.value) throw new Error('No Nuvio profile is available for this account.');
       return data;
     };
+
+    connectStremioBtn?.addEventListener('click', async () => {
+      const name = (document.getElementById('new-conn-name') as HTMLInputElement | null)?.value.trim() || '';
+      if (!name) {
+        showMessage('Choose a name for the Stremio connection.', 'error');
+        return;
+      }
+      if (stremioPollTimer !== null) {
+        window.clearTimeout(stremioPollTimer);
+        stremioPollTimer = null;
+      }
+      connectStremioBtn.disabled = true;
+      const originalLabel = connectStremioBtn.textContent;
+      connectStremioBtn.textContent = 'Creating link…';
+      try {
+        const response = await fetch('/api/proxy/auth/stremio/link/start', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        const link = await response.json();
+        if (!response.ok) throw new Error(link.detail || 'Could not create the Stremio link.');
+        const details = document.getElementById('stremio-link-details');
+        const linkUrl = document.getElementById('stremio-link-url') as HTMLAnchorElement | null;
+        const code = document.getElementById('stremio-link-code');
+        const qr = document.getElementById('stremio-link-qr') as HTMLImageElement | null;
+        const status = document.getElementById('stremio-link-status');
+        details?.classList.remove('hidden');
+        if (linkUrl) linkUrl.href = link.link;
+        if (code) code.textContent = link.code;
+        if (qr) qr.src = link.qrcode;
+        if (status) status.textContent = 'Waiting for authorization…';
+        window.open(link.link, '_blank', 'noopener,noreferrer');
+        const linkExpiresAt = Date.now() + 10 * 60 * 1000;
+
+        const poll = async () => {
+          try {
+            if (Date.now() >= linkExpiresAt) {
+              throw new Error('Stremio authorization expired. Create a new link and try again.');
+            }
+            const pollResponse = await fetch('/api/proxy/auth/stremio/link/poll', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                code: link.code,
+                name,
+                sync_collection: (document.getElementById('new-sync-collection') as HTMLInputElement)?.checked ?? true,
+                sync_watched: (document.getElementById('new-sync-watched') as HTMLInputElement)?.checked ?? true,
+                sync_playback: (document.getElementById('new-sync-playback') as HTMLInputElement)?.checked ?? true,
+                push_collection: (document.getElementById('new-push-collection') as HTMLInputElement)?.checked ?? false,
+                push_watched: (document.getElementById('new-push-watched') as HTMLInputElement)?.checked ?? false,
+                push_playback: (document.getElementById('new-push-playback') as HTMLInputElement)?.checked ?? false,
+                auto_sync_interval: (() => {
+                  const value = (document.getElementById('new-auto-sync') as HTMLSelectElement)?.value;
+                  return value ? parseFloat(value) : null;
+                })(),
+                auto_push_interval: (() => {
+                  const value = (document.getElementById('new-auto-push') as HTMLSelectElement)?.value;
+                  return value ? parseFloat(value) : null;
+                })(),
+              }),
+            });
+            const result = await pollResponse.json();
+            if (!pollResponse.ok) throw new Error(result.detail || 'Stremio authorization failed.');
+            if (result.status === 'connected') {
+              stremioPollTimer = null;
+              if (status) status.textContent = 'Connected. Reloading…';
+              showMessage('Stremio connected.');
+              window.location.reload();
+              return;
+            }
+            stremioPollTimer = window.setTimeout(poll, 2000);
+          } catch (error: any) {
+            stremioPollTimer = null;
+            if (status) status.textContent = error.message;
+            showMessage(error.message, 'error');
+            connectStremioBtn.disabled = false;
+            connectStremioBtn.textContent = originalLabel;
+          }
+        };
+        stremioPollTimer = window.setTimeout(poll, 1500);
+        connectStremioBtn.textContent = 'Waiting…';
+      } catch (error: any) {
+        stremioPollTimer = null;
+        showMessage(error.message, 'error');
+        connectStremioBtn.disabled = false;
+        connectStremioBtn.textContent = originalLabel;
+      }
+    });
 
     // Test new connection button
     const testNewBtn = document.getElementById('test-new-connection-btn');
@@ -4675,7 +4851,7 @@ if (me.totp_enabled) {
         return `${Math.floor(diff / 86400)}d ago`;
       }
 
-      for (const source of ['jellyfin', 'emby', 'plex', 'nuvio'] as const) {
+      for (const source of ['jellyfin', 'emby', 'plex', 'nuvio', 'stremio'] as const) {
         const el = document.getElementById(`${source}-last-sync`);
         if (!el) continue;
         const job = jobs.find(j => j.source === source && (j.status === 'completed' || j.status === 'failed'));

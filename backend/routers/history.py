@@ -230,6 +230,29 @@ async def _push_watch_state(
                 continue
         await db.commit()
 
+    stremio_connections = [conn for conn in connections if conn.type == "stremio"]
+    if stremio_connections:
+        from routers.sync import _get_effective_tmdb_key, _push_stremio_connection
+
+        api_key = await _get_effective_tmdb_key(db, settings)
+        watch_overrides = {media_id: watched for media_id in media_ids}
+        for conn in stremio_connections:
+            try:
+                await _push_stremio_connection(
+                    db,
+                    conn,
+                    user_id,
+                    api_key=api_key,
+                    changed_media_ids=set(media_ids),
+                    watch_overrides=watch_overrides,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to push watch state to Stremio connection %s",
+                    conn.id,
+                )
+        await db.commit()
+
 
 def format_event(event: WatchEvent | PlaybackProgress, media: Media) -> dict:
     # PlaybackProgress has no watched_at; its updated_at remains the display timestamp.

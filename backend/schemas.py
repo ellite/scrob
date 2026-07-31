@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from typing import Optional
 from datetime import datetime
 from models.base import UserRole, MediaType, PrivacyLevel
@@ -151,6 +151,19 @@ class NuvioConnectionTestRequest(BaseModel):
     profile_id: int
 
 
+class StremioLinkPollRequest(BaseModel):
+    code: str
+    name: str = "Stremio"
+    sync_collection: bool = True
+    sync_watched: bool = True
+    sync_playback: bool = True
+    push_collection: bool = False
+    push_watched: bool = False
+    push_playback: bool = False
+    auto_sync_interval: Optional[float] = None
+    auto_push_interval: Optional[float] = None
+
+
 class MediaServerConnectionBase(BaseModel):
     type: str
     name: str
@@ -208,6 +221,12 @@ class MediaServerConnectionResponse(MediaServerConnectionBase):
     id: int
     user_id: int
     created_at: datetime
+
+    @model_validator(mode="after")
+    def redact_stremio_auth_key(self):
+        if self.type == "stremio":
+            self.token = ""
+        return self
 
     class Config:
         from_attributes = True

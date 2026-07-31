@@ -29,6 +29,7 @@ async def _auto_sync_scheduler():
         run_emby_sync,
         run_jellyfin_sync,
         run_nuvio_sync,
+        run_stremio_sync,
         run_plex_sync,
     )
 
@@ -38,12 +39,14 @@ async def _auto_sync_scheduler():
         "emby": CollectionSource.emby,
         "plex": CollectionSource.plex,
         "nuvio": CollectionSource.nuvio,
+        "stremio": CollectionSource.stremio,
     }
     runner_map = {
         "jellyfin": run_jellyfin_sync,
         "emby": run_emby_sync,
         "plex": run_plex_sync,
         "nuvio": run_nuvio_sync,
+        "stremio": run_stremio_sync,
     }
 
     while True:
