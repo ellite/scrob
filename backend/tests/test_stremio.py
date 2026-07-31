@@ -176,6 +176,78 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(progress[0]["position"], 120_000)
         self.assertEqual(removed, set())
 
+    async def test_temporary_removed_movie_still_emits_watched_state(self) -> None:
+        item = {
+            "_id": "tt0133093",
+            "type": "movie",
+            "name": "The Matrix",
+            "removed": True,
+            "temp": True,
+            "state": {
+                "timesWatched": 1,
+                "lastWatched": "2026-07-31T20:00:00Z",
+            },
+        }
+
+        library, watched_records, progress, removed = await _stremio_records([item])
+
+        self.assertEqual(library, [])
+        self.assertEqual(
+            watched_records,
+            [
+                {
+                    "content_id": "tt0133093",
+                    "content_type": "movie",
+                    "title": "The Matrix",
+                    "watched_at": 1785528000000,
+                }
+            ],
+        )
+        self.assertEqual(progress, [])
+        self.assertEqual(removed, {"tt0133093"})
+
+    async def test_temporary_removed_series_still_emits_episode_state(self) -> None:
+        videos = [
+            {"id": "tt0944947:1:1", "season": 1, "episode": 1, "name": "S1E1"},
+            {"id": "tt0944947:1:2", "season": 1, "episode": 2, "name": "S1E2"},
+        ]
+        watched = stremio.encode_watched_bitfield(
+            {"tt0944947:1:1"},
+            [video["id"] for video in videos],
+        )
+        item = {
+            "_id": "tt0944947",
+            "type": "series",
+            "name": "Game of Thrones",
+            "removed": True,
+            "temp": True,
+            "state": {
+                "watched": watched,
+                "video_id": "tt0944947:1:2",
+                "timeOffset": 120_000,
+                "duration": 3_600_000,
+                "lastWatched": "2026-07-31T20:00:00Z",
+            },
+        }
+
+        with patch.object(
+            stremio,
+            "get_cinemeta_series",
+            AsyncMock(return_value={"videos": videos}),
+        ):
+            library, watched_records, progress, removed = await _stremio_records([item])
+
+        self.assertEqual(library, [])
+        self.assertEqual(
+            [(record["season"], record["episode"]) for record in watched_records],
+            [(1, 1)],
+        )
+        self.assertEqual(
+            [(record["season"], record["episode"]) for record in progress],
+            [(1, 2)],
+        )
+        self.assertEqual(removed, {"tt0944947"})
+
     def test_noop_comparison_ignores_only_mtime(self) -> None:
         left = {"_id": "tt0133093", "_mtime": "old", "state": {"timeOffset": 42}, "custom": True}
         same = {**left, "_mtime": "new"}

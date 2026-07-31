@@ -3453,12 +3453,10 @@ async def _stremio_series_metadata(content_ids: set[str]) -> dict[str, dict]:
 async def _stremio_records(
     items: list[dict],
 ) -> tuple[list[dict], list[dict], list[dict], set[str]]:
-    active = [
+    records = [
         item
         for item in items
-        if not item.get("removed")
-        and not item.get("temp")
-        and str(item.get("type") or "") in ("movie", "series")
+        if str(item.get("type") or "") in ("movie", "series")
         and re.fullmatch(r"tt\d+", str(item.get("_id") or ""), flags=re.IGNORECASE)
     ]
     removed_ids = {
@@ -3468,7 +3466,7 @@ async def _stremio_records(
     }
     series_needing_meta = [
         item
-        for item in active
+        for item in records
         if item.get("type") == "series"
         and (
             (item.get("state") or {}).get("watched")
@@ -3482,7 +3480,7 @@ async def _stremio_records(
     library_records: list[dict] = []
     watched_records: list[dict] = []
     progress_records: list[dict] = []
-    for item in active:
+    for item in records:
         content_id = str(item["_id"])
         content_type = str(item["type"])
         title = str(item.get("name") or content_id)
@@ -3492,7 +3490,8 @@ async def _stremio_records(
             "content_type": content_type,
             "title": title,
         }
-        library_records.append(base)
+        if not item.get("removed") and not item.get("temp"):
+            library_records.append(base)
         last_watched = _stremio_epoch_ms(state.get("lastWatched"))
 
         if content_type == "movie":
