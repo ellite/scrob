@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import struct
 import unittest
 import zipfile
 from datetime import datetime
@@ -78,6 +79,49 @@ class ParseScrobExportTests(unittest.TestCase):
         self.assertIsNone(data.media_connections)
         self.assertIsNone(data.scrobble_connections)
         self.assertIsNone(data.connections)
+
+
+class ParseScrobExportZipBombTests(unittest.TestCase):
+    """Same defense-in-depth as core/trakt_export.py — decompression caps must
+    be enforced against bytes actually produced while streaming, never trusted
+    from the zip's own (attacker-controllable) declared size metadata."""
+
+    def test_rejects_oversized_export(self) -> None:
+        # user-profile.json alone is only ever used as a marker (membership
+        # check in the zip's namelist) and is never itself decompressed by
+        # the parser, so the payload needs a file that actually gets _load-ed
+        # for the running byte-count to have anything to exceed the cap with.
+        payload = _build_zip({"user-profile.json": {"username": "alice"}, "watched-history-1.json": [{"type": "movie"}]})
+        with patch.object(scrob_import, "MAX_TOTAL_SIZE", 10):
+            with self.assertRaises(ValueError):
+                parse_scrob_export(payload)
+
+    def test_declared_size_lie_cannot_bypass_the_size_cap(self) -> None:
+        # Build an entry whose real (compressible) content is much bigger than
+        # what its local header / central directory claim, and confirm the
+        # cap still catches it from bytes actually read, not the declared value.
+        real_payload = b"0" * (2 * 1024 * 1024)  # 2MB, highly compressible
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("user-profile.json", json.dumps({"username": "alice"}))
+            zf.writestr("watched-history-1.json", real_payload)
+        raw = bytes(buf.getvalue())
+
+        true_size_bytes = struct.pack("<I", len(real_payload))
+        fake_size_bytes = struct.pack("<I", 10)
+        self.assertEqual(raw.count(true_size_bytes), 2)  # local header + central directory
+        tampered = raw.replace(true_size_bytes, fake_size_bytes)
+
+        with patch.object(scrob_import, "MAX_ENTRY_SIZE", 1024):
+            with self.assertRaises(ValueError):
+                parse_scrob_export(tampered)
+
+    def test_corrupted_entry_raises_a_clean_error(self) -> None:
+        payload = _build_zip({"user-profile.json": {"username": "alice"}, "watched-history-1.json": []})
+        with patch.object(zipfile.ZipExtFile, "read", side_effect=zipfile.BadZipFile("Bad CRC-32 for file 'x'")):
+            with self.assertRaises(ValueError) as ctx:
+                parse_scrob_export(payload)
+        self.assertIn("corrupted", str(ctx.exception))
 
 
 class _NestedTxn:
