@@ -30,6 +30,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, and **Nuvio**,
   - [Connect Nuvio](#connect-nuvio)
   - [Synchronization Directions](#synchronization-directions)
   - [Scheduling and Limitations](#scheduling-and-limitations)
+- [Trakt Synchronization](#trakt-synchronization)
 - [MDBList Synchronization](#mdblist-synchronization)
 - [Webhooks](#webhooks-real-time-scrobbling)
   - [Jellyfin](#jellyfin)
@@ -49,7 +50,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, and **Nuvio**,
 - **Keep providers in sync**: Keep watched status synchronized between your media servers and Nuvio. Supports multiple instances and Nuvio profiles.
 - **Real-time scrobbling**: Webhooks from Jellyfin, Plex, Emby, and Kodi update your watch state as you play - no manual sync needed.
 - **Manual scrobble**: Start a watching session directly from any movie or episode page. Pause, resume, stop, or mark as watched - session progress shows live on the home screen.
-- **Trakt integration**: Sync your watched history and ratings from Trakt, and push Scrob activity back to Trakt automatically.
+- **Trakt integration**: Sync your watched history, ratings, and lists from Trakt, and push Scrob activity back to Trakt automatically. Connecting live requires a Trakt VIP subscription (a recent Trakt-side restriction) — everyone else can still import via a Trakt data export, no VIP needed. See [Trakt Synchronization](#trakt-synchronization).
 - **Simkl integration**: Sync your watched history and ratings from Simkl, and push Scrob activity back to Simkl automatically.
 - **MDBList integration**: Pull watched history, ratings, and watchlist items from MDBList, and optionally push Scrob changes back using an MDBList API key.
 - **Watch history & ratings**: Track every movie and episode you've watched, including multiple plays with individual timestamps. Log plays manually with a custom date, or remove individual entries — all from the watched button on any movie or episode page. Rate them on a 10-point scale with optional reviews.
@@ -338,6 +339,31 @@ Library membership is currently pull-only. Ratings are not synchronized with Nuv
 **Auto Pull** repeats the enabled inbound synchronization every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours. Nuvio synchronization is polling-based; Nuvio does not use the media-server webhook URLs documented below.
 
 Inbound Nuvio identifiers are normalized to TMDB for Scrob's internal matching. Before an outbound push, Scrob resolves those TMDB identifiers to Nuvio-compatible bare IMDb identifiers (`tt...`) and caches the mapping. Unsupported identifiers are skipped rather than attached to the wrong title.
+
+## Trakt Synchronization
+
+Trakt now requires a **Trakt VIP** subscription to create a new API application (the client ID/secret used below) — a restriction Trakt introduced on their end, not a Scrob limitation. There are two ways to get your Trakt data into Scrob depending on whether you have VIP:
+
+| | Requires VIP | Imports | Pushes Scrob → Trakt |
+|---|---|---|---|
+| **OAuth connection** | Yes (to create the API app) | Watched history, ratings, lists — kept in sync automatically | Yes — watched status, ratings, collection, lists, live "now watching" |
+| **Export import** | No | Watched history, ratings (including per-episode), lists — one-time snapshot per upload | No — pull only |
+
+### OAuth connection (VIP)
+
+1. Go to [trakt.tv/oauth/applications/new](https://trakt.tv/oauth/applications/new) and create an application to get a Client ID and Client Secret.
+2. Open **Settings → Connections → Trakt**, paste them in, and select **Connect Trakt**.
+3. Enter the code shown at the provided URL to authorize, on trakt.tv.
+4. Choose what to import under **Trakt → Scrob**, then select **Pull** (incremental) or **Full resync**.
+5. Enable the desired **Scrob → Trakt** options to push watched status, ratings, collection, lists, or live scrobbling back to Trakt.
+
+### Export import (no VIP required)
+
+1. On trakt.tv, go to **Settings → Data** and select **Export now** to download your export zip.
+2. In Scrob, open **Settings → Import**, select the **Trakt** tab, then drop the zip on the upload box (or click it to browse).
+3. Choose what to import — Watched History, Ratings (including per-episode), and/or Lists, all preselected by default — then confirm. This is a one-shot, per-upload choice, independent of the **Trakt → Scrob** preferences used by the OAuth pull.
+
+Re-uploading a newer export is safe to do any time you want to catch up on new activity — imported watch plays and ratings are deduplicated, so nothing is imported twice.
 
 ## MDBList Synchronization
 

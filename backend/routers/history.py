@@ -549,7 +549,15 @@ async def get_next_up(
     candidates_result = await db.execute(
         select(Media)
         .options(selectinload(Media.show))
-        .where(Media.media_type == MediaType.episode, or_(*show_filters))
+        .where(
+            Media.media_type == MediaType.episode,
+            # Exclude phantom placeholder rows (imported watch/rating history for
+            # an episode number TMDB doesn't actually have, e.g. a provider
+            # numbering mismatch) — they have no real metadata and would surface
+            # a broken Next Up card that 404s when opened.
+            Media.tmdb_id.isnot(None),
+            or_(*show_filters),
+        )
         .order_by(Media.show_id, Media.season_number, Media.episode_number)
     )
     candidates = candidates_result.scalars().all()

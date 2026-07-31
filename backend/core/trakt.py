@@ -216,7 +216,7 @@ async def get_history_episodes(
 
 
 async def get_ratings(client_id: str, access_token: str) -> dict:
-    """Fetch every page of movie, show, and season ratings."""
+    """Fetch every page of movie, show, season, and episode ratings."""
 
     async def _fetch(path: str) -> list[dict]:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -226,12 +226,13 @@ async def get_ratings(client_id: str, access_token: str) -> dict:
                 _headers(client_id, access_token),
             )
 
-    movies, shows, seasons = await asyncio.gather(
+    movies, shows, seasons, episodes = await asyncio.gather(
         _fetch("/sync/ratings/movies"),
         _fetch("/sync/ratings/shows"),
         _fetch("/sync/ratings/seasons"),
+        _fetch("/sync/ratings/episodes"),
     )
-    return {"movies": movies, "shows": shows, "seasons": seasons}
+    return {"movies": movies, "shows": shows, "seasons": seasons, "episodes": episodes}
 
 
 # ── Outbound Push ─────────────────────────────────────────────────────────────

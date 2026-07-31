@@ -211,18 +211,26 @@ async def _get_or_create_episode_media(
             season_data = await tmdb.get_season(show_tmdb_id, season_number, api_key=api_key)
         ep_map = {ep["episode_number"]: ep for ep in season_data.get("episodes", [])}
         ep = ep_map.get(episode_number)
+        if not ep:
+            # TMDB has no such episode (provider numbering mismatch) — don't fabricate
+            # a placeholder row for it; see routers/trakt.py's twin of this function.
+            logger.warning(
+                "Simkl episode s%se%s not found on TMDB for show tmdb=%s — skipping",
+                season_number, episode_number, show_tmdb_id,
+            )
+            return None
         media = Media(
-            tmdb_id=ep["id"] if ep else None,
+            tmdb_id=ep["id"],
             media_type=MediaType.episode,
-            title=ep["name"] if ep else f"S{season_number:02d}E{episode_number:02d}",
-            overview=ep.get("overview") if ep else None,
-            poster_path=tmdb.poster_url(ep.get("still_path"), size="w500") if ep else None,
-            release_date=ep.get("air_date") if ep else None,
-            tmdb_rating=ep.get("vote_average") if ep else None,
+            title=ep["name"],
+            overview=ep.get("overview"),
+            poster_path=tmdb.poster_url(ep.get("still_path"), size="w500"),
+            release_date=ep.get("air_date"),
+            tmdb_rating=ep.get("vote_average"),
             show_id=show_id,
             season_number=season_number,
             episode_number=episode_number,
-            tmdb_data={"runtime": ep.get("runtime"), "cast": []} if ep else {},
+            tmdb_data={"runtime": ep.get("runtime"), "cast": []},
         )
         db.add(media)
         await db.flush()
