@@ -21,13 +21,21 @@ const SECURITY_HEADERS: Record<string, string> = {
 export const onRequest = defineMiddleware(async (context, next) => {
   const token = context.cookies.get("token")?.value;
   const { pathname } = context.url;
-  
+
+  // Requests to the backend proxy carrying a Scrob API key (header or query
+  // param) skip the cookie/JWT gate below — the proxy forwards the key as-is
+  // (see api/proxy/[...path].ts) and the backend's own per-endpoint auth
+  // dependency decides whether that key is accepted for the route.
+  const hasApiKey =
+    pathname.startsWith("/api/proxy/") &&
+    (context.request.headers.get("X-Api-Key") !== null || context.url.searchParams.has("api_key"));
+
   // Skip auth for static assets and public routes
   const isStaticAsset = /\.(js|css|woff2?|ico|png|svg|webp|jpg|jpeg|webmanifest|json|xml)$/.test(pathname);
   const isAdminOnlyRoute = ADMIN_ONLY_ROUTES.includes(pathname);
   const isPublicRoute =
     !isAdminOnlyRoute &&
-    (isStaticAsset || PUBLIC_ROUTES.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p)));
+    (hasApiKey || isStaticAsset || PUBLIC_ROUTES.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p)));
 
   if (token) {
     try {
