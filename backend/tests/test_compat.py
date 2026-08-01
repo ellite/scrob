@@ -1,3 +1,4 @@
+import asyncio
 import os
 import unittest
 from types import SimpleNamespace
@@ -111,6 +112,36 @@ class SonarrTvdbResolutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0]["tvdbId"], 393926)
         self.assertNotIn("tvdbId", result[1])
         self.assertEqual(m.await_count, 2)
+
+    async def test_tmdb_lookup_fan_out_is_capped_by_concurrency_limit(self) -> None:
+        user = SimpleNamespace(id=1)
+        lst = SimpleNamespace(user_id=1)
+        item_count = compat.TMDB_CONCURRENCY * 3
+        db = _FakeSession(lst, [
+            (_series_media(tmdb_id=1000 + i, title=f"Show {i}"), None, None)
+            for i in range(item_count)
+        ])
+
+        in_flight = 0
+        max_in_flight = 0
+        lock = asyncio.Lock()
+
+        async def fake_external_ids(tmdb_id, type, api_key=None):
+            nonlocal in_flight, max_in_flight
+            async with lock:
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0.01)
+            async with lock:
+                in_flight -= 1
+            return {"tvdb_id": tmdb_id}
+
+        with patch("routers.media.get_user_tmdb_key", new=AsyncMock(return_value="k")), \
+             patch("core.tmdb.get_external_ids", side_effect=fake_external_ids):
+            result = await compat.sonarr_list(list_id=1, user=user, db=db)
+
+        self.assertEqual(len(result), item_count)
+        self.assertEqual(max_in_flight, compat.TMDB_CONCURRENCY)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,8 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["compat"])
 
+TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
+
 
 async def _user_by_api_key(
     x_api_key: str | None = Header(None, alias="X-Api-Key"),
@@ -117,10 +119,12 @@ async def sonarr_list(
         from routers.media import get_user_tmdb_key
 
         tmdb_key = await get_user_tmdb_key(db, user.id)
+        semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
 
         async def _lookup(idx: int, tmdb_id: int) -> tuple[int, int | None]:
             try:
-                ext = await tmdb_core.get_external_ids(tmdb_id, "tv", api_key=tmdb_key)
+                async with semaphore:
+                    ext = await tmdb_core.get_external_ids(tmdb_id, "tv", api_key=tmdb_key)
                 return idx, ext.get("tvdb_id")
             except Exception as e:
                 log.warning(f"sonarr-compat: TMDB external_ids lookup failed for tmdb:{tmdb_id}: {e}")
