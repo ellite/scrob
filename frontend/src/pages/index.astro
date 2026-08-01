@@ -33,9 +33,11 @@ if (token) {
     continueWatching = results[2].value?.continue_watching ?? [];
   if (results[3].status === "fulfilled") {
     const raw = results[3].value?.next_up ?? [];
-    for (let i = raw.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [raw[i], raw[j]] = [raw[j], raw[i]];
+    if (settings?.shuffle_next_up) {
+      for (let i = raw.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [raw[i], raw[j]] = [raw[j], raw[i]];
+      }
     }
     nextUp = raw;
   }

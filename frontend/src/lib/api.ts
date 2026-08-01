@@ -441,6 +441,7 @@ export interface UserSettings {
   blur_explicit: boolean;
   time_format_24h: boolean;
   use_hls_player: boolean;
+  shuffle_next_up: boolean;
 }
 
 export interface MediaServerConnection {

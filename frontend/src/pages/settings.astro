@@ -141,10 +141,26 @@ if (me.totp_enabled) {
         </form>
       </section>
 
-      <!-- Appearance -->
+      <!-- Display Settings -->
       <section>
-        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Appearance</h2>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Display Settings</h2>
         <div class="space-y-6">
+          <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
+            <div>
+              <p class="text-sm font-semibold text-zinc-100 mb-1">Shuffle Next Up</p>
+              <p class="text-xs text-zinc-400">Randomize the order of the Next Up row on the homepage. When off, shows are ordered by most recently watched.</p>
+            </div>
+            <label class="relative inline-flex items-center shrink-0 cursor-pointer mt-0.5">
+              <input
+                type="checkbox"
+                name="shuffle_next_up"
+                id="shuffle-next-up-toggle"
+                class="sr-only peer"
+                checked={settings.shuffle_next_up === true}
+              />
+              <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+            </label>
+          </div>
           <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
             <div>
               <p class="text-sm font-semibold text-zinc-100 mb-1">Blur explicit content</p>
@@ -1394,6 +1410,18 @@ if (me.totp_enabled) {
   setupPasswordToggles();
   setupSettingsForm();
   setupPasswordForm();
+
+  const shuffleNextUpToggle = document.getElementById('shuffle-next-up-toggle') as HTMLInputElement | null;
+  if (shuffleNextUpToggle) {
+    shuffleNextUpToggle.addEventListener('change', async () => {
+      const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
+      await fetch('/api/proxy/auth/settings', {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shuffle_next_up: shuffleNextUpToggle.checked }),
+      });
+    });
+  }
 
   // Sync blur_explicit cookie from the server-rendered value on page load.
   // Picks up changes made on another device/browser.
