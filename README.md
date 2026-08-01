@@ -13,7 +13,7 @@
 
 ---
 
-Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, and **Nuvio**, tracks your watch history, ratings, and personal lists, and can push watched activity back to connected providers - all from a clean, app-like web interface that installs as a PWA on any device.
+Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, and **Stremio**, tracks your watch history, ratings, and personal lists, and can push watched activity back to connected providers - all from a clean, app-like web interface that installs as a PWA on any device.
 
 ## Table of Contents
 
@@ -31,6 +31,10 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, and **Nuvio**,
   - [Synchronization Directions](#synchronization-directions)
   - [Scheduling and Limitations](#scheduling-and-limitations)
 - [Trakt Synchronization](#trakt-synchronization)
+- [Stremio Synchronization](#stremio-synchronization)
+  - [Connect Stremio](#connect-stremio)
+  - [Stremio Synchronization Directions](#stremio-synchronization-directions)
+  - [Scheduling, Full Resync, and Limitations](#scheduling-full-resync-and-limitations)
 - [MDBList Synchronization](#mdblist-synchronization)
 - [Webhooks](#webhooks-real-time-scrobbling)
   - [Jellyfin](#jellyfin)
@@ -46,8 +50,8 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, and **Nuvio**,
 
 ## Features
 
-- **Multi-source sync**: Import libraries and watch history from Jellyfin, Plex, Emby, and Nuvio. Nuvio also imports playback progress for Continue Watching.
-- **Keep providers in sync**: Keep watched status synchronized between your media servers and Nuvio. Supports multiple instances and Nuvio profiles.
+- **Multi-source sync**: Import libraries, watched status, and playback progress from Jellyfin, Plex, Emby, Nuvio, and Stremio.
+- **Keep providers in sync**: Keep collection membership, watched status, and playback progress synchronized between media servers, Nuvio, and Stremio. Supports multiple server instances and Nuvio profiles.
 - **Real-time scrobbling**: Webhooks from Jellyfin, Plex, Emby, and Kodi update your watch state as you play - no manual sync needed.
 - **Manual scrobble**: Start a watching session directly from any movie or episode page. Pause, resume, stop, or mark as watched - session progress shows live on the home screen.
 - **Trakt integration**: Sync your watched history, ratings, and lists from Trakt, and push Scrob activity back to Trakt automatically. Connecting live requires a Trakt VIP subscription (a recent Trakt-side restriction) — everyone else can still import via a Trakt data export, no VIP needed. See [Trakt Synchronization](#trakt-synchronization).
@@ -257,10 +261,10 @@ docker run -d \
 ### First Setup
 
 1. Open `http://localhost:7330` and create your account.
-2. Go to **Settings → Integrations** to add your TMDB Read Access Token and connect Jellyfin, Plex, Emby, or Nuvio.
-3. Select which media-server libraries to sync, or select a Nuvio profile, then trigger your first sync.
+2. Go to **Settings → Integrations** to add your TMDB Read Access Token, then open **Settings → Media & Cloud Connections** to connect Jellyfin, Plex, Emby, Nuvio, or Stremio.
+3. Select which libraries and synchronization directions to enable, then trigger your first sync.
 
-For Nuvio, choose **Nuvio** as the provider, sign in, and select one of the returned profiles. See [Nuvio Cloud Synchronization](#nuvio-cloud-synchronization) for credential handling, sync directions, scheduling, and current limitations.
+For Nuvio, sign in and select one of the returned profiles. For Stremio, select **Connect Stremio**, then authorize the generated Link code or QR code in your Stremio account. See [Nuvio Cloud Synchronization](#nuvio-cloud-synchronization) and [Stremio Synchronization](#stremio-synchronization) for provider-specific behavior and limitations.
 
 ### Updating
 
@@ -328,16 +332,17 @@ Each connection targets one Nuvio profile. Add another connection if you need to
 | Nuvio → Scrob | **Collection status** | Imports the profile's library movies and series. |
 | Nuvio → Scrob | **Watched status** | Imports watched movies and episodes with their latest watch timestamps. |
 | Nuvio → Scrob | **Playback progress** | Imports position and duration into Continue Watching. |
+| Scrob → Nuvio | **Collection status** | Adds or removes library membership while preserving unrelated Nuvio items. |
 | Scrob → Nuvio | **Watched status** | Pushes watched and unwatched changes made in Scrob or imported from another connected provider. |
 | Scrob → Nuvio | **Playback progress** | Pushes current playback positions into Nuvio's Continue Watching state as non-destructive upserts. |
 
-**Sync now** runs an inbound synchronization using the enabled Nuvio → Scrob settings. **Push** sends the enabled watched-history and playback-progress data from Scrob to Nuvio. Both operations use non-destructive upserts; items absent from Scrob are not removed from Nuvio.
+**Sync now** runs an inbound synchronization using the enabled Nuvio → Scrob settings. **Push** sends the enabled collection, watched-history, and playback-progress data from Scrob to Nuvio. Pushes use merge semantics and preserve unrelated remote items.
 
-Library membership is currently pull-only. Ratings are not synchronized with Nuvio.
+Ratings are not synchronized with Nuvio.
 
 ### Scheduling and Limitations
 
-**Auto Pull** repeats the enabled inbound synchronization every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours. Nuvio synchronization is polling-based; Nuvio does not use the media-server webhook URLs documented below.
+**Auto Pull** and **Auto Push** can run independently every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours. Nuvio synchronization is polling-based; Nuvio does not use the media-server webhook URLs documented below.
 
 Inbound Nuvio identifiers are normalized to TMDB for Scrob's internal matching. Before an outbound push, Scrob resolves those TMDB identifiers to Nuvio-compatible bare IMDb identifiers (`tt...`) and caches the mapping. Unsupported identifiers are skipped rather than attached to the wrong title.
 
@@ -365,6 +370,43 @@ Trakt now requires a **Trakt VIP** subscription to create a new API application 
 3. Choose what to import — Watched History, Ratings (including per-episode), and/or Lists, all preselected by default — then confirm. This is a one-shot, per-upload choice, independent of the **Trakt → Scrob** preferences used by the OAuth pull.
 
 Re-uploading a newer export is safe to do any time you want to catch up on new activity — imported watch plays and ratings are deduplicated, so nothing is imported twice.
+## Stremio Synchronization
+
+Scrob uses Stremio's account datastore API at `https://api.strem.io`, the official Link flow at `https://link.stremio.com`, and Cinemeta episode metadata. Configure a TMDB Read Access Token in Scrob before synchronizing so Stremio IMDb identifiers can be mapped to Scrob media.
+
+### Connect Stremio
+
+1. Open **Settings → Media & Cloud Connections** and select **Add Connection**.
+2. Choose **Stremio**, enter a connection name, and select **Connect Stremio**.
+3. Open the generated authorization link or scan its QR code, then approve the connection in Stremio.
+4. Return to Scrob. The page detects the authorization and creates the connection automatically.
+
+Scrob never asks for or stores your Stremio password. The Link flow returns an account authorization key, which is stored server-side and redacted from frontend API responses. Deleting the connection logs out that Stremio session. Each Scrob user can have one Stremio connection.
+
+Authorization links expire in the Scrob interface after 10 minutes. Select **Connect Stremio** again to generate a fresh code.
+
+### Stremio Synchronization Directions
+
+| Direction | Setting | Behavior |
+|---|---|---|
+| Stremio → Scrob | **Collection status** | Imports active Stremio library movies and series. |
+| Stremio → Scrob | **Watched status** | Imports watched movies and episodes. Series episode state is decoded from Stremio's watched bitfield using Cinemeta episode order. |
+| Stremio → Scrob | **Playback progress** | Imports the current movie or episode position and duration into Continue Watching. |
+| Scrob → Stremio | **Collection status** | Adds local collection items and removes only items previously pushed by this Scrob connection. Items created directly in Stremio are preserved. |
+| Scrob → Stremio | **Watched status** | Merges movie and episode watched state into the existing Stremio record. |
+| Scrob → Stremio | **Playback progress** | Merges the current playback position, duration, and episode identifier into Stremio. |
+
+**Sync now** performs an inbound pull. The first pull reads the complete Stremio library; later pulls use Stremio modification metadata with a five-minute overlap window. **Push** sends the complete set of enabled outbound data. Changes imported from another provider are also forwarded to Stremio when the corresponding outbound option is enabled.
+
+Outbound writes first fetch the current Stremio record and preserve unknown fields, addon metadata, and unrelated remote items. No-op records are skipped. Ratings and Stremio addons are not synchronized.
+
+### Scheduling, Full Resync, and Limitations
+
+**Auto Pull** and **Auto Push** use separate schedules and can run every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours.
+
+Use **Full resync** when the incremental cursor must be rebuilt. It reads the complete Stremio library and reconciles only collection sources owned by that Stremio connection; collection entries still backed by Jellyfin, Plex, Emby, Nuvio, or another source remain in Scrob.
+
+Stremio exposes a current watched state rather than Scrob's complete per-play history. For series, Stremio stores a watched-episode bitfield and one `lastWatched` timestamp for the item, so repeated episode plays and their individual timestamps cannot be reconstructed exactly. Playback progress represents one current movie or episode per library item.
 
 ## MDBList Synchronization
 

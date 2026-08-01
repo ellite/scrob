@@ -446,7 +446,7 @@ export interface UserSettings {
 export interface MediaServerConnection {
   id: number;
   user_id: number;
-  type: "jellyfin" | "emby" | "plex" | "nuvio";
+  type: "jellyfin" | "emby" | "plex" | "nuvio" | "stremio";
   name: string;
   url: string;
   token: string;
@@ -466,7 +466,7 @@ export interface MediaServerConnection {
 }
 
 export interface MediaServerConnectionCreate {
-  type: "jellyfin" | "emby" | "plex" | "nuvio";
+  type: "jellyfin" | "emby" | "plex" | "nuvio" | "stremio";
   name: string;
   url: string;
   token: string;
@@ -981,6 +981,10 @@ export const api = {
       patch<MediaServerConnection>(`/auth/connections/${id}`, body, token),
     deleteConnection: (id: number, token: string) =>
       del<{ status: string }>(`/auth/connections/${id}`, token),
+    startStremioLink: (token: string) =>
+      post<{ code: string; link: string; qrcode: string }>("/auth/stremio/link/start", undefined, token),
+    pollStremioLink: (body: { code: string; name: string }, token: string) =>
+      post<{ status: "pending" | "connected"; connection?: MediaServerConnection }>("/auth/stremio/link/poll", body, token),
     getScrobbleConnections: (token: string) =>
       get<ScrobbleConnection[]>("/auth/scrobble-connections", undefined, token),
     createScrobbleConnection: (body: ScrobbleConnectionCreate, token: string) =>
@@ -1255,6 +1259,8 @@ export const api = {
       post<{ status: string; job_id: number; message: string }>("/sync/plex", params, token),
     syncConnection: (connectionId: number, params?: { movie_limit?: number; show_limit?: number }, token?: string) =>
       post<{ status: string; job_id: number; message: string }>(`/sync/connection/${connectionId}`, params, token),
+    fullResyncConnection: (connectionId: number, token: string) =>
+      post<{ status: string; job_id: number; message: string }>(`/sync/connection/${connectionId}?full=true`, undefined, token),
     status: (token: string) =>
       get<SyncJob[]>("/sync/status", undefined, token),
     getConnectionLibraries: (connectionId: number, token: string) =>
