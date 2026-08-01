@@ -1,10 +1,11 @@
 import os
 import unittest
+from datetime import datetime, timezone
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _compute_next_episode
+from routers.history import _compute_next_episode, _group_last_watched
 
 
 class ComputeNextEpisodeTests(unittest.TestCase):
@@ -38,6 +39,34 @@ class ComputeNextEpisodeTests(unittest.TestCase):
     def test_specials_season_zero_is_never_returned_and_never_used_as_current(self):
         seasons = [{"season_number": 0, "episode_count": 5}, {"season_number": 1, "episode_count": 12}]
         self.assertEqual(_compute_next_episode(seasons, 0, 3), (1, 1))
+
+
+class GroupLastWatchedTests(unittest.TestCase):
+    """Regression tests for #108: rows with a NULL watched_at (e.g. imported
+    history with no date) must not blow up the datetime comparison that finds
+    each show's most recent watch."""
+
+    def test_null_watched_at_row_processed_first_does_not_crash(self):
+        rows = [
+            (1, 1, 5, None),
+            (1, 1, 4, datetime(2026, 1, 1, tzinfo=timezone.utc)),
+        ]
+        last_per_show, last_watched_at = _group_last_watched(rows)
+        self.assertEqual(last_per_show[1], (1, 5))
+        self.assertEqual(last_watched_at[1], datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+    def test_show_with_only_null_watched_at_rows_has_no_entry(self):
+        rows = [(1, 1, 2, None), (1, 1, 1, None)]
+        last_per_show, last_watched_at = _group_last_watched(rows)
+        self.assertEqual(last_per_show[1], (1, 2))
+        self.assertNotIn(1, last_watched_at)
+
+    def test_keeps_most_recent_watched_at_across_rows(self):
+        older = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        newer = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        rows = [(1, 1, 2, older), (1, 1, 1, newer)]
+        last_per_show, last_watched_at = _group_last_watched(rows)
+        self.assertEqual(last_watched_at[1], newer)
 
 
 if __name__ == "__main__":

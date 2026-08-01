@@ -541,6 +541,23 @@ def _compute_next_episode(seasons: list[dict], season: int, episode: int) -> tup
     return None
 
 
+def _group_last_watched(
+    rows: list[tuple[int, int, int, datetime | None]],
+) -> tuple[dict[int, tuple[int, int]], dict[int, datetime]]:
+    """Reduce next-up candidate rows (ordered by show, season desc, episode desc)
+    to each show's furthest-watched (season, episode) and its most recent
+    watched_at. watched_at may be NULL (e.g. imported history with no date), so
+    a show with no timestamped watch simply gets no last_watched_at entry."""
+    last_per_show: dict[int, tuple[int, int]] = {}
+    last_watched_at: dict[int, datetime] = {}
+    for show_id, season, episode, watched_at in rows:
+        if show_id not in last_per_show:
+            last_per_show[show_id] = (season, episode)
+        if watched_at and (show_id not in last_watched_at or watched_at > last_watched_at[show_id]):
+            last_watched_at[show_id] = watched_at
+    return last_per_show, last_watched_at
+
+
 @router.get("/next-up")
 async def get_next_up(
     db: AsyncSession = Depends(get_db),
@@ -565,13 +582,7 @@ async def get_next_up(
     rows = result.all()
 
     # Keep only the furthest episode per show, and the most recent watched_at per show.
-    last_per_show: dict[int, tuple[int, int]] = {}
-    last_watched_at: dict[int, object] = {}
-    for show_id, season, episode, watched_at in rows:
-        if show_id not in last_per_show:
-            last_per_show[show_id] = (season, episode)
-        if show_id not in last_watched_at or (watched_at and watched_at > last_watched_at[show_id]):
-            last_watched_at[show_id] = watched_at
+    last_per_show, last_watched_at = _group_last_watched(rows)
 
     if not last_per_show:
         return {"next_up": []}
