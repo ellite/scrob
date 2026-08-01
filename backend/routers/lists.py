@@ -12,7 +12,7 @@ from models.media import Media
 from models.base import MediaType, PrivacyLevel
 from models.show import Show as ShowModel
 from models.users import UserSettings
-from dependencies import get_current_user
+from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
 from routers.media import enrich_with_state
 
@@ -97,7 +97,7 @@ def _format_item(item: ListItem) -> dict:
 @router.get("/public")
 async def get_public_lists(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(ListModel, User.username)
@@ -122,7 +122,7 @@ async def get_public_lists(
 @router.get("")
 async def get_lists(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(ListModel)
@@ -165,7 +165,7 @@ async def create_list(
 async def get_list(
     list_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(ListModel)

@@ -13,7 +13,7 @@ class MediaServerConnection(Base):
 
     id               : Mapped[int]           = mapped_column(Integer, primary_key=True)
     user_id          : Mapped[int]           = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    type             : Mapped[str]           = mapped_column(String(50), nullable=False)   # plex | jellyfin | emby
+    type             : Mapped[str]           = mapped_column(String(50), nullable=False)   # plex | jellyfin | emby | nuvio | stremio
     name             : Mapped[str]           = mapped_column(String(255), nullable=False)
     url              : Mapped[str]           = mapped_column(String(500), nullable=False)
     token            : Mapped[str]           = mapped_column(String(500), nullable=False)
@@ -42,6 +42,11 @@ class MediaServerConnection(Base):
     watchlist_all_users       : Mapped[bool]           = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     watchlist_monitored_users : Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     watchlist_synced_ids      : Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+
+    # Stremio account datastore sync state
+    stremio_pull_cursor_at     : Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    stremio_full_sync_done     : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    stremio_pushed_library_ids : Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
 
     # Plex watchlist ↔ Scrob list sync (Plex connections only)
     plex_sync_watchlist : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

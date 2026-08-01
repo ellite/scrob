@@ -21,16 +21,16 @@ from models.ratings import Rating, RatingChanges, RatingKey
 from models.playback_progress import PlaybackProgress
 from models.library_selections import JellyfinLibrarySelection, EmbyLibrarySelection, PlexLibrarySelection
 from models.season_override import ShowSeasonOverride
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from models.base import MediaType, CollectionSource
 from models.global_settings import GlobalSettings
-from core import jellyfin, emby, plex, nuvio, tmdb
+from core import jellyfin, emby, plex, nuvio, stremio, tmdb
 import core.trakt as trakt_client
 from core.enrichment import enrich_media
 from core.image_cache import pre_cache_all_collected_bg
 
-from dependencies import get_current_user
+from dependencies import get_current_user, get_current_user_or_api_key
 logger = logging.getLogger("uvicorn.error")
 
 
@@ -66,12 +66,18 @@ router = APIRouter()
 # Global semaphore — at most one sync running at a time across all users
 _sync_semaphore = asyncio.Semaphore(1)
 _nuvio_push_locks: dict[int, asyncio.Lock] = {}
+_stremio_push_locks: dict[int, asyncio.Lock] = {}
 
 BATCH_SIZE = 500
 TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
 # asyncpg hard limit is 32767 parameters per query; stay well under it
 _MAX_IN_PARAMS = 30_000
-_MEDIA_BROWSER_ITEM_SOURCES = (CollectionSource.jellyfin, CollectionSource.emby, CollectionSource.nuvio)
+_MEDIA_BROWSER_ITEM_SOURCES = (
+    CollectionSource.jellyfin,
+    CollectionSource.emby,
+    CollectionSource.nuvio,
+    CollectionSource.stremio,
+)
 
 
 async def _select_in_chunks(db: AsyncSession, stmt_builder, ids: list):
@@ -609,14 +615,19 @@ def _nuvio_watched_item(
     media: Media,
     watched_at: datetime | None,
     show: Show | None = None,
+    *,
+    include_unknown_date: bool = False,
 ) -> dict | None:
-    # Nuvio requires a timestamp for watched entries and has no unknown-date
-    # representation. Do not fabricate one for a date-less local event.
     if watched_at is None:
-        return None
-    if watched_at.tzinfo is None:
-        watched_at = watched_at.replace(tzinfo=timezone.utc)
-    watched_epoch_ms = int(watched_at.timestamp() * 1000)
+        if not include_unknown_date:
+            # Nuvio cannot represent an unknown date. Stremio can still merge
+            # the watched state without replacing its last-watched timestamp.
+            return None
+        watched_epoch_ms = None
+    else:
+        if watched_at.tzinfo is None:
+            watched_at = watched_at.replace(tzinfo=timezone.utc)
+        watched_epoch_ms = int(watched_at.timestamp() * 1000)
 
     if media.media_type == MediaType.movie and (content_id := _nuvio_imdb_id(media)):
         return {
@@ -654,6 +665,8 @@ async def _build_nuvio_watched_items(
     user_id: int,
     media_ids: set[int] | None = None,
     api_key: str | None = None,
+    *,
+    include_unknown_dates: bool = False,
 ) -> list[dict]:
     event_query = (
         select(WatchEvent.media_id, WatchEvent.watched_at)
@@ -693,6 +706,7 @@ async def _build_nuvio_watched_items(
             media,
             latest_watched_at[media.id],
             shows_by_id.get(media.show_id),
+            include_unknown_date=include_unknown_dates,
         )
         if item:
             items.append(item)
@@ -843,7 +857,7 @@ async def _fan_out_changes_to_other_connections(
     push_candidates = [
         conn
         for conn in other_conns
-        if getattr(conn, "push_collection", False) or conn.push_watched or conn.push_ratings
+        if getattr(conn, "push_collection", False) or conn.push_watched or conn.push_ratings or conn.push_playback
     ]
 
     push_tasks = []
@@ -887,6 +901,11 @@ async def _fan_out_changes_to_other_connections(
                 conn.type == "nuvio" and (conn.push_watched or conn.push_collection)
                 for conn in push_candidates
             )
+            else None
+        )
+        stremio_api_key = (
+            await _get_effective_tmdb_key(db, settings)
+            if any(conn.type == "stremio" for conn in push_candidates)
             else None
         )
         collection_changed_ids = new_collected_ids | removed_collected_ids
@@ -954,6 +973,21 @@ async def _fan_out_changes_to_other_connections(
             return True
 
         for conn in push_candidates:
+            if conn.type == "stremio":
+                try:
+                    await _push_stremio_connection(
+                        db,
+                        conn,
+                        user_id,
+                        api_key=stremio_api_key,
+                        changed_media_ids=all_changed_ids,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Stremio fan-out failed for connection %s",
+                        conn.id,
+                    )
+                continue
             if conn.type == "nuvio":
                 if conn.push_watched:
                     if nuvio_watched_items is None:
@@ -1378,8 +1412,8 @@ async def _fan_out_changes_to_other_connections(
         failed = sum(1 for r in results if isinstance(r, Exception))
         if failed:
             print(f"  {failed}/{len(push_tasks)} fan-out push tasks failed (non-fatal)")
-        if any(conn.type == "nuvio" for conn in push_candidates):
-            await db.commit()
+    if any(conn.type in ("nuvio", "stremio") for conn in push_candidates):
+        await db.commit()
 
 
 async def sync_items(
@@ -2784,6 +2818,7 @@ async def _resolve_nuvio_tmdb_ids(
     db: AsyncSession,
     user_id: int,
     api_key: str,
+    source: CollectionSource = CollectionSource.nuvio,
 ) -> dict[str, int]:
     content_types: dict[str, str] = {}
     resolved: dict[str, int] = {}
@@ -2804,7 +2839,7 @@ async def _resolve_nuvio_tmdb_ids(
             .join(Media, Media.id == Collection.media_id)
             .where(
                 Collection.user_id == user_id,
-                CollectionFile.source == CollectionSource.nuvio,
+                CollectionFile.source == source,
                 Media.tmdb_id.isnot(None),
             )
         )
@@ -2903,6 +2938,8 @@ async def _apply_nuvio_watch_history(
     rows: list[dict],
     show_map: dict[str, int],
     tmdb_ids: dict[str, int],
+    *,
+    include_unknown_dates: bool = False,
 ) -> set[int]:
     standalone_tmdb_ids = {
         tmdb_id
@@ -2944,12 +2981,12 @@ async def _apply_nuvio_watch_history(
             and media.episode_number is not None
         }
 
-    candidates: list[tuple[Media, datetime]] = []
+    candidates: list[tuple[Media, datetime | None]] = []
     for row in rows:
         content_id = str(row.get("content_id") or "")
         tmdb_id = tmdb_ids.get(content_id)
         watched_at = _nuvio_datetime(row.get("watched_at"))
-        if tmdb_id is None or watched_at is None:
+        if tmdb_id is None or (watched_at is None and not include_unknown_dates):
             continue
         content_type = str(row.get("content_type") or "").lower()
         season = row.get("season")
@@ -3366,6 +3403,505 @@ async def _run_nuvio_sync(
             await db.commit()
 
 
+def _stremio_epoch_ms(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        parsed = parser.isoparse(str(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp() * 1000)
+
+
+def _stremio_video_parts(video: dict) -> tuple[int, int] | None:
+    try:
+        return int(video["season"]), int(video["episode"])
+    except (KeyError, TypeError, ValueError):
+        video_id = str(video.get("id") or "")
+        parts = video_id.rsplit(":", 2)
+        if len(parts) != 3:
+            return None
+        try:
+            return int(parts[1]), int(parts[2])
+        except ValueError:
+            return None
+
+
+async def _stremio_series_metadata(content_ids: set[str]) -> dict[str, dict]:
+    semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
+
+    async def fetch(content_id: str) -> tuple[str, dict | None]:
+        try:
+            async with semaphore:
+                return content_id, await stremio.get_cinemeta_series(content_id)
+        except stremio.StremioAPIError:
+            logger.warning("Cinemeta metadata unavailable for %s", content_id)
+            return content_id, None
+
+    results = await asyncio.gather(*(fetch(content_id) for content_id in content_ids))
+    return {
+        content_id: metadata
+        for content_id, metadata in results
+        if metadata is not None
+    }
+
+
+def _stremio_valid_content_id(content_id: object) -> bool:
+    value = str(content_id or "")
+    return bool(re.fullmatch(r"tt\d+", value, flags=re.IGNORECASE)) or _parse_nuvio_tmdb_id(value) is not None
+
+
+def _stremio_series_imdb_id(item: dict) -> str | None:
+    """Cinemeta only understands IMDb ids, but a series' own `_id` may be a
+    tmdb:<id> catalog id (e.g. items added via a TMDB-based addon). Episode
+    identifiers embedded in state always carry the IMDb-prefixed episode id
+    regardless of the catalog the series was added from, so fall back to
+    those to find an IMDb id to key the Cinemeta lookup by."""
+    content_id = str(item.get("_id") or "")
+    if re.fullmatch(r"tt\d+", content_id, flags=re.IGNORECASE):
+        return content_id
+    state = item.get("state") if isinstance(item.get("state"), dict) else {}
+    candidates = [str(state.get("video_id") or "")]
+    watched = str(state.get("watched") or "")
+    if watched:
+        candidates.append(watched.rsplit(":", 2)[0])
+    for candidate in candidates:
+        imdb_id = candidate.split(":", 1)[0]
+        if re.fullmatch(r"tt\d+", imdb_id, flags=re.IGNORECASE):
+            return imdb_id
+    return None
+
+
+async def _stremio_records(
+    items: list[dict],
+) -> tuple[list[dict], list[dict], list[dict], set[str]]:
+    records = [
+        item
+        for item in items
+        if str(item.get("type") or "") in ("movie", "series")
+        and _stremio_valid_content_id(item.get("_id"))
+    ]
+    removed_ids = {
+        str(item.get("_id"))
+        for item in items
+        if item.get("removed") and _stremio_valid_content_id(item.get("_id"))
+    }
+    series_needing_meta = [
+        item
+        for item in records
+        if item.get("type") == "series"
+        and (
+            (item.get("state") or {}).get("watched")
+            or (item.get("state") or {}).get("video_id")
+        )
+    ]
+    series_imdb_ids = {
+        str(item["_id"]): imdb_id
+        for item in series_needing_meta
+        if (imdb_id := _stremio_series_imdb_id(item)) is not None
+    }
+    metas = await _stremio_series_metadata(set(series_imdb_ids.values()))
+
+    library_records: list[dict] = []
+    watched_records: list[dict] = []
+    progress_records: list[dict] = []
+    for item in records:
+        content_id = str(item["_id"])
+        content_type = str(item["type"])
+        title = str(item.get("name") or content_id)
+        state = item.get("state") if isinstance(item.get("state"), dict) else {}
+        base = {
+            "content_id": content_id,
+            "content_type": content_type,
+            "title": title,
+        }
+        if not item.get("removed") and not item.get("temp"):
+            library_records.append(base)
+        last_watched = _stremio_epoch_ms(state.get("lastWatched"))
+
+        if content_type == "movie":
+            try:
+                times_watched = int(state.get("timesWatched") or 0)
+            except (TypeError, ValueError):
+                times_watched = 0
+            if times_watched > 0:
+                watched_records.append({**base, "watched_at": last_watched})
+            try:
+                position = int(state.get("timeOffset") or 0)
+                duration = int(state.get("duration") or 0)
+            except (TypeError, ValueError):
+                position = duration = 0
+            if position > 0 and duration > 0:
+                progress_records.append(
+                    {
+                        **base,
+                        "position": position,
+                        "duration": duration,
+                        "last_watched": last_watched,
+                    }
+                )
+            continue
+
+        videos = _stremio_sorted_videos(metas.get(series_imdb_ids.get(content_id, content_id), {}))
+        video_ids = [str(video["id"]) for video in videos]
+        watched_ids = stremio.decode_watched_bitfield(state.get("watched"), video_ids)
+        for video in videos:
+            video_id = str(video["id"])
+            if video_id not in watched_ids:
+                continue
+            parts = _stremio_video_parts(video)
+            if parts is None:
+                continue
+            season, episode = parts
+            watched_records.append(
+                {
+                    **base,
+                    "title": str(video.get("name") or title),
+                    "season": season,
+                    "episode": episode,
+                    "watched_at": last_watched,
+                }
+            )
+
+        current_video_id = str(state.get("video_id") or "")
+        current_video = next(
+            (video for video in videos if str(video.get("id")) == current_video_id),
+            {"id": current_video_id},
+        )
+        current_parts = _stremio_video_parts(current_video)
+        try:
+            position = int(state.get("timeOffset") or 0)
+            duration = int(state.get("duration") or 0)
+        except (TypeError, ValueError):
+            position = duration = 0
+        if current_parts and position > 0 and duration > 0:
+            season, episode = current_parts
+            progress_records.append(
+                {
+                    **base,
+                    "title": str(current_video.get("name") or title),
+                    "season": season,
+                    "episode": episode,
+                    "position": position,
+                    "duration": duration,
+                    "last_watched": last_watched,
+                }
+            )
+    return library_records, watched_records, progress_records, removed_ids
+
+
+async def _remove_stremio_collection_sources(
+    db: AsyncSession,
+    user_id: int,
+    connection_id: int,
+    *,
+    removed_ids: set[str],
+    complete_snapshot_ids: set[str] | None,
+) -> set[int]:
+    result = await db.execute(
+        select(CollectionFile, Collection.media_id)
+        .join(Collection, Collection.id == CollectionFile.collection_id)
+        .where(
+            Collection.user_id == user_id,
+            CollectionFile.source == CollectionSource.stremio,
+            CollectionFile.connection_id == connection_id,
+        )
+    )
+    removed_media_ids: set[int] = set()
+    expected = (
+        {f"{connection_id}:{content_id}" for content_id in complete_snapshot_ids}
+        if complete_snapshot_ids is not None
+        else None
+    )
+    explicit = {f"{connection_id}:{content_id}" for content_id in removed_ids}
+    for collection_file, media_id in result.all():
+        should_remove = collection_file.source_id in explicit
+        if expected is not None and collection_file.source_id not in expected:
+            should_remove = True
+        if not should_remove:
+            continue
+        collection_id = collection_file.collection_id
+        await db.delete(collection_file)
+        await db.flush()
+        remaining = await db.execute(
+            select(func.count(CollectionFile.id)).where(
+                CollectionFile.collection_id == collection_id
+            )
+        )
+        if remaining.scalar_one() == 0:
+            collection = await db.get(Collection, collection_id)
+            if collection:
+                await db.delete(collection)
+                removed_media_ids.add(media_id)
+    return removed_media_ids
+
+
+async def _pull_stremio_items(
+    conn: MediaServerConnection,
+    *,
+    full_resync: bool,
+) -> tuple[list[dict], bool, datetime]:
+    started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    complete_snapshot = full_resync or not conn.stremio_full_sync_done or conn.stremio_pull_cursor_at is None
+    if complete_snapshot:
+        return await stremio.datastore_get(conn.token, all_items=True), True, started_at
+
+    cutoff = conn.stremio_pull_cursor_at - timedelta(minutes=5)
+    meta = await stremio.datastore_meta(conn.token)
+    changed_ids = []
+    for row in meta:
+        if not isinstance(row, (list, tuple)) or len(row) < 2:
+            continue
+        item_id = str(row[0] or "")
+        modified_at = _nuvio_datetime(_stremio_epoch_ms(row[1]))
+        if item_id and modified_at is not None and modified_at >= cutoff:
+            changed_ids.append(item_id)
+    return await stremio.datastore_get(conn.token, ids=changed_ids), False, started_at
+
+
+async def run_stremio_sync(
+    user_id: int,
+    job_id: int,
+    movie_limit: int,
+    show_limit: int,
+    connection_id: int | None = None,
+    full_resync: bool = False,
+) -> None:
+    async with _sync_semaphore:
+        await _run_stremio_sync(
+            user_id,
+            job_id,
+            movie_limit,
+            show_limit,
+            connection_id,
+            full_resync,
+        )
+
+
+async def _run_stremio_sync(
+    user_id: int,
+    job_id: int,
+    movie_limit: int,
+    show_limit: int,
+    connection_id: int | None = None,
+    full_resync: bool = False,
+) -> None:
+    logger.info("Starting Stremio sync for user %s, job %s", user_id, job_id)
+    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with async_session() as db:
+        try:
+            await db.execute(
+                update(SyncJob)
+                .where(SyncJob.id == job_id)
+                .values(status=SyncStatus.running, processed_items=0, total_items=0)
+            )
+            await db.commit()
+            settings_result = await db.execute(
+                select(UserSettings).where(UserSettings.user_id == user_id)
+            )
+            settings = settings_result.scalar_one_or_none()
+            tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+            conn_query = select(MediaServerConnection).where(
+                MediaServerConnection.user_id == user_id,
+                MediaServerConnection.type == "stremio",
+            )
+            if connection_id:
+                conn_query = conn_query.where(MediaServerConnection.id == connection_id)
+            conn = (await db.execute(conn_query.limit(1))).scalar_one_or_none()
+            if not conn or not tmdb_api_key:
+                raise RuntimeError("Missing Stremio connection or TMDB API key")
+
+            items, complete_snapshot, pull_started_at = await _pull_stremio_items(
+                conn,
+                full_resync=full_resync,
+            )
+            library_records, watched_records, progress_records, removed_ids = await _stremio_records(items)
+            if not conn.sync_collection:
+                library_records = []
+                removed_ids = set()
+            if not conn.sync_watched:
+                watched_records = []
+            if not conn.sync_playback:
+                progress_records = []
+
+            all_records = [*library_records, *watched_records, *progress_records]
+            tmdb_ids = await _resolve_nuvio_tmdb_ids(
+                all_records,
+                db,
+                user_id,
+                tmdb_api_key,
+                source=CollectionSource.stremio,
+            )
+            normalized_library = [
+                normalized
+                for record in library_records
+                if (
+                    normalized := _normalize_nuvio_item(
+                        record,
+                        conn.id,
+                        tmdb_id=tmdb_ids.get(str(record.get("content_id") or "")),
+                    )
+                )
+            ]
+            normalized_watched = [
+                normalized
+                for record in watched_records
+                if (
+                    normalized := _normalize_nuvio_item(
+                        record,
+                        conn.id,
+                        watched=True,
+                        tmdb_id=tmdb_ids.get(str(record.get("content_id") or "")),
+                    )
+                )
+            ]
+            normalized_progress = [
+                normalized
+                for record in progress_records
+                if (
+                    normalized := _normalize_nuvio_item(
+                        record,
+                        conn.id,
+                        tmdb_id=tmdb_ids.get(str(record.get("content_id") or "")),
+                    )
+                )
+            ]
+            if movie_limit:
+                normalized_library = [
+                    *[entry for entry in normalized_library if entry[0] == MediaType.movie][:movie_limit],
+                    *[entry for entry in normalized_library if entry[0] != MediaType.movie],
+                ]
+            if show_limit:
+                normalized_library = [
+                    *[entry for entry in normalized_library if entry[0] != MediaType.series],
+                    *[entry for entry in normalized_library if entry[0] == MediaType.series][:show_limit],
+                ]
+
+            series_tmdb_map = {
+                str(record["content_id"]): tmdb_ids[str(record["content_id"])]
+                for record in all_records
+                if record.get("content_type") == "series"
+                and str(record.get("content_id")) in tmdb_ids
+            }
+            show_map, show_id_to_tmdb = (
+                await sync_shows_batch(series_tmdb_map, db, api_key=tmdb_api_key)
+                if series_tmdb_map
+                else ({}, {})
+            )
+            all_entries = [*normalized_library, *normalized_watched, *normalized_progress]
+            await db.execute(
+                update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(all_entries))
+            )
+            await db.commit()
+
+            stats = {"movies": 0, "series": 0, "episodes": 0, "skipped": 0, "errors": 0}
+            warnings: list[dict] = []
+            new_watched_ids: set[int] = set()
+            new_collected_ids: set[int] = set()
+
+            async def sync_group(
+                entries: list[tuple[MediaType, dict]],
+                media_type: MediaType,
+                *,
+                sync_collection: bool,
+            ) -> None:
+                group = [item for item_type, item in entries if item_type == media_type]
+                if not group:
+                    return
+                warnings.extend(
+                    await sync_items(
+                        group,
+                        media_type,
+                        CollectionSource.stremio,
+                        db,
+                        stats,
+                        user_id,
+                        job_id,
+                        show_map if media_type == MediaType.episode else {},
+                        api_key=tmdb_api_key,
+                        show_id_to_tmdb=show_id_to_tmdb if media_type == MediaType.episode else {},
+                        sync_collection=sync_collection,
+                        sync_watched=False,
+                        sync_ratings=False,
+                        new_watched_ids=new_watched_ids,
+                        new_collected_ids=new_collected_ids,
+                        connection_id=conn.id,
+                    )
+                )
+
+            for media_type in (MediaType.movie, MediaType.series):
+                await sync_group(normalized_library, media_type, sync_collection=True)
+            for media_type in (MediaType.movie, MediaType.episode):
+                await sync_group(normalized_watched, media_type, sync_collection=False)
+                await sync_group(normalized_progress, media_type, sync_collection=False)
+
+            if watched_records:
+                new_watched_ids.update(
+                    await _apply_nuvio_watch_history(
+                        db,
+                        user_id,
+                        watched_records,
+                        show_map,
+                        tmdb_ids,
+                        include_unknown_dates=True,
+                    )
+                )
+            if progress_records:
+                await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids)
+
+            complete_snapshot_ids = (
+                {str(record["content_id"]) for record in library_records}
+                if complete_snapshot and conn.sync_collection
+                else None
+            )
+            removed_collected_ids = await _remove_stremio_collection_sources(
+                db,
+                user_id,
+                conn.id,
+                removed_ids=removed_ids,
+                complete_snapshot_ids=complete_snapshot_ids,
+            )
+            await _fan_out_changes_to_other_connections(
+                db,
+                user_id,
+                conn.id,
+                new_watched_ids,
+                {},
+                settings=settings,
+                exclude_cloud_source=CollectionSource.stremio,
+                new_collected_ids=new_collected_ids,
+                removed_collected_ids=removed_collected_ids,
+            )
+            conn.stremio_pull_cursor_at = pull_started_at
+            conn.stremio_full_sync_done = True
+            warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
+            await db.execute(
+                update(SyncJob)
+                .where(SyncJob.id == job_id)
+                .values(
+                    status=SyncStatus.completed,
+                    stats=stats,
+                    warnings=warnings or None,
+                    updated_at=func.now(),
+                )
+            )
+            await db.commit()
+            asyncio.create_task(pre_cache_all_collected_bg())
+        except Exception as exc:
+            logger.exception("Stremio sync job %s failed", job_id)
+            await db.rollback()
+            await db.execute(
+                update(SyncJob)
+                .where(SyncJob.id == job_id)
+                .values(status=SyncStatus.failed, error_message=str(exc)[:900])
+            )
+            await db.commit()
+
+
 class LibrarySelectionBody(BaseModel):
     library_ids: list[str]
 
@@ -3391,7 +3927,7 @@ async def _get_connection_or_404(db: AsyncSession, connection_id: int, user_id: 
 async def get_plex_friends(
     connection_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
     if conn.type != "plex":
@@ -3405,7 +3941,7 @@ async def get_plex_friends(
 async def get_connection_libraries(
     connection_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
 
@@ -3446,7 +3982,7 @@ async def get_connection_libraries(
             ]
             return {"libraries": libraries, "all_selected": len(selected_keys) == 0}
 
-        elif conn.type == "nuvio":
+        elif conn.type in ("nuvio", "stremio"):
             return {"libraries": [], "all_selected": True}
 
         else:
@@ -3467,7 +4003,7 @@ async def trigger_library_scan(
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
 
     try:
-        if conn.type == "nuvio":
+        if conn.type in ("nuvio", "stremio"):
             settings_result = await db.execute(
                 select(UserSettings).where(UserSettings.user_id == current_user.id)
             )
@@ -3488,11 +4024,11 @@ async def trigger_library_scan(
                 return {
                     "status": "started",
                     "job_id": active_job.id,
-                    "message": "Nuvio sync is already running",
+                    "message": f"{conn.type.capitalize()} sync is already running",
                 }
             job = SyncJob(
                 user_id=current_user.id,
-                source=CollectionSource.nuvio,
+                source=CollectionSource(conn.type),
                 status=SyncStatus.pending,
                 connection_id=conn.id,
                 job_type="pull",
@@ -3501,7 +4037,7 @@ async def trigger_library_scan(
             await db.commit()
             await db.refresh(job)
             background_tasks.add_task(
-                run_nuvio_sync,
+                run_nuvio_sync if conn.type == "nuvio" else run_stremio_sync,
                 current_user.id,
                 job.id,
                 0,
@@ -3511,7 +4047,7 @@ async def trigger_library_scan(
             return {
                 "status": "started",
                 "job_id": job.id,
-                "message": "Nuvio library, watch history, and playback progress sync started",
+                "message": f"{conn.type.capitalize()} library, watched status, and playback progress sync started",
             }
         if conn.type in ("jellyfin", "emby"):
             client = jellyfin if conn.type == "jellyfin" else emby
@@ -3577,7 +4113,7 @@ async def save_connection_libraries(
             await db.commit()
             return {"saved": len(library_keys)}
 
-        elif conn.type == "nuvio":
+        elif conn.type in ("nuvio", "stremio"):
             return {"saved": 0}
 
         else:
@@ -3594,6 +4130,7 @@ async def sync_connection(
     background_tasks: BackgroundTasks,
     movie_limit: int = Query(default=0),
     show_limit: int = Query(default=0),
+    full: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -3604,7 +4141,13 @@ async def sync_connection(
     if not await _get_effective_tmdb_key(db, settings):
         raise HTTPException(status_code=400, detail="TMDB API key required")
 
-    source_map = {"jellyfin": CollectionSource.jellyfin, "emby": CollectionSource.emby, "plex": CollectionSource.plex, "nuvio": CollectionSource.nuvio}
+    source_map = {
+        "jellyfin": CollectionSource.jellyfin,
+        "emby": CollectionSource.emby,
+        "plex": CollectionSource.plex,
+        "nuvio": CollectionSource.nuvio,
+        "stremio": CollectionSource.stremio,
+    }
     source = source_map.get(conn.type)
     if not source:
         raise HTTPException(status_code=400, detail=f"Unknown connection type: {conn.type}")
@@ -3614,9 +4157,392 @@ async def sync_connection(
     await db.commit()
     await db.refresh(job)
 
-    runner_map = {"jellyfin": run_jellyfin_sync, "emby": run_emby_sync, "plex": run_plex_sync, "nuvio": run_nuvio_sync}
-    background_tasks.add_task(runner_map[conn.type], current_user.id, job.id, movie_limit, show_limit, connection_id)
+    runner_map = {
+        "jellyfin": run_jellyfin_sync,
+        "emby": run_emby_sync,
+        "plex": run_plex_sync,
+        "nuvio": run_nuvio_sync,
+        "stremio": run_stremio_sync,
+    }
+    runner_args = (current_user.id, job.id, movie_limit, show_limit, connection_id)
+    if conn.type == "stremio":
+        runner_args = (*runner_args, full)
+    background_tasks.add_task(runner_map[conn.type], *runner_args)
     return {"status": "started", "job_id": job.id, "message": f"{conn.type.capitalize()} sync is running in the background"}
+
+
+def _stremio_default_state() -> dict:
+    return {
+        "lastWatched": None,
+        "timeWatched": 0,
+        "timeOffset": 0,
+        "overallTimeWatched": 0,
+        "timesWatched": 0,
+        "flaggedWatched": 0,
+        "duration": 0,
+        "video_id": None,
+        "watched": None,
+        "noNotif": False,
+    }
+
+
+def _stremio_sorted_videos(meta: dict) -> list[dict]:
+    def sort_key(video: dict) -> tuple:
+        parts = _stremio_video_parts(video)
+        season, episode = parts if parts is not None else (-1, -1)
+        return season, episode, str(video.get("released") or "")
+
+    return sorted(
+        [
+            video
+            for video in (meta.get("videos") or [])
+            if isinstance(video, dict) and video.get("id")
+        ],
+        key=sort_key,
+    )
+
+
+def _stremio_new_library_item(
+    record: dict,
+    now: str,
+    *,
+    in_library: bool = True,
+) -> dict:
+    return {
+        "_id": record["content_id"],
+        "name": record.get("name") or record.get("title") or record["content_id"],
+        "type": record["content_type"],
+        "poster": record.get("poster"),
+        "posterShape": record.get("poster_shape") or "poster",
+        "removed": not in_library,
+        "temp": not in_library,
+        "_ctime": now,
+        "_mtime": now,
+        "state": _stremio_default_state(),
+        "behaviorHints": {},
+    }
+
+
+def _stremio_same_item(left: dict, right: dict) -> bool:
+    return (
+        {key: value for key, value in left.items() if key != "_mtime"}
+        == {key: value for key, value in right.items() if key != "_mtime"}
+    )
+
+
+async def _stremio_media_records(
+    db: AsyncSession,
+    media_ids: set[int],
+    api_key: str | None,
+) -> dict[int, dict]:
+    if not media_ids:
+        return {}
+    media_rows = await _select_in_chunks(
+        db,
+        lambda chunk: select(Media).where(Media.id.in_(chunk)),
+        list(media_ids),
+    )
+    show_ids = {media.show_id for media in media_rows if media.show_id is not None}
+    shows_by_id: dict[int, Show] = {}
+    if show_ids:
+        shows = await _select_in_chunks(
+            db,
+            lambda chunk: select(Show).where(Show.id.in_(chunk)),
+            list(show_ids),
+        )
+        shows_by_id = {show.id: show for show in shows}
+    await _ensure_nuvio_imdb_ids(media_rows, shows_by_id, api_key)
+
+    records: dict[int, dict] = {}
+    for media in media_rows:
+        show = shows_by_id.get(media.show_id)
+        content_id = _nuvio_imdb_id(show or media)
+        if not content_id:
+            continue
+        if (
+            media.media_type == MediaType.episode
+            and show is not None
+            and media.season_number is not None
+            and media.episode_number is not None
+        ):
+            records[media.id] = {
+                "content_id": content_id,
+                "content_type": "series",
+                "title": show.title,
+                "season": media.season_number,
+                "episode": media.episode_number,
+            }
+        elif media.media_type in (MediaType.movie, MediaType.series):
+            records[media.id] = {
+                "content_id": content_id,
+                "content_type": media.media_type.value,
+                "title": media.title,
+            }
+    return records
+
+
+async def _stremio_changed_content_ids(
+    db: AsyncSession,
+    media_ids: set[int],
+    api_key: str | None,
+) -> set[str]:
+    return {
+        record["content_id"]
+        for record in (await _stremio_media_records(db, media_ids, api_key)).values()
+    }
+
+
+async def _push_stremio_connection(
+    db: AsyncSession,
+    conn: MediaServerConnection,
+    user_id: int,
+    *,
+    api_key: str | None,
+    changed_media_ids: set[int] | None = None,
+    watch_overrides: dict[int, bool] | None = None,
+) -> int:
+    effective_changed_ids = (
+        set(changed_media_ids or set()) | set(watch_overrides or {})
+        if changed_media_ids is not None or watch_overrides
+        else None
+    )
+    all_library_records = (
+        await _build_nuvio_library_items(db, user_id, api_key=api_key)
+        if conn.push_collection
+        else []
+    )
+    library_records = list(all_library_records)
+    watched_records = (
+        await _build_nuvio_watched_items(
+            db,
+            user_id,
+            media_ids=effective_changed_ids,
+            api_key=api_key,
+            include_unknown_dates=True,
+        )
+        if conn.push_watched
+        else []
+    )
+    if watch_overrides and conn.push_watched:
+        override_media = await _stremio_media_records(
+            db,
+            set(watch_overrides),
+            api_key,
+        )
+        watched_at_by_media = await _latest_watched_at(
+            db,
+            user_id,
+            [media_id for media_id, watched in watch_overrides.items() if watched],
+        )
+
+        def watch_key(record: dict) -> tuple:
+            return (
+                record["content_id"],
+                record.get("season"),
+                record.get("episode"),
+            )
+
+        watched_by_key = {watch_key(record): record for record in watched_records}
+        for media_id, watched in watch_overrides.items():
+            record = override_media.get(media_id)
+            if record is None:
+                continue
+            watched_by_key[watch_key(record)] = {
+                **record,
+                "watched": watched,
+                "watched_at": watched_at_by_media.get(media_id),
+            }
+        watched_records = list(watched_by_key.values())
+    progress_records = (
+        await _build_nuvio_progress_items(db, user_id, api_key=api_key)
+        if conn.push_playback
+        else []
+    )
+    target_ids = (
+        await _stremio_changed_content_ids(db, effective_changed_ids, api_key)
+        if effective_changed_ids is not None
+        else None
+    )
+    if target_ids is not None:
+        library_records = [
+            record for record in library_records if record["content_id"] in target_ids
+        ]
+        watched_records = [
+            record for record in watched_records if record["content_id"] in target_ids
+        ]
+        progress_records = [
+            record for record in progress_records if record["content_id"] in target_ids
+        ]
+
+    current_library_ids = {
+        item["content_id"]
+        for item in all_library_records
+    }
+    previously_pushed_ids = set(conn.stremio_pushed_library_ids or [])
+    removed_library_ids = (
+        previously_pushed_ids - current_library_ids
+        if conn.push_collection and conn.stremio_pushed_library_ids is not None
+        else set()
+    )
+    if target_ids is not None:
+        removed_library_ids &= target_ids
+
+    lock = _stremio_push_locks.setdefault(conn.id, asyncio.Lock())
+    async with lock:
+        remote_items = await stremio.datastore_get(conn.token, all_items=True)
+        remote_by_id = {
+            str(item.get("_id")): item
+            for item in remote_items
+            if isinstance(item, dict) and item.get("_id")
+        }
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        candidates: dict[str, dict] = {}
+
+        for record in library_records:
+            content_id = str(record["content_id"])
+            candidate = dict(
+                remote_by_id.get(content_id)
+                or _stremio_new_library_item(record, now)
+            )
+            candidate["removed"] = False
+            candidate["temp"] = False
+            candidate.setdefault("_ctime", now)
+            candidate.setdefault("state", _stremio_default_state())
+            candidates[content_id] = candidate
+
+        for content_id in removed_library_ids:
+            if content_id not in remote_by_id:
+                continue
+            candidate = dict(remote_by_id[content_id])
+            candidate["removed"] = True
+            candidate["temp"] = False
+            candidates[content_id] = candidate
+
+        records_by_series: dict[str, list[dict]] = {}
+        for record in [*watched_records, *progress_records]:
+            if record.get("content_type") == "series":
+                records_by_series.setdefault(str(record["content_id"]), []).append(record)
+        series_meta = await _stremio_series_metadata(set(records_by_series))
+
+        for record in watched_records:
+            content_id = str(record["content_id"])
+            is_watched = bool(record.get("watched", True))
+            base_item = candidates.get(content_id) or remote_by_id.get(content_id)
+            if base_item is None:
+                if not is_watched:
+                    continue
+                base_item = _stremio_new_library_item(
+                    record,
+                    now,
+                    in_library=False,
+                )
+            candidate = dict(base_item)
+            state = {**_stremio_default_state(), **(candidate.get("state") or {})}
+            watched_at_ms = record.get("watched_at")
+            watched_at = (
+                datetime.fromtimestamp(
+                    int(watched_at_ms) / 1000,
+                    tz=timezone.utc,
+                ).isoformat().replace("+00:00", "Z")
+                if watched_at_ms is not None
+                else None
+            )
+            season = record.get("season")
+            episode = record.get("episode")
+            if record.get("content_type") == "movie" or season is None or episode is None:
+                state["timesWatched"] = (
+                    max(1, int(state.get("timesWatched") or 0))
+                    if is_watched
+                    else 0
+                )
+                if not is_watched:
+                    state["flaggedWatched"] = 0
+                if is_watched and watched_at is not None:
+                    state["lastWatched"] = watched_at
+            else:
+                videos = _stremio_sorted_videos(series_meta.get(content_id, {}))
+                video_ids = [str(video["id"]) for video in videos]
+                watched_ids = stremio.decode_watched_bitfield(
+                    state.get("watched"),
+                    video_ids,
+                )
+                matching_video = next(
+                    (
+                        video
+                        for video in videos
+                        if _stremio_video_parts(video)
+                        == (int(season), int(episode))
+                    ),
+                    None,
+                )
+                if matching_video:
+                    video_id = str(matching_video["id"])
+                    if is_watched:
+                        watched_ids.add(video_id)
+                    else:
+                        watched_ids.discard(video_id)
+                    state["watched"] = stremio.encode_watched_bitfield(
+                        watched_ids,
+                        video_ids,
+                    )
+                    if is_watched and watched_at is not None:
+                        state["lastWatched"] = watched_at
+            candidate["state"] = state
+            candidates[content_id] = candidate
+
+        for record in progress_records:
+            content_id = str(record["content_id"])
+            base_item = (
+                candidates.get(content_id)
+                or remote_by_id.get(content_id)
+                or _stremio_new_library_item(record, now, in_library=False)
+            )
+            candidate = dict(base_item)
+            state = {**_stremio_default_state(), **(candidate.get("state") or {})}
+            state["timeOffset"] = int(record["position"])
+            state["duration"] = int(record["duration"])
+            if record.get("content_type") == "movie":
+                state["video_id"] = content_id
+            else:
+                videos = _stremio_sorted_videos(series_meta.get(content_id, {}))
+                matching_video = next(
+                    (
+                        video
+                        for video in videos
+                        if _stremio_video_parts(video)
+                        == (int(record["season"]), int(record["episode"]))
+                    ),
+                    None,
+                )
+                state["video_id"] = (
+                    str(matching_video["id"])
+                    if matching_video
+                    else str(record.get("video_id") or "")
+                )
+            last_watched_ms = record.get("last_watched")
+            if last_watched_ms:
+                state["lastWatched"] = datetime.fromtimestamp(
+                    int(last_watched_ms) / 1000,
+                    tz=timezone.utc,
+                ).isoformat().replace("+00:00", "Z")
+            candidate["state"] = state
+            candidates[content_id] = candidate
+
+        changes = []
+        for content_id, candidate in candidates.items():
+            candidate["_mtime"] = now
+            existing = remote_by_id.get(content_id)
+            if existing is None or not _stremio_same_item(existing, candidate):
+                changes.append(candidate)
+        for start in range(0, len(changes), BATCH_SIZE):
+            await stremio.datastore_put(
+                conn.token,
+                changes[start : start + BATCH_SIZE],
+            )
+
+    if conn.push_collection:
+        conn.stremio_pushed_library_ids = sorted(current_library_ids)
+    return len(changes)
 
 
 async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
@@ -3638,6 +4564,36 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             if not conn:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message="Connection not found"))
                 await db.commit()
+                return
+
+            if conn.type == "stremio":
+                settings_result = await db.execute(
+                    select(UserSettings).where(UserSettings.user_id == user_id)
+                )
+                user_settings = settings_result.scalar_one_or_none()
+                api_key = await _get_effective_tmdb_key(db, user_settings)
+                changed = await _push_stremio_connection(
+                    db,
+                    conn,
+                    user_id,
+                    api_key=api_key,
+                )
+                await db.execute(
+                    update(SyncJob)
+                    .where(SyncJob.id == job_id)
+                    .values(
+                        status=SyncStatus.completed,
+                        total_items=changed,
+                        processed_items=changed,
+                        stats={"succeeded": changed, "failed": 0},
+                    )
+                )
+                await db.commit()
+                logger.info(
+                    "Full Stremio push for connection %s: %s changed items",
+                    connection_id,
+                    changed,
+                )
                 return
 
             if conn.type == "nuvio":
@@ -4069,7 +5025,13 @@ async def push_upstream(
             detail="Enable 'Scrob → Server' push flags for this connection first",
         )
 
-    source_map = {"jellyfin": CollectionSource.jellyfin, "emby": CollectionSource.emby, "plex": CollectionSource.plex, "nuvio": CollectionSource.nuvio}
+    source_map = {
+        "jellyfin": CollectionSource.jellyfin,
+        "emby": CollectionSource.emby,
+        "plex": CollectionSource.plex,
+        "nuvio": CollectionSource.nuvio,
+        "stremio": CollectionSource.stremio,
+    }
     source = source_map.get(conn.type, CollectionSource.jellyfin)
     job = SyncJob(user_id=current_user.id, source=source, status=SyncStatus.pending, connection_id=connection_id, job_type="push")
     db.add(job)
@@ -4176,7 +5138,7 @@ async def sync_plex(
 @router.get("/status")
 async def get_sync_status(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     # A high enough limit that a long-running job (e.g. a large MDBList push) doesn't
     # fall out of the window just because other sync jobs (connection scans, etc.)
@@ -4440,7 +5402,7 @@ class SeasonOverrideBody(BaseModel):
 @router.get("/season-overrides")
 async def list_season_overrides(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(ShowSeasonOverride).where(ShowSeasonOverride.user_id == current_user.id)
@@ -5335,7 +6297,7 @@ async def unmatch_movie(
 @router.get("/matched-shows")
 async def list_matched_shows(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Return all matched shows (TMDB or TVDB) for the current user.
 

@@ -450,12 +450,38 @@ async def create_connection(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if body.type not in ("plex", "jellyfin", "emby", "nuvio"):
-        raise HTTPException(status_code=400, detail="type must be plex, jellyfin, emby, or nuvio")
-    validated_url = await validate_service_url(body.url, f"{body.type.capitalize()} URL")
+    if body.type not in ("plex", "jellyfin", "emby", "nuvio", "stremio"):
+        raise HTTPException(
+            status_code=400,
+            detail="type must be plex, jellyfin, emby, nuvio, or stremio",
+        )
+    validated_url = body.url
     connection_token = body.token
     server_user_id = body.server_user_id
     server_username = body.server_username
+    if body.type == "stremio":
+        from core import stremio
+
+        existing_result = await db.execute(
+            select(MediaServerConnection).where(
+                MediaServerConnection.user_id == current_user.id,
+                MediaServerConnection.type == "stremio",
+            )
+        )
+        if existing_result.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="Stremio is already connected")
+        try:
+            account = await stremio.validate_auth_key(connection_token)
+        except stremio.StremioAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        validated_url = stremio.DEFAULT_URL
+        server_user_id = str(account["_id"])
+        server_username = str(account.get("email") or "Stremio")
+    else:
+        validated_url = await validate_service_url(
+            body.url,
+            f"{body.type.capitalize()} URL",
+        )
     if body.type == "nuvio":
         from core import nuvio
 
@@ -468,6 +494,7 @@ async def create_connection(
         server_user_id = str(profile_id)
         server_username = _nuvio_profile_name(profiles, profile_id)
 
+    cloud_media_provider = body.type in ("nuvio", "stremio")
     conn = MediaServerConnection(
         user_id=current_user.id,
         type=body.type,
@@ -478,12 +505,12 @@ async def create_connection(
         server_username=server_username,
         sync_collection=body.sync_collection,
         sync_watched=body.sync_watched,
-        sync_ratings=body.sync_ratings if body.type != "nuvio" else False,
+        sync_ratings=body.sync_ratings if not cloud_media_provider else False,
         sync_playback=body.sync_playback,
         push_watched=body.push_watched,
-        push_collection=body.push_collection if body.type == "nuvio" else False,
-        push_playback=body.push_playback if body.type == "nuvio" else False,
-        push_ratings=body.push_ratings if body.type != "nuvio" else False,
+        push_collection=body.push_collection if cloud_media_provider else False,
+        push_playback=body.push_playback if cloud_media_provider else False,
+        push_ratings=body.push_ratings if not cloud_media_provider else False,
         auto_sync_interval=body.auto_sync_interval,
         auto_push_interval=body.auto_push_interval,
     )
@@ -511,29 +538,51 @@ async def update_connection(
         raise HTTPException(status_code=404, detail="Connection not found")
 
     update_data = body.model_dump(exclude_unset=True)
-    if "url" in update_data and update_data["url"]:
-        update_data["url"] = await validate_service_url(update_data["url"], f"{conn.type.capitalize()} URL")
+    if conn.type == "stremio":
+        from core import stremio
 
-    if conn.type == "nuvio":
-        from core import nuvio
-
-        candidate_url = update_data.get("url", conn.url)
-        candidate_token = update_data.get("token", conn.token)
-        profile_id = _parse_nuvio_profile_id(update_data.get("server_user_id", conn.server_user_id))
-        try:
-            session, profiles = await nuvio.validate_connection(candidate_url, candidate_token, profile_id)
-        except nuvio.NuvioAPIError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        update_data["token"] = session.refresh_token
-        update_data["server_user_id"] = str(profile_id)
-        update_data["server_username"] = _nuvio_profile_name(profiles, profile_id)
+        update_data["url"] = stremio.DEFAULT_URL
+        candidate_token = update_data.get("token")
+        if candidate_token:
+            try:
+                account = await stremio.validate_auth_key(candidate_token)
+            except stremio.StremioAPIError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            update_data["server_user_id"] = str(account["_id"])
+            update_data["server_username"] = str(account.get("email") or "Stremio")
+        else:
+            update_data.pop("token", None)
         update_data["sync_ratings"] = False
         update_data["push_ratings"] = False
         update_data["push_playback"] = update_data.get("push_playback", conn.push_playback)
         update_data["push_collection"] = update_data.get("push_collection", conn.push_collection)
     else:
-        update_data["push_playback"] = False
-        update_data["push_collection"] = False
+        if "url" in update_data and update_data["url"]:
+            update_data["url"] = await validate_service_url(
+                update_data["url"],
+                f"{conn.type.capitalize()} URL",
+            )
+
+        if conn.type == "nuvio":
+            from core import nuvio
+
+            candidate_url = update_data.get("url", conn.url)
+            candidate_token = update_data.get("token", conn.token)
+            profile_id = _parse_nuvio_profile_id(update_data.get("server_user_id", conn.server_user_id))
+            try:
+                session, profiles = await nuvio.validate_connection(candidate_url, candidate_token, profile_id)
+            except nuvio.NuvioAPIError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            update_data["token"] = session.refresh_token
+            update_data["server_user_id"] = str(profile_id)
+            update_data["server_username"] = _nuvio_profile_name(profiles, profile_id)
+            update_data["sync_ratings"] = False
+            update_data["push_ratings"] = False
+            update_data["push_playback"] = update_data.get("push_playback", conn.push_playback)
+            update_data["push_collection"] = update_data.get("push_collection", conn.push_collection)
+        else:
+            update_data["push_playback"] = False
+            update_data["push_collection"] = False
 
     for field, value in update_data.items():
         setattr(conn, field, value)
@@ -558,6 +607,16 @@ async def delete_connection(
     conn = result.scalar_one_or_none()
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
+    if conn.type == "stremio":
+        from core import stremio
+
+        try:
+            await stremio.logout(conn.token)
+        except stremio.StremioAPIError:
+            logger.warning(
+                "Failed to revoke Stremio session for connection %s",
+                conn.id,
+            )
     await db.delete(conn)
     await db.commit()
     return {"status": "deleted"}
@@ -753,6 +812,76 @@ async def test_plex(
     return {"status": "ok"}
 
 
+@router.post("/stremio/link/start")
+async def start_stremio_link(
+    current_user: User = Depends(get_current_user),
+):
+    from core import stremio
+
+    try:
+        link = await stremio.create_link_code()
+    except stremio.StremioAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {
+        "code": link["code"],
+        "link": link["link"],
+        "qrcode": link["qrcode"],
+    }
+
+
+@router.post("/stremio/link/poll")
+async def poll_stremio_link(
+    body: schemas.StremioLinkPollRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from core import stremio
+
+    existing_result = await db.execute(
+        select(MediaServerConnection).where(
+            MediaServerConnection.user_id == current_user.id,
+            MediaServerConnection.type == "stremio",
+        )
+    )
+    if existing_result.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Stremio is already connected")
+
+    try:
+        auth_key = await stremio.read_link_code(body.code)
+        if auth_key is None:
+            return {"status": "pending"}
+        account = await stremio.validate_auth_key(auth_key)
+    except stremio.StremioAPIError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    connection = MediaServerConnection(
+        user_id=current_user.id,
+        type="stremio",
+        name=body.name.strip() or "Stremio",
+        url=stremio.DEFAULT_URL,
+        token=auth_key,
+        server_user_id=str(account["_id"]),
+        server_username=str(account.get("email") or "Stremio"),
+        sync_collection=body.sync_collection,
+        sync_watched=body.sync_watched,
+        sync_ratings=False,
+        sync_playback=body.sync_playback,
+        push_collection=body.push_collection,
+        push_watched=body.push_watched,
+        push_ratings=False,
+        push_playback=body.push_playback,
+        auto_sync_interval=body.auto_sync_interval,
+        auto_push_interval=body.auto_push_interval,
+    )
+    db.add(connection)
+    await db.commit()
+    await db.refresh(connection)
+    return {
+        "status": "connected",
+        "connection": schemas.MediaServerConnectionResponse.model_validate(connection),
+    }
+
+
 @router.post("/nuvio-login")
 async def login_nuvio(
     body: schemas.NuvioLoginRequest,
@@ -904,7 +1033,7 @@ async def get_connection_status(
         return {"configured": True, "connected": connected}
 
     async def check_media_server(conn):
-        from core import jellyfin, nuvio, plex
+        from core import jellyfin, nuvio, plex, stremio
 
         try:
             if conn.type == "plex":
@@ -914,6 +1043,11 @@ async def get_connection_status(
                 session, profiles = await nuvio.validate_connection(conn.url, conn.token, profile_id)
                 conn.token = session.refresh_token
                 conn.server_username = _nuvio_profile_name(profiles, profile_id)
+                connected = True
+            elif conn.type == "stremio":
+                account = await stremio.validate_auth_key(conn.token)
+                conn.server_user_id = str(account["_id"])
+                conn.server_username = str(account.get("email") or "Stremio")
                 connected = True
             else:
                 connected = await jellyfin.validate_connection(conn.url, conn.token, conn.server_user_id)
@@ -951,7 +1085,7 @@ async def get_connection_status(
     rdr_status, snr_status, trakt_status, simkl_status, mdblist_status, *ms_statuses = await asyncio.gather(
         check_radarr(), check_sonarr(), check_trakt(), check_simkl(), check_mdblist(), *media_server_tasks
     )
-    if any(conn.type == "nuvio" for conn in media_server_conns):
+    if any(conn.type in ("nuvio", "stremio") for conn in media_server_conns):
         await db.commit()
 
     return {"radarr": rdr_status, "sonarr": snr_status, "trakt": trakt_status, "simkl": simkl_status, "mdblist": mdblist_status, "connections": ms_statuses}

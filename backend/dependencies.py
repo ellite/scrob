@@ -1,5 +1,5 @@
 from typing import Generator, Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,3 +70,29 @@ async def get_optional_user(
     result = await db.execute(query)
     user = result.scalar_one_or_none()
     return user
+
+
+async def get_current_user_or_api_key(
+    db: AsyncSession = Depends(get_db),
+    jwt_user: Optional[User] = Depends(get_optional_user),
+    api_key: Optional[str] = Query(None, description="Scrob API key, as an alternative to a JWT Bearer token"),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> User:
+    """Same as get_current_user, but also accepts a Scrob API key (query param or
+    X-Api-Key header) — the same key already used by webhooks and the Radarr/Sonarr
+    compat endpoints — for callers that can't hold a JWT (e.g. external scripts)."""
+    if jwt_user:
+        return jwt_user
+
+    key = api_key or x_api_key
+    if key:
+        result = await db.execute(select(User).where(User.api_key == key))
+        user = result.scalar_one_or_none()
+        if user:
+            return user
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )

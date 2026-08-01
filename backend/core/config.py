@@ -16,6 +16,10 @@ class Settings(BaseSettings):
 
     server_url: str = "http://localhost:7330"
 
+    # Set at image build time (see Dockerfile / release workflow) to the actual
+    # release version; falls back to "dev" for local/non-release builds.
+    app_version: str = "dev"
+
     # OIDC / SSO
     oidc_enabled: bool = False
     oidc_provider_name: str = "SSO"

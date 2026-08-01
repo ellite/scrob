@@ -34,8 +34,10 @@ Astro.response.headers.set("Cache-Control", "no-store");
 const origin = Astro.url.origin;
 const hasMovies = list ? list.items.some(i => i.media.type === "movie") : false;
 const hasShows = list ? list.items.some(i => i.media.type === "series") : false;
-const radarrUrl = `${origin}/api/proxy/radarr-compat/${list?.id}/api/v3/movie`;
-const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}/api/v3/series`;
+// Radarr/Sonarr treat this as the Base URL and append /api/v3/movie or
+// /api/v3/series themselves — including it here would double it up.
+const radarrUrl = `${origin}/api/proxy/radarr-compat/${list?.id}`;
+const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
 ---
 
 <Base title={list?.name || "List"}>
@@ -188,8 +190,8 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}/api/v3/series`;
           </summary>
 
           <div class="px-5 pb-5 pt-1 space-y-4 border-t border-zinc-800/60 mt-0">
-            <p class="text-xs text-zinc-500 pt-3">
-              In Radarr / Sonarr → Settings → Import Lists → Add → choose <strong class="text-zinc-400">Radarr</strong> or <strong class="text-zinc-400">Sonarr</strong> as the list type. Paste the URL below as the <strong class="text-zinc-400">Base URL</strong> and your Scrob API key (from <a href="/user-settings" class="text-blue-400 hover:underline">User Settings</a>) as the <strong class="text-zinc-400">API Key</strong>.
+            <p class="text-sm text-zinc-400 pt-3">
+              In Radarr / Sonarr → Settings → Import Lists → Add → choose <strong class="text-zinc-300">Radarr</strong> or <strong class="text-zinc-300">Sonarr</strong> as the list type. Paste the URL below as the <strong class="text-zinc-300">Base URL</strong> and your Scrob API key (from <a href="/settings" class="text-blue-400 hover:underline">Settings</a>) as the <strong class="text-zinc-300">API Key</strong>.
             </p>
 
             {hasMovies && (

@@ -294,7 +294,7 @@ const bottomNavItem = (active: boolean) =>
   <div id="watch-history-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
       <div class="px-5 pt-5 pb-4 border-b border-zinc-800 flex items-center justify-between gap-3">
-        <h3 class="text-base font-bold text-zinc-100">Watch History</h3>
+        <h3 id="watch-history-modal-title" class="text-base font-bold text-zinc-100">Watch History</h3>
         <button id="watch-history-modal-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label="Close">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -304,7 +304,7 @@ const bottomNavItem = (active: boolean) =>
         <button id="watch-history-unwatch-btn" class="hidden w-full px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95 disabled:opacity-50 disabled:pointer-events-none">
           Mark as unwatched
         </button>
-        <p class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Add a play</p>
+        <p id="watch-history-add-play-label" class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Add a play</p>
         <div class="flex gap-2">
           <button id="watch-history-now-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white">Just now</button>
           <button id="watch-history-custom-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Custom</button>
@@ -989,6 +989,9 @@ const bottomNavItem = (active: boolean) =>
     let _watchHistoryShowTmdbId = '';
     let _watchHistorySeasonNumber = '';
     let _watchHistoryEpisodeNumber = '';
+    // Set when the modal is being used to mark a whole season/show watched
+    // (no single item's history applies) rather than logging one item's play.
+    let _watchHistoryBulkMode: { kind: 'season' | 'show'; seriesId: string; season: string; episodeOrder: string; btn: HTMLElement } | null = null;
 
     const toLocal = (d: Date) => {
       const p = (n: number) => String(n).padStart(2, '0');
@@ -998,16 +1001,10 @@ const bottomNavItem = (active: boolean) =>
 
     function closeWatchHistoryModal() {
       document.getElementById('watch-history-modal')!.classList.add('hidden');
+      _watchHistoryBulkMode = null;
     }
 
-    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '') {
-      _watchHistoryTmdbId = tmdbId;
-      _watchHistoryMediaType = mediaType;
-      _watchHistoryShowTmdbId = showTmdbId;
-      _watchHistorySeasonNumber = seasonNumber;
-      _watchHistoryEpisodeNumber = episodeNumber;
-
-      // Reset "add play" form to "Just now"
+    function resetWatchHistoryDateUI() {
       _watchHistoryDateMode = 'now';
       const nowBtn = document.getElementById('watch-history-now-btn')!;
       const customBtn = document.getElementById('watch-history-custom-btn')!;
@@ -1021,10 +1018,71 @@ const bottomNavItem = (active: boolean) =>
       dateInput.classList.add('hidden');
       dateInput.value = toLocal(new Date());
       dateInput.max = toLocal(new Date());
+    }
+
+    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '') {
+      _watchHistoryBulkMode = null;
+      _watchHistoryTmdbId = tmdbId;
+      _watchHistoryMediaType = mediaType;
+      _watchHistoryShowTmdbId = showTmdbId;
+      _watchHistorySeasonNumber = seasonNumber;
+      _watchHistoryEpisodeNumber = episodeNumber;
+
+      document.getElementById('watch-history-modal-title')!.textContent = 'Watch History';
+      document.getElementById('watch-history-modal-events')!.classList.remove('hidden');
+      document.getElementById('watch-history-add-play-label')!.classList.remove('hidden');
+      resetWatchHistoryDateUI();
 
       document.getElementById('watch-history-log-btn')!.textContent = 'Mark as watched';
       document.getElementById('watch-history-modal')!.classList.remove('hidden');
       await loadWatchHistoryEvents();
+    }
+
+    function openBulkWatchModal(btn: HTMLElement, kind: 'season' | 'show', seriesId: string, season = '', episodeOrder = '') {
+      _watchHistoryBulkMode = { kind, seriesId, season, episodeOrder, btn };
+
+      document.getElementById('watch-history-modal-title')!.textContent = kind === 'season' ? 'Mark Season Watched' : 'Mark Show Watched';
+      document.getElementById('watch-history-modal-events')!.classList.add('hidden');
+      document.getElementById('watch-history-unwatch-btn')!.classList.add('hidden');
+      document.getElementById('watch-history-add-play-label')!.classList.add('hidden');
+      resetWatchHistoryDateUI();
+
+      document.getElementById('watch-history-log-btn')!.textContent = 'Mark as watched';
+      document.getElementById('watch-history-modal')!.classList.remove('hidden');
+    }
+
+    function cascadeWatchedUI(btn: HTMLElement, mediaType: string, tmdbId: string, seriesId: string, season: string, episodeOrder: string, nowWatched: boolean) {
+      updateWatchedButtonUI(btn, nowWatched);
+
+      // If marking a show as watched/unwatched, update all season/episode cards on the page
+      if (mediaType === 'series' && !season) {
+        // Find season cards: can be [data-tmdb-id=SHOW_ID] with [data-season] set,
+        // OR [data-show-tmdb-id=SHOW_ID] with [data-season] set.
+        const allSeasonCards = document.querySelectorAll(`
+          [data-card][data-media-type="series"][data-tmdb-id="${tmdbId}"][data-season]:not([data-season=""]),
+          [data-card][data-media-type="series"][data-show-tmdb-id="${tmdbId}"][data-season]:not([data-season=""])
+        `);
+        allSeasonCards.forEach(c => {
+          const sBtn = c.querySelector('[data-action="watched"]');
+          if (sBtn) updateWatchedButtonUI(sBtn, nowWatched);
+        });
+        // Also update any episode cards for this show
+        const allEpCards = document.querySelectorAll(`[data-card][data-media-type="episode"][data-show-tmdb-id="${tmdbId}"]`);
+        allEpCards.forEach(c => {
+          const eBtn = c.querySelector('[data-action="watched"]');
+          if (eBtn) updateWatchedButtonUI(eBtn, nowWatched);
+        });
+      }
+
+      // If marking a season as watched/unwatched, update all episodes for that season on the page
+      if (mediaType === 'series' && season) {
+        const seasonAttribute = episodeOrder === 'tvdb' ? 'data-display-season' : 'data-season';
+        const allEpCards = document.querySelectorAll(`[data-card][data-media-type="episode"][data-show-tmdb-id="${seriesId}"][${seasonAttribute}="${season}"]`);
+        allEpCards.forEach(c => {
+          const eBtn = c.querySelector('[data-action="watched"]');
+          if (eBtn) updateWatchedButtonUI(eBtn, nowWatched);
+        });
+      }
     }
 
     async function loadWatchHistoryEvents() {
@@ -1147,6 +1205,29 @@ const bottomNavItem = (active: boolean) =>
         const idleLabel = logBtn.textContent || 'Mark as watched';
         logBtn.disabled = true;
         logBtn.textContent = 'Saving…';
+
+        if (_watchHistoryBulkMode) {
+          const { kind, seriesId, season, episodeOrder, btn: sourceBtn } = _watchHistoryBulkMode;
+          try {
+            if (kind === 'season') {
+              const body: Record<string, unknown> = {
+                series_tmdb_id: Number(seriesId),
+                season_number: Number(season),
+                watched_at: watchedAt,
+              };
+              if (episodeOrder === 'tvdb') body.episode_order = 'tvdb';
+              await apiFetch('/history/season', 'POST', body);
+              cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, season, episodeOrder, true);
+            } else {
+              await apiFetch('/history/show-all', 'POST', { series_tmdb_id: Number(seriesId), watched_at: watchedAt });
+              cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, '', '', true);
+            }
+            closeWatchHistoryModal();
+          } catch { logBtn.textContent = idleLabel; }
+          logBtn.disabled = false;
+          return;
+        }
+
         try {
           const watchBody: Record<string, unknown> = {
             tmdb_id: Number(_watchHistoryTmdbId),
@@ -1208,17 +1289,23 @@ const bottomNavItem = (active: boolean) =>
           return;
         }
 
+        // Marking a season/show watched needs a date (custom/unknown/now) — handled by
+        // the modal's own log button, which POSTs to /history/season or /history/show-all
+        // once the user confirms (see the watch-history-log-btn handler below).
+        if (mediaType === 'series' && season && !isWatched) {
+          openBulkWatchModal(btn, 'season', seriesId, season, episodeOrder);
+          return;
+        }
+        if (mediaType === 'series' && !season && !isWatched) {
+          openBulkWatchModal(btn, 'show', tmdbId);
+          return;
+        }
+
+        // Only the "unwatch" (remove all history) cases remain here — no date involved.
         let confirmed = true;
-        if (mediaType === 'series' && season) {
-          confirmed = await showConfirm(
-            isWatched ? 'Mark season as unwatched?' : 'Mark season as watched?',
-            isWatched
-              ? 'This will remove all watch events for every episode in this season.'
-              : 'This will add a watch event for every episode in your library for this season.'
-          );
-        } else if (mediaType === 'series' && !isWatched) {
-          confirmed = await showConfirm('Mark all episodes as watched?', 'This will add a watch event for every episode in your library for this show.');
-        } else if (mediaType === 'series' && isWatched) {
+        if (mediaType === 'series' && season && isWatched) {
+          confirmed = await showConfirm('Mark season as unwatched?', 'This will remove all watch events for every episode in this season.');
+        } else if (mediaType === 'series' && !season && isWatched) {
           confirmed = await showConfirm('Remove all watch history?', 'This will remove all watch events for every episode of this show.');
         }
         if (!confirmed) return;
@@ -1226,56 +1313,11 @@ const bottomNavItem = (active: boolean) =>
         try {
           if (mediaType === 'series' && season) {
             const orderQuery = episodeOrder === 'tvdb' ? '&episode_order=tvdb' : '';
-            if (isWatched) {
-              await apiFetch(`/history/season?series_tmdb_id=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
-            } else {
-              const watchBody: Record<string, number | string> = {
-                series_tmdb_id: Number(seriesId),
-                season_number: Number(season),
-              };
-              if (episodeOrder === 'tvdb') watchBody.episode_order = 'tvdb';
-              await apiFetch('/history/season', 'POST', watchBody);
-            }
+            await apiFetch(`/history/season?series_tmdb_id=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
           } else if (mediaType === 'series') {
-            if (isWatched) {
-              await apiFetch(`/history/show-all?series_tmdb_id=${tmdbId}`, 'DELETE');
-            } else {
-              await apiFetch('/history/show-all', 'POST', { series_tmdb_id: Number(tmdbId) });
-            }
+            await apiFetch(`/history/show-all?series_tmdb_id=${tmdbId}`, 'DELETE');
           }
-          const nowWatched = !isWatched;
-
-          updateWatchedButtonUI(btn, nowWatched);
-
-          // If marking a show as watched/unwatched, update all season/episode cards on the page
-          if (mediaType === 'series' && !season) {
-            // Find season cards: can be [data-tmdb-id=SHOW_ID] with [data-season] set, 
-            // OR [data-show-tmdb-id=SHOW_ID] with [data-season] set.
-            const allSeasonCards = document.querySelectorAll(`
-              [data-card][data-media-type="series"][data-tmdb-id="${tmdbId}"][data-season]:not([data-season=""]),
-              [data-card][data-media-type="series"][data-show-tmdb-id="${tmdbId}"][data-season]:not([data-season=""])
-            `);
-            allSeasonCards.forEach(c => {
-              const sBtn = c.querySelector('[data-action="watched"]');
-              if (sBtn) updateWatchedButtonUI(sBtn, nowWatched);
-            });
-            // Also update any episode cards for this show
-            const allEpCards = document.querySelectorAll(`[data-card][data-media-type="episode"][data-show-tmdb-id="${tmdbId}"]`);
-            allEpCards.forEach(c => {
-              const eBtn = c.querySelector('[data-action="watched"]');
-              if (eBtn) updateWatchedButtonUI(eBtn, nowWatched);
-            });
-          }
-
-          // If marking a season as watched/unwatched, update all episodes for that season on the page
-          if (mediaType === 'series' && season) {
-            const seasonAttribute = episodeOrder === 'tvdb' ? 'data-display-season' : 'data-season';
-            const allEpCards = document.querySelectorAll(`[data-card][data-media-type="episode"][data-show-tmdb-id="${seriesId}"][${seasonAttribute}="${season}"]`);
-            allEpCards.forEach(c => {
-              const eBtn = c.querySelector('[data-action="watched"]');
-              if (eBtn) updateWatchedButtonUI(eBtn, nowWatched);
-            });
-          }
+          cascadeWatchedUI(btn, mediaType, tmdbId, seriesId, season || '', episodeOrder, false);
         } catch { /* ignore */ }
 
       } else if (action === 'list') {

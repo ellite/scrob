@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
+from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, or_, select, desc, func, delete
@@ -19,7 +20,7 @@ from models.episode_order import EpisodeOrderMapping
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations
 
-from dependencies import get_current_user
+from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
 import core.plex as plex_client
 import core.jellyfin as jellyfin_client
@@ -63,7 +64,10 @@ async def _push_watch_state(
             from routers.sync import _latest_watched_at
             resolved_watched_at = await _latest_watched_at(db, user_id, media_ids)
 
-    tasks = []
+    # Each entry is (label, coroutine) so a failure can be logged with which
+    # provider/connection it came from — asyncio.gather(return_exceptions=True)
+    # would otherwise swallow errors here silently.
+    tasks: list[tuple[str, Any]] = []
 
     if connections:
         files_result = await db.execute(
@@ -86,20 +90,23 @@ async def _push_watch_state(
             source_type = coll_file.source.value if hasattr(coll_file.source, "value") else str(coll_file.source)
             for conn in conn_by_type.get(source_type, []):
                 if coll_file.source == CollectionSource.plex:
+                    label = f"plex connection {conn.id}"
                     if watched:
-                        tasks.append(plex_client.mark_watched(conn.url, conn.token, coll_file.source_id))
+                        tasks.append((label, plex_client.mark_watched(conn.url, conn.token, coll_file.source_id)))
                     else:
-                        tasks.append(plex_client.mark_unwatched(conn.url, conn.token, coll_file.source_id))
+                        tasks.append((label, plex_client.mark_unwatched(conn.url, conn.token, coll_file.source_id)))
                 elif coll_file.source == CollectionSource.jellyfin:
+                    label = f"jellyfin connection {conn.id}"
                     if watched:
-                        tasks.append(jellyfin_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id))
+                        tasks.append((label, jellyfin_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
                     else:
-                        tasks.append(jellyfin_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id))
+                        tasks.append((label, jellyfin_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
                 elif coll_file.source == CollectionSource.emby:
+                    label = f"emby connection {conn.id}"
                     if watched:
-                        tasks.append(emby_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id))
+                        tasks.append((label, emby_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
                     else:
-                        tasks.append(emby_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id))
+                        tasks.append((label, emby_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
 
     push_simkl = settings and settings.simkl_push_watched and settings.simkl_access_token
     if push_simkl and settings.simkl_client_id:
@@ -113,9 +120,9 @@ async def _push_watch_state(
                 if watched:
                     watched_at = resolved_watched_at.get(media.id)
                     if watched_at is not None:
-                        tasks.append(simkl_client.add_movie_to_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, watched_at))
+                        tasks.append((f"simkl add movie {media.tmdb_id}", simkl_client.add_movie_to_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, watched_at)))
                 else:
-                    tasks.append(simkl_client.remove_movie_from_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id))
+                    tasks.append((f"simkl remove movie {media.tmdb_id}", simkl_client.remove_movie_from_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id)))
             elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
                 show_res = await db.execute(select(Show).where(Show.id == media.show_id))
                 show = show_res.scalar_one_or_none()
@@ -123,9 +130,9 @@ async def _push_watch_state(
                     if watched:
                         watched_at = resolved_watched_at.get(media.id)
                         if watched_at is not None:
-                            tasks.append(simkl_client.add_episode_to_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number, watched_at))
+                            tasks.append((f"simkl add episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", simkl_client.add_episode_to_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number, watched_at)))
                     else:
-                        tasks.append(simkl_client.remove_episode_from_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number))
+                        tasks.append((f"simkl remove episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", simkl_client.remove_episode_from_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number)))
 
     if push_trakt and settings.trakt_client_id:
         media_res = await db.execute(
@@ -137,17 +144,17 @@ async def _push_watch_state(
                 continue
             if media.media_type == MediaType.movie:
                 if watched:
-                    tasks.append(trakt_client.add_movie_to_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, resolved_watched_at.get(media.id)))
+                    tasks.append((f"trakt add movie {media.tmdb_id}", trakt_client.add_movie_to_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id, resolved_watched_at.get(media.id))))
                 else:
-                    tasks.append(trakt_client.remove_movie_from_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id))
+                    tasks.append((f"trakt remove movie {media.tmdb_id}", trakt_client.remove_movie_from_history(settings.trakt_client_id, settings.trakt_access_token, media.tmdb_id)))
             elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
                 show_res = await db.execute(select(Show).where(Show.id == media.show_id))
                 show = show_res.scalar_one_or_none()
                 if show and show.tmdb_id:
                     if watched:
-                        tasks.append(trakt_client.add_episode_to_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number, resolved_watched_at.get(media.id)))
+                        tasks.append((f"trakt add episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", trakt_client.add_episode_to_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number, resolved_watched_at.get(media.id))))
                     else:
-                        tasks.append(trakt_client.remove_episode_from_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number))
+                        tasks.append((f"trakt remove episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", trakt_client.remove_episode_from_history(settings.trakt_client_id, settings.trakt_access_token, show.tmdb_id, media.season_number, media.episode_number)))
 
     if push_mdblist:
         from core import mdblist as mdblist_client
@@ -171,11 +178,18 @@ async def _push_watch_state(
             if item:
                 mdblist_payload[item[0]].append(item[1])
         mdblist_payload["shows"] = _merge_show_entries(mdblist_payload["shows"])
+        # MDBList's /sync/watched/remove has no per-item removal feed — it bumps
+        # a removal timestamp on /sync/last_activities and expects clients to
+        # re-fetch the whole watched snapshot rather than confirming per item,
+        # so removal on their end can lag visibly behind this call returning.
         operation = mdblist_client.push_watched if watched else mdblist_client.remove_watched
-        tasks.append(operation(settings.mdblist_api_key, mdblist_payload))
+        tasks.append((f"mdblist {'push' if watched else 'remove'} watched", operation(settings.mdblist_api_key, mdblist_payload)))
 
     if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*(coro for _, coro in tasks), return_exceptions=True)
+        for (label, _), result in zip(tasks, results):
+            if isinstance(result, Exception):
+                logger.exception("Failed to push watch state to %s", label, exc_info=result)
 
     nuvio_connections = [conn for conn in connections if conn.type == "nuvio"]
     if nuvio_connections:
@@ -230,6 +244,29 @@ async def _push_watch_state(
                 continue
         await db.commit()
 
+    stremio_connections = [conn for conn in connections if conn.type == "stremio"]
+    if stremio_connections:
+        from routers.sync import _get_effective_tmdb_key, _push_stremio_connection
+
+        api_key = await _get_effective_tmdb_key(db, settings)
+        watch_overrides = {media_id: watched for media_id in media_ids}
+        for conn in stremio_connections:
+            try:
+                await _push_stremio_connection(
+                    db,
+                    conn,
+                    user_id,
+                    api_key=api_key,
+                    changed_media_ids=set(media_ids),
+                    watch_overrides=watch_overrides,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to push watch state to Stremio connection %s",
+                    conn.id,
+                )
+        await db.commit()
+
 
 def format_event(event: WatchEvent | PlaybackProgress, media: Media) -> dict:
     # PlaybackProgress has no watched_at; its updated_at remains the display timestamp.
@@ -278,7 +315,7 @@ async def get_history(
     page_size: int = Query(20, ge=1, le=100),
     type: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     offset = (page - 1) * page_size
 
@@ -339,7 +376,7 @@ async def get_history(
 @router.get("/now-playing")
 async def get_now_playing(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Active playback sessions for the current user."""
     result = await db.execute(
@@ -405,7 +442,7 @@ async def clear_now_playing_sessions(
 @router.get("/continue-watching")
 async def get_continue_watching(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Items currently in progress."""
     result = await db.execute(
@@ -502,7 +539,7 @@ def _compute_next_episode(seasons: list[dict], season: int, episode: int) -> tup
 @router.get("/next-up")
 async def get_next_up(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
     limit: int | None = None,
     include_hidden: bool = Query(False),
 ):
@@ -549,7 +586,15 @@ async def get_next_up(
     candidates_result = await db.execute(
         select(Media)
         .options(selectinload(Media.show))
-        .where(Media.media_type == MediaType.episode, or_(*show_filters))
+        .where(
+            Media.media_type == MediaType.episode,
+            # Exclude phantom placeholder rows (imported watch/rating history for
+            # an episode number TMDB doesn't actually have, e.g. a provider
+            # numbering mismatch) — they have no real metadata and would surface
+            # a broken Next Up card that 404s when opened.
+            Media.tmdb_id.isnot(None),
+            or_(*show_filters),
+        )
         .order_by(Media.show_id, Media.season_number, Media.episode_number)
     )
     candidates = candidates_result.scalars().all()
@@ -690,10 +735,12 @@ class SeasonWatchRequest(BaseModel):
     series_tmdb_id: int
     season_number: int
     episode_order: str | None = None
+    watched_at: datetime | None = None  # omitted = now; explicit null = unknown date
 
 
 class ShowWatchRequest(BaseModel):
     series_tmdb_id: int
+    watched_at: datetime | None = None  # omitted = now; explicit null = unknown date
 
 
 @router.post("", response_model=dict)
@@ -829,7 +876,7 @@ async def get_item_events(
     tmdb_id: int = Query(...),
     media_type: MediaType = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Return all completed watch events for a specific movie or episode."""
     query = (
@@ -1007,6 +1054,14 @@ async def mark_season_watched(
 
     now = datetime.utcnow()
     today = now.date()
+    # "Has this episode aired yet" stays tied to the real current date, independent
+    # of what date the user says they watched it. Omitted watched_at retains the
+    # existing API default ("now"); explicit null marks it watched without a known date.
+    resolved_watched_at = (
+        body.watched_at.replace(tzinfo=None) if body.watched_at is not None
+        else None if "watched_at" in body.model_fields_set
+        else now
+    )
     existing_q = await db.execute(
         select(Media).where(
             Media.show_id == show.id,
@@ -1074,7 +1129,7 @@ async def mark_season_watched(
             db.add(WatchEvent(
                 user_id=current_user.id,
                 media_id=ep.id,
-                watched_at=now,
+                watched_at=resolved_watched_at,
                 completed=True,
                 play_count=1,
                 progress_percent=1.0,
@@ -1203,9 +1258,16 @@ async def mark_show_watched(
     # 2. For each season, fetch episodes and ensure they exist + mark watched
     seasons = [s["season_number"] for s in show.tmdb_data["seasons"] if s["season_number"] > 0]
     all_newly_watched_ids = []
-    
+
     now = datetime.utcnow()
     today = now.date()
+    # See mark_season_watched: aired-cutoff stays tied to the real current date;
+    # omitted watched_at retains "now", explicit null means unknown watch date.
+    resolved_watched_at = (
+        body.watched_at.replace(tzinfo=None) if body.watched_at is not None
+        else None if "watched_at" in body.model_fields_set
+        else now
+    )
 
     for sn in seasons:
         try:
@@ -1266,7 +1328,7 @@ async def mark_show_watched(
                 db.add(WatchEvent(
                     user_id=current_user.id,
                     media_id=ep.id,
-                    watched_at=now,
+                    watched_at=resolved_watched_at,
                     completed=True,
                     play_count=1,
                     progress_percent=1.0,

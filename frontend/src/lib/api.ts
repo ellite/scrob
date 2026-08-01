@@ -216,6 +216,7 @@ export interface PersonDetail {
   page: number;
   page_size: number;
   in_lists: number[];
+  collection: "in" | "out" | null;
 }
 
 export interface WatchEvent {
@@ -445,7 +446,7 @@ export interface UserSettings {
 export interface MediaServerConnection {
   id: number;
   user_id: number;
-  type: "jellyfin" | "emby" | "plex" | "nuvio";
+  type: "jellyfin" | "emby" | "plex" | "nuvio" | "stremio";
   name: string;
   url: string;
   token: string;
@@ -465,7 +466,7 @@ export interface MediaServerConnection {
 }
 
 export interface MediaServerConnectionCreate {
-  type: "jellyfin" | "emby" | "plex" | "nuvio";
+  type: "jellyfin" | "emby" | "plex" | "nuvio" | "stremio";
   name: string;
   url: string;
   token: string;
@@ -980,6 +981,10 @@ export const api = {
       patch<MediaServerConnection>(`/auth/connections/${id}`, body, token),
     deleteConnection: (id: number, token: string) =>
       del<{ status: string }>(`/auth/connections/${id}`, token),
+    startStremioLink: (token: string) =>
+      post<{ code: string; link: string; qrcode: string }>("/auth/stremio/link/start", undefined, token),
+    pollStremioLink: (body: { code: string; name: string }, token: string) =>
+      post<{ status: "pending" | "connected"; connection?: MediaServerConnection }>("/auth/stremio/link/poll", body, token),
     getScrobbleConnections: (token: string) =>
       get<ScrobbleConnection[]>("/auth/scrobble-connections", undefined, token),
     createScrobbleConnection: (body: ScrobbleConnectionCreate, token: string) =>
@@ -1068,8 +1073,19 @@ export const api = {
     getRecommendations: (type: string, tmdbId: number, token?: string) =>
       get<{ results: MediaItem[] }>(`/media/${type}/${tmdbId}/recommendations`, undefined, token),
 
-    getPerson: (personId: number, page: number = 1, token?: string) =>
-      get<PersonDetail>(`/media/person/${personId}`, { page }, token),
+    getPerson: (
+      personId: number,
+      page: number = 1,
+      token?: string,
+      filters?: { collection?: "in" | "out" | ""; genre?: string[]; year?: number[]; minRating?: string },
+    ) =>
+      get<PersonDetail>(`/media/person/${personId}`, {
+        page,
+        collection: filters?.collection || undefined,
+        genre: filters?.genre?.length ? filters.genre : undefined,
+        year: filters?.year?.length ? filters.year : undefined,
+        min_rating: filters?.minRating || undefined,
+      }, token),
 
     getCollection: (collectionId: number, token?: string) =>
       get<CollectionDetail>(`/media/collection/${collectionId}`, undefined, token),
@@ -1243,6 +1259,8 @@ export const api = {
       post<{ status: string; job_id: number; message: string }>("/sync/plex", params, token),
     syncConnection: (connectionId: number, params?: { movie_limit?: number; show_limit?: number }, token?: string) =>
       post<{ status: string; job_id: number; message: string }>(`/sync/connection/${connectionId}`, params, token),
+    fullResyncConnection: (connectionId: number, token: string) =>
+      post<{ status: string; job_id: number; message: string }>(`/sync/connection/${connectionId}?full=true`, undefined, token),
     status: (token: string) =>
       get<SyncJob[]>("/sync/status", undefined, token),
     getConnectionLibraries: (connectionId: number, token: string) =>

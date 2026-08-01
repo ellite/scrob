@@ -3,15 +3,36 @@ import Base from "../../layouts/Base.astro";
 import MediaCard from "../../components/MediaCard.astro";
 import ActionBar from "../../components/ActionBar.astro";
 import CommentsSection from "../../components/CommentsSection.astro";
+import FilterPanel from "../../components/FilterPanel.astro";
 import { api, type MediaItem } from "../../lib/api";
 export const prerender = false;
 
 const { id } = Astro.params;
 const { token } = Astro.locals;
-const person = await api.media.getPerson(Number(id), 1, token);
+const collectionParam = Astro.url.searchParams.get("collection");
+const collection: "in" | "out" | "" = collectionParam === "in" || collectionParam === "out" ? collectionParam : "";
+const genre = Astro.url.searchParams.getAll("genre");
+const year = Astro.url.searchParams.getAll("year").map(Number).filter((y) => !Number.isNaN(y));
+const minRating = Astro.url.searchParams.get("min_rating") ?? "";
+const person = await api.media.getPerson(Number(id), 1, token, { collection, genre, year, minRating });
 
 const credits = person.credits || [];
 const totalPages = Math.ceil(person.total_credits / person.page_size);
+
+const MOVIE_GENRES = [
+  "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary",
+  "Drama", "Family", "Fantasy", "History", "Horror", "Music", "Mystery",
+  "Romance", "Science Fiction", "Thriller", "War", "Western",
+];
+const TV_GENRES = [
+  "Action & Adventure", "Animation", "Comedy", "Crime", "Documentary",
+  "Drama", "Family", "Kids", "Mystery", "News", "Reality",
+  "Sci-Fi & Fantasy", "Soap", "Talk", "War & Politics", "Western",
+];
+const CREDIT_GENRES = Array.from(new Set([...MOVIE_GENRES, ...TV_GENRES])).sort();
+
+const currentYear = new Date().getFullYear();
+const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear - i);
 ---
 
 <Base title={person.name}>
@@ -93,17 +114,42 @@ const totalPages = Math.ceil(person.total_credits / person.page_size);
       )}
 
       <div>
-        <h2 class="section-headline mb-6">Known For</h2>
-        <div id="credits-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {credits.map((item) => (
-            <div class="flex flex-col gap-1">
-              <MediaCard item={item as unknown as MediaItem} />
-              {item.character && (
-                <p class="text-xs text-zinc-500 truncate px-1">as {item.character}</p>
-              )}
-            </div>
-          ))}
+        <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <h2 class="section-headline">Known For</h2>
+          <FilterPanel
+            id="person-credits-filters"
+            basePath={`/person/${id}`}
+            sections={[
+              { key: "collection", label: "Collection", options: [{ value: "in", label: "In My Collection" }, { value: "out", label: "Not In My Collection" }], selected: collection ? [collection] : [], multi: false },
+              { key: "genre", label: "Genre", options: CREDIT_GENRES.map((g) => ({ value: g, label: g })), selected: genre },
+              { key: "year", label: "Year", options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },
+              {
+                key: "min_rating",
+                label: "Rating",
+                options: [
+                  ...[9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: `${r}+ Stars` })),
+                  { value: "lt5", label: "Less than 5 Stars" },
+                ],
+                selected: minRating ? [minRating] : [],
+                multi: false,
+              },
+            ]}
+          />
         </div>
+        {credits.length === 0 && (collection || genre.length > 0 || year.length > 0 || minRating) ? (
+          <p class="text-zinc-500 text-sm">No matching credits found.</p>
+        ) : (
+          <div id="credits-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {credits.map((item) => (
+              <div class="flex flex-col gap-1">
+                <MediaCard item={item as unknown as MediaItem} />
+                {item.character && (
+                  <p class="text-xs text-zinc-500 truncate px-1">as {item.character}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         {totalPages > 1 && (
           <div id="credits-pagination" class="flex items-center justify-center gap-3 mt-8">
             <button id="credits-prev" disabled class="px-4 py-2 text-sm rounded-lg bg-zinc-800 text-zinc-400 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer hover:bg-zinc-700 transition-colors">← Prev</button>
@@ -164,7 +210,7 @@ const totalPages = Math.ceil(person.total_credits / person.page_size);
   }
 </script>
 
-<script define:vars={{ personId: person.tmdb_id, totalCredits: person.total_credits, pageSize: person.page_size }}>
+<script define:vars={{ personId: person.tmdb_id, totalCredits: person.total_credits, pageSize: person.page_size, collection, genre, year, minRating }}>
   const totalPages = Math.ceil(totalCredits / pageSize);
   let currentPage = 1;
   let loading = false;
@@ -188,7 +234,12 @@ const totalPages = Math.ceil(person.total_credits / person.page_size);
     grid.style.pointerEvents = 'none';
 
     try {
-      const res = await fetch('/partials/person-credits?person_id=' + personId + '&page=' + page);
+      const params = new URLSearchParams({ person_id: String(personId), page: String(page) });
+      if (collection) params.set('collection', collection);
+      genre.forEach((g) => params.append('genre', g));
+      year.forEach((y) => params.append('year', String(y)));
+      if (minRating) params.set('min_rating', minRating);
+      const res = await fetch('/partials/person-credits?' + params.toString());
       if (!res.ok) return;
       const html = await res.text();
       const tmp = document.createElement('div');

@@ -7,6 +7,11 @@ export const partial = true;
 const token = Astro.cookies.get("token")?.value;
 const personId = parseInt(Astro.url.searchParams.get("person_id") || "0");
 const page = parseInt(Astro.url.searchParams.get("page") || "1");
+const collectionParam = Astro.url.searchParams.get("collection");
+const collection: "in" | "out" | "" = collectionParam === "in" || collectionParam === "out" ? collectionParam : "";
+const genre = Astro.url.searchParams.getAll("genre");
+const year = Astro.url.searchParams.getAll("year").map(Number).filter((y) => !Number.isNaN(y));
+const minRating = Astro.url.searchParams.get("min_rating") ?? "";
 
 if (!token || !personId) {
   return new Response(null, { status: 400 });
@@ -14,7 +19,7 @@ if (!token || !personId) {
 
 let person: Awaited<ReturnType<typeof api.media.getPerson>>;
 try {
-  person = await api.media.getPerson(personId, page, token);
+  person = await api.media.getPerson(personId, page, token, { collection, genre, year, minRating });
 } catch {
   return new Response(null, { status: 500 });
 }

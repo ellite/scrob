@@ -51,7 +51,10 @@ async def radarr_list(
     for media in rows:
         if not media.tmdb_id:
             continue
-        year = int(media.release_date[:4]) if media.release_date else None
+        # Radarr/Sonarr deserialize this into a non-nullable int — a null year
+        # on any single item aborts the whole list import, so default to 0
+        # (Radarr's own convention for unknown/unreleased year) instead.
+        year = int(media.release_date[:4]) if media.release_date else 0
         result.append({
             "tmdbId": media.tmdb_id,
             "title": media.title,
@@ -91,7 +94,10 @@ async def sonarr_list(
     for media, tvdb_id in rows:
         if not media.tmdb_id:
             continue
-        year = int(media.release_date[:4]) if media.release_date else None
+        # Radarr/Sonarr deserialize this into a non-nullable int — a null year
+        # on any single item aborts the whole list import, so default to 0
+        # (Radarr's own convention for unknown/unreleased year) instead.
+        year = int(media.release_date[:4]) if media.release_date else 0
         entry: dict = {
             "tmdbId": media.tmdb_id,
             "title": media.title,

@@ -3,7 +3,9 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
+
+from fastapi import HTTPException
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault(
@@ -14,6 +16,7 @@ os.environ.setdefault(
 import httpx
 
 from core import trakt
+from core.trakt_export import TraktExportData
 from models.base import MediaType
 from models.media import Media
 from routers import trakt as trakt_router
@@ -144,7 +147,7 @@ class TraktClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(plays), 1)
 
 
-    async def test_get_ratings_fetches_movies_shows_and_seasons(self) -> None:
+    async def test_get_ratings_fetches_movies_shows_seasons_and_episodes(self) -> None:
         requested: list[tuple[str, int]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -157,6 +160,10 @@ class TraktClientTests(unittest.IsolatedAsyncioTestCase):
                 "seasons": {
                     "show": {"ids": {"tmdb": 1396}},
                     "season": {"number": page, "ids": {"tmdb": 3572 + page - 1}},
+                },
+                "episodes": {
+                    "show": {"ids": {"tmdb": 1396}},
+                    "episode": {"season": 1, "number": page, "ids": {"tmdb": 62085 + page - 1}},
                 },
             }
             return httpx.Response(
@@ -182,10 +189,14 @@ class TraktClientTests(unittest.IsolatedAsyncioTestCase):
                 ("shows", 2),
                 ("seasons", 1),
                 ("seasons", 2),
+                ("episodes", 1),
+                ("episodes", 2),
             ],
         )
         self.assertEqual(len(ratings["seasons"]), 2)
         self.assertEqual(ratings["seasons"][1]["season"]["number"], 2)
+        self.assertEqual(len(ratings["episodes"]), 2)
+        self.assertEqual(ratings["episodes"][1]["episode"]["number"], 2)
 
     async def test_history_time_window_is_forwarded(self) -> None:
         requests: list[httpx.Request] = []
@@ -333,6 +344,9 @@ class _Result:
     def all(self):
         return self._scalars or self._rows
 
+    def first(self):
+        items = self._scalars or self._rows
+        return items[0] if items else None
 
     def __iter__(self):
         return iter(self._rows)
@@ -345,12 +359,24 @@ class _FakeSession:
         self.media = media
         self.shows = shows
         self.commit = AsyncMock()
+        self.added: list = []
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc, traceback):
         return False
+
+    def add(self, obj):
+        if getattr(obj, "id", None) is None:
+            obj.id = len(self.added) + 1
+        self.added.append(obj)
+
+    async def flush(self):
+        pass
+
+    def begin_nested(self):
+        return self
 
     async def execute(self, statement):
         sql = str(statement)
@@ -713,6 +739,267 @@ class TraktHistorySafetyTests(unittest.IsolatedAsyncioTestCase):
         # window, so the remote-dedup fetch falls back to unbounded.
         self.assertIsNone(get_movies.await_args.kwargs["start_at"])
         self.assertIsNone(get_movies.await_args.kwargs["end_at"])
+
+
+class TraktSourceAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_live_source_delegates_to_trakt_client(self) -> None:
+        source = trakt_router.LiveTraktSource("client-id", "access-token")
+        start = datetime(2026, 1, 1)
+        end = datetime(2026, 1, 2)
+
+        with patch.object(trakt_router.trakt_client, "get_history_movies", AsyncMock(return_value=["m"])) as m:
+            self.assertEqual(await source.get_history_movies(start, end), ["m"])
+            m.assert_awaited_once_with("client-id", "access-token", start_at=start, end_at=end)
+
+        with patch.object(trakt_router.trakt_client, "get_ratings", AsyncMock(return_value={"movies": []})) as m:
+            self.assertEqual(await source.get_ratings(), {"movies": []})
+            m.assert_awaited_once_with("client-id", "access-token")
+
+        with patch.object(trakt_router.trakt_client, "get_list_items", AsyncMock(return_value=["item"])) as m:
+            self.assertEqual(await source.get_list_items("my-list"), ["item"])
+            m.assert_awaited_once_with("client-id", "access-token", "my-list")
+
+    async def test_export_source_serves_parsed_data_without_network(self) -> None:
+        data = TraktExportData(
+            history_movies=[{"movie": "a"}],
+            history_episodes=[{"episode": "b"}],
+            ratings={"movies": [], "shows": [], "seasons": [], "episodes": []},
+            watchlist=[{"type": "movie"}],
+            lists=[{"name": "x"}],
+            list_items={"x": [{"type": "show"}]},
+        )
+        source = trakt_router.ExportTraktSource(data)
+
+        self.assertEqual(await source.get_history_movies(None, datetime(2026, 1, 1)), data.history_movies)
+        self.assertEqual(await source.get_history_episodes(None, datetime(2026, 1, 1)), data.history_episodes)
+        self.assertEqual(await source.get_ratings(), data.ratings)
+        self.assertEqual(await source.get_watchlist(), data.watchlist)
+        self.assertEqual(await source.get_user_lists(), data.lists)
+        self.assertEqual(await source.get_list_items("x"), [{"type": "show"}])
+        # A slug with no matching item file (e.g. an empty list) should not raise.
+        self.assertEqual(await source.get_list_items("missing"), [])
+
+
+class _NestedTxn:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+
+class _RatingsFakeDB:
+    """Minimal DB double for exercising _apply_trakt_import's ratings loop only.
+
+    Sync watched/lists are left disabled by the test so this never needs to
+    support db.add()/db.flush() — only the calls the ratings loop itself makes.
+    """
+
+    def __init__(self):
+        self.commit = AsyncMock()
+
+    def begin_nested(self):
+        return _NestedTxn()
+
+    async def execute(self, statement):
+        return _Result(rows=[])
+
+
+class TraktImportUploadSizeCapTests(unittest.IsolatedAsyncioTestCase):
+    async def test_oversized_upload_is_rejected_without_buffering_it_all(self) -> None:
+        # Regression: trakt_import_upload used to do a single unbounded
+        # `await file.read()`, buffering the entire request body into memory
+        # before any size check ran at all. It must now bail out mid-read.
+        chunk = b"0" * (2 * 1024 * 1024)  # 2MB per read() call
+        read_calls = 0
+
+        class _FakeUploadFile:
+            filename = "export.zip"
+
+            async def read(self, size: int = -1) -> bytes:
+                nonlocal read_calls
+                read_calls += 1
+                # If the cap weren't enforced mid-loop, this would run forever.
+                return chunk
+
+        with patch.object(trakt_router, "MAX_TOTAL_SIZE", 1024 * 1024):  # 1MB cap
+            with self.assertRaises(HTTPException) as ctx:
+                await trakt_router.trakt_import_upload(
+                    background_tasks=SimpleNamespace(add_task=lambda *a, **k: None),
+                    file=_FakeUploadFile(),
+                    sync_watched=True,
+                    sync_ratings=True,
+                    sync_lists=True,
+                    db=None,
+                    current_user=SimpleNamespace(id=1),
+                )
+
+        self.assertEqual(ctx.exception.status_code, 413)
+        # Stopped after the first chunk pushed it past the (mocked) 1MB cap —
+        # not after buffering gigabytes.
+        self.assertEqual(read_calls, 1)
+
+
+class TraktExportSyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_export_sync_runs_without_oauth_credentials_and_skips_cursor(self) -> None:
+        # No trakt_access_token/client_id at all — the whole point of export
+        # import is that it works without ever having connected via OAuth.
+        settings = SimpleNamespace(
+            trakt_access_token=None,
+            trakt_client_id=None,
+            trakt_client_secret=None,
+            trakt_refresh_token=None,
+            trakt_history_cursor_at=None,
+            trakt_sync_watched=True,
+            trakt_sync_ratings=False,
+            trakt_sync_lists=False,
+            trakt_watchlist_split=False,
+            tmdb_api_key="tmdb-token",
+        )
+        session = _FakeSession(settings, [], [], [])
+        export_data = TraktExportData(history_movies=[], history_episodes=[])
+        fan_out = AsyncMock()
+
+        with (
+            patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session),
+            patch("routers.sync._fan_out_changes_to_other_connections", fan_out),
+        ):
+            await trakt_router.run_trakt_export_sync(user_id=1, job_id=30, export_data=export_data)
+
+        # Reaching the fan-out call means the job completed successfully rather
+        # than failing early (both except branches return before this point).
+        fan_out.assert_awaited_once()
+        # Export import is a full snapshot, not an incremental live pull — it
+        # must never touch the live-sync cursor.
+        self.assertIsNone(settings.trakt_history_cursor_at)
+
+    async def test_export_sync_ignores_trakt_sync_preferences_and_uses_call_args(self) -> None:
+        # Regression: what to import is chosen per-upload (the caller's
+        # sync_watched/sync_ratings/sync_lists args, picked in the import
+        # confirmation modal) — never read from trakt_sync_* preferences,
+        # which only gate the continuous OAuth pull and default sync_lists
+        # to False.
+        settings = SimpleNamespace(
+            trakt_history_cursor_at=None,
+            trakt_sync_watched=False,
+            trakt_sync_ratings=False,
+            trakt_sync_lists=False,
+            trakt_watchlist_split=False,
+            tmdb_api_key="tmdb-token",
+        )
+        session = _FakeSession(settings, [], [], [])
+        export_data = TraktExportData(history_movies=[], history_episodes=[])
+
+        captured: dict = {}
+
+        async def fake_apply(db, job_id, user_id, source, api_key, sync_watched, sync_ratings, sync_lists, split_watchlist, history_start, history_end):
+            captured.update(sync_watched=sync_watched, sync_ratings=sync_ratings, sync_lists=sync_lists)
+            return (
+                {"movies": 0, "episodes": 0, "ratings": 0, "lists": 0, "list_items": 0, "skipped": 0, "errors": 0},
+                0,
+                False,
+                set(),
+                {},
+            )
+
+        with (
+            patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session),
+            patch.object(trakt_router, "_apply_trakt_import", fake_apply),
+            patch("routers.sync._fan_out_changes_to_other_connections", AsyncMock()),
+        ):
+            # Defaults (as when the endpoint isn't given explicit form values).
+            await trakt_router.run_trakt_export_sync(user_id=1, job_id=31, export_data=export_data)
+            self.assertEqual(captured, {"sync_watched": True, "sync_ratings": True, "sync_lists": True})
+
+            # An explicit partial selection (e.g. the user unchecked "Lists" in
+            # the import modal) must be honored exactly, not overridden.
+            await trakt_router.run_trakt_export_sync(
+                user_id=1, job_id=32, export_data=export_data,
+                sync_watched=True, sync_ratings=False, sync_lists=False,
+            )
+            self.assertEqual(captured, {"sync_watched": True, "sync_ratings": False, "sync_lists": False})
+
+
+class GetOrCreateEpisodeMediaTests(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_none_and_creates_nothing_when_tmdb_lacks_the_episode(self) -> None:
+        # Regression: importing watch history/ratings for an episode number a
+        # provider (Plex/Trakt) has but TMDB doesn't (numbering mismatch) used
+        # to fabricate a placeholder Media row with tmdb_id=None. That phantom
+        # row would then surface in Next Up and 404 every time its page loaded.
+        session = _FakeSession(settings=None, watch_rows=[], media=[], shows=[])
+        season_data = {"episodes": [{"episode_number": 1, "id": 1, "name": "Ep 1"}]}
+
+        with patch("core.tmdb.get_season", AsyncMock(return_value=season_data)):
+            media = await trakt_router._get_or_create_episode_media(
+                session, show_id=1, show_tmdb_id=999, season_number=3, episode_number=11, api_key=None,
+            )
+
+        self.assertIsNone(media)
+        self.assertEqual(session.added, [])
+
+    async def test_returns_media_when_tmdb_has_the_episode(self) -> None:
+        session = _FakeSession(settings=None, watch_rows=[], media=[], shows=[])
+        season_data = {"episodes": [{"episode_number": 11, "id": 555, "name": "The Real Episode 11"}]}
+
+        with patch("core.tmdb.get_season", AsyncMock(return_value=season_data)):
+            media = await trakt_router._get_or_create_episode_media(
+                session, show_id=1, show_tmdb_id=999, season_number=3, episode_number=11, api_key=None,
+            )
+
+        self.assertIsNotNone(media)
+        self.assertEqual(media.tmdb_id, 555)
+        self.assertEqual(media.title, "The Real Episode 11")
+        self.assertIn(media, session.added)
+
+
+class ApplyTraktImportEpisodeRatingsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_episode_rating_resolves_show_then_episode_media(self) -> None:
+        show_stub = SimpleNamespace(id=42)
+        media_stub = SimpleNamespace(id=99)
+        episode_rating_item = {
+            "rated_at": "2025-06-05T14:00:20.000Z",
+            "rating": 7,
+            "show": {"title": "The Chalet", "ids": {"tmdb": 78309}},
+            "episode": {"season": 1, "number": 1, "ids": {"tmdb": 1460583}},
+        }
+
+        class _ExportSource:
+            async def get_ratings(self):
+                return {"movies": [], "shows": [], "seasons": [], "episodes": [episode_rating_item]}
+
+        applied: list[tuple] = []
+
+        def _fake_apply_rating(db, user_id, media, season_number, item, existing, changed):
+            applied.append((media, season_number, item))
+            return True
+
+        with (
+            patch.object(trakt_router, "_get_or_create_show", AsyncMock(return_value=show_stub)) as show_mock,
+            patch.object(trakt_router, "_get_or_create_episode_media", AsyncMock(return_value=media_stub)) as media_mock,
+            patch.object(trakt_router, "_apply_imported_rating", side_effect=_fake_apply_rating),
+        ):
+            stats, processed, had_errors, new_watched, new_ratings = await trakt_router._apply_trakt_import(
+                db=_RatingsFakeDB(),
+                job_id=1,
+                user_id=7,
+                source=_ExportSource(),
+                api_key=None,
+                sync_watched=False,
+                sync_ratings=True,
+                sync_lists=False,
+                split_watchlist=False,
+                history_start=None,
+                history_end=datetime(2026, 1, 1),
+            )
+
+        show_mock.assert_awaited_once_with(ANY, 78309, "The Chalet", None)
+        media_mock.assert_awaited_once_with(ANY, 42, 78309, 1, 1, None)
+        self.assertEqual(len(applied), 1)
+        self.assertEqual(applied[0][0], media_stub)
+        self.assertIsNone(applied[0][1])
+        self.assertEqual(stats["ratings"], 1)
+        self.assertEqual(stats["errors"], 0)
+        self.assertEqual(stats["skipped"], 0)
 
 
 if __name__ == "__main__":

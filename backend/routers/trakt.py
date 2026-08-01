@@ -5,18 +5,21 @@ Endpoints:
   POST /trakt/auth/device/poll    – Poll for token completion
   DELETE /trakt/auth/disconnect   – Revoke token and clear stored credentials
   POST /trakt/sync                – Trigger a Trakt import (watched history + ratings)
+  POST /trakt/import/upload       – Import watched history/ratings/lists from a Trakt
+                                     data export zip (no VIP / API app required)
 """
 
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import trakt as trakt_client
 from core.enrichment import enrich_media
+from core.trakt_export import MAX_TOTAL_SIZE, TraktExportData, parse_trakt_export
 from db import get_db, engine
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
@@ -358,18 +361,28 @@ async def _get_or_create_episode_media(
             season_data = await tmdb.get_season(show_tmdb_id, season_number, api_key=api_key)
         ep_map = {ep["episode_number"]: ep for ep in season_data.get("episodes", [])}
         ep = ep_map.get(episode_number)
+        if not ep:
+            # TMDB has no such episode (provider numbering mismatch, e.g. a Plex/Trakt
+            # special counted differently) — don't fabricate a placeholder row for it,
+            # since it can never be enriched and would show up as a broken/phantom
+            # episode (e.g. in Next Up) with no real metadata behind it.
+            logger.warning(
+                "Trakt episode s%se%s not found on TMDB for show tmdb=%s — skipping",
+                season_number, episode_number, show_tmdb_id,
+            )
+            return None
         media = Media(
-            tmdb_id=ep["id"] if ep else None,
+            tmdb_id=ep["id"],
             media_type=MediaType.episode,
-            title=ep["name"] if ep else f"S{season_number:02d}E{episode_number:02d}",
-            overview=ep.get("overview") if ep else None,
-            poster_path=tmdb.poster_url(ep.get("still_path"), size="w500") if ep else None,
-            release_date=ep.get("air_date") if ep else None,
-            tmdb_rating=ep.get("vote_average") if ep else None,
+            title=ep["name"],
+            overview=ep.get("overview"),
+            poster_path=tmdb.poster_url(ep.get("still_path"), size="w500"),
+            release_date=ep.get("air_date"),
+            tmdb_rating=ep.get("vote_average"),
             show_id=show_id,
             season_number=season_number,
             episode_number=episode_number,
-            tmdb_data={"runtime": ep.get("runtime"), "cast": []} if ep else {},
+            tmdb_data={"runtime": ep.get("runtime"), "cast": []},
         )
         db.add(media)
         await db.flush()
@@ -377,6 +390,651 @@ async def _get_or_create_episode_media(
     except Exception as exc:
         logger.warning("Could not fetch episode s%se%s for show tmdb=%s: %s", season_number, episode_number, show_tmdb_id, exc)
         return None
+
+
+class LiveTraktSource:
+    """Fetches watched history, ratings, and lists from the live Trakt API."""
+
+    def __init__(self, client_id: str, access_token: str):
+        self.client_id = client_id
+        self.access_token = access_token
+
+    async def get_history_movies(self, start_at: datetime | None, end_at: datetime):
+        return await trakt_client.get_history_movies(self.client_id, self.access_token, start_at=start_at, end_at=end_at)
+
+    async def get_history_episodes(self, start_at: datetime | None, end_at: datetime):
+        return await trakt_client.get_history_episodes(self.client_id, self.access_token, start_at=start_at, end_at=end_at)
+
+    async def get_ratings(self):
+        return await trakt_client.get_ratings(self.client_id, self.access_token)
+
+    async def get_watchlist(self):
+        return await trakt_client.get_watchlist(self.client_id, self.access_token)
+
+    async def get_user_lists(self):
+        return await trakt_client.get_user_lists(self.client_id, self.access_token)
+
+    async def get_list_items(self, list_slug: str):
+        return await trakt_client.get_list_items(self.client_id, self.access_token, list_slug)
+
+
+class ExportTraktSource:
+    """Serves watched history, ratings, and lists from a parsed Trakt data export.
+
+    An export is always a full snapshot, so start_at/end_at bounds are ignored.
+    """
+
+    def __init__(self, data: TraktExportData):
+        self.data = data
+
+    async def get_history_movies(self, start_at: datetime | None, end_at: datetime):
+        return self.data.history_movies
+
+    async def get_history_episodes(self, start_at: datetime | None, end_at: datetime):
+        return self.data.history_episodes
+
+    async def get_ratings(self):
+        return self.data.ratings
+
+    async def get_watchlist(self):
+        return self.data.watchlist
+
+    async def get_user_lists(self):
+        return self.data.lists
+
+    async def get_list_items(self, list_slug: str):
+        return self.data.list_items.get(list_slug, [])
+
+
+async def _apply_trakt_import(
+    db: AsyncSession,
+    job_id: int,
+    user_id: int,
+    source: LiveTraktSource | ExportTraktSource,
+    api_key: str | None,
+    sync_watched: bool,
+    sync_ratings: bool,
+    sync_lists: bool,
+    split_watchlist: bool,
+    history_start: datetime | None,
+    history_end: datetime,
+) -> tuple[dict, int, bool, set[int], RatingChanges]:
+    """Fetches (from `source`) and applies watched history, ratings, and lists.
+
+    Shared by the live-API sync (run_trakt_sync) and the export-file import
+    (run_trakt_export_sync) — the two differ only in how `source` is built and
+    in what happens before/after this call (token refresh + cursor tracking is
+    live-only). Returns (stats, watched_processed, history_had_errors, new_watched,
+    new_ratings) for the caller to use in its own completion/fan-out handling.
+    """
+    from routers.sync import SyncCancelled, _raise_if_cancelled
+
+    stats = {"movies": 0, "episodes": 0, "ratings": 0, "lists": 0, "list_items": 0, "skipped": 0, "errors": 0}
+    _new_watched: set[int] = set()
+    _new_ratings: RatingChanges = {}
+    watched_processed = 0
+    history_error_count = stats["errors"]
+    history_had_errors = False
+    stats["history_mode"] = "full" if history_start is None else "incremental"
+
+    # ── Watched Movies ────────────────────────────────────────────────
+    # Uses /sync/history (one row per play) rather than /sync/watched
+    # (one aggregated row per title) so every distinct play of a movie
+    # gets its own WatchEvent instead of only the most recent one.
+    if sync_watched:
+        print(f"  Fetching movie watch history from Trakt...")
+        history_movies = await source.get_history_movies(
+            start_at=history_start,
+            end_at=history_end,
+        )
+        print(f"  {len(history_movies)} movie plays fetched from Trakt")
+        await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(history_movies)))
+        await db.commit()
+
+        # Pre-load existing watch events for this user, keyed by the
+        # exact play (media_id, watched_at) so re-syncing doesn't
+        # duplicate plays already imported, while still allowing
+        # multiple distinct plays of the same title.
+        we_res = await db.execute(
+            select(WatchEvent.media_id, WatchEvent.watched_at).where(WatchEvent.user_id == user_id)
+        )
+        existing_watched: set[tuple[int, datetime]] = {(row[0], row[1]) for row in we_res}
+
+        for movie_index, item in enumerate(history_movies, start=1):
+            movie_data = item.get("movie", {})
+            tmdb_id = movie_data.get("ids", {}).get("tmdb")
+            try:
+                if not tmdb_id:
+                    stats["skipped"] += 1
+                    continue
+                try:
+                    async with db.begin_nested():
+                        media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
+                        if not media:
+                            stats["errors"] += 1
+                            continue
+                        # A dateless play (submitted with watched_at="unknown", which Trakt
+                        # silently stores/returns as the Unix epoch — see
+                        # _TRAKT_UNKNOWN_DATE_EPOCH) is stored as unknown locally too,
+                        # rather than fabricating a "now" timestamp or importing 1970-01-01.
+                        watched_at = _parse_trakt_datetime(item.get("watched_at"))
+                        key = (media.id, watched_at)
+                        if key not in existing_watched:
+                            db.add(WatchEvent(
+                                user_id=user_id,
+                                media_id=media.id,
+                                watched_at=watched_at,
+                                completed=True,
+                                play_count=1,
+                            ))
+                            existing_watched.add(key)
+                            _new_watched.add(media.id)
+                            stats["movies"] += 1
+                        else:
+                            stats["skipped"] += 1
+                except Exception as exc:
+                    logger.warning("Error processing Trakt movie tmdb=%s: %s", tmdb_id, exc)
+                    stats["errors"] += 1
+            finally:
+                watched_processed = movie_index
+                if movie_index % 25 == 0 or movie_index == len(history_movies):
+                    await db.execute(
+                        update(SyncJob)
+                        .where(SyncJob.id == job_id)
+                        .values(processed_items=watched_processed)
+                    )
+                    await db.commit()
+                    await _raise_if_cancelled(db, job_id)
+
+        await db.commit()
+
+    # ── Watched Shows / Episodes ──────────────────────────────────────
+    # Same rationale as movies above: /sync/history/episodes returns
+    # one row per play instead of one aggregated row per episode.
+    if sync_watched:
+        print(f"  Fetching episode watch history from Trakt...")
+        history_episodes = await source.get_history_episodes(
+            start_at=history_start,
+            end_at=history_end,
+        )
+        print(f"  {len(history_episodes)} episode plays fetched from Trakt")
+
+        await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+            total_items=len(history_movies) + len(history_episodes),
+            processed_items=watched_processed,
+        ))
+        await db.commit()
+
+        # Re-fetch watched set (may have grown from movie sync)
+        we_res = await db.execute(
+            select(WatchEvent.media_id, WatchEvent.watched_at).where(WatchEvent.user_id == user_id)
+        )
+        existing_watched = {(row[0], row[1]) for row in we_res}
+
+        # Group plays by show so _get_or_create_show only runs once per show
+        plays_by_show: dict[int, list[dict]] = {}
+        for entry in history_episodes:
+            show_tmdb_id = entry.get("show", {}).get("ids", {}).get("tmdb")
+            if show_tmdb_id:
+                plays_by_show.setdefault(show_tmdb_id, []).append(entry)
+            else:
+                stats["skipped"] += 1
+
+        async def process_show(show_tmdb_id: int, entries: list[dict]):
+            show_title = entries[0].get("show", {}).get("title", "")
+            try:
+                async with db.begin_nested():
+                    show = await _get_or_create_show(db, show_tmdb_id, show_title, api_key)
+                    if not show:
+                        stats["errors"] += 1
+                        return
+                    await db.flush()
+
+                for entry in entries:
+                    ep_data = entry.get("episode", {})
+                    season_num = ep_data.get("season")
+                    ep_num = ep_data.get("number")
+                    if season_num is None or season_num == 0 or ep_num is None:
+                        stats["skipped"] += 1
+                        continue
+                    try:
+                        async with db.begin_nested():
+                            media = await _get_or_create_episode_media(
+                                db, show.id, show_tmdb_id, season_num, ep_num, api_key
+                            )
+                            if not media:
+                                stats["errors"] += 1
+                                continue
+                            # See the movie-import branch above: preserve an unknown
+                            # date as unknown rather than fabricating "now".
+                            watched_at = _parse_trakt_datetime(entry.get("watched_at"))
+                            key = (media.id, watched_at)
+                            if key not in existing_watched:
+                                db.add(WatchEvent(
+                                    user_id=user_id,
+                                    media_id=media.id,
+                                    watched_at=watched_at,
+                                    completed=True,
+                                    play_count=1,
+                                ))
+                                existing_watched.add(key)
+                                _new_watched.add(media.id)
+                                stats["episodes"] += 1
+                            else:
+                                stats["skipped"] += 1
+                    except Exception as exc:
+                        logger.warning("Error processing episode s%se%s for show tmdb=%s: %s", season_num, ep_num, show_tmdb_id, exc)
+                        stats["errors"] += 1
+            except Exception as exc:
+                logger.warning("Error processing Trakt show tmdb=%s: %s", show_tmdb_id, exc)
+                stats["errors"] += 1
+
+        show_plays = list(plays_by_show.items())
+        for i, (show_tmdb_id, entries) in enumerate(show_plays):
+            await process_show(show_tmdb_id, entries)
+            watched_processed += len(entries)
+            if (i + 1) % 10 == 0 or i + 1 == len(show_plays):
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                    processed_items=watched_processed
+                ))
+                await db.commit()
+                await _raise_if_cancelled(db, job_id)
+        await db.commit()
+        history_had_errors = stats["errors"] > history_error_count
+
+    await _raise_if_cancelled(db, job_id)
+
+    # ── Ratings ───────────────────────────────────────────────────────
+    if sync_ratings:
+        print("  Fetching ratings from Trakt...")
+        ratings_data = await source.get_ratings()
+
+        ratings_result = await db.execute(
+            select(Rating).where(
+                Rating.user_id == user_id,
+                Rating.episode_order.is_(None),
+            )
+        )
+        existing_ratings = {
+            (rating.media_id, rating.season_number): rating
+            for rating in ratings_result.scalars().all()
+        }
+
+        for kind in ("movies", "shows", "seasons", "episodes"):
+            for item in ratings_data.get(kind, []):
+                try:
+                    async with db.begin_nested():
+                        season_number: int | None = None
+                        if kind == "movies":
+                            movie_data = item.get("movie", {})
+                            tmdb_id = movie_data.get("ids", {}).get("tmdb")
+                            media = (
+                                await _get_or_create_movie_media(
+                                    db,
+                                    tmdb_id,
+                                    movie_data.get("title", ""),
+                                    api_key,
+                                )
+                                if tmdb_id
+                                else None
+                            )
+                        elif kind == "episodes":
+                            show_data = item.get("show", {})
+                            show_tmdb_id = show_data.get("ids", {}).get("tmdb")
+                            ep_data = item.get("episode", {})
+                            ep_season = ep_data.get("season")
+                            ep_number = ep_data.get("number")
+                            media = None
+                            if show_tmdb_id and ep_season is not None and ep_number is not None:
+                                ep_show = await _get_or_create_show(db, show_tmdb_id, show_data.get("title", ""), api_key)
+                                if ep_show:
+                                    media = await _get_or_create_episode_media(
+                                        db, ep_show.id, show_tmdb_id, ep_season, ep_number, api_key
+                                    )
+                        else:
+                            show_data = item.get("show", {})
+                            tmdb_id = show_data.get("ids", {}).get("tmdb")
+                            if kind == "seasons":
+                                season_number = item.get("season", {}).get("number")
+                            media = (
+                                await _get_or_create_series_media(
+                                    db,
+                                    tmdb_id,
+                                    show_data.get("title", ""),
+                                    api_key,
+                                )
+                                if tmdb_id and (kind != "seasons" or season_number is not None)
+                                else None
+                            )
+
+                        if not media:
+                            stats["skipped"] += 1
+                            continue
+                        if _apply_imported_rating(
+                            db,
+                            user_id,
+                            media,
+                            season_number,
+                            item,
+                            existing_ratings,
+                            _new_ratings,
+                        ):
+                            stats["ratings"] += 1
+                        else:
+                            stats["skipped"] += 1
+                except (KeyError, TypeError, ValueError) as exc:
+                    logger.warning("Invalid Trakt %s rating: %s", kind, exc)
+                    stats["errors"] += 1
+                except Exception as exc:
+                    logger.warning("Error processing Trakt %s rating: %s", kind, exc)
+                    stats["errors"] += 1
+
+        await db.commit()
+
+    await _raise_if_cancelled(db, job_id)
+
+    # ── Lists (watchlist + personal lists) ───────────────────────────
+    if sync_lists:
+        WATCHLIST_SLUG         = "__watchlist__"
+        WATCHLIST_MOVIES_SLUG  = "__watchlist_movies__"
+        WATCHLIST_SHOWS_SLUG   = "__watchlist_shows__"
+
+        print(f"  Fetching watchlist from Trakt...")
+        watchlist_items = await source.get_watchlist()
+        print(f"  {len(watchlist_items)} watchlist items fetched from Trakt")
+
+        if split_watchlist:
+            # ── Split mode: two lists keyed by media type ─────────────
+            async def _get_or_create_split_list(slug: str, name: str) -> ListModel:
+                r = await db.execute(
+                    select(ListModel).where(ListModel.user_id == user_id, ListModel.trakt_slug == slug)
+                )
+                lst = r.scalar_one_or_none()
+                if not lst:
+                    lst = ListModel(user_id=user_id, name=name, trakt_slug=slug)
+                    db.add(lst)
+                    await db.flush()
+                    stats["lists"] += 1
+                return lst
+
+            movies_list = await _get_or_create_split_list(WATCHLIST_MOVIES_SLUG, "Trakt - Watchlist (Movies)")
+            shows_list  = await _get_or_create_split_list(WATCHLIST_SHOWS_SLUG,  "Trakt - Watchlist (Shows)")
+
+            movies_existing = {row[0] for row in (await db.execute(
+                select(ListItem.media_id).where(ListItem.list_id == movies_list.id)
+            )).all()}
+            shows_existing  = {row[0] for row in (await db.execute(
+                select(ListItem.media_id).where(ListItem.list_id == shows_list.id)
+            )).all()}
+
+            # Reconcile: remove items no longer on Trakt watchlist
+            trakt_movie_tmdb_ids = {
+                e.get("movie", {}).get("ids", {}).get("tmdb")
+                for e in watchlist_items if e.get("type") == "movie"
+            } - {None}
+            trakt_show_tmdb_ids = {
+                e.get("show", {}).get("ids", {}).get("tmdb")
+                for e in watchlist_items if e.get("type") == "show"
+            } - {None}
+
+            # Remove stale movies
+            if movies_existing:
+                stale_movies_result = await db.execute(
+                    select(Media).where(
+                        Media.id.in_(movies_existing),
+                        Media.tmdb_id.notin_(trakt_movie_tmdb_ids),
+                    )
+                )
+                for stale in stale_movies_result.scalars():
+                    await db.execute(
+                        ListItem.__table__.delete().where(
+                            ListItem.list_id == movies_list.id,
+                            ListItem.media_id == stale.id,
+                        )
+                    )
+                    movies_existing.discard(stale.id)
+
+            # Remove stale shows
+            if shows_existing:
+                stale_shows_result = await db.execute(
+                    select(Media).where(
+                        Media.id.in_(shows_existing),
+                        Media.tmdb_id.notin_(trakt_show_tmdb_ids),
+                    )
+                )
+                for stale in stale_shows_result.scalars():
+                    await db.execute(
+                        ListItem.__table__.delete().where(
+                            ListItem.list_id == shows_list.id,
+                            ListItem.media_id == stale.id,
+                        )
+                    )
+                    shows_existing.discard(stale.id)
+
+            for entry in watchlist_items:
+                item_type = entry.get("type")
+                media: Media | None = None
+                try:
+                    if item_type == "movie":
+                        movie_data = entry.get("movie", {})
+                        tmdb_id_item = movie_data.get("ids", {}).get("tmdb")
+                        if not tmdb_id_item:
+                            continue
+                        async with db.begin_nested():
+                            media = await _get_or_create_movie_media(db, tmdb_id_item, movie_data.get("title", ""), api_key)
+                        if media and media.id not in movies_existing:
+                            db.add(ListItem(list_id=movies_list.id, media_id=media.id))
+                            movies_existing.add(media.id)
+                            stats["list_items"] += 1
+                    elif item_type == "show":
+                        show_data = entry.get("show", {})
+                        tmdb_id_item = show_data.get("ids", {}).get("tmdb")
+                        if not tmdb_id_item:
+                            continue
+                        async with db.begin_nested():
+                            r2 = await db.execute(
+                                select(Media).where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
+                            )
+                            media = r2.scalar_one_or_none()
+                            if not media:
+                                from core import tmdb
+                                d = await tmdb.get_show(tmdb_id_item, api_key=api_key)
+                                media = Media(
+                                    tmdb_id=tmdb_id_item,
+                                    media_type=MediaType.series,
+                                    title=d.get("name") or show_data.get("title", ""),
+                                    poster_path=tmdb.poster_url(d.get("poster_path")),
+                                    backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
+                                    release_date=d.get("first_air_date"),
+                                    tmdb_rating=d.get("vote_average"),
+                                    overview=d.get("overview"),
+                                    adult=d.get("adult", False),
+                                )
+                                db.add(media)
+                                await db.flush()
+                        if media and media.id not in shows_existing:
+                            db.add(ListItem(list_id=shows_list.id, media_id=media.id))
+                            shows_existing.add(media.id)
+                            stats["list_items"] += 1
+                except Exception as exc:
+                    logger.warning("Error processing Trakt watchlist item (%s): %s", item_type, exc)
+                    stats["errors"] += 1
+
+        else:
+            # ── Unified mode: one list for movies + shows ─────────────
+            wl_result = await db.execute(
+                select(ListModel).where(
+                    ListModel.user_id == user_id,
+                    ListModel.trakt_slug == WATCHLIST_SLUG,
+                )
+            )
+            watchlist = wl_result.scalar_one_or_none()
+            if not watchlist:
+                watchlist = ListModel(user_id=user_id, name="Trakt - Watchlist", trakt_slug=WATCHLIST_SLUG)
+                db.add(watchlist)
+                await db.flush()
+                stats["lists"] += 1
+
+            wl_items_result = await db.execute(
+                select(ListItem.media_id).where(ListItem.list_id == watchlist.id)
+            )
+            wl_existing_ids: set[int] = {row[0] for row in wl_items_result}
+
+            for entry in watchlist_items:
+                item_type = entry.get("type")
+                media: Media | None = None
+                try:
+                    if item_type == "movie":
+                        movie_data = entry.get("movie", {})
+                        tmdb_id_item = movie_data.get("ids", {}).get("tmdb")
+                        if not tmdb_id_item:
+                            continue
+                        async with db.begin_nested():
+                            media = await _get_or_create_movie_media(db, tmdb_id_item, movie_data.get("title", ""), api_key)
+                    elif item_type == "show":
+                        show_data = entry.get("show", {})
+                        tmdb_id_item = show_data.get("ids", {}).get("tmdb")
+                        if not tmdb_id_item:
+                            continue
+                        async with db.begin_nested():
+                            r2 = await db.execute(
+                                select(Media).where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
+                            )
+                            media = r2.scalar_one_or_none()
+                            if not media:
+                                from core import tmdb
+                                d = await tmdb.get_show(tmdb_id_item, api_key=api_key)
+                                media = Media(
+                                    tmdb_id=tmdb_id_item,
+                                    media_type=MediaType.series,
+                                    title=d.get("name") or show_data.get("title", ""),
+                                    poster_path=tmdb.poster_url(d.get("poster_path")),
+                                    backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
+                                    release_date=d.get("first_air_date"),
+                                    tmdb_rating=d.get("vote_average"),
+                                    overview=d.get("overview"),
+                                    adult=d.get("adult", False),
+                                )
+                                db.add(media)
+                                await db.flush()
+                    else:
+                        continue
+
+                    if media and media.id not in wl_existing_ids:
+                        db.add(ListItem(list_id=watchlist.id, media_id=media.id))
+                        wl_existing_ids.add(media.id)
+                        stats["list_items"] += 1
+                except Exception as exc:
+                    logger.warning("Error processing Trakt watchlist item (%s): %s", item_type, exc)
+                    stats["errors"] += 1
+
+        await db.commit()
+
+        print(f"  Fetching lists from Trakt...")
+        trakt_lists = await source.get_user_lists()
+        print(f"  {len(trakt_lists)} lists fetched from Trakt")
+
+        for trakt_list in trakt_lists:
+            list_name = trakt_list.get("name", "")
+            list_slug = trakt_list.get("ids", {}).get("slug") or trakt_list.get("slug")
+            if not list_slug or not list_name:
+                continue
+
+            local_name = f"Trakt - {list_name}"
+
+            # Find or create the local list — keyed by trakt_slug, not name
+            existing_list_result = await db.execute(
+                select(ListModel).where(
+                    ListModel.user_id == user_id,
+                    ListModel.trakt_slug == list_slug,
+                )
+            )
+            local_list = existing_list_result.scalar_one_or_none()
+            if not local_list:
+                local_list = ListModel(
+                    user_id=user_id,
+                    name=local_name,
+                    description=trakt_list.get("description"),
+                    trakt_slug=list_slug,
+                )
+                db.add(local_list)
+                await db.flush()
+                stats["lists"] += 1
+
+            # Pre-load existing list item media_ids to avoid duplicates
+            existing_items_result = await db.execute(
+                select(ListItem.media_id).where(ListItem.list_id == local_list.id)
+            )
+            existing_item_media_ids: set[int] = {row[0] for row in existing_items_result}
+
+            try:
+                items = await source.get_list_items(list_slug)
+            except Exception as exc:
+                logger.warning("Could not fetch items for Trakt list %s: %s", list_slug, exc)
+                continue
+
+            for entry in items:
+                item_type = entry.get("type")
+                media: Media | None = None
+                try:
+                    if item_type == "movie":
+                        movie_data = entry.get("movie", {})
+                        tmdb_id = movie_data.get("ids", {}).get("tmdb")
+                        if not tmdb_id:
+                            continue
+                        async with db.begin_nested():
+                            media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
+                    elif item_type == "show":
+                        show_data = entry.get("show", {})
+                        tmdb_id = show_data.get("ids", {}).get("tmdb")
+                        if not tmdb_id:
+                            continue
+                        async with db.begin_nested():
+                            result2 = await db.execute(
+                                select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.series)
+                            )
+                            media = result2.scalar_one_or_none()
+                            if not media:
+                                from core import tmdb
+                                d = await tmdb.get_show(tmdb_id, api_key=api_key)
+                                media = Media(
+                                    tmdb_id=tmdb_id,
+                                    media_type=MediaType.series,
+                                    title=d.get("name") or show_data.get("title", ""),
+                                    poster_path=tmdb.poster_url(d.get("poster_path")),
+                                    backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
+                                    release_date=d.get("first_air_date"),
+                                    tmdb_rating=d.get("vote_average"),
+                                    overview=d.get("overview"),
+                                    adult=d.get("adult", False),
+                                )
+                                db.add(media)
+                                await db.flush()
+                    else:
+                        continue
+
+                    if media and media.id not in existing_item_media_ids:
+                        db.add(ListItem(list_id=local_list.id, media_id=media.id))
+                        existing_item_media_ids.add(media.id)
+                        stats["list_items"] += 1
+                except Exception as exc:
+                    logger.warning("Error processing Trakt list item (%s): %s", item_type, exc)
+                    stats["errors"] += 1
+
+            await db.commit()
+
+    return stats, watched_processed, history_had_errors, _new_watched, _new_ratings
+
+
+def _trakt_import_summary(job_id: int, label: str, stats: dict) -> str:
+    return (
+        f"Trakt {label} job {job_id} completed. "
+        f"Movies: {stats['movies']} new, {stats.get('skipped', 0)} skipped. "
+        f"Episodes: {stats['episodes']} new. "
+        f"Ratings: {stats['ratings']} new. "
+        f"Lists: {stats['lists']} new, {stats['list_items']} items added. "
+        f"Errors: {stats['errors']}."
+    )
 
 
 async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
@@ -436,572 +1094,29 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
             _gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
             _gs = _gs_result.scalar_one_or_none()
             api_key = settings.tmdb_api_key or (_gs.tmdb_api_key if _gs else None)
-            sync_watched = settings.trakt_sync_watched
-            sync_ratings = settings.trakt_sync_ratings
 
-            stats = {"movies": 0, "episodes": 0, "ratings": 0, "lists": 0, "list_items": 0, "skipped": 0, "errors": 0}
-            _new_watched: set[int] = set()
-            _new_ratings: RatingChanges = {}
-            watched_processed = 0
             history_cutoff = datetime.now(timezone.utc).replace(tzinfo=None)
             history_start, history_end = _history_window(
                 getattr(settings, "trakt_history_cursor_at", None),
                 full_resync,
                 history_cutoff,
             )
-            history_error_count = stats["errors"]
-            history_had_errors = False
-            stats["history_mode"] = "full" if history_start is None else "incremental"
 
-            # ── Watched Movies ────────────────────────────────────────────────
-            # Uses /sync/history (one row per play) rather than /sync/watched
-            # (one aggregated row per title) so every distinct play of a movie
-            # gets its own WatchEvent instead of only the most recent one.
-            if sync_watched:
-                print(f"  Fetching movie watch history from Trakt...")
-                history_movies = await trakt_client.get_history_movies(
-                    client_id,
-                    access_token,
-                    start_at=history_start,
-                    end_at=history_end,
-                )
-                print(f"  {len(history_movies)} movie plays fetched from Trakt")
-                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(history_movies)))
-                await db.commit()
+            source = LiveTraktSource(client_id, access_token)
+            stats, watched_processed, history_had_errors, _new_watched, _new_ratings = await _apply_trakt_import(
+                db, job_id, user_id, source, api_key,
+                settings.trakt_sync_watched,
+                settings.trakt_sync_ratings,
+                settings.trakt_sync_lists,
+                getattr(settings, "trakt_watchlist_split", False),
+                history_start,
+                history_end,
+            )
 
-                # Pre-load existing watch events for this user, keyed by the
-                # exact play (media_id, watched_at) so re-syncing doesn't
-                # duplicate plays already imported, while still allowing
-                # multiple distinct plays of the same title.
-                we_res = await db.execute(
-                    select(WatchEvent.media_id, WatchEvent.watched_at).where(WatchEvent.user_id == user_id)
-                )
-                existing_watched: set[tuple[int, datetime]] = {(row[0], row[1]) for row in we_res}
-
-                for movie_index, item in enumerate(history_movies, start=1):
-                    movie_data = item.get("movie", {})
-                    tmdb_id = movie_data.get("ids", {}).get("tmdb")
-                    try:
-                        if not tmdb_id:
-                            stats["skipped"] += 1
-                            continue
-                        try:
-                            async with db.begin_nested():
-                                media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
-                                if not media:
-                                    stats["errors"] += 1
-                                    continue
-                                # A dateless play (submitted with watched_at="unknown", which Trakt
-                                # silently stores/returns as the Unix epoch — see
-                                # _TRAKT_UNKNOWN_DATE_EPOCH) is stored as unknown locally too,
-                                # rather than fabricating a "now" timestamp or importing 1970-01-01.
-                                watched_at = _parse_trakt_datetime(item.get("watched_at"))
-                                key = (media.id, watched_at)
-                                if key not in existing_watched:
-                                    db.add(WatchEvent(
-                                        user_id=user_id,
-                                        media_id=media.id,
-                                        watched_at=watched_at,
-                                        completed=True,
-                                        play_count=1,
-                                    ))
-                                    existing_watched.add(key)
-                                    _new_watched.add(media.id)
-                                    stats["movies"] += 1
-                                else:
-                                    stats["skipped"] += 1
-                        except Exception as exc:
-                            logger.warning("Error processing Trakt movie tmdb=%s: %s", tmdb_id, exc)
-                            stats["errors"] += 1
-                    finally:
-                        watched_processed = movie_index
-                        if movie_index % 25 == 0 or movie_index == len(history_movies):
-                            await db.execute(
-                                update(SyncJob)
-                                .where(SyncJob.id == job_id)
-                                .values(processed_items=watched_processed)
-                            )
-                            await db.commit()
-                            await _raise_if_cancelled(db, job_id)
-
-                await db.commit()
-
-            # ── Watched Shows / Episodes ──────────────────────────────────────
-            # Same rationale as movies above: /sync/history/episodes returns
-            # one row per play instead of one aggregated row per episode.
-            if sync_watched:
-                print(f"  Fetching episode watch history from Trakt...")
-                history_episodes = await trakt_client.get_history_episodes(
-                    client_id,
-                    access_token,
-                    start_at=history_start,
-                    end_at=history_end,
-                )
-                print(f"  {len(history_episodes)} episode plays fetched from Trakt")
-
-                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
-                    total_items=len(history_movies) + len(history_episodes),
-                    processed_items=watched_processed,
-                ))
-                await db.commit()
-
-                # Re-fetch watched set (may have grown from movie sync)
-                we_res = await db.execute(
-                    select(WatchEvent.media_id, WatchEvent.watched_at).where(WatchEvent.user_id == user_id)
-                )
-                existing_watched = {(row[0], row[1]) for row in we_res}
-
-                # Group plays by show so _get_or_create_show only runs once per show
-                plays_by_show: dict[int, list[dict]] = {}
-                for entry in history_episodes:
-                    show_tmdb_id = entry.get("show", {}).get("ids", {}).get("tmdb")
-                    if show_tmdb_id:
-                        plays_by_show.setdefault(show_tmdb_id, []).append(entry)
-                    else:
-                        stats["skipped"] += 1
-
-                async def process_show(show_tmdb_id: int, entries: list[dict]):
-                    show_title = entries[0].get("show", {}).get("title", "")
-                    try:
-                        async with db.begin_nested():
-                            show = await _get_or_create_show(db, show_tmdb_id, show_title, api_key)
-                            if not show:
-                                stats["errors"] += 1
-                                return
-                            await db.flush()
-
-                        for entry in entries:
-                            ep_data = entry.get("episode", {})
-                            season_num = ep_data.get("season")
-                            ep_num = ep_data.get("number")
-                            if season_num is None or season_num == 0 or ep_num is None:
-                                stats["skipped"] += 1
-                                continue
-                            try:
-                                async with db.begin_nested():
-                                    media = await _get_or_create_episode_media(
-                                        db, show.id, show_tmdb_id, season_num, ep_num, api_key
-                                    )
-                                    if not media:
-                                        stats["errors"] += 1
-                                        continue
-                                    # See the movie-import branch above: preserve an unknown
-                                    # date as unknown rather than fabricating "now".
-                                    watched_at = _parse_trakt_datetime(entry.get("watched_at"))
-                                    key = (media.id, watched_at)
-                                    if key not in existing_watched:
-                                        db.add(WatchEvent(
-                                            user_id=user_id,
-                                            media_id=media.id,
-                                            watched_at=watched_at,
-                                            completed=True,
-                                            play_count=1,
-                                        ))
-                                        existing_watched.add(key)
-                                        _new_watched.add(media.id)
-                                        stats["episodes"] += 1
-                                    else:
-                                        stats["skipped"] += 1
-                            except Exception as exc:
-                                logger.warning("Error processing episode s%se%s for show tmdb=%s: %s", season_num, ep_num, show_tmdb_id, exc)
-                                stats["errors"] += 1
-                    except Exception as exc:
-                        logger.warning("Error processing Trakt show tmdb=%s: %s", show_tmdb_id, exc)
-                        stats["errors"] += 1
-
-                show_plays = list(plays_by_show.items())
-                for i, (show_tmdb_id, entries) in enumerate(show_plays):
-                    await process_show(show_tmdb_id, entries)
-                    watched_processed += len(entries)
-                    if (i + 1) % 10 == 0 or i + 1 == len(show_plays):
-                        await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
-                            processed_items=watched_processed
-                        ))
-                        await db.commit()
-                        await _raise_if_cancelled(db, job_id)
-                await db.commit()
-                history_had_errors = stats["errors"] > history_error_count
-
-            await _raise_if_cancelled(db, job_id)
-
-            # ── Ratings ───────────────────────────────────────────────────────
-            if sync_ratings:
-                print("  Fetching ratings from Trakt...")
-                ratings_data = await trakt_client.get_ratings(client_id, access_token)
-
-                ratings_result = await db.execute(
-                    select(Rating).where(
-                        Rating.user_id == user_id,
-                        Rating.episode_order.is_(None),
-                    )
-                )
-                existing_ratings = {
-                    (rating.media_id, rating.season_number): rating
-                    for rating in ratings_result.scalars().all()
-                }
-
-                for kind in ("movies", "shows", "seasons"):
-                    for item in ratings_data.get(kind, []):
-                        try:
-                            async with db.begin_nested():
-                                season_number: int | None = None
-                                if kind == "movies":
-                                    movie_data = item.get("movie", {})
-                                    tmdb_id = movie_data.get("ids", {}).get("tmdb")
-                                    media = (
-                                        await _get_or_create_movie_media(
-                                            db,
-                                            tmdb_id,
-                                            movie_data.get("title", ""),
-                                            api_key,
-                                        )
-                                        if tmdb_id
-                                        else None
-                                    )
-                                else:
-                                    show_data = item.get("show", {})
-                                    tmdb_id = show_data.get("ids", {}).get("tmdb")
-                                    if kind == "seasons":
-                                        season_number = item.get("season", {}).get("number")
-                                    media = (
-                                        await _get_or_create_series_media(
-                                            db,
-                                            tmdb_id,
-                                            show_data.get("title", ""),
-                                            api_key,
-                                        )
-                                        if tmdb_id and (kind != "seasons" or season_number is not None)
-                                        else None
-                                    )
-
-                                if not media:
-                                    stats["skipped"] += 1
-                                    continue
-                                if _apply_imported_rating(
-                                    db,
-                                    user_id,
-                                    media,
-                                    season_number,
-                                    item,
-                                    existing_ratings,
-                                    _new_ratings,
-                                ):
-                                    stats["ratings"] += 1
-                                else:
-                                    stats["skipped"] += 1
-                        except (KeyError, TypeError, ValueError) as exc:
-                            logger.warning("Invalid Trakt %s rating: %s", kind, exc)
-                            stats["errors"] += 1
-                        except Exception as exc:
-                            logger.warning("Error processing Trakt %s rating: %s", kind, exc)
-                            stats["errors"] += 1
-
-                await db.commit()
-
-            await _raise_if_cancelled(db, job_id)
-
-            # ── Lists (watchlist + personal lists) ───────────────────────────
-            if settings.trakt_sync_lists:
-                WATCHLIST_SLUG         = "__watchlist__"
-                WATCHLIST_MOVIES_SLUG  = "__watchlist_movies__"
-                WATCHLIST_SHOWS_SLUG   = "__watchlist_shows__"
-                split_watchlist = getattr(settings, "trakt_watchlist_split", False)
-
-                print(f"  Fetching watchlist from Trakt...")
-                watchlist_items = await trakt_client.get_watchlist(client_id, access_token)
-                print(f"  {len(watchlist_items)} watchlist items fetched from Trakt")
-
-                if split_watchlist:
-                    # ── Split mode: two lists keyed by media type ─────────────
-                    async def _get_or_create_split_list(slug: str, name: str) -> ListModel:
-                        r = await db.execute(
-                            select(ListModel).where(ListModel.user_id == user_id, ListModel.trakt_slug == slug)
-                        )
-                        lst = r.scalar_one_or_none()
-                        if not lst:
-                            lst = ListModel(user_id=user_id, name=name, trakt_slug=slug)
-                            db.add(lst)
-                            await db.flush()
-                            stats["lists"] += 1
-                        return lst
-
-                    movies_list = await _get_or_create_split_list(WATCHLIST_MOVIES_SLUG, "Trakt - Watchlist (Movies)")
-                    shows_list  = await _get_or_create_split_list(WATCHLIST_SHOWS_SLUG,  "Trakt - Watchlist (Shows)")
-
-                    movies_existing = {row[0] for row in (await db.execute(
-                        select(ListItem.media_id).where(ListItem.list_id == movies_list.id)
-                    )).all()}
-                    shows_existing  = {row[0] for row in (await db.execute(
-                        select(ListItem.media_id).where(ListItem.list_id == shows_list.id)
-                    )).all()}
-
-                    # Reconcile: remove items no longer on Trakt watchlist
-                    trakt_movie_tmdb_ids = {
-                        e.get("movie", {}).get("ids", {}).get("tmdb")
-                        for e in watchlist_items if e.get("type") == "movie"
-                    } - {None}
-                    trakt_show_tmdb_ids = {
-                        e.get("show", {}).get("ids", {}).get("tmdb")
-                        for e in watchlist_items if e.get("type") == "show"
-                    } - {None}
-
-                    # Remove stale movies
-                    if movies_existing:
-                        stale_movies_result = await db.execute(
-                            select(Media).where(
-                                Media.id.in_(movies_existing),
-                                Media.tmdb_id.notin_(trakt_movie_tmdb_ids),
-                            )
-                        )
-                        for stale in stale_movies_result.scalars():
-                            await db.execute(
-                                ListItem.__table__.delete().where(
-                                    ListItem.list_id == movies_list.id,
-                                    ListItem.media_id == stale.id,
-                                )
-                            )
-                            movies_existing.discard(stale.id)
-
-                    # Remove stale shows
-                    if shows_existing:
-                        stale_shows_result = await db.execute(
-                            select(Media).where(
-                                Media.id.in_(shows_existing),
-                                Media.tmdb_id.notin_(trakt_show_tmdb_ids),
-                            )
-                        )
-                        for stale in stale_shows_result.scalars():
-                            await db.execute(
-                                ListItem.__table__.delete().where(
-                                    ListItem.list_id == shows_list.id,
-                                    ListItem.media_id == stale.id,
-                                )
-                            )
-                            shows_existing.discard(stale.id)
-
-                    for entry in watchlist_items:
-                        item_type = entry.get("type")
-                        media: Media | None = None
-                        try:
-                            if item_type == "movie":
-                                movie_data = entry.get("movie", {})
-                                tmdb_id_item = movie_data.get("ids", {}).get("tmdb")
-                                if not tmdb_id_item:
-                                    continue
-                                async with db.begin_nested():
-                                    media = await _get_or_create_movie_media(db, tmdb_id_item, movie_data.get("title", ""), api_key)
-                                if media and media.id not in movies_existing:
-                                    db.add(ListItem(list_id=movies_list.id, media_id=media.id))
-                                    movies_existing.add(media.id)
-                                    stats["list_items"] += 1
-                            elif item_type == "show":
-                                show_data = entry.get("show", {})
-                                tmdb_id_item = show_data.get("ids", {}).get("tmdb")
-                                if not tmdb_id_item:
-                                    continue
-                                async with db.begin_nested():
-                                    r2 = await db.execute(
-                                        select(Media).where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
-                                    )
-                                    media = r2.scalar_one_or_none()
-                                    if not media:
-                                        from core import tmdb
-                                        d = await tmdb.get_show(tmdb_id_item, api_key=api_key)
-                                        media = Media(
-                                            tmdb_id=tmdb_id_item,
-                                            media_type=MediaType.series,
-                                            title=d.get("name") or show_data.get("title", ""),
-                                            poster_path=tmdb.poster_url(d.get("poster_path")),
-                                            backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-                                            release_date=d.get("first_air_date"),
-                                            tmdb_rating=d.get("vote_average"),
-                                            overview=d.get("overview"),
-                                            adult=d.get("adult", False),
-                                        )
-                                        db.add(media)
-                                        await db.flush()
-                                if media and media.id not in shows_existing:
-                                    db.add(ListItem(list_id=shows_list.id, media_id=media.id))
-                                    shows_existing.add(media.id)
-                                    stats["list_items"] += 1
-                        except Exception as exc:
-                            logger.warning("Error processing Trakt watchlist item (%s): %s", item_type, exc)
-                            stats["errors"] += 1
-
-                else:
-                    # ── Unified mode: one list for movies + shows ─────────────
-                    wl_result = await db.execute(
-                        select(ListModel).where(
-                            ListModel.user_id == user_id,
-                            ListModel.trakt_slug == WATCHLIST_SLUG,
-                        )
-                    )
-                    watchlist = wl_result.scalar_one_or_none()
-                    if not watchlist:
-                        watchlist = ListModel(user_id=user_id, name="Trakt - Watchlist", trakt_slug=WATCHLIST_SLUG)
-                        db.add(watchlist)
-                        await db.flush()
-                        stats["lists"] += 1
-
-                    wl_items_result = await db.execute(
-                        select(ListItem.media_id).where(ListItem.list_id == watchlist.id)
-                    )
-                    wl_existing_ids: set[int] = {row[0] for row in wl_items_result}
-
-                    for entry in watchlist_items:
-                        item_type = entry.get("type")
-                        media: Media | None = None
-                        try:
-                            if item_type == "movie":
-                                movie_data = entry.get("movie", {})
-                                tmdb_id_item = movie_data.get("ids", {}).get("tmdb")
-                                if not tmdb_id_item:
-                                    continue
-                                async with db.begin_nested():
-                                    media = await _get_or_create_movie_media(db, tmdb_id_item, movie_data.get("title", ""), api_key)
-                            elif item_type == "show":
-                                show_data = entry.get("show", {})
-                                tmdb_id_item = show_data.get("ids", {}).get("tmdb")
-                                if not tmdb_id_item:
-                                    continue
-                                async with db.begin_nested():
-                                    r2 = await db.execute(
-                                        select(Media).where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
-                                    )
-                                    media = r2.scalar_one_or_none()
-                                    if not media:
-                                        from core import tmdb
-                                        d = await tmdb.get_show(tmdb_id_item, api_key=api_key)
-                                        media = Media(
-                                            tmdb_id=tmdb_id_item,
-                                            media_type=MediaType.series,
-                                            title=d.get("name") or show_data.get("title", ""),
-                                            poster_path=tmdb.poster_url(d.get("poster_path")),
-                                            backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-                                            release_date=d.get("first_air_date"),
-                                            tmdb_rating=d.get("vote_average"),
-                                            overview=d.get("overview"),
-                                            adult=d.get("adult", False),
-                                        )
-                                        db.add(media)
-                                        await db.flush()
-                            else:
-                                continue
-
-                            if media and media.id not in wl_existing_ids:
-                                db.add(ListItem(list_id=watchlist.id, media_id=media.id))
-                                wl_existing_ids.add(media.id)
-                                stats["list_items"] += 1
-                        except Exception as exc:
-                            logger.warning("Error processing Trakt watchlist item (%s): %s", item_type, exc)
-                            stats["errors"] += 1
-
-                await db.commit()
-
-                print(f"  Fetching lists from Trakt...")
-                trakt_lists = await trakt_client.get_user_lists(client_id, access_token)
-                print(f"  {len(trakt_lists)} lists fetched from Trakt")
-
-                for trakt_list in trakt_lists:
-                    list_name = trakt_list.get("name", "")
-                    list_slug = trakt_list.get("ids", {}).get("slug") or trakt_list.get("slug")
-                    if not list_slug or not list_name:
-                        continue
-
-                    local_name = f"Trakt - {list_name}"
-
-                    # Find or create the local list — keyed by trakt_slug, not name
-                    existing_list_result = await db.execute(
-                        select(ListModel).where(
-                            ListModel.user_id == user_id,
-                            ListModel.trakt_slug == list_slug,
-                        )
-                    )
-                    local_list = existing_list_result.scalar_one_or_none()
-                    if not local_list:
-                        local_list = ListModel(
-                            user_id=user_id,
-                            name=local_name,
-                            description=trakt_list.get("description"),
-                            trakt_slug=list_slug,
-                        )
-                        db.add(local_list)
-                        await db.flush()
-                        stats["lists"] += 1
-
-                    # Pre-load existing list item media_ids to avoid duplicates
-                    existing_items_result = await db.execute(
-                        select(ListItem.media_id).where(ListItem.list_id == local_list.id)
-                    )
-                    existing_item_media_ids: set[int] = {row[0] for row in existing_items_result}
-
-                    try:
-                        items = await trakt_client.get_list_items(client_id, access_token, list_slug)
-                    except Exception as exc:
-                        logger.warning("Could not fetch items for Trakt list %s: %s", list_slug, exc)
-                        continue
-
-                    for entry in items:
-                        item_type = entry.get("type")
-                        media: Media | None = None
-                        try:
-                            if item_type == "movie":
-                                movie_data = entry.get("movie", {})
-                                tmdb_id = movie_data.get("ids", {}).get("tmdb")
-                                if not tmdb_id:
-                                    continue
-                                async with db.begin_nested():
-                                    media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
-                            elif item_type == "show":
-                                show_data = entry.get("show", {})
-                                tmdb_id = show_data.get("ids", {}).get("tmdb")
-                                if not tmdb_id:
-                                    continue
-                                async with db.begin_nested():
-                                    result2 = await db.execute(
-                                        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.series)
-                                    )
-                                    media = result2.scalar_one_or_none()
-                                    if not media:
-                                        from core import tmdb
-                                        d = await tmdb.get_show(tmdb_id, api_key=api_key)
-                                        media = Media(
-                                            tmdb_id=tmdb_id,
-                                            media_type=MediaType.series,
-                                            title=d.get("name") or show_data.get("title", ""),
-                                            poster_path=tmdb.poster_url(d.get("poster_path")),
-                                            backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-                                            release_date=d.get("first_air_date"),
-                                            tmdb_rating=d.get("vote_average"),
-                                            overview=d.get("overview"),
-                                            adult=d.get("adult", False),
-                                        )
-                                        db.add(media)
-                                        await db.flush()
-                            else:
-                                continue
-
-                            if media and media.id not in existing_item_media_ids:
-                                db.add(ListItem(list_id=local_list.id, media_id=media.id))
-                                existing_item_media_ids.add(media.id)
-                                stats["list_items"] += 1
-                        except Exception as exc:
-                            logger.warning("Error processing Trakt list item (%s): %s", item_type, exc)
-                            stats["errors"] += 1
-
-                    await db.commit()
-
-            if sync_watched and not history_had_errors:
+            if settings.trakt_sync_watched and not history_had_errors:
                 settings.trakt_history_cursor_at = history_end
 
-            print(
-                f"Trakt sync job {job_id} completed. "
-                f"Movies: {stats['movies']} new, {stats.get('skipped', 0)} skipped. "
-                f"Episodes: {stats['episodes']} new. "
-                f"Ratings: {stats['ratings']} new. "
-                f"Lists: {stats['lists']} new, {stats['list_items']} items added. "
-                f"Errors: {stats['errors']}."
-            )
+            print(_trakt_import_summary(job_id, "sync", stats))
             from routers.sync import _fan_out_changes_to_other_connections
             await _fan_out_changes_to_other_connections(db, user_id, None, _new_watched, _new_ratings, settings=settings, exclude_cloud_source=CollectionSource.trakt)
             await db.execute(
@@ -1016,14 +1131,92 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
         except SyncCancelled:
             print(f"Trakt sync job {job_id} cancelled")
             await db.execute(
-                update(SyncJob).where(SyncJob.id == job_id).values(
-                    status=SyncStatus.cancelled, processed_items=watched_processed
-                )
+                update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.cancelled)
             )
             await db.commit()
 
         except Exception as exc:
             print(f"Trakt sync job {job_id} failed: {exc}")
+            await db.execute(
+                update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.failed, error_message=str(exc)
+                )
+            )
+            await db.commit()
+
+
+async def run_trakt_export_sync(
+    user_id: int,
+    job_id: int,
+    export_data: TraktExportData,
+    sync_watched: bool = True,
+    sync_ratings: bool = True,
+    sync_lists: bool = True,
+):
+    from routers.sync import SyncCancelled, _raise_if_cancelled
+    print(f"Starting Trakt export import for user {user_id}, job {job_id}")
+    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with async_session() as db:
+        try:
+            await db.execute(
+                update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.running, processed_items=0, total_items=0
+                )
+            )
+            await db.commit()
+
+            result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+            settings = result.scalar_one_or_none()
+
+            if not settings:
+                err = "User settings not found"
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=err))
+                await db.commit()
+                return
+
+            _gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
+            _gs = _gs_result.scalar_one_or_none()
+            api_key = settings.tmdb_api_key or (_gs.tmdb_api_key if _gs else None)
+
+            source = ExportTraktSource(export_data)
+            history_end = datetime.now(timezone.utc).replace(tzinfo=None)
+
+            # What to import is chosen per-upload (sync_watched/sync_ratings/sync_lists,
+            # picked in the import confirmation modal), not read from the trakt_sync_*
+            # preferences — those only gate the continuous OAuth pull, where
+            # trakt_sync_lists defaults to False so existing users aren't surprised by
+            # new lists appearing unprompted.
+            stats, watched_processed, _history_had_errors, _new_watched, _new_ratings = await _apply_trakt_import(
+                db, job_id, user_id, source, api_key,
+                sync_watched,
+                sync_ratings,
+                sync_lists,
+                getattr(settings, "trakt_watchlist_split", False),
+                None,
+                history_end,
+            )
+
+            print(_trakt_import_summary(job_id, "export import", stats))
+            from routers.sync import _fan_out_changes_to_other_connections
+            await _fan_out_changes_to_other_connections(db, user_id, None, _new_watched, _new_ratings, settings=settings, exclude_cloud_source=CollectionSource.trakt)
+            await db.execute(
+                update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.completed,
+                    stats=stats,
+                    processed_items=watched_processed,
+                )
+            )
+            await db.commit()
+
+        except SyncCancelled:
+            print(f"Trakt export import job {job_id} cancelled")
+            await db.execute(
+                update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.cancelled)
+            )
+            await db.commit()
+
+        except Exception as exc:
+            print(f"Trakt export import job {job_id} failed: {exc}")
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.failed, error_message=str(exc)
@@ -1062,6 +1255,71 @@ async def sync_trakt(
     background_tasks.add_task(run_trakt_sync, current_user.id, job.id, full)
     mode = "full resync" if full else "incremental sync"
     return {"status": "started", "job_id": job.id, "message": f"Trakt {mode} is running in the background"}
+
+
+@router.post("/import/upload")
+async def trakt_import_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    sync_watched: bool = Form(True),
+    sync_ratings: bool = Form(True),
+    sync_lists: bool = Form(True),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Import watched history, ratings, and/or lists from a Trakt data export zip.
+
+    Unlike /trakt/sync, this doesn't require a Trakt API app (client ID/secret) —
+    Trakt now requires a VIP subscription to create one, so this is the only way
+    non-VIP users can get their Trakt data into Scrob. What to import is chosen
+    per-upload (sync_watched/sync_ratings/sync_lists) rather than read from the
+    trakt_sync_* preferences, which only gate the continuous OAuth pull.
+    """
+    if not (file.filename or "").lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Only .zip export files are accepted.")
+
+    if not (sync_watched or sync_ratings or sync_lists):
+        raise HTTPException(status_code=400, detail="Select at least one item to import.")
+
+    # Read in bounded chunks rather than a single file.read() — otherwise an
+    # oversized request body gets buffered into memory in full before the zip
+    # is ever opened, regardless of what parse_trakt_export's own caps enforce.
+    chunks: list[bytes] = []
+    total_read = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total_read += len(chunk)
+        if total_read > MAX_TOTAL_SIZE:
+            raise HTTPException(status_code=413, detail="Export file is too large to import.")
+        chunks.append(chunk)
+    content = b"".join(chunks)
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        export_data = parse_trakt_export(content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
+    settings = result.scalar_one_or_none()
+    _tmdb_key = settings.tmdb_api_key if settings else None
+    if not _tmdb_key:
+        _gs_r = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
+        _gs = _gs_r.scalar_one_or_none()
+        _tmdb_key = _gs.tmdb_api_key if _gs else None
+    if not _tmdb_key:
+        raise HTTPException(status_code=400, detail="TMDB API key required for import")
+
+    job = SyncJob(user_id=current_user.id, source=CollectionSource.trakt, status=SyncStatus.pending, job_type="import")
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    background_tasks.add_task(run_trakt_export_sync, current_user.id, job.id, export_data, sync_watched, sync_ratings, sync_lists)
+    return {"status": "started", "job_id": job.id, "message": "Trakt export import is running in the background"}
 
 
 async def _run_trakt_push(user_id: int, job_id: int) -> None:

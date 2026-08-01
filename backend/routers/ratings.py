@@ -11,7 +11,7 @@ from models.media import Media
 from models.ratings import Rating
 from models.base import MediaType
 from models.users import UserSettings
-from dependencies import get_current_user
+from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
 from core.enrichment import enrich_media
 
@@ -155,7 +155,7 @@ async def submit_rating(
 @router.get("")
 async def get_ratings(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(Rating, Media)
@@ -170,7 +170,7 @@ async def get_ratings(
 async def get_media_rating(
     media_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(Rating, Media)
