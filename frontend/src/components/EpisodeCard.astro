@@ -17,7 +17,7 @@ const sxe =
 const isSeries = item.type === "series";
 
 const href =
-  item.show_tmdb_id && item.season_number != null && item.episode_number != null
+  !item.tvdb_sourced && item.show_tmdb_id && item.season_number != null && item.episode_number != null
     ? `/show/${item.show_tmdb_id}/season/${item.season_number}/${item.episode_number}`
     : item.show_tvdb_id && item.season_number != null && item.episode_number != null
       ? `/show/tvdb/${item.show_tvdb_id}/season/${item.season_number}/${item.episode_number}`
@@ -49,7 +49,9 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
   data-tmdb-id={String(item.tmdb_id)}
   data-media-type={item.type}
   data-show-tmdb-id={item.show_tmdb_id ? String(item.show_tmdb_id) : ""}
+  data-show-tvdb-id={item.show_tvdb_id ? String(item.show_tvdb_id) : ""}
   data-season={item.season_number != null ? String(item.season_number) : ""}
+  data-episode-number={item.episode_number != null ? String(item.episode_number) : ""}
 >
   {href ? (
     <a href={href} class="block">

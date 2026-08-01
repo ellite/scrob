@@ -217,6 +217,7 @@ async def admin_heal_metadata(
 async def run_admin_heal(api_key: str, user_id: int | None = None, job_id: int | None = None):
     from models.show import Show
     from routers.sync import batch_enrich_items
+    from core.enrichment import is_unmapped_tvdb_episode
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         async def _update_job(**kwargs):
@@ -238,7 +239,13 @@ async def run_admin_heal(api_key: str, user_id: int | None = None, job_id: int |
             items = coll_q.scalars().all()
 
             movies = [m for m in items if m.media_type == MediaType.movie and m.tmdb_id]
-            episodes = [m for m in items if m.media_type == MediaType.episode and m.show_id and m.season_number is not None and m.episode_number is not None]
+            # Episodes enriched from TVDB (see #101) have no real TMDB
+            # counterpart to re-fetch — retrying would just 404 every time.
+            episodes = [
+                m for m in items
+                if m.media_type == MediaType.episode and m.show_id and m.season_number is not None
+                and m.episode_number is not None and not is_unmapped_tvdb_episode(m)
+            ]
 
             if not movies and not episodes:
                 print("Admin heal: nothing to fix server-wide")

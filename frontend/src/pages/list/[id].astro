@@ -676,7 +676,9 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
         data-tmdb-id="${media.tmdb_id}"
         data-media-type="${esc(media.type)}"
         data-show-tmdb-id="${media.show_tmdb_id ?? ''}"
+        data-show-tvdb-id="${media.show_tvdb_id ?? ''}"
         data-season="${media.season_number ?? ''}"
+        data-episode-number="${media.episode_number ?? ''}"
       >
         <a href="${esc(href)}" class="block">
           <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300"${media.adult ? ' data-adult="true"' : ''}>

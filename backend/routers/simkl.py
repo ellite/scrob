@@ -17,7 +17,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import simkl as simkl_client
-from core.enrichment import enrich_media
+from core.enrichment import enrich_media, is_unmapped_tvdb_episode
 from db import get_db, engine
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
@@ -697,7 +697,7 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
             if settings.simkl_push_watched:
                 for mid in watched_ids:
                     media = media_by_id.get(mid)
-                    if not media or not media.tmdb_id:
+                    if not media or not media.tmdb_id or is_unmapped_tvdb_episode(media):
                         continue
                     # Simkl has no unknown-date representation, and watched_at=None
                     # means "stamp as now" on its side — skip rather than fabricate.
@@ -714,7 +714,7 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
             if settings.simkl_push_ratings:
                 for mid, rating in ratings_map.items():
                     media = media_by_id.get(mid)
-                    if not media or not media.tmdb_id:
+                    if not media or not media.tmdb_id or is_unmapped_tvdb_episode(media):
                         continue
                     if media.media_type == MediaType.movie:
                         push_tasks.append(simkl_client.set_movie_rating(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, rating))

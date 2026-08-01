@@ -18,7 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import trakt as trakt_client
-from core.enrichment import enrich_media
+from core.enrichment import enrich_media, is_unmapped_tvdb_episode
 from core.trakt_export import MAX_TOTAL_SIZE, TraktExportData, parse_trakt_export
 from db import get_db, engine
 from dependencies import get_current_user
@@ -1428,6 +1428,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                         and media.show_id
                         and media.season_number is not None
                         and media.episode_number is not None
+                        and not is_unmapped_tvdb_episode(media)
                     ):
                         show = shows_by_id.get(media.show_id)
                         if show and show.tmdb_id:
@@ -1515,6 +1516,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                         and media.show_id
                         and media.season_number is not None
                         and media.episode_number is not None
+                        and not is_unmapped_tvdb_episode(media)
                     ):
                         show = shows_by_id.get(media.show_id)
                         if show and show.tmdb_id:

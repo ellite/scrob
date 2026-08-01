@@ -285,6 +285,7 @@ class WatchEventCreate(BaseModel):
     watched_at: Optional[datetime] = None  # omitted = now; explicit null = unknown date
     completed: bool = True
     series_tmdb_id: Optional[int] = None
+    series_tvdb_id: Optional[int] = None  # lets the show be linked to TVDB (see #101) without requiring a prior visit to its TVDB page
     season_number: Optional[int] = None
     episode_number: Optional[int] = None
 

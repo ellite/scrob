@@ -621,9 +621,13 @@ class StremioCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         files_result = SimpleNamespace(
             scalars=lambda: SimpleNamespace(all=lambda: []),
         )
+        movie = Media(id=10, tmdb_id=603, media_type=MediaType.movie, title="The Matrix")
+        stremio_media_result = SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: [movie]),
+        )
         db = SimpleNamespace(
             execute=AsyncMock(
-                side_effect=[connection_result, settings_result, files_result],
+                side_effect=[connection_result, settings_result, files_result, stremio_media_result],
             ),
             commit=AsyncMock(),
         )

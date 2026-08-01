@@ -604,6 +604,8 @@ def _extract_show_content_rating(data: dict, country: str = "US") -> str | None:
 
 
 def format_media(media: Media) -> dict:
+    from core.enrichment import is_unmapped_tvdb_episode
+
     cast = []
     raw_cast = (media.tmdb_data or {}).get("cast", [])
     for c in raw_cast:
@@ -639,6 +641,7 @@ def format_media(media: Media) -> dict:
         "show_tvdb_id": media.show.tvdb_id if media.show else None,
         "show_poster_path": media.show.poster_path if media.show else None,
         "show_backdrop_path": media.show.backdrop_path if media.show else None,
+        "tvdb_sourced": is_unmapped_tvdb_episode(media),
         "genres": (media.tmdb_data or {}).get("genres", []),
         "cast": cast[:12],
         "collection": (media.tmdb_data or {}).get("collection"),
@@ -2607,6 +2610,62 @@ async def _resolve_season_episodes(
     return result
 
 
+async def _resolve_season_episodes_from_tvdb(
+    db: AsyncSession, show: "ShowModel", tvdb_id: int, season_number: int, tvdb_key: str
+) -> list:
+    """TVDB equivalent of _resolve_season_episodes, for a season TMDB doesn't
+    have at all (see #101). Enriches new rows via enrich_episode_from_tvdb,
+    which stores the TVDB episode id as a disguised tmdb_id — see
+    core/enrichment.py for why that's safe."""
+    import core.tvdb as tvdb_client
+    from core.enrichment import enrich_episode_from_tvdb
+
+    try:
+        raw_eps = await tvdb_client.get_series_episodes(tvdb_id, season_number, tvdb_key)
+    except Exception:
+        q = await db.execute(
+            select(Media).where(
+                Media.show_id == show.id,
+                Media.media_type == MediaType.episode,
+                Media.season_number == season_number,
+            )
+        )
+        return q.scalars().all()
+
+    tvdb_eps = [tvdb_client.format_episode(e) for e in raw_eps]
+    if not tvdb_eps:
+        return []
+
+    existing_q = await db.execute(
+        select(Media).where(
+            Media.show_id == show.id,
+            Media.media_type == MediaType.episode,
+            Media.season_number == season_number,
+        )
+    )
+    existing_by_episode = {m.episode_number: m for m in existing_q.scalars().all()}
+
+    result: list[Media] = []
+    for ep in tvdb_eps:
+        ep_num = ep.get("episode_number")
+        if ep_num is None:
+            continue
+        media = existing_by_episode.get(ep_num)
+        if not media:
+            media = Media(
+                media_type=MediaType.episode,
+                season_number=season_number,
+                episode_number=ep_num,
+                show_id=show.id,
+            )
+            await enrich_episode_from_tvdb(media, ep)
+            db.add(media)
+        result.append(media)
+
+    await db.flush()
+    return result
+
+
 async def _collect_episodes(db: AsyncSession, user_id: int, episodes: list) -> int:
     """Insert Collection + CollectionFile(manual) for each episode, skipping existing ones."""
     from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -2689,25 +2748,44 @@ async def collect_season(
         )
         mappings = list(mapping_result.scalars().all())
         if not mappings:
-            raise HTTPException(status_code=400, detail="TVDB episode mapping is not available")
-        target_positions = {
-            (mapping.tmdb_season_number, mapping.tmdb_episode_number)
-            for mapping in mappings
-        }
-        episodes = []
-        for canonical_season in sorted({season for season, _ in target_positions}):
-            resolved = await _resolve_season_episodes(
-                db,
-                show,
-                body.series_tmdb_id,
-                canonical_season,
-                tmdb_key,
+            # No computed mapping. If TMDB doesn't have a season with this
+            # number at all, it's confidently absent (see #101): resolve
+            # straight from TVDB. Otherwise stay conservative — don't guess.
+            from core.enrichment import tmdb_season_covers
+
+            season_on_tmdb = any(
+                s.get("season_number") == body.season_number
+                for s in (show.tmdb_data or {}).get("seasons", [])
             )
-            episodes.extend(
-                episode
-                for episode in resolved
-                if (episode.season_number, episode.episode_number) in target_positions
+            if season_on_tmdb or not show.tvdb_id:
+                raise HTTPException(status_code=400, detail="TVDB episode mapping is not available")
+            from routers.shows import get_user_tvdb_key
+
+            tvdb_key = await get_user_tvdb_key(db, current_user.id)
+            if not tvdb_key:
+                raise HTTPException(status_code=400, detail="TVDB API key not configured")
+            episodes = await _resolve_season_episodes_from_tvdb(
+                db, show, show.tvdb_id, body.season_number, tvdb_key
             )
+        else:
+            target_positions = {
+                (mapping.tmdb_season_number, mapping.tmdb_episode_number)
+                for mapping in mappings
+            }
+            episodes = []
+            for canonical_season in sorted({season for season, _ in target_positions}):
+                resolved = await _resolve_season_episodes(
+                    db,
+                    show,
+                    body.series_tmdb_id,
+                    canonical_season,
+                    tmdb_key,
+                )
+                episodes.extend(
+                    episode
+                    for episode in resolved
+                    if (episode.season_number, episode.episode_number) in target_positions
+                )
     else:
         episodes = await _resolve_season_episodes(
             db,
@@ -2783,6 +2861,30 @@ async def collect_show(
         total_added += await _collect_episodes(db, current_user.id, episodes)
         collected_media_ids.update(episode.id for episode in episodes)
 
+    # Seasons TVDB has but TMDB doesn't (see #101) — only reachable once this
+    # show is linked to a TVDB id (set once the user visits its TVDB page).
+    if show.tvdb_id:
+        from routers.shows import get_user_tvdb_key
+        import core.tvdb as tvdb_client
+
+        tvdb_key = await get_user_tvdb_key(db, current_user.id)
+        if tvdb_key:
+            tmdb_season_numbers = set(season_numbers)
+            try:
+                tvdb_show_data = tvdb_client.format_series(await tvdb_client.get_series(show.tvdb_id, tvdb_key))
+            except Exception:
+                tvdb_show_data = None
+
+            if tvdb_show_data:
+                tvdb_only_seasons = [
+                    s["season_number"] for s in tvdb_show_data.get("seasons", [])
+                    if s.get("season_number") and s["season_number"] > 0 and s["season_number"] not in tmdb_season_numbers
+                ]
+                for sn in tvdb_only_seasons:
+                    episodes = await _resolve_season_episodes_from_tvdb(db, show, show.tvdb_id, sn, tvdb_key)
+                    total_added += await _collect_episodes(db, current_user.id, episodes)
+                    collected_media_ids.update(episode.id for episode in episodes)
+
     await db.commit()
     await _push_collection_change(db, current_user.id, collected_media_ids, added=True)
     return {"status": "ok", "count": total_added}
@@ -2854,8 +2956,19 @@ async def uncollect_season(
             for mapping in mapping_result.scalars().all()
         ]
         if not positions:
-            return {"status": "ok"}
-        media_filters.append(or_(*positions))
+            # No computed mapping. If TMDB doesn't have a season with this
+            # number at all, these episodes were tracked via the raw TVDB
+            # numbers (see #101) — fall back to that. Otherwise stay
+            # conservative and no-op rather than guess positions.
+            season_on_tmdb = any(
+                s.get("season_number") == season_number
+                for s in (show.tmdb_data or {}).get("seasons", [])
+            )
+            if season_on_tmdb:
+                return {"status": "ok"}
+            media_filters.append(Media.season_number == season_number)
+        else:
+            media_filters.append(or_(*positions))
     else:
         media_filters.append(Media.season_number == season_number)
     episodes_q = await db.execute(select(Media.id).where(*media_filters))

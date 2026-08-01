@@ -12,7 +12,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import mdblist as mdblist_client
-from core.enrichment import enrich_media
+from core.enrichment import enrich_media, is_unmapped_tvdb_episode
 from db import engine, get_db
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
@@ -296,6 +296,11 @@ def _payload_item(
         if not show or not show.tmdb_id:
             return None
         if media.season_number is None or media.episode_number is None:
+            return None
+        # Episode enriched from TVDB, no real TMDB counterpart (see #101) —
+        # its season/episode numbers are raw TVDB numbers, not safe to send
+        # as if they were positions under show.tmdb_id.
+        if is_unmapped_tvdb_episode(media):
             return None
         episode: dict[str, Any] = {"number": media.episode_number}
         if watched_at is not None:

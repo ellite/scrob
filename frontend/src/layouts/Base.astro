@@ -484,7 +484,7 @@ const bottomNavItem = (active: boolean) =>
           ? `S${String(m.season_number).padStart(2,'0')}E${String(m.episode_number).padStart(2,'0')} · ${m.title}`
           : null;
         const href = isEpisode
-          ? (m.show_tmdb_id && m.season_number && m.episode_number
+          ? (!m.tvdb_sourced && m.show_tmdb_id && m.season_number && m.episode_number
               ? `/show/${m.show_tmdb_id}/season/${m.season_number}/${m.episode_number}`
               : m.show_tvdb_id && m.season_number && m.episode_number
                 ? `/show/tvdb/${m.show_tvdb_id}/season/${m.season_number}/${m.episode_number}`
@@ -603,6 +603,19 @@ const bottomNavItem = (active: boolean) =>
       });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
+    }
+
+    // apiFetch's Error.message is the raw response body — usually a JSON
+    // {"detail": "..."} string from FastAPI, sometimes plain text.
+    function alertFromError(err: any, fallback = 'Something went wrong'): void {
+      let msg = fallback;
+      try {
+        const data = JSON.parse(err.message);
+        msg = data.detail || msg;
+      } catch {
+        if (err.message) msg = err.message;
+      }
+      alert(msg);
     }
 
     // ── Watched-at picker ──────────────────────────────────────────────────────
@@ -988,11 +1001,12 @@ const bottomNavItem = (active: boolean) =>
     let _watchHistoryMediaType = '';
     let _watchHistoryDateMode: 'now' | 'custom' | 'unknown' = 'now';
     let _watchHistoryShowTmdbId = '';
+    let _watchHistoryShowTvdbId = '';
     let _watchHistorySeasonNumber = '';
     let _watchHistoryEpisodeNumber = '';
     // Set when the modal is being used to mark a whole season/show watched
     // (no single item's history applies) rather than logging one item's play.
-    let _watchHistoryBulkMode: { kind: 'season' | 'show'; seriesId: string; season: string; episodeOrder: string; btn: HTMLElement } | null = null;
+    let _watchHistoryBulkMode: { kind: 'season' | 'show'; seriesId: string; season: string; episodeOrder: string; btn: HTMLElement; tvdbId: string } | null = null;
 
     const toLocal = (d: Date) => {
       const p = (n: number) => String(n).padStart(2, '0');
@@ -1021,11 +1035,12 @@ const bottomNavItem = (active: boolean) =>
       dateInput.max = toLocal(new Date());
     }
 
-    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '') {
+    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '', showTvdbId = '') {
       _watchHistoryBulkMode = null;
       _watchHistoryTmdbId = tmdbId;
       _watchHistoryMediaType = mediaType;
       _watchHistoryShowTmdbId = showTmdbId;
+      _watchHistoryShowTvdbId = showTvdbId;
       _watchHistorySeasonNumber = seasonNumber;
       _watchHistoryEpisodeNumber = episodeNumber;
 
@@ -1039,8 +1054,8 @@ const bottomNavItem = (active: boolean) =>
       await loadWatchHistoryEvents();
     }
 
-    function openBulkWatchModal(btn: HTMLElement, kind: 'season' | 'show', seriesId: string, season = '', episodeOrder = '') {
-      _watchHistoryBulkMode = { kind, seriesId, season, episodeOrder, btn };
+    function openBulkWatchModal(btn: HTMLElement, kind: 'season' | 'show', seriesId: string, season = '', episodeOrder = '', tvdbId = '') {
+      _watchHistoryBulkMode = { kind, seriesId, season, episodeOrder, btn, tvdbId };
 
       document.getElementById('watch-history-modal-title')!.textContent = kind === 'season' ? 'Mark Season Watched' : 'Mark Show Watched';
       document.getElementById('watch-history-modal-events')!.classList.add('hidden');
@@ -1208,7 +1223,7 @@ const bottomNavItem = (active: boolean) =>
         logBtn.textContent = 'Saving…';
 
         if (_watchHistoryBulkMode) {
-          const { kind, seriesId, season, episodeOrder, btn: sourceBtn } = _watchHistoryBulkMode;
+          const { kind, seriesId, season, episodeOrder, btn: sourceBtn, tvdbId: bulkTvdbId } = _watchHistoryBulkMode;
           try {
             if (kind === 'season') {
               const body: Record<string, unknown> = {
@@ -1217,14 +1232,20 @@ const bottomNavItem = (active: boolean) =>
                 watched_at: watchedAt,
               };
               if (episodeOrder === 'tvdb') body.episode_order = 'tvdb';
+              if (bulkTvdbId) body.series_tvdb_id = Number(bulkTvdbId);
               await apiFetch('/history/season', 'POST', body);
               cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, season, episodeOrder, true);
             } else {
-              await apiFetch('/history/show-all', 'POST', { series_tmdb_id: Number(seriesId), watched_at: watchedAt });
+              const body: Record<string, unknown> = { series_tmdb_id: Number(seriesId), watched_at: watchedAt };
+              if (bulkTvdbId) body.series_tvdb_id = Number(bulkTvdbId);
+              await apiFetch('/history/show-all', 'POST', body);
               cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, '', '', true);
             }
             closeWatchHistoryModal();
-          } catch { logBtn.textContent = idleLabel; }
+          } catch (err) {
+            logBtn.textContent = idleLabel;
+            alertFromError(err, 'Failed to mark as watched');
+          }
           logBtn.disabled = false;
           return;
         }
@@ -1238,6 +1259,7 @@ const bottomNavItem = (active: boolean) =>
           };
           if (_watchHistoryMediaType === 'episode' && _watchHistoryShowTmdbId) {
             watchBody.series_tmdb_id = Number(_watchHistoryShowTmdbId);
+            if (_watchHistoryShowTvdbId) watchBody.series_tvdb_id = Number(_watchHistoryShowTvdbId);
             if (_watchHistorySeasonNumber) watchBody.season_number = Number(_watchHistorySeasonNumber);
             if (_watchHistoryEpisodeNumber) watchBody.episode_number = Number(_watchHistoryEpisodeNumber);
           }
@@ -1249,7 +1271,10 @@ const bottomNavItem = (active: boolean) =>
           (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
           (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
           input.classList.add('hidden');
-        } catch { logBtn.textContent = idleLabel; }
+        } catch (err) {
+          logBtn.textContent = idleLabel;
+          alertFromError(err, 'Failed to mark as watched');
+        }
         logBtn.disabled = false;
       });
     })();
@@ -1273,7 +1298,9 @@ const bottomNavItem = (active: boolean) =>
 
       const tmdbIdRaw = card.dataset.tmdbId;
       const tmdbId = tmdbIdRaw && tmdbIdRaw !== 'null' ? tmdbIdRaw : '';
-      const mediaId = card.dataset.id || '';
+      // ActionBar cards set data-media-id; MediaCard grid cards set data-id
+      // (same purpose, mismatched attribute name) — check both.
+      const mediaId = card.dataset.mediaId || card.dataset.id || '';
       const mediaType = card.dataset.mediaType!;
       const episodeOrder = card.dataset.episodeOrder || 'tmdb';
 
@@ -1286,7 +1313,7 @@ const bottomNavItem = (active: boolean) =>
         const seriesId = showTmdbId || tmdbId;
 
         if (mediaType === 'movie' || mediaType === 'episode') {
-          await openWatchHistoryModal(btn, tmdbId, mediaType, card.dataset.showTmdbId || '', card.dataset.season || '', card.dataset.episodeNumber || '');
+          await openWatchHistoryModal(btn, tmdbId, mediaType, card.dataset.showTmdbId || '', card.dataset.season || '', card.dataset.episodeNumber || '', card.dataset.showTvdbId || '');
           return;
         }
 
@@ -1294,11 +1321,11 @@ const bottomNavItem = (active: boolean) =>
         // the modal's own log button, which POSTs to /history/season or /history/show-all
         // once the user confirms (see the watch-history-log-btn handler below).
         if (mediaType === 'series' && season && !isWatched) {
-          openBulkWatchModal(btn, 'season', seriesId, season, episodeOrder);
+          openBulkWatchModal(btn, 'season', seriesId, season, episodeOrder, card.dataset.tvdbId || '');
           return;
         }
         if (mediaType === 'series' && !season && !isWatched) {
-          openBulkWatchModal(btn, 'show', tmdbId);
+          openBulkWatchModal(btn, 'show', tmdbId, '', '', card.dataset.tvdbId || '');
           return;
         }
 
@@ -1427,15 +1454,7 @@ const bottomNavItem = (active: boolean) =>
         } catch (err: any) {
           btn.innerHTML = originalContent;
           btn.classList.remove('pointer-events-none');
-          // Try to parse error message
-          let msg = 'Request failed';
-          try {
-             const data = JSON.parse(err.message);
-             msg = data.detail || msg;
-          } catch {
-             if (err.message) msg = err.message;
-          }
-          alert(msg);
+          alertFromError(err, 'Request failed');
         }
       }
     });

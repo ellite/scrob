@@ -15,6 +15,7 @@ from models.users import UserSettings
 from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
 from routers.media import enrich_with_state
+from core.enrichment import is_unmapped_tvdb_episode
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +86,14 @@ def _format_item(item: ListItem) -> dict:
             "adult": media.adult,
             "library": None,
             "in_library": False,
+            "tvdb_sourced": is_unmapped_tvdb_episode(media),
         },
     }
     if media.media_type == MediaType.episode and media.show:
         data["media"]["show_title"] = media.show.title
         data["media"]["show_poster_path"] = media.show.poster_path
         data["media"]["show_tmdb_id"] = media.show.tmdb_id
+        data["media"]["show_tvdb_id"] = media.show.tvdb_id
     return data
 
 

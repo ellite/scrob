@@ -105,7 +105,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   {nextUp.length > 0 && !settings?.minimalist_next_up && (() => {
     const hero = nextUp[0];
     const rest = nextUp.slice(1);
-    const heroHref = hero.show_tmdb_id && hero.season_number != null && hero.episode_number != null
+    const heroHref = !hero.tvdb_sourced && hero.show_tmdb_id && hero.season_number != null && hero.episode_number != null
       ? `/show/${hero.show_tmdb_id}/season/${hero.season_number}/${hero.episode_number}`
       : hero.show_tvdb_id && hero.season_number != null && hero.episode_number != null
         ? `/show/tvdb/${hero.show_tvdb_id}/season/${hero.season_number}/${hero.episode_number}`
@@ -406,7 +406,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
 
         function episodeCardHtml(item) {
           const isSeries = item.type === 'series';
-          const href = item.show_tmdb_id && item.season_number != null && item.episode_number != null
+          const href = !item.tvdb_sourced && item.show_tmdb_id && item.season_number != null && item.episode_number != null
             ? `/show/${item.show_tmdb_id}/season/${item.season_number}/${item.episode_number}`
             : item.show_tvdb_id && item.season_number != null && item.episode_number != null
               ? `/show/tvdb/${item.show_tvdb_id}/season/${item.season_number}/${item.episode_number}`

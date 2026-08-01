@@ -68,7 +68,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
 
   function buildCard(item) {
     const isHidden = item.next_up_hidden === true;
-    const href = item.show_tmdb_id && item.season_number != null && item.episode_number != null
+    const href = !item.tvdb_sourced && item.show_tmdb_id && item.season_number != null && item.episode_number != null
       ? `/show/${item.show_tmdb_id}/season/${item.season_number}/${item.episode_number}`
       : item.show_tvdb_id && item.season_number != null && item.episode_number != null
         ? `/show/tvdb/${item.show_tvdb_id}/season/${item.season_number}/${item.episode_number}`

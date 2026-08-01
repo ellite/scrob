@@ -2,6 +2,60 @@ from core import tmdb
 from models.media import Media, MediaType
 
 
+def tmdb_season_covers(show_tmdb_data: dict | None, season_number: int, episode_number: int) -> bool:
+    """True if the show's cached TMDB season list (shape: [{season_number,
+    episode_count, name}, ...], as stored on Show.tmdb_data) plausibly has
+    this season/episode position. Used to decide whether a TVDB episode with
+    no local mapping genuinely has no TMDB counterpart (confidently absent,
+    safe to enrich from TVDB directly) versus might still exist on TMDB but
+    hasn't been matched yet (ambiguous — don't guess)."""
+    if not show_tmdb_data:
+        return False
+    for season in show_tmdb_data.get("seasons", []):
+        if season.get("season_number") == season_number:
+            return episode_number <= (season.get("episode_count") or 0)
+    return False
+
+
+def is_unmapped_tvdb_episode(media: Media) -> bool:
+    """True if this episode Media row was created from TVDB data because it
+    has no TMDB counterpart — its tmdb_id is a TVDB episode id in disguise
+    (see enrich_episode_from_tvdb), not a real TMDB id. Must be excluded from
+    anything sent to services that expect real TMDB identifiers (Trakt,
+    Simkl, MDBList)."""
+    return (
+        media.media_type == MediaType.episode
+        and isinstance(media.tmdb_data, dict)
+        and media.tmdb_data.get("source") == "tvdb"
+    )
+
+
+async def enrich_episode_from_tvdb(media: Media, tvdb_episode_data: dict) -> None:
+    """Populate a bare episode Media record from TVDB data (shape: core.tvdb's
+    format_episode output) for an episode that has no TMDB counterpart.
+
+    Stores the TVDB episode id in tmdb_id — the same convention already used
+    by the "resolve a fully-unmatched show to TVDB" flow (routers/sync.py) —
+    so every tmdb_id-keyed consumer (ActionBar, ratings, collection, next-up)
+    works unchanged, since none of them re-validate tmdb_id against a live
+    TMDB call. tmdb_data.source is tagged "tvdb" so is_unmapped_tvdb_episode
+    can identify and exclude these rows from outbound TMDB-id-based pushes.
+    """
+    tvdb_episode_id = tvdb_episode_data.get("tvdb_id")
+    if tvdb_episode_id:
+        media.tmdb_id = tvdb_episode_id
+    media.title = tvdb_episode_data.get("name") or media.title
+    media.overview = tvdb_episode_data.get("overview")
+    if tvdb_episode_data.get("image_url"):
+        media.poster_path = tvdb_episode_data["image_url"]
+    media.release_date = tvdb_episode_data.get("air_date")
+    media.tmdb_data = {
+        "runtime": tvdb_episode_data.get("runtime"),
+        "tvdb_episode_id": tvdb_episode_id,
+        "source": "tvdb",
+    }
+
+
 def _extract_release_dates(results: list) -> dict:
     us_entry = next((e for e in results if e.get("iso_3166_1") == "US"), None)
     digital = physical = None

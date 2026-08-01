@@ -558,6 +558,10 @@ export interface MediaItem {
   show_tvdb_id?: number | null;
   show_poster_path?: string | null;
   show_backdrop_path?: string | null;
+  // True when this episode has no real TMDB counterpart and was enriched
+  // from TVDB instead (see #101) — its season/episode numbers are TVDB's
+  // raw numbers, not TMDB's, regardless of whether show_tmdb_id is set.
+  tvdb_sourced?: boolean;
   next_up_hidden?: boolean;
   known_for_department?: string | null;
   in_library?: boolean;
@@ -661,6 +665,7 @@ export interface TvdbEpisode {
   show_tmdb_id: number | null;
   tmdb_season_number: number;
   tmdb_episode_number: number;
+  unmatched: boolean;
   season_number: number;
   episode_number: number;
   name: string | null;
@@ -681,6 +686,7 @@ export interface TvdbEpisodeDetail {
   show_tmdb_id: number | null;
   tmdb_season_number: number;
   tmdb_episode_number: number;
+  unmatched: boolean;
   season_number: number;
   episode_number: number;
   name: string | null;

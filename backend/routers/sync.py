@@ -27,7 +27,7 @@ from models.base import MediaType, CollectionSource
 from models.global_settings import GlobalSettings
 from core import jellyfin, emby, plex, nuvio, stremio, tmdb
 import core.trakt as trakt_client
-from core.enrichment import enrich_media
+from core.enrichment import enrich_media, is_unmapped_tvdb_episode
 from core.image_cache import pre_cache_all_collected_bg
 
 from dependencies import get_current_user, get_current_user_or_api_key
@@ -5214,7 +5214,13 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
             items = coll_q.scalars().all()
 
             movies = [m for m in items if m.media_type == MediaType.movie and m.tmdb_id]
-            episodes = [m for m in items if m.media_type == MediaType.episode and m.show_id and m.season_number is not None and m.episode_number is not None]
+            # Episodes enriched from TVDB (see #101) have no real TMDB
+            # counterpart to re-fetch — retrying would just 404 every time.
+            episodes = [
+                m for m in items
+                if m.media_type == MediaType.episode and m.show_id and m.season_number is not None
+                and m.episode_number is not None and not is_unmapped_tvdb_episode(m)
+            ]
 
             if movies or episodes:
                 print(f"Heal: {len(movies)} movies, {len(episodes)} episodes to re-enrich for user {user_id}")

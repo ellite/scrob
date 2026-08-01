@@ -25,6 +25,7 @@ from dependencies import get_current_user, get_current_user_or_api_key
 from core import tmdb
 from core import tvdb as tvdb_client
 from core.episode_order import ensure_episode_order_mapping, get_episode_order, validate_episode_order
+from core.enrichment import tmdb_season_covers, enrich_episode_from_tvdb
 from core.translations import (
     get_user_metadata_language,
     get_media_translations,
@@ -1594,6 +1595,52 @@ async def get_tvdb_show(
         )
     )
     show = show_result.scalar_one_or_none()
+    if show is None:
+        if series_tmdb_id:
+            tmdb_api_key_for_show = await get_user_tmdb_key(db, current_user.id)
+            from routers.webhooks import _find_or_create_show
+            show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key_for_show)
+        else:
+            # Show has no TMDB presence at all — mirrors the "resolve an
+            # unmatched show to TVDB" flow in routers/sync.py.
+            show = ShowModel(
+                tvdb_id=tvdb_id,
+                tmdb_id=None,
+                title=show_data.get("title") or f"TVDB #{tvdb_id}",
+                original_title=show_data.get("original_title"),
+                overview=show_data.get("overview"),
+                poster_path=show_data.get("poster_path"),
+                backdrop_path=show_data.get("backdrop_path"),
+                status=show_data.get("status"),
+                first_air_date=show_data.get("first_air_date"),
+                last_air_date=show_data.get("last_air_date"),
+                tmdb_data={"seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
+            )
+            db.add(show)
+            await db.flush()
+
+    # Link this Show to its TVDB id (see #101 — mark-as-watched/collect
+    # endpoints only ever look shows up by tmdb_id, so without this they can
+    # never fall back to TVDB for episodes TMDB doesn't have). Also backfill
+    # poster/backdrop/overview from TVDB when TMDB's own entry lacks them —
+    # common for a sparsely-listed show. Never overwrite an existing
+    # different tvdb_id link (it's unique).
+    show_changed = False
+    if not show.tvdb_id:
+        show.tvdb_id = tvdb_id
+        show_changed = True
+    if not show.poster_path and show_data.get("poster_path"):
+        show.poster_path = show_data["poster_path"]
+        show_changed = True
+    if not show.backdrop_path and show_data.get("backdrop_path"):
+        show.backdrop_path = show_data["backdrop_path"]
+        show_changed = True
+    if not show.overview and show_data.get("overview"):
+        show.overview = show_data["overview"]
+        show_changed = True
+    if show_changed:
+        await db.flush()
+        await db.commit()
 
     mapping_result = await db.execute(
         select(EpisodeOrderMapping).where(
@@ -1822,6 +1869,52 @@ async def get_tvdb_season(
         )
     )
     show = show_result.scalar_one_or_none()
+    if show is None:
+        if series_tmdb_id:
+            tmdb_api_key_for_show = await get_user_tmdb_key(db, current_user.id)
+            from routers.webhooks import _find_or_create_show
+            show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key_for_show)
+        else:
+            # Show has no TMDB presence at all — mirrors the "resolve an
+            # unmatched show to TVDB" flow in routers/sync.py.
+            show = ShowModel(
+                tvdb_id=tvdb_id,
+                tmdb_id=None,
+                title=show_data.get("title") or f"TVDB #{tvdb_id}",
+                original_title=show_data.get("original_title"),
+                overview=show_data.get("overview"),
+                poster_path=show_data.get("poster_path"),
+                backdrop_path=show_data.get("backdrop_path"),
+                status=show_data.get("status"),
+                first_air_date=show_data.get("first_air_date"),
+                last_air_date=show_data.get("last_air_date"),
+                tmdb_data={"seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
+            )
+            db.add(show)
+            await db.flush()
+
+    # Link this Show to its TVDB id (see #101 — mark-as-watched/collect
+    # endpoints only ever look shows up by tmdb_id, so without this they can
+    # never fall back to TVDB for episodes TMDB doesn't have). Also backfill
+    # poster/backdrop/overview from TVDB when TMDB's own entry lacks them —
+    # common for a sparsely-listed show. Never overwrite an existing
+    # different tvdb_id link (it's unique).
+    show_changed = False
+    if not show.tvdb_id:
+        show.tvdb_id = tvdb_id
+        show_changed = True
+    if not show.poster_path and show_data.get("poster_path"):
+        show.poster_path = show_data["poster_path"]
+        show_changed = True
+    if not show.backdrop_path and show_data.get("backdrop_path"):
+        show.backdrop_path = show_data["backdrop_path"]
+        show_changed = True
+    if not show.overview and show_data.get("overview"):
+        show.overview = show_data["overview"]
+        show_changed = True
+    if show_changed:
+        await db.flush()
+        await db.commit()
 
     mapping_result = await db.execute(
         select(EpisodeOrderMapping).where(
@@ -1874,8 +1967,10 @@ async def get_tvdb_season(
             if episode.season_number is not None and episode.episode_number is not None
         }
 
-    mapped_rows: list[tuple[dict, EpisodeOrderMapping | None, Media | None]] = []
+    mapped_rows: list[tuple[dict, EpisodeOrderMapping | None, Media | None, bool]] = []
+    created_any = False
     for episode in eps:
+        unmatched_ep = False
         mapping = mapping_by_tvdb_id.get(episode.get("tvdb_id"))
         if not mapping:
             mapping = mapping_by_position.get(
@@ -1891,11 +1986,36 @@ async def get_tvdb_season(
             local_episode = local_ep_map.get(
                 (season_number, episode.get("episode_number"))
             )
-        mapped_rows.append((episode, mapping, local_episode))
+            ep_num = episode.get("episode_number")
+            if not local_episode and ep_num is not None:
+                if show.tmdb_id and tmdb_season_covers(show.tmdb_data, season_number, ep_num):
+                    # TMDB plausibly has this episode too, just not matched
+                    # yet — don't guess; point at "Refresh Metadata" instead.
+                    unmatched_ep = True
+                else:
+                    # Confidently absent from TMDB (see #101) — create/enrich
+                    # now so this listing (and mark-as-watched from it) is
+                    # accurate immediately, not just after visiting the
+                    # episode's own detail page.
+                    local_episode = Media(
+                        media_type=MediaType.episode,
+                        show_id=show.id,
+                        season_number=season_number,
+                        episode_number=ep_num,
+                    )
+                    await enrich_episode_from_tvdb(local_episode, episode)
+                    db.add(local_episode)
+                    await db.flush()
+                    local_ep_map[(season_number, ep_num)] = local_episode
+                    created_any = True
+        mapped_rows.append((episode, mapping, local_episode, unmatched_ep))
+
+    if created_any:
+        await db.commit()
 
     local_media_ids = list({
         local_episode.id
-        for _, _, local_episode in mapped_rows
+        for _, _, local_episode, _ in mapped_rows
         if local_episode
     })
     watched_ep_ids: set[int] = set()
@@ -1950,7 +2070,7 @@ async def get_tvdb_season(
             season_user_rating = season_rating_result.scalar_one_or_none()
 
     enriched_eps = []
-    for episode, mapping, local_episode in mapped_rows:
+    for episode, mapping, local_episode, unmatched_ep in mapped_rows:
         enriched_eps.append({
             **episode,
             "id": local_episode.id if local_episode else None,
@@ -1960,6 +2080,7 @@ async def get_tvdb_season(
             "show_tmdb_id": series_tmdb_id,
             "tmdb_season_number": mapping.tmdb_season_number if mapping else season_number,
             "tmdb_episode_number": mapping.tmdb_episode_number if mapping else episode.get("episode_number"),
+            "unmatched": unmatched_ep,
             "in_library": local_episode.id in collected_ep_ids if local_episode else False,
             "watched": local_episode.id in watched_ep_ids if local_episode else False,
             "user_rating": episode_ratings.get(local_episode.id) if local_episode else None,
@@ -2041,6 +2162,53 @@ async def get_tvdb_episode(
         )
     )
     show = show_result.scalar_one_or_none()
+    if show is None:
+        if series_tmdb_id:
+            tmdb_api_key = await get_user_tmdb_key(db, current_user.id)
+            from routers.webhooks import _find_or_create_show
+            show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key)
+        else:
+            # Show has no TMDB presence at all — mirrors the "resolve an
+            # unmatched show to TVDB" flow in routers/sync.py.
+            show = ShowModel(
+                tvdb_id=tvdb_id,
+                tmdb_id=None,
+                title=show_data.get("title") or f"TVDB #{tvdb_id}",
+                original_title=show_data.get("original_title"),
+                overview=show_data.get("overview"),
+                poster_path=show_data.get("poster_path"),
+                backdrop_path=show_data.get("backdrop_path"),
+                status=show_data.get("status"),
+                first_air_date=show_data.get("first_air_date"),
+                last_air_date=show_data.get("last_air_date"),
+                tmdb_data={"seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
+            )
+            db.add(show)
+            await db.flush()
+
+    # Link this Show to its TVDB id (found-via-tmdb_id and _find_or_create_show
+    # both leave it unset) so mark-as-watched/collect endpoints — which only
+    # ever look shows up by tmdb_id — can still fall back to TVDB for episodes
+    # TMDB doesn't have (see #101). Also backfill poster/backdrop/overview
+    # from TVDB when TMDB's own entry lacks them — common for a sparsely-
+    # listed show. Never overwrite an existing different tvdb_id link.
+    show_changed = False
+    if not show.tvdb_id:
+        show.tvdb_id = tvdb_id
+        show_changed = True
+    if not show.poster_path and show_data.get("poster_path"):
+        show.poster_path = show_data["poster_path"]
+        show_changed = True
+    if not show.backdrop_path and show_data.get("backdrop_path"):
+        show.backdrop_path = show_data["backdrop_path"]
+        show_changed = True
+    if not show.overview and show_data.get("overview"):
+        show.overview = show_data["overview"]
+        show_changed = True
+    if show_changed:
+        await db.flush()
+        await db.commit()
+
     mapping_result = await db.execute(
         select(EpisodeOrderMapping).where(
             EpisodeOrderMapping.series_tmdb_id == series_tmdb_id,
@@ -2054,8 +2222,51 @@ async def get_tvdb_episode(
         )
     ) if series_tmdb_id else None
     mapping = mapping_result.scalars().first() if mapping_result else None
-    canonical_season = mapping.tmdb_season_number if mapping else season_number
-    canonical_episode = mapping.tmdb_episode_number if mapping else episode_number
+
+    # No computed mapping — figure out whether this episode is confidently
+    # absent from TMDB (safe to enrich straight from TVDB and track locally)
+    # or merely unmapped-but-maybe-present (ambiguous; don't guess numbers).
+    unmatched = False
+    if mapping:
+        canonical_season = mapping.tmdb_season_number
+        canonical_episode = mapping.tmdb_episode_number
+    else:
+        if show.tmdb_id and tmdb_season_covers(show.tmdb_data, season_number, episode_number):
+            # TMDB plausibly has this episode too, just not matched yet — don't
+            # guess; the frontend points the user at the "refresh"/match action.
+            # (show.tmdb_id gates this: without it there's no real TMDB show to
+            # check against — show.tmdb_data may just be cached TVDB season
+            # data from the bare-show-creation branch above, which would
+            # trivially "cover" every TVDB episode and defeat this check.)
+            canonical_season = season_number
+            canonical_episode = episode_number
+            unmatched = True
+        else:
+            # Confidently absent from TMDB (issue #101's exact scenario) —
+            # create/enrich a local Media row keyed by the raw TVDB numbers so
+            # it can be watched/rated/collected like any other episode.
+            new_ep_q = await db.execute(
+                select(Media).where(
+                    Media.show_id == show.id,
+                    Media.media_type == MediaType.episode,
+                    Media.season_number == season_number,
+                    Media.episode_number == episode_number,
+                )
+            )
+            new_ep = new_ep_q.scalars().first()
+            if not new_ep:
+                new_ep = Media(
+                    media_type=MediaType.episode,
+                    show_id=show.id,
+                    season_number=season_number,
+                    episode_number=episode_number,
+                )
+                await enrich_episode_from_tvdb(new_ep, ep_data)
+                db.add(new_ep)
+                await db.flush()
+                await db.commit()
+            canonical_season = season_number
+            canonical_episode = episode_number
 
     in_library = False
     watched = False
@@ -2065,7 +2276,7 @@ async def get_tvdb_episode(
     library_info = None
     play_count = 0
 
-    if show:
+    if show and not unmatched:
         local_ep_q = await db.execute(
             select(Media).where(
                 Media.show_id == show.id,
@@ -2134,6 +2345,7 @@ async def get_tvdb_episode(
         "show_tmdb_id": series_tmdb_id,
         "tmdb_season_number": canonical_season,
         "tmdb_episode_number": canonical_episode,
+        "unmatched": unmatched,
         "in_library": in_library,
         "watched": watched,
         "user_rating": user_rating,
