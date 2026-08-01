@@ -854,7 +854,11 @@ async def poll_stremio_link(
             MediaServerConnection.type == "stremio",
         )
     )
-    if existing_result.scalar_one_or_none():
+    existing = existing_result.scalar_one_or_none()
+    # A reconnect passes the id of the (e.g. disconnected) connection it's
+    # replacing the auth key on; anything else with an existing row present
+    # is the "add new" flow hitting Scrob's one-Stremio-connection limit.
+    if existing and existing.id != body.connection_id:
         raise HTTPException(status_code=409, detail="Stremio is already connected")
 
     try:
@@ -864,6 +868,20 @@ async def poll_stremio_link(
         account = await stremio.validate_auth_key(auth_key)
     except stremio.StremioAPIError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    if existing:
+        # Reconnecting: replace the auth key in place and keep the user's
+        # existing sync/push settings — this request's defaults only apply
+        # to a brand-new connection.
+        existing.token = auth_key
+        existing.server_user_id = str(account["_id"])
+        existing.server_username = str(account.get("email") or "Stremio")
+        await db.commit()
+        await db.refresh(existing)
+        return {
+            "status": "connected",
+            "connection": schemas.MediaServerConnectionResponse.model_validate(existing),
+        }
 
     connection = MediaServerConnection(
         user_id=current_user.id,

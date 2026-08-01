@@ -211,6 +211,23 @@ if (me.totp_enabled) {
                           <p class="text-xs text-zinc-500">The account key is stored server-side and is never exposed here.</p>
                         </div>
                       )}
+                      {conn.type === "stremio" && (
+                        <div class="stremio-reauth hidden space-y-2" data-conn-id={conn.id}>
+                          <button type="button" class="stremio-reauth-toggle text-sm text-blue-400 hover:text-blue-300 cursor-pointer transition-colors">
+                            Disconnected? Reconnect Stremio
+                          </button>
+                          <div class="stremio-reauth-panel hidden space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+                            <p class="text-xs text-zinc-500">Reconnecting replaces the stored account key and keeps your existing sync settings.</p>
+                            <button type="button" class="stremio-reauth-start text-sm bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Reconnect Stremio</button>
+                            <div class="stremio-reauth-details hidden space-y-3">
+                              <a class="stremio-reauth-url block text-sm text-blue-400 hover:text-blue-300 underline" href="#" target="_blank" rel="noopener noreferrer">Open Stremio authorization</a>
+                              <p class="text-sm text-zinc-400">Code: <strong class="stremio-reauth-code font-mono text-zinc-100"></strong></p>
+                              <img class="stremio-reauth-qr w-40 h-40 rounded-lg bg-white p-2" alt="Stremio authorization QR code" />
+                              <p class="stremio-reauth-status text-xs text-zinc-500">Waiting for authorization…</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       {conn.type === "nuvio" && (
                         <div class="nuvio-reauth hidden space-y-2" data-conn-id={conn.id}>
                           <button type="button" class="nuvio-reauth-toggle text-sm text-blue-400 hover:text-blue-300 cursor-pointer transition-colors">
@@ -3143,6 +3160,7 @@ if (me.totp_enabled) {
       for (const cs of (data.connections ?? [])) {
         setConnStatus(`conn-status-${cs.id}`, cs.connected ? 'connected' : 'disconnected');
         document.querySelector(`.nuvio-reauth[data-conn-id="${cs.id}"]`)?.classList.toggle('hidden', cs.connected);
+        document.querySelector(`.stremio-reauth[data-conn-id="${cs.id}"]`)?.classList.toggle('hidden', cs.connected);
         if (cs.token) {
           const card = document.querySelector(`[data-connection-id="${cs.id}"]`);
           const tokenInput = card?.querySelector('.conn-token-input') as HTMLInputElement | null;
@@ -3324,6 +3342,7 @@ if (me.totp_enabled) {
               if (statusResponse.ok && connectionStatus?.connected) {
                 showMessage('Stremio connection successful!');
                 if (connId) setConnStatus(`conn-status-${connId}`, 'connected');
+                card?.querySelector('.stremio-reauth')?.classList.add('hidden');
               } else {
                 if (connId) setConnStatus(`conn-status-${connId}`, 'disconnected');
                 throw new Error('Stremio connection test failed');
@@ -4507,6 +4526,85 @@ if (me.totp_enabled) {
           if (statusEl) statusEl.textContent = err.message || 'Sign-in failed';
         } finally {
           if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Sign in'; }
+        }
+      });
+    });
+
+    // Stremio: a connection can also go stale (account key revoked, password
+    // changed elsewhere) with no in-place recovery today. Reuse the same
+    // link/QR flow as "add new", but pass this connection's id so the
+    // backend updates it in place instead of rejecting with "already
+    // connected".
+    document.querySelectorAll('.stremio-reauth').forEach(block => {
+      const connId = block.getAttribute('data-conn-id');
+      const toggleBtn = block.querySelector('.stremio-reauth-toggle');
+      const panel = block.querySelector('.stremio-reauth-panel');
+      const startBtn = block.querySelector('.stremio-reauth-start') as HTMLButtonElement | null;
+      const details = block.querySelector('.stremio-reauth-details');
+      const urlLink = block.querySelector('.stremio-reauth-url') as HTMLAnchorElement | null;
+      const codeEl = block.querySelector('.stremio-reauth-code');
+      const qrImg = block.querySelector('.stremio-reauth-qr') as HTMLImageElement | null;
+      const statusEl = block.querySelector('.stremio-reauth-status');
+      let pollTimer: number | null = null;
+
+      toggleBtn?.addEventListener('click', () => {
+        panel?.classList.toggle('hidden');
+      });
+
+      startBtn?.addEventListener('click', async () => {
+        if (pollTimer !== null) { window.clearTimeout(pollTimer); pollTimer = null; }
+        startBtn.disabled = true;
+        const originalLabel = startBtn.textContent;
+        startBtn.textContent = 'Creating link…';
+        try {
+          const response = await fetch('/api/proxy/auth/stremio/link/start', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          const link = await response.json();
+          if (!response.ok) throw new Error(link.detail || 'Could not create the Stremio link.');
+          details?.classList.remove('hidden');
+          if (urlLink) urlLink.href = link.link;
+          if (codeEl) codeEl.textContent = link.code;
+          if (qrImg) qrImg.src = link.qrcode;
+          if (statusEl) statusEl.textContent = 'Waiting for authorization…';
+          window.open(link.link, '_blank', 'noopener,noreferrer');
+          const linkExpiresAt = Date.now() + 10 * 60 * 1000;
+
+          const poll = async () => {
+            try {
+              if (Date.now() >= linkExpiresAt) {
+                throw new Error('Stremio authorization expired. Try again.');
+              }
+              const pollResponse = await fetch('/api/proxy/auth/stremio/link/poll', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: link.code, connection_id: connId ? parseInt(connId) : undefined }),
+              });
+              const result = await pollResponse.json();
+              if (!pollResponse.ok) throw new Error(result.detail || 'Stremio authorization failed.');
+              if (result.status === 'connected') {
+                pollTimer = null;
+                if (statusEl) statusEl.textContent = 'Connected. Reloading…';
+                showMessage('Stremio reconnected.');
+                window.location.reload();
+                return;
+              }
+              pollTimer = window.setTimeout(poll, 2000);
+            } catch (error: any) {
+              pollTimer = null;
+              if (statusEl) statusEl.textContent = error.message;
+              showMessage(error.message, 'error');
+              startBtn.disabled = false;
+              startBtn.textContent = originalLabel;
+            }
+          };
+          pollTimer = window.setTimeout(poll, 1500);
+          startBtn.textContent = 'Waiting…';
+        } catch (error: any) {
+          showMessage(error.message, 'error');
+          startBtn.disabled = false;
+          startBtn.textContent = originalLabel;
         }
       });
     });

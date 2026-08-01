@@ -164,6 +164,7 @@ class ServiceConnectionTestRequest(BaseModel):
 class StremioLinkPollRequest(BaseModel):
     code: str
     name: str = "Stremio"
+    connection_id: Optional[int] = None
     sync_collection: bool = True
     sync_watched: bool = True
     sync_playback: bool = True

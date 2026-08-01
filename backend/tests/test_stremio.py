@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import httpx
+from fastapi import HTTPException
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -13,7 +14,8 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from core import stremio
 from models.base import MediaType
 from models.media import Media
-from schemas import MediaServerConnectionResponse
+from schemas import MediaServerConnectionResponse, StremioLinkPollRequest
+from routers import auth
 from routers.history import _push_watch_state
 from routers.sync import (
     _apply_nuvio_watch_history,
@@ -665,3 +667,118 @@ class StremioCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response.token, "")
+
+
+def _stremio_connection(**overrides) -> SimpleNamespace:
+    fields = dict(
+        id=14,
+        user_id=7,
+        type="stremio",
+        name="Stremio",
+        url=stremio.DEFAULT_URL,
+        token="dead-auth-key",
+        server_user_id="old-account-id",
+        server_username="old@example.com",
+        sync_collection=False,
+        sync_watched=True,
+        sync_ratings=False,
+        sync_playback=False,
+        push_watched=True,
+        push_collection=True,
+        push_playback=False,
+        push_ratings=False,
+        auto_sync_interval=6.0,
+        auto_push_interval=None,
+        watchlist_to_radarr=False,
+        watchlist_to_sonarr=False,
+        watchlist_all_users=False,
+        watchlist_monitored_users=None,
+        plex_sync_watchlist=False,
+        plex_push_watchlist=False,
+        created_at=datetime(2026, 6, 1),
+    )
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
+class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
+    """A disconnected Stremio connection has no in-place recovery path today
+    (unlike a fresh 'add new', poll_stremio_link 409s if one already exists).
+    Passing the existing connection's id reconnects it instead."""
+
+    async def test_reconnect_replaces_auth_key_and_preserves_existing_settings(self) -> None:
+        existing = _stremio_connection()
+        db = SimpleNamespace(
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: existing)),
+            commit=AsyncMock(),
+            refresh=AsyncMock(),
+        )
+        body = StremioLinkPollRequest(code="ABCD", name="Ignored on reconnect", connection_id=14)
+
+        with (
+            patch("core.stremio.read_link_code", AsyncMock(return_value="fresh-auth-key")),
+            patch(
+                "core.stremio.validate_auth_key",
+                AsyncMock(return_value={"_id": "new-account-id", "email": "new@example.com"}),
+            ),
+        ):
+            result = await auth.poll_stremio_link(body, db=db, current_user=SimpleNamespace(id=7))
+
+        self.assertEqual(result["status"], "connected")
+        self.assertEqual(existing.token, "fresh-auth-key")
+        self.assertEqual(existing.server_user_id, "new-account-id")
+        self.assertEqual(existing.server_username, "new@example.com")
+        # Existing sync/push preferences must survive a reconnect untouched —
+        # the request body's defaults only apply to a brand-new connection.
+        self.assertFalse(existing.sync_collection)
+        self.assertTrue(existing.push_collection)
+        self.assertEqual(existing.auto_sync_interval, 6.0)
+        db.commit.assert_awaited_once()
+
+    async def test_poll_without_matching_connection_id_still_rejects(self) -> None:
+        existing = _stremio_connection()
+        db = SimpleNamespace(
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: existing)),
+        )
+        body = StremioLinkPollRequest(code="ABCD", connection_id=None)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await auth.poll_stremio_link(body, db=db, current_user=SimpleNamespace(id=7))
+
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    async def test_poll_creates_new_connection_when_none_exists(self) -> None:
+        async def _fake_refresh(connection) -> None:
+            # Simulate the server-side column defaults a real DB flush would
+            # populate — this test never touches a real database.
+            connection.id = 99
+            connection.created_at = datetime(2026, 8, 1)
+            connection.watchlist_to_radarr = False
+            connection.watchlist_to_sonarr = False
+            connection.watchlist_all_users = False
+            connection.watchlist_monitored_users = None
+            connection.plex_sync_watchlist = False
+            connection.plex_push_watchlist = False
+
+        db = SimpleNamespace(
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),
+            add=MagicMock(),
+            commit=AsyncMock(),
+            refresh=AsyncMock(side_effect=_fake_refresh),
+        )
+        body = StremioLinkPollRequest(code="ABCD", name="My Stremio")
+
+        with (
+            patch("core.stremio.read_link_code", AsyncMock(return_value="fresh-auth-key")),
+            patch(
+                "core.stremio.validate_auth_key",
+                AsyncMock(return_value={"_id": "account-id", "email": "me@example.com"}),
+            ),
+        ):
+            result = await auth.poll_stremio_link(body, db=db, current_user=SimpleNamespace(id=7))
+
+        self.assertEqual(result["status"], "connected")
+        db.add.assert_called_once()
+        added = db.add.call_args.args[0]
+        self.assertEqual(added.token, "fresh-auth-key")
+        self.assertEqual(added.name, "My Stremio")
