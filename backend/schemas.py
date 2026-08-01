@@ -107,6 +107,8 @@ class UserSettings(BaseModel):
     trakt_push_collection: Optional[bool] = None
     trakt_push_lists: Optional[bool] = None
     trakt_scrobble: Optional[bool] = None
+    trakt_auto_sync_interval: Optional[float] = None
+    trakt_auto_push_interval: Optional[float] = None
 
     # Simkl — client_id only (PIN flow, no secret); OAuth token managed via /simkl/* endpoints
     simkl_client_id: Optional[str] = None
@@ -117,6 +119,8 @@ class UserSettings(BaseModel):
     simkl_push_watched: Optional[bool] = None
     simkl_push_ratings: Optional[bool] = None
     simkl_scrobble: Optional[bool] = None
+    simkl_auto_sync_interval: Optional[float] = None
+    simkl_auto_push_interval: Optional[float] = None
 
     # MDBList — API key authentication
     mdblist_api_key: Optional[str] = None
@@ -129,6 +133,8 @@ class UserSettings(BaseModel):
     mdblist_push_watchlist: Optional[bool] = None
     mdblist_push_collection: Optional[bool] = None
     mdblist_scrobble: Optional[bool] = None
+    mdblist_auto_sync_interval: Optional[float] = None
+    mdblist_auto_push_interval: Optional[float] = None
 
     preferences: Optional[dict] = None
     blur_explicit: Optional[bool] = None

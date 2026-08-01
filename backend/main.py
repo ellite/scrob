@@ -27,6 +27,7 @@ async def _auto_sync_scheduler():
 
     from db import async_sessionmaker
     from models.connections import MediaServerConnection
+    from models.users import UserSettings
     from routers.sync import (
         _run_full_push,
         run_emby_sync,
@@ -35,6 +36,47 @@ async def _auto_sync_scheduler():
         run_stremio_sync,
         run_plex_sync,
     )
+    from routers.trakt import run_trakt_sync, _run_trakt_push
+    from routers.simkl import run_simkl_sync, _run_simkl_push
+    from routers.mdblist import run_mdblist_sync, run_mdblist_push
+
+    # Trakt/Simkl/MDBList are single, user-level cloud connections (no
+    # MediaServerConnection row, no connection_id) — same due-date logic as
+    # the media-connection loop below, just keyed by user_id + source alone.
+    cloud_sync_config = [
+        {
+            "source": CollectionSource.trakt,
+            "connected_field": "trakt_access_token",
+            "auto_sync_field": "trakt_auto_sync_interval",
+            "auto_push_field": "trakt_auto_push_interval",
+            "push_flags": ("trakt_push_watched", "trakt_push_ratings", "trakt_push_collection"),
+            "pull_runner": run_trakt_sync,
+            "push_runner": _run_trakt_push,
+        },
+        {
+            "source": CollectionSource.simkl,
+            "connected_field": "simkl_access_token",
+            "auto_sync_field": "simkl_auto_sync_interval",
+            "auto_push_field": "simkl_auto_push_interval",
+            "push_flags": ("simkl_push_watched", "simkl_push_ratings"),
+            "pull_runner": run_simkl_sync,
+            "push_runner": _run_simkl_push,
+        },
+        {
+            "source": CollectionSource.mdblist,
+            "connected_field": "mdblist_api_key",
+            "auto_sync_field": "mdblist_auto_sync_interval",
+            "auto_push_field": "mdblist_auto_push_interval",
+            "push_flags": (
+                "mdblist_push_watched",
+                "mdblist_push_ratings",
+                "mdblist_push_watchlist",
+                "mdblist_push_collection",
+            ),
+            "pull_runner": run_mdblist_sync,
+            "push_runner": run_mdblist_push,
+        },
+    ]
 
     check_interval = 300  # seconds between scheduler ticks
     source_map = {
@@ -147,6 +189,94 @@ async def _auto_sync_scheduler():
                         asyncio.create_task(runner(conn.user_id, conn.id, job_id))
                     else:
                         asyncio.create_task(runner(conn.user_id, job_id, 0, 0, conn.id))
+
+                cloud_settings_result = await db.execute(
+                    select(UserSettings).where(
+                        or_(
+                            *[
+                                getattr(UserSettings, cfg["auto_sync_field"]).isnot(None)
+                                for cfg in cloud_sync_config
+                            ],
+                            *[
+                                getattr(UserSettings, cfg["auto_push_field"]).isnot(None)
+                                for cfg in cloud_sync_config
+                            ],
+                        )
+                    )
+                )
+                cloud_settings_rows = cloud_settings_result.scalars().all()
+
+                for settings_row in cloud_settings_rows:
+                    for cfg in cloud_sync_config:
+                        source = cfg["source"]
+                        auto_sync = getattr(settings_row, cfg["auto_sync_field"])
+                        auto_push = getattr(settings_row, cfg["auto_push_field"])
+                        if auto_sync is None and auto_push is None:
+                            continue
+                        if not getattr(settings_row, cfg["connected_field"]):
+                            continue
+
+                        active_q = await db.execute(
+                            select(SyncJob)
+                            .where(
+                                SyncJob.user_id == settings_row.user_id,
+                                SyncJob.source == source,
+                                SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]),
+                            )
+                            .limit(1)
+                        )
+                        if active_q.scalar_one_or_none():
+                            continue
+
+                        schedules: list[tuple[str, float, object]] = []
+                        if auto_sync is not None:
+                            schedules.append(("pull", auto_sync, cfg["pull_runner"]))
+                        if auto_push is not None and any(
+                            getattr(settings_row, flag) for flag in cfg["push_flags"]
+                        ):
+                            schedules.append(("push", auto_push, cfg["push_runner"]))
+
+                        due: list[tuple[datetime, str, object]] = []
+                        for job_type, interval, runner in schedules:
+                            last_q = await db.execute(
+                                select(SyncJob)
+                                .where(
+                                    SyncJob.user_id == settings_row.user_id,
+                                    SyncJob.source == source,
+                                    SyncJob.job_type == job_type,
+                                    SyncJob.status.in_([SyncStatus.completed, SyncStatus.failed]),
+                                )
+                                .order_by(SyncJob.updated_at.desc())
+                                .limit(1)
+                            )
+                            last_job = last_q.scalar_one_or_none()
+                            next_run = (
+                                last_job.updated_at + timedelta(hours=interval)
+                                if last_job
+                                else datetime.min
+                            )
+                            if next_run <= now:
+                                due.append((next_run, job_type, runner))
+
+                        if not due:
+                            continue
+                        _, job_type, runner = min(due, key=lambda item: item[0])
+                        job = SyncJob(
+                            user_id=settings_row.user_id,
+                            source=source,
+                            status=SyncStatus.pending,
+                            job_type=job_type,
+                        )
+                        db.add(job)
+                        await db.flush()
+                        job_id = job.id
+                        await db.commit()
+
+                        print(
+                            f"Auto-{job_type}: queuing {source.value} for user "
+                            f"{settings_row.user_id} (job {job_id})"
+                        )
+                        asyncio.create_task(runner(settings_row.user_id, job_id))
 
         except Exception as e:
             print(f"Auto-sync scheduler error: {e}")

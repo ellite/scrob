@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Integer, String, func, ForeignKey
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, Integer, String, func, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -91,6 +91,10 @@ class UserSettings(Base):
     trakt_push_lists         : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     trakt_watchlist_split    : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
+    # Trakt auto sync/push interval, in hours (null = disabled)
+    trakt_auto_sync_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    trakt_auto_push_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     # TVDB API key (optional personal override)
     tvdb_api_key             : Mapped[Optional[str]]  = mapped_column(String(255))
 
@@ -111,6 +115,10 @@ class UserSettings(Base):
     simkl_push_ratings       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     simkl_scrobble           : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
+    # Simkl auto sync/push interval, in hours (null = disabled)
+    simkl_auto_sync_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    simkl_auto_push_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     preferences    : Mapped[Optional[dict]] = mapped_column(JSONB)
     blur_explicit   : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     time_format_24h : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
@@ -127,6 +135,10 @@ class UserSettings(Base):
     mdblist_push_watchlist: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     mdblist_push_collection: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     mdblist_scrobble: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+    # MDBList auto sync/push interval, in hours (null = disabled)
+    mdblist_auto_sync_interval: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    mdblist_auto_push_interval: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     user : Mapped["User"] = relationship(back_populates="settings")
 

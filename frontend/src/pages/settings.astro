@@ -12,6 +12,16 @@ const [settings, me, connections, scrobbleConnections, seasonOverrides] = await 
   api.sync.getSeasonOverrides(token!).catch(() => []),
 ]);
 const hasTmdbKey = settings.has_effective_tmdb_key;
+const AUTO_SYNC_INTERVAL_OPTIONS = [
+  { value: 0.25, label: "Every 15m" },
+  { value: 0.5, label: "Every 30m" },
+  { value: 1, label: "Every 1h" },
+  { value: 3, label: "Every 3h" },
+  { value: 6, label: "Every 6h" },
+  { value: 12, label: "Every 12h" },
+  { value: 24, label: "Every 24h" },
+  { value: 48, label: "Every 48h" },
+];
 const traktConfigured    = !!(settings.trakt_connected || settings.trakt_client_id);
 const radarrConfigured   = !!(settings.radarr_url && settings.radarr_token);
 const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
@@ -344,16 +354,7 @@ if (me.totp_enabled) {
                           <label class="text-sm text-zinc-300">Pull interval</label>
                           <select class="conn-auto-sync bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
                             <option value="" selected={!conn.auto_sync_interval}>Disabled</option>
-                            {[
-                              { value: 0.25, label: "Every 15m" },
-                              { value: 0.5, label: "Every 30m" },
-                              { value: 1, label: "Every 1h" },
-                              { value: 3, label: "Every 3h" },
-                              { value: 6, label: "Every 6h" },
-                              { value: 12, label: "Every 12h" },
-                              { value: 24, label: "Every 24h" },
-                              { value: 48, label: "Every 48h" },
-                            ].map(({ value, label }) => (
+                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
                               <option value={String(value)} selected={conn.auto_sync_interval === value}>{label}</option>
                             ))}
                           </select>
@@ -362,16 +363,7 @@ if (me.totp_enabled) {
                           <label class="text-sm text-zinc-300">Push interval</label>
                           <select class="conn-auto-push bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
                             <option value="" selected={!conn.auto_push_interval}>Disabled</option>
-                            {[
-                              { value: 0.25, label: "Every 15m" },
-                              { value: 0.5, label: "Every 30m" },
-                              { value: 1, label: "Every 1h" },
-                              { value: 3, label: "Every 3h" },
-                              { value: 6, label: "Every 6h" },
-                              { value: 12, label: "Every 12h" },
-                              { value: 24, label: "Every 24h" },
-                              { value: 48, label: "Every 48h" },
-                            ].map(({ value, label }) => (
+                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
                               <option value={String(value)} selected={conn.auto_push_interval === value}>{label}</option>
                             ))}
                           </select>
@@ -537,32 +529,14 @@ if (me.totp_enabled) {
                         <label class="text-sm text-zinc-300">Pull interval</label>
                         <select id="new-auto-sync" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 cursor-pointer">
                           <option value="">Disabled</option>
-                          {[
-                            { value: 0.25, label: "Every 15m" },
-                            { value: 0.5, label: "Every 30m" },
-                            { value: 1, label: "Every 1h" },
-                            { value: 3, label: "Every 3h" },
-                            { value: 6, label: "Every 6h" },
-                            { value: 12, label: "Every 12h" },
-                            { value: 24, label: "Every 24h" },
-                            { value: 48, label: "Every 48h" },
-                          ].map(({ value, label }) => (<option value={String(value)}>{label}</option>))}
+                          {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (<option value={String(value)}>{label}</option>))}
                         </select>
                       </div>
                       <div class="flex items-center justify-between gap-4">
                         <label class="text-sm text-zinc-300">Push interval</label>
                         <select id="new-auto-push" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 cursor-pointer">
                           <option value="">Disabled</option>
-                          {[
-                            { value: 0.25, label: "Every 15m" },
-                            { value: 0.5, label: "Every 30m" },
-                            { value: 1, label: "Every 1h" },
-                            { value: 3, label: "Every 3h" },
-                            { value: 6, label: "Every 6h" },
-                            { value: 12, label: "Every 12h" },
-                            { value: 24, label: "Every 24h" },
-                            { value: 48, label: "Every 48h" },
-                          ].map(({ value, label }) => (<option value={String(value)}>{label}</option>))}
+                          {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (<option value={String(value)}>{label}</option>))}
                         </select>
                       </div>
                     </div>
@@ -893,6 +867,29 @@ if (me.totp_enabled) {
                         >Push</button>
                       </div>
                     )}
+                    {settings.trakt_connected && (
+                      <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
+                        <div class="flex items-center justify-between gap-4">
+                          <label class="text-sm text-zinc-300">Pull interval</label>
+                          <select name="trakt_auto_sync_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer">
+                            <option value="" selected={!settings.trakt_auto_sync_interval}>Disabled</option>
+                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
+                              <option value={String(value)} selected={settings.trakt_auto_sync_interval === value}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div class="flex items-center justify-between gap-4">
+                          <label class="text-sm text-zinc-300">Push interval</label>
+                          <select name="trakt_auto_push_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer">
+                            <option value="" selected={!settings.trakt_auto_push_interval}>Disabled</option>
+                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
+                              <option value={String(value)} selected={settings.trakt_auto_push_interval === value}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1011,6 +1008,27 @@ if (me.totp_enabled) {
                           title="Push all watched states and ratings from Scrob to Simkl"
                         >Push</button>
                       </div>
+                      <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
+                        <div class="flex items-center justify-between gap-4">
+                          <label class="text-sm text-zinc-300">Pull interval</label>
+                          <select name="simkl_auto_sync_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all cursor-pointer">
+                            <option value="" selected={!settings.simkl_auto_sync_interval}>Disabled</option>
+                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
+                              <option value={String(value)} selected={settings.simkl_auto_sync_interval === value}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div class="flex items-center justify-between gap-4">
+                          <label class="text-sm text-zinc-300">Push interval</label>
+                          <select name="simkl_auto_push_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all cursor-pointer">
+                            <option value="" selected={!settings.simkl_auto_push_interval}>Disabled</option>
+                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
+                              <option value={String(value)} selected={settings.simkl_auto_push_interval === value}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1126,6 +1144,29 @@ if (me.totp_enabled) {
                           class="js-action-btn text-sm bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                           title="Push watched states, ratings, and the managed watchlist to MDBList"
                         >Push</button>
+                      </div>
+                    )}
+                    {settings.mdblist_connected && (
+                      <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
+                        <div class="flex items-center justify-between gap-4">
+                          <label class="text-sm text-zinc-300">Pull interval</label>
+                          <select name="mdblist_auto_sync_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all cursor-pointer">
+                            <option value="" selected={!settings.mdblist_auto_sync_interval}>Disabled</option>
+                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
+                              <option value={String(value)} selected={settings.mdblist_auto_sync_interval === value}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div class="flex items-center justify-between gap-4">
+                          <label class="text-sm text-zinc-300">Push interval</label>
+                          <select name="mdblist_auto_push_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all cursor-pointer">
+                            <option value="" selected={!settings.mdblist_auto_push_interval}>Disabled</option>
+                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
+                              <option value={String(value)} selected={settings.mdblist_auto_push_interval === value}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -5096,9 +5137,16 @@ if (me.totp_enabled) {
 
           trakt_client_id: formData.get('trakt_client_id') || null,
           trakt_client_secret: formData.get('trakt_client_secret') || null,
+          trakt_auto_sync_interval: formData.get('trakt_auto_sync_interval') ? parseFloat(formData.get('trakt_auto_sync_interval') as string) : null,
+          trakt_auto_push_interval: formData.get('trakt_auto_push_interval') ? parseFloat(formData.get('trakt_auto_push_interval') as string) : null,
 
           simkl_client_id: formData.get('simkl_client_id') || null,
+          simkl_auto_sync_interval: formData.get('simkl_auto_sync_interval') ? parseFloat(formData.get('simkl_auto_sync_interval') as string) : null,
+          simkl_auto_push_interval: formData.get('simkl_auto_push_interval') ? parseFloat(formData.get('simkl_auto_push_interval') as string) : null,
+
           mdblist_api_key: formData.get('mdblist_api_key') || null,
+          mdblist_auto_sync_interval: formData.get('mdblist_auto_sync_interval') ? parseFloat(formData.get('mdblist_auto_sync_interval') as string) : null,
+          mdblist_auto_push_interval: formData.get('mdblist_auto_push_interval') ? parseFloat(formData.get('mdblist_auto_push_interval') as string) : null,
         };
 
         // Collect boolean checkboxes (cloud sync preferences + app preferences)
