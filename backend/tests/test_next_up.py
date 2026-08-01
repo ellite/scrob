@@ -1,11 +1,11 @@
 import os
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _compute_next_episode, _group_last_watched
+from routers.history import _compute_next_episode, _group_last_watched, _has_aired
 
 
 class ComputeNextEpisodeTests(unittest.TestCase):
@@ -67,6 +67,26 @@ class GroupLastWatchedTests(unittest.TestCase):
         rows = [(1, 1, 2, older), (1, 1, 1, newer)]
         last_per_show, last_watched_at = _group_last_watched(rows)
         self.assertEqual(last_watched_at[1], newer)
+
+
+class HasAiredTests(unittest.TestCase):
+    """Regression tests for #104: Next Up must not suggest an episode before
+    its air date."""
+
+    def test_past_release_date_has_aired(self):
+        self.assertTrue(_has_aired("2020-01-01", date(2026, 1, 1)))
+
+    def test_todays_release_date_has_aired(self):
+        self.assertTrue(_has_aired("2026-01-01", date(2026, 1, 1)))
+
+    def test_future_release_date_has_not_aired(self):
+        self.assertFalse(_has_aired("2026-06-01", date(2026, 1, 1)))
+
+    def test_unknown_release_date_is_treated_as_aired(self):
+        # We can't confirm it hasn't aired, so don't hide a show over missing
+        # metadata — that would silently empty out someone's Next Up row.
+        self.assertTrue(_has_aired(None, date(2026, 1, 1)))
+        self.assertTrue(_has_aired("", date(2026, 1, 1)))
 
 
 if __name__ == "__main__":

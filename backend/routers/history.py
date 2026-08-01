@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -558,6 +558,13 @@ def _group_last_watched(
     return last_per_show, last_watched_at
 
 
+def _has_aired(release_date: str | None, today: date) -> bool:
+    """True if release_date (ISO 8601, e.g. from TMDB air_date) is on or before
+    today, or unknown. ISO 8601 strings sort lexicographically the same as their
+    dates, so a plain string comparison is safe here."""
+    return not release_date or release_date <= today.isoformat()
+
+
 @router.get("/next-up")
 async def get_next_up(
     db: AsyncSession = Depends(get_db),
@@ -675,9 +682,15 @@ async def get_next_up(
     settings = settings_result.scalar_one_or_none()
     hidden_set = set(settings.next_up_hidden_shows or []) if settings else set()
 
+    today = date.today()
     next_up = [
         m for m in next_per_show.values()
-        if m.id not in completed_ids and (include_hidden or m.show_id not in hidden_set)
+        if m.id not in completed_ids
+        and (include_hidden or m.show_id not in hidden_set)
+        # Don't surface an episode that hasn't aired yet — the immediately-next
+        # episode for the show, not a later one, so we simply show nothing for
+        # this show until it airs rather than skipping ahead.
+        and _has_aired(m.release_date, today)
     ]
     next_up.sort(key=lambda m: last_watched_at.get(m.show_id) or datetime.min, reverse=True)
     if limit is not None:
