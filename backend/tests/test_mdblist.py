@@ -403,5 +403,78 @@ class MDBListNormalizationTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class _WatchedFakeSession:
+    """Fakes just enough of AsyncSession for _import_watched: an empty
+    existing-watch-events query, plus recording every WatchEvent added."""
+
+    def __init__(self) -> None:
+        self.added: list = []
+
+    async def execute(self, statement):
+        return SimpleNamespace(all=lambda: [])
+
+    def begin_nested(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    def add(self, obj):
+        self.added.append(obj)
+
+
+class ImportWatchedSkipsShowRollupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_shows_entries_are_not_imported_as_watch_events(self) -> None:
+        """Regression test: MDBList's /sync/watched "shows" entries are rollup
+        wrappers whose watched_at just mirrors the show's most recently
+        watched episode — they carry no per-episode data of their own.
+        Importing them as standalone watch events created a bogus
+        series-level WatchEvent for every watched show, alongside the real
+        episode-level one, and could collide with an unrelated movie that
+        happens to share the same TMDB id (movies and shows are separate
+        TMDB id namespaces)."""
+        from routers.mdblist import _import_watched
+
+        seen_kinds: list[str] = []
+
+        async def fake_resolve_media(db, kind, entry, api_key, external_cache):
+            seen_kinds.append(kind)
+            if kind == "movies":
+                return SimpleNamespace(id=1)
+            if kind == "episodes":
+                return SimpleNamespace(id=2)
+            return SimpleNamespace(id=999)  # would only happen on regression
+
+        payload = {
+            "movies": [{"ids": {"tmdb": 100}, "watched_at": "2026-08-01T00:00:00Z"}],
+            "shows": [
+                {"ids": {"tmdb": 32726}, "last_watched_at": "2026-08-01T17:37:45Z"}
+            ],
+            "episodes": [
+                {
+                    "episode": {"season": 12, "number": 1},
+                    "show": {"ids": {"tmdb": 32726}},
+                    "last_watched_at": "2026-08-01T17:37:45Z",
+                }
+            ],
+        }
+        stats = {"watched": 0, "skipped": 0, "errors": 0}
+        db = _WatchedFakeSession()
+
+        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media):
+            changed = await _import_watched(
+                db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
+            )
+
+        self.assertEqual(seen_kinds, ["movies", "episodes"])
+        self.assertEqual({obj.media_id for obj in db.added}, {1, 2})
+        self.assertEqual(stats["watched"], 2)
+        self.assertEqual(stats["skipped"], 1)
+        self.assertEqual(changed, {1, 2})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -401,7 +401,12 @@ async def _import_watched(
     existing = {row[0] for row in existing_result.all()}
     changed: set[int] = set()
 
-    for kind in ("movies", "shows", "episodes"):
+    # MDBList's /sync/watched "shows" entries are rollup wrappers (a show's
+    # own last_watched_at just mirrors its most recently watched episode) —
+    # they carry no per-episode data of their own. Importing them as watch
+    # events creates a spurious series-level WatchEvent alongside the real
+    # episode-level one for every watched show.
+    for kind in ("movies", "episodes"):
         for entry in payload.get(kind, []):
             try:
                 async with db.begin_nested():
@@ -429,7 +434,7 @@ async def _import_watched(
                 logger.warning("Error importing MDBList %s watch item: %s", kind, exc)
                 stats["errors"] += 1
 
-    stats["skipped"] += len(payload.get("seasons", []))
+    stats["skipped"] += len(payload.get("seasons", [])) + len(payload.get("shows", []))
     return changed
 
 
