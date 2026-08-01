@@ -262,7 +262,7 @@ docker run -d \
 ### First Setup
 
 1. Open `http://localhost:7330` and create your account.
-2. Go to **Settings → Integrations** to add your TMDB Read Access Token, then open **Settings → Media & Cloud Connections** to connect Jellyfin, Plex, Emby, Nuvio, or Stremio.
+2. Go to **Settings → General** to add your TMDB Read Access Token, then open **Connections → Media Players** to connect Jellyfin, Plex, Emby, Nuvio, or Stremio.
 3. Select which libraries and synchronization directions to enable, then trigger your first sync.
 
 For Nuvio, sign in and select one of the returned profiles. For Stremio, select **Connect Stremio**, then authorize the generated Link code or QR code in your Stremio account. See [Nuvio Cloud Synchronization](#nuvio-cloud-synchronization) and [Stremio Synchronization](#stremio-synchronization) for provider-specific behavior and limitations.
@@ -317,7 +317,7 @@ Scrob connects to the [Nuvio public Cloud API](https://nuvio.tv/docs) at `https:
 
 ### Connect Nuvio
 
-1. Open **Settings → Media & Cloud Connections** and select **Add Connection**.
+1. Open **Connections → Media Players** and select **Add Connection**.
 2. Choose **Nuvio**, then enter a connection name, your Nuvio email, and your Nuvio password.
 3. Select **Test** to authenticate and load the profiles attached to the account.
 4. Select the Nuvio profile to synchronize, choose the pull and push options, then select **Add**.
@@ -359,7 +359,7 @@ Trakt now requires a **Trakt VIP** subscription to create a new API application 
 ### OAuth connection (VIP)
 
 1. Go to [trakt.tv/oauth/applications/new](https://trakt.tv/oauth/applications/new) and create an application to get a Client ID and Client Secret.
-2. Open **Settings → Connections → Trakt**, paste them in, and select **Connect Trakt**.
+2. Open **Connections → Media Trackers → Trakt**, paste them in, and select **Connect Trakt**.
 3. Enter the code shown at the provided URL to authorize, on trakt.tv.
 4. Choose what to import under **Trakt → Scrob**, then select **Pull** (incremental) or **Full resync**.
 5. Enable the desired **Scrob → Trakt** options to push watched status, ratings, collection, lists, or live scrobbling back to Trakt.
@@ -367,7 +367,7 @@ Trakt now requires a **Trakt VIP** subscription to create a new API application 
 ### Export import (no VIP required)
 
 1. On trakt.tv, go to **Settings → Data** and select **Export now** to download your export zip.
-2. In Scrob, open **Settings → Import**, select the **Trakt** tab, then drop the zip on the upload box (or click it to browse).
+2. In Scrob, open **Connections → Import**, select the **Trakt** tab, then drop the zip on the upload box (or click it to browse).
 3. Choose what to import - Watched History, Ratings (including per-episode), and/or Lists, all preselected by default - then confirm. This is a one-shot, per-upload choice, independent of the **Trakt → Scrob** preferences used by the OAuth pull.
 
 Re-uploading a newer export is safe to do any time you want to catch up on new activity - imported watch plays and ratings are deduplicated, so nothing is imported twice.
@@ -380,7 +380,7 @@ Scrob uses Stremio's account datastore API at `https://api.strem.io`, the offici
 
 ### Connect Stremio
 
-1. Open **Settings → Media & Cloud Connections** and select **Add Connection**.
+1. Open **Connections → Media Players** and select **Add Connection**.
 2. Choose **Stremio**, enter a connection name, and select **Connect Stremio**.
 3. Open the generated authorization link or scan its QR code, then approve the connection in Stremio.
 4. Return to Scrob. The page detects the authorization and creates the connection automatically.
@@ -415,7 +415,7 @@ Stremio exposes a current watched state rather than Scrob's complete per-play hi
 ## Simkl Synchronization
 
 1. Create a Simkl application at [simkl.com/settings/developer](https://simkl.com/settings/developer) to get a Client ID.
-2. Open **Settings → Connections → Simkl**, paste the Client ID in, and select **Connect Simkl**.
+2. Open **Connections → Media Trackers → Simkl**, paste the Client ID in, and select **Connect Simkl**.
 3. Go to the shown URL and enter the displayed PIN to authorize, on simkl.com.
 4. Choose what to import under **Simkl → Scrob**, then select **Pull**.
 5. Enable the desired **Scrob → Simkl** options to push watched status, ratings, or live scrobbling back to Simkl.
@@ -437,7 +437,7 @@ The manual **Push** action sends the complete enabled watched-history and rating
 
 ## MDBList Synchronization
 
-1. Open **Settings → Connections → MDBList**.
+1. Open **Connections → Media Trackers → MDBList**.
 2. Copy the API key from [MDBList Preferences](https://mdblist.com/preferences), paste it into Scrob, and select **Save Changes**.
 3. Choose the data to import under **MDBList → Scrob**, then select **Pull**. MDBList pulls run only when this button is selected.
 4. To send changes back, enable the required **Scrob → MDBList** options. Watched-state and rating edits are pushed as they happen; edits to the managed **MDBList - Watchlist** are pushed to the MDBList watchlist.
@@ -448,10 +448,10 @@ The manual **Push** action sends the complete enabled watched, ratings, or manag
 
 ## Webhooks (Real-time Scrobbling)
 
-Webhooks update your watch history and Continue Watching in real time. Each user's webhook URL is shown in **Settings** next to the relevant integration.
+Webhooks update your watch history and Continue Watching in real time. Each user's webhook URL is shown in **Connections** next to the relevant integration.
 
 ```
-# Jellyfin, Plex, Emby - connection_id is shown in Settings next to each server
+# Jellyfin, Plex, Emby - connection_id is shown in Connections next to each server
 https://your-scrob-url/api/proxy/webhooks/{jellyfin|plex|emby}/{connection_id}?api_key=YOUR_API_KEY
 
 # Kodi - no connection, just the API key
@@ -475,7 +475,7 @@ Plex webhooks require a **Plex Pass** subscription.
 
 1. Go to [plex.tv/account](https://www.plex.tv/account/) → **Webhooks → Add Webhook**.
 2. Paste your Scrob Plex webhook URL.
-3. In Scrob → Settings, enter your **Plex username** so events are attributed to the right account.
+3. In Scrob → Connections, enter your **Plex username** so events are attributed to the right account.
 
 ### Emby
 
@@ -488,7 +488,7 @@ Plex webhooks require a **Plex Pass** subscription.
 Kodi scrobbling uses the **[scrob-kodi](https://github.com/ellite/scrob-kodi)** add-on - no manual webhook configuration needed.
 
 1. Install the **scrob-kodi** add-on from the [scrob-kodi repository](https://github.com/ellite/scrob-kodi).
-2. In the add-on settings, enter your Scrob URL and your API key (found in **Settings → Account**).
+2. In the add-on settings, enter your Scrob URL and your API key (found in **Connections → API Key**).
 3. The add-on will automatically send playback events to Scrob as you watch.
 
 ## OIDC / Single Sign-On
