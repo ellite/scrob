@@ -35,6 +35,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, and
   - [Connect Stremio](#connect-stremio)
   - [Stremio Synchronization Directions](#stremio-synchronization-directions)
   - [Scheduling, Full Resync, and Limitations](#scheduling-full-resync-and-limitations)
+- [Simkl Synchronization](#simkl-synchronization)
 - [MDBList Synchronization](#mdblist-synchronization)
 - [Webhooks](#webhooks-real-time-scrobbling)
   - [Jellyfin](#jellyfin)
@@ -54,15 +55,15 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, and
 - **Keep providers in sync**: Keep collection membership, watched status, and playback progress synchronized between media servers, Nuvio, and Stremio. Supports multiple server instances and Nuvio profiles.
 - **Real-time scrobbling**: Webhooks from Jellyfin, Plex, Emby, and Kodi update your watch state as you play - no manual sync needed.
 - **Manual scrobble**: Start a watching session directly from any movie or episode page. Pause, resume, stop, or mark as watched - session progress shows live on the home screen.
-- **Trakt integration**: Sync your watched history, ratings, and lists from Trakt, and push Scrob activity back to Trakt automatically. Connecting live requires a Trakt VIP subscription (a recent Trakt-side restriction) — everyone else can still import via a Trakt data export, no VIP needed. See [Trakt Synchronization](#trakt-synchronization).
+- **Trakt integration**: Sync your watched history, ratings, and lists from Trakt, and push Scrob activity back to Trakt automatically. Connecting live requires a Trakt VIP subscription (a recent Trakt-side restriction) - everyone else can still import via a Trakt data export, no VIP needed. See [Trakt Synchronization](#trakt-synchronization).
 - **Simkl integration**: Sync your watched history and ratings from Simkl, and push Scrob activity back to Simkl automatically.
 - **MDBList integration**: Pull watched history, ratings, and watchlist items from MDBList, and optionally push Scrob changes back using an MDBList API key.
-- **Watch history & ratings**: Track every movie and episode you've watched, including multiple plays with individual timestamps. Log plays manually with a custom date, or remove individual entries — all from the watched button on any movie or episode page. Rate them on a 10-point scale with optional reviews.
+- **Watch history & ratings**: Track every movie and episode you've watched, including multiple plays with individual timestamps. Log plays manually with a custom date, or remove individual entries - all from the watched button on any movie or episode page. Rate them on a 10-point scale with optional reviews.
 - **Season ratings**: Rate individual seasons separately from the overall show.
 - **Personal lists**: Create and curate lists of movies and shows. Mark them public to share with other users on the same instance.
 - **Comments**: Leave comments on movies, shows, seasons, and episodes.
 - **Social**: Follow other users and see their activity.
-- **Release schedule**: Movie pages show the full release schedule ��� theatrical, digital, and physical dates — sourced from TMDB.
+- **Release schedule**: Movie pages show the full release schedule - theatrical, digital, and physical dates - sourced from TMDB.
 - **TMDB integration**: Rich metadata for every title - posters, backdrops, cast, crew, trailers, collections, and more.
 - **Search**: Search TMDB across movies, shows, people, and collections, merged with your local library data.
 - **Pick a Movie / Pick a Show**: Get a suggestion on what to watch next from your library or your streaming services based on your preferences.
@@ -184,7 +185,7 @@ docker compose up -d
 
 ### Omnibus (single container)
 
-The omnibus image bundles PostgreSQL inside the container — no separate database service needed. It's the simplest way to get started, especially on platforms like Unraid or Portainer where managing multiple containers is cumbersome.
+The omnibus image bundles PostgreSQL inside the container - no separate database service needed. It's the simplest way to get started, especially on platforms like Unraid or Portainer where managing multiple containers is cumbersome.
 
 > **Image tags:** `bellamy/scrob:latest-omnibus` / `ghcr.io/ellite/scrob:latest-omnibus`
 
@@ -206,7 +207,7 @@ SECRET_KEY: changeme   # ← generate with: openssl rand -hex 32
 docker compose up -d
 ```
 
-That's it — no database container, no `DATABASE_URL` to configure. PostgreSQL is initialised automatically on first run and persisted in the `scrob_db` volume.
+That's it - no database container, no `DATABASE_URL` to configure. PostgreSQL is initialised automatically on first run and persisted in the `scrob_db` volume.
 
 **Switching to an external database later:** set `DATABASE_URL` in the environment and the embedded PostgreSQL will be skipped entirely. The omnibus image behaves identically to the standard image when `DATABASE_URL` is provided.
 
@@ -244,7 +245,7 @@ docker run -d \
   bellamy/scrob:latest
 ```
 
-**Omnibus image** (PostgreSQL included — no separate container needed):
+**Omnibus image** (PostgreSQL included - no separate container needed):
 
 ```bash
 docker run -d \
@@ -279,7 +280,7 @@ Database migrations run automatically on startup - no manual steps required.
 | Variable | Default | Description |
 |---|---|---|
 | `SECRET_KEY` | - | **Required.** JWT signing key. Generate with `openssl rand -hex 32`. |
-| `DATABASE_URL` | - | **Required** (standard image). PostgreSQL connection string (`postgresql+asyncpg://...`). Optional on the omnibus image — if omitted, the embedded database is used. |
+| `DATABASE_URL` | - | **Required** (standard image). PostgreSQL connection string (`postgresql+asyncpg://...`). Optional on the omnibus image - if omitted, the embedded database is used. |
 | `ENABLE_REGISTRATIONS` | `false` | Allow new users to register. The first user can always register regardless of this setting. |
 | `REGISTRATION_MAX_ALLOWED_USERS` | `0` | Maximum number of registered users. `0` = unlimited. |
 | `TZ` | `UTC` | Container timezone (e.g. `Europe/Lisbon`). |
@@ -348,12 +349,12 @@ Inbound Nuvio identifiers are normalized to TMDB for Scrob's internal matching. 
 
 ## Trakt Synchronization
 
-Trakt now requires a **Trakt VIP** subscription to create a new API application (the client ID/secret used below) — a restriction Trakt introduced on their end, not a Scrob limitation. There are two ways to get your Trakt data into Scrob depending on whether you have VIP:
+Trakt now requires a **Trakt VIP** subscription to create a new API application (the client ID/secret used below) - a restriction Trakt introduced on their end, not a Scrob limitation. There are two ways to get your Trakt data into Scrob depending on whether you have VIP:
 
 | | Requires VIP | Imports | Pushes Scrob → Trakt |
 |---|---|---|---|
-| **OAuth connection** | Yes (to create the API app) | Watched history, ratings, lists — kept in sync automatically | Yes — watched status, ratings, collection, lists, live "now watching" |
-| **Export import** | No | Watched history, ratings (including per-episode), lists — one-time snapshot per upload | No — pull only |
+| **OAuth connection** | Yes (to create the API app) | Watched history, ratings, lists - kept in sync automatically | Yes - watched status, ratings, collection, lists, live "now watching" |
+| **Export import** | No | Watched history, ratings (including per-episode), lists - one-time snapshot per upload | No - pull only |
 
 ### OAuth connection (VIP)
 
@@ -367,9 +368,12 @@ Trakt now requires a **Trakt VIP** subscription to create a new API application 
 
 1. On trakt.tv, go to **Settings → Data** and select **Export now** to download your export zip.
 2. In Scrob, open **Settings → Import**, select the **Trakt** tab, then drop the zip on the upload box (or click it to browse).
-3. Choose what to import — Watched History, Ratings (including per-episode), and/or Lists, all preselected by default — then confirm. This is a one-shot, per-upload choice, independent of the **Trakt → Scrob** preferences used by the OAuth pull.
+3. Choose what to import - Watched History, Ratings (including per-episode), and/or Lists, all preselected by default - then confirm. This is a one-shot, per-upload choice, independent of the **Trakt → Scrob** preferences used by the OAuth pull.
 
-Re-uploading a newer export is safe to do any time you want to catch up on new activity — imported watch plays and ratings are deduplicated, so nothing is imported twice.
+Re-uploading a newer export is safe to do any time you want to catch up on new activity - imported watch plays and ratings are deduplicated, so nothing is imported twice.
+
+**Auto Pull** and **Auto Push** apply only to the OAuth connection and can run independently every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours.
+
 ## Stremio Synchronization
 
 Scrob uses Stremio's account datastore API at `https://api.strem.io`, the official Link flow at `https://link.stremio.com`, and Cinemeta episode metadata. Configure a TMDB Read Access Token in Scrob before synchronizing so Stremio IMDb identifiers can be mapped to Scrob media.
@@ -408,6 +412,29 @@ Use **Full resync** when the incremental cursor must be rebuilt. It reads the co
 
 Stremio exposes a current watched state rather than Scrob's complete per-play history. For series, Stremio stores a watched-episode bitfield and one `lastWatched` timestamp for the item, so repeated episode plays and their individual timestamps cannot be reconstructed exactly. Playback progress represents one current movie or episode per library item.
 
+## Simkl Synchronization
+
+1. Create a Simkl application at [simkl.com/settings/developer](https://simkl.com/settings/developer) to get a Client ID.
+2. Open **Settings → Connections → Simkl**, paste the Client ID in, and select **Connect Simkl**.
+3. Go to the shown URL and enter the displayed PIN to authorize, on simkl.com.
+4. Choose what to import under **Simkl → Scrob**, then select **Pull**.
+5. Enable the desired **Scrob → Simkl** options to push watched status, ratings, or live scrobbling back to Simkl.
+
+Simkl uses PIN-based authentication - no client secret is needed.
+
+| Direction | Setting | Behavior |
+|---|---|---|
+| Simkl → Scrob | **Watched history** | Imports watched movies and episodes. |
+| Simkl → Scrob | **Ratings** | Imports ratings. |
+| Simkl → Scrob | **Lists / Watchlist** | Imports "plan to watch" items into a managed **Simkl - Watchlist** list. |
+| Scrob → Simkl | **Watched status** | Pushes watched and unwatched changes made in Scrob or imported from another connected provider. |
+| Scrob → Simkl | **Ratings** | Pushes rating changes. |
+| Scrob → Simkl | **Live scrobbling** | Pushes playback start/stop events from webhooks and manual scrobble sessions in real time. |
+
+The manual **Push** action sends the complete enabled watched-history and ratings snapshot, in batches of 50 items per request. Collection membership and the Simkl watchlist are not pushed back to Simkl.
+
+**Auto Pull** and **Auto Push** can run independently every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours.
+
 ## MDBList Synchronization
 
 1. Open **Settings → Connections → MDBList**.
@@ -416,6 +443,8 @@ Stremio exposes a current watched state rather than Scrob's complete per-play hi
 4. To send changes back, enable the required **Scrob → MDBList** options. Watched-state and rating edits are pushed as they happen; edits to the managed **MDBList - Watchlist** are pushed to the MDBList watchlist.
 
 The manual **Push** action sends the complete enabled watched, ratings, or managed-watchlist snapshot. MDBList pagination follows `next_cursor` and requests the documented maximum of 1,000 items per page.
+
+**Auto Pull** and **Auto Push** can run independently every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours.
 
 ## Webhooks (Real-time Scrobbling)
 
