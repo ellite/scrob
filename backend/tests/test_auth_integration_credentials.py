@@ -101,6 +101,158 @@ class IntegrationCredentialRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 422)
         validate_api_key.assert_not_awaited()
 
+    async def test_tvdb_uses_json_body_and_disables_response_caching(self) -> None:
+        app = _test_app()
+        transport = httpx.ASGITransport(app=app)
+        validate_api_key = AsyncMock(return_value=True)
+
+        with patch("core.tvdb.validate_api_key", validate_api_key):
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/auth/test-tvdb",
+                    json={"key": "tvdb-secret"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        validate_api_key.assert_awaited_once_with("tvdb-secret")
+
+    async def test_jellyfin_passes_body_credentials_including_user_id(self) -> None:
+        app = _test_app()
+        transport = httpx.ASGITransport(app=app)
+        validate_url = AsyncMock(return_value="https://jellyfin.example")
+        validate_connection = AsyncMock(return_value=True)
+
+        with (
+            patch.object(auth, "validate_service_url", validate_url),
+            patch("core.jellyfin.validate_connection", validate_connection),
+        ):
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/auth/test-jellyfin",
+                    json={
+                        "url": "https://jellyfin.example/",
+                        "token": "jellyfin-secret",
+                        "user_id": "user-1",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        validate_connection.assert_awaited_once_with(
+            "https://jellyfin.example",
+            "jellyfin-secret",
+            "user-1",
+        )
+
+    async def test_emby_passes_body_credentials_including_user_id(self) -> None:
+        app = _test_app()
+        transport = httpx.ASGITransport(app=app)
+        validate_url = AsyncMock(return_value="https://emby.example")
+        validate_connection = AsyncMock(return_value=True)
+
+        with (
+            patch.object(auth, "validate_service_url", validate_url),
+            patch("core.emby.validate_connection", validate_connection),
+        ):
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/auth/test-emby",
+                    json={
+                        "url": "https://emby.example/",
+                        "token": "emby-secret",
+                        "user_id": "user-2",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        validate_connection.assert_awaited_once_with(
+            "https://emby.example",
+            "emby-secret",
+            "user-2",
+        )
+
+    async def test_sonarr_test_connection_passes_body_credentials_to_provider(self) -> None:
+        app = _test_app()
+        transport = httpx.ASGITransport(app=app)
+        validate_url = AsyncMock(return_value="https://sonarr.example")
+        validate_connection = AsyncMock(return_value=True)
+
+        with (
+            patch.object(auth, "validate_service_url", validate_url),
+            patch("core.sonarr.validate_connection", validate_connection),
+        ):
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/auth/test-sonarr",
+                    json={
+                        "url": "https://sonarr.example/",
+                        "token": "sonarr-secret",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        validate_connection.assert_awaited_once_with(
+            "https://sonarr.example",
+            "sonarr-secret",
+        )
+
+    async def test_sonarr_profile_discovery_uses_post_body_credentials(self) -> None:
+        app = _test_app()
+        transport = httpx.ASGITransport(app=app)
+        validate_url = AsyncMock(return_value="https://sonarr.example")
+        quality_profiles = AsyncMock(return_value=[{"id": 1, "name": "HD"}])
+        root_folders = AsyncMock(return_value=[{"path": "/tv"}])
+        tags = AsyncMock(return_value=[])
+
+        with (
+            patch.object(auth, "validate_service_url", validate_url),
+            patch("core.sonarr.get_quality_profiles", quality_profiles),
+            patch("core.sonarr.get_root_folders", root_folders),
+            patch("core.sonarr.get_tags", tags),
+        ):
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/auth/sonarr/profiles",
+                    json={
+                        "url": "https://sonarr.example/",
+                        "token": "sonarr-secret",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.json()["quality_profiles"][0]["name"], "HD")
+        quality_profiles.assert_awaited_once_with(
+            "https://sonarr.example",
+            "sonarr-secret",
+        )
+        root_folders.assert_awaited_once_with(
+            "https://sonarr.example",
+            "sonarr-secret",
+        )
+        tags.assert_awaited_once_with(
+            "https://sonarr.example",
+            "sonarr-secret",
+        )
+
     async def test_media_server_test_passes_body_credentials_to_provider(self) -> None:
         app = _test_app()
         transport = httpx.ASGITransport(app=app)
