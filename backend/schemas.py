@@ -141,6 +141,7 @@ class UserSettings(BaseModel):
     time_format_24h: Optional[bool] = None
     use_hls_player: Optional[bool] = None
     shuffle_next_up: Optional[bool] = None
+    minimalist_next_up: Optional[bool] = None
 
     class Config:
         from_attributes = True

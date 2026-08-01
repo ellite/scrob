@@ -124,6 +124,7 @@ class UserSettings(Base):
     time_format_24h : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     use_hls_player  : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     shuffle_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    minimalist_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     next_up_hidden_shows : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="'[]'")
 
     # MDBList — API key authentication

@@ -86,7 +86,23 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
     </div>
   )}
 
-  {nextUp.length > 0 && (() => {
+  {nextUp.length > 0 && settings?.minimalist_next_up && (
+    <section class="mb-16">
+      <div class="flex items-center justify-between mb-8">
+        <h2 class="section-headline">Next Up</h2>
+        <a href="/next-up" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
+          See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+        </a>
+      </div>
+      <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
+        {nextUp.map((item) => (
+          <div class="flex-shrink-0 w-56"><EpisodeCard item={item} /></div>
+        ))}
+      </div>
+    </section>
+  )}
+
+  {nextUp.length > 0 && !settings?.minimalist_next_up && (() => {
     const hero = nextUp[0];
     const rest = nextUp.slice(1);
     const heroHref = hero.show_tmdb_id && hero.season_number != null && hero.episode_number != null
