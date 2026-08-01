@@ -11,7 +11,7 @@ async def validate_connection(url: str, token: str) -> bool:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             response = await client.get(
                 f"{url}/api/v3/system/status",
-                params={"apiKey": token}
+                headers={"X-Api-Key": token}
             )
             return response.status_code == 200
     except Exception as e:
@@ -25,7 +25,7 @@ async def get_root_folders(url: str, token: str) -> List[Dict[str, Any]]:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             response = await client.get(
                 f"{url}/api/v3/rootfolder",
-                params={"apiKey": token}
+                headers={"X-Api-Key": token}
             )
             response.raise_for_status()
             return response.json()
@@ -40,7 +40,7 @@ async def get_quality_profiles(url: str, token: str) -> List[Dict[str, Any]]:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             response = await client.get(
                 f"{url}/api/v3/qualityprofile",
-                params={"apiKey": token}
+                headers={"X-Api-Key": token}
             )
             response.raise_for_status()
             return response.json()
@@ -55,7 +55,7 @@ async def get_tags(url: str, token: str) -> List[Dict[str, Any]]:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             response = await client.get(
                 f"{url}/api/v3/tag",
-                params={"apiKey": token}
+                headers={"X-Api-Key": token}
             )
             response.raise_for_status()
             return response.json()
@@ -81,7 +81,8 @@ async def add_movie(
             # First, check if movie already exists or get more details from Radarr's lookup
             lookup_res = await client.get(
                 f"{url}/api/v3/movie/lookup",
-                params={"apiKey": token, "term": f"tmdb:{tmdb_id}"}
+                headers={"X-Api-Key": token},
+                params={"term": f"tmdb:{tmdb_id}"},
             )
             lookup_res.raise_for_status()
             lookup_data = lookup_res.json()
@@ -109,7 +110,7 @@ async def add_movie(
 
             response = await client.post(
                 f"{url}/api/v3/movie",
-                params={"apiKey": token},
+                headers={"X-Api-Key": token},
                 json=payload
             )
             response.raise_for_status()

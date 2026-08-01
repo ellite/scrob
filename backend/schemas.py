@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, SecretStr, field_validator, model_validator
 from typing import Optional
 from datetime import datetime
 from models.base import UserRole, MediaType, PrivacyLevel
@@ -149,6 +149,16 @@ class NuvioConnectionTestRequest(BaseModel):
     url: str
     token: str
     profile_id: int
+
+
+class ApiKeyTestRequest(BaseModel):
+    key: SecretStr
+
+
+class ServiceConnectionTestRequest(BaseModel):
+    url: str
+    token: SecretStr
+    user_id: Optional[str] = None
 
 
 class StremioLinkPollRequest(BaseModel):
