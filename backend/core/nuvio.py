@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 
@@ -12,6 +12,32 @@ _PAGE_SIZE = 500
 
 class NuvioAPIError(RuntimeError):
     pass
+
+
+# Nuvio (Supabase auth) rotates the refresh token on every use — each one is
+# single-use, and the old one is permanently rejected the moment a new one is
+# issued. Every function below that refreshes a session accepts this optional
+# callback and invokes it immediately once the new token exists, so callers
+# can persist it before attempting any further work that might fail. Without
+# this, a failure partway through a pull/push (or two overlapping requests
+# racing on the same stale token) silently strands the connection on a
+# refresh token Nuvio will never accept again, with no way to recover short
+# of a full re-authentication.
+OnRefresh = Callable[["NuvioSession"], Awaitable[None]] | None
+
+_connection_locks: dict[int, asyncio.Lock] = {}
+
+
+def connection_lock(connection_id: int) -> asyncio.Lock:
+    """Shared per-connection lock guarding Nuvio's single-use refresh token.
+
+    Any two operations against the same connection that both read the
+    current refresh token and then redeem it are racing: whichever reaches
+    Nuvio second gets "refresh_token_already_used". Used across both
+    routers/sync.py and routers/auth.py so status checks, pulls, and pushes
+    for one connection never overlap.
+    """
+    return _connection_locks.setdefault(connection_id, asyncio.Lock())
 
 
 def parse_profile_id(value: str | None) -> int:
@@ -48,7 +74,18 @@ async def _raise_api_error(response: httpx.Response, operation: str) -> None:
         return
     try:
         payload = response.json()
-        detail = payload.get("message") or payload.get("error_description") or payload.get("error")
+        # Nuvio's Supabase-based auth errors use "msg"/"error_code" (e.g.
+        # {"error_code": "refresh_token_already_used", "msg": "Invalid Refresh
+        # Token: Already Used"}); its RPC errors use "message"/"error". Check
+        # both shapes so the real reason reaches logs and the UI instead of a
+        # bare status code.
+        detail = (
+            payload.get("msg")
+            or payload.get("message")
+            or payload.get("error_description")
+            or payload.get("error_code")
+            or payload.get("error")
+        )
     except (ValueError, AttributeError):
         detail = None
     suffix = f": {detail}" if detail else ""
@@ -145,9 +182,13 @@ async def validate_connection(
     url: str,
     refresh_token: str,
     profile_id: int | None = None,
+    *,
+    on_refresh: OnRefresh = None,
 ) -> tuple[NuvioSession, list[dict[str, Any]]]:
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
+        if on_refresh:
+            await on_refresh(session)
         profiles = await get_profiles(url, session.access_token, client=client)
     if profile_id is not None and not any(int(profile.get("profile_index") or 0) == profile_id for profile in profiles):
         raise NuvioAPIError(f"Nuvio profile {profile_id} was not found")
@@ -224,9 +265,13 @@ async def pull_sync_data(
     url: str,
     refresh_token: str,
     profile_id: int,
+    *,
+    on_refresh: OnRefresh = None,
 ) -> tuple[NuvioSession, dict[str, list[dict[str, Any]]]]:
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
+        if on_refresh:
+            await on_refresh(session)
         profiles = await get_profiles(url, session.access_token, client=client)
         if not any(int(profile.get("profile_index") or 0) == profile_id for profile in profiles):
             raise NuvioAPIError(f"Nuvio profile {profile_id} was not found")
@@ -271,10 +316,14 @@ async def push_library(
     refresh_token: str,
     profile_id: int,
     items: list[dict[str, Any]],
+    *,
+    on_refresh: OnRefresh = None,
 ) -> NuvioSession:
     """Replace a Nuvio library while preserving remote playback metadata."""
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
+        if on_refresh:
+            await on_refresh(session)
         remote_items = await _pull_library(
             client,
             url,
@@ -312,10 +361,13 @@ async def merge_library(
     *,
     additions: list[dict[str, Any]],
     removed_content_ids: set[str],
+    on_refresh: OnRefresh = None,
 ) -> tuple[NuvioSession, int]:
     """Read, merge, and safely replace a Nuvio library snapshot."""
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
+        if on_refresh:
+            await on_refresh(session)
         remote_items = await _pull_library(
             client,
             url,
@@ -359,9 +411,13 @@ async def _push_sync_items(
     profile_id: int,
     watched_items: list[dict[str, Any]] | None = None,
     progress_items: list[dict[str, Any]] | None = None,
+    *,
+    on_refresh: OnRefresh = None,
 ) -> NuvioSession:
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
+        if on_refresh:
+            await on_refresh(session)
         for function_name, items_key, items in (
             ("sync_push_watched_items", "p_items", watched_items or []),
             ("sync_push_watch_progress", "p_entries", progress_items or []),
@@ -382,8 +438,10 @@ async def push_watched_items(
     refresh_token: str,
     profile_id: int,
     items: list[dict[str, Any]],
+    *,
+    on_refresh: OnRefresh = None,
 ) -> NuvioSession:
-    return await _push_sync_items(url, refresh_token, profile_id, watched_items=items)
+    return await _push_sync_items(url, refresh_token, profile_id, watched_items=items, on_refresh=on_refresh)
 
 
 async def push_watch_progress(
@@ -391,8 +449,10 @@ async def push_watch_progress(
     refresh_token: str,
     profile_id: int,
     items: list[dict[str, Any]],
+    *,
+    on_refresh: OnRefresh = None,
 ) -> NuvioSession:
-    return await _push_sync_items(url, refresh_token, profile_id, progress_items=items)
+    return await _push_sync_items(url, refresh_token, profile_id, progress_items=items, on_refresh=on_refresh)
 
 
 async def push_sync_items(
@@ -401,6 +461,8 @@ async def push_sync_items(
     profile_id: int,
     watched_items: list[dict[str, Any]],
     progress_items: list[dict[str, Any]],
+    *,
+    on_refresh: OnRefresh = None,
 ) -> NuvioSession:
     return await _push_sync_items(
         url,
@@ -408,6 +470,7 @@ async def push_sync_items(
         profile_id,
         watched_items=watched_items,
         progress_items=progress_items,
+        on_refresh=on_refresh,
     )
 
 
@@ -416,9 +479,13 @@ async def delete_watched_items(
     refresh_token: str,
     profile_id: int,
     keys: list[dict[str, Any]],
+    *,
+    on_refresh: OnRefresh = None,
 ) -> NuvioSession:
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
+        if on_refresh:
+            await on_refresh(session)
         for offset in range(0, len(keys), _PAGE_SIZE):
             await _rpc(
                 client,

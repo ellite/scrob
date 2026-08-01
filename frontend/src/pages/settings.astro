@@ -211,6 +211,22 @@ if (me.totp_enabled) {
                           <p class="text-xs text-zinc-500">The account key is stored server-side and is never exposed here.</p>
                         </div>
                       )}
+                      {conn.type === "nuvio" && (
+                        <div class="nuvio-reauth hidden space-y-2" data-conn-id={conn.id}>
+                          <button type="button" class="nuvio-reauth-toggle text-sm text-blue-400 hover:text-blue-300 cursor-pointer transition-colors">
+                            Refresh token stopped working? Sign in again
+                          </button>
+                          <div class="nuvio-reauth-form hidden space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+                            <p class="text-xs text-zinc-500">Signing in replaces the refresh token above with a fresh one and reconnects immediately.</p>
+                            <input type="email" class="nuvio-reauth-email w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder="Nuvio email" autocomplete="username" />
+                            <input type="password" class="nuvio-reauth-password w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder="Nuvio password" autocomplete="current-password" />
+                            <div class="flex items-center gap-2">
+                              <button type="button" class="nuvio-reauth-submit text-sm bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Sign in</button>
+                              <span class="nuvio-reauth-status text-xs text-zinc-500"></span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       {conn.type === "nuvio" ? (
                         <div class="space-y-2">
                           <label class="block text-sm font-medium text-zinc-400">Nuvio Profile</label>
@@ -3126,6 +3142,7 @@ if (me.totp_enabled) {
       }
       for (const cs of (data.connections ?? [])) {
         setConnStatus(`conn-status-${cs.id}`, cs.connected ? 'connected' : 'disconnected');
+        document.querySelector(`.nuvio-reauth[data-conn-id="${cs.id}"]`)?.classList.toggle('hidden', cs.connected);
         if (cs.token) {
           const card = document.querySelector(`[data-connection-id="${cs.id}"]`);
           const tokenInput = card?.querySelector('.conn-token-input') as HTMLInputElement | null;
@@ -3341,6 +3358,7 @@ if (me.totp_enabled) {
                 const savedConnection = await saveTokenRes.json();
                 const tokenInput = card?.querySelector('.conn-token-input') as HTMLInputElement | null;
                 if (tokenInput) tokenInput.value = savedConnection.token;
+                card?.querySelector('.nuvio-reauth')?.classList.add('hidden');
               }
             } else {
               if (connId) setConnStatus(`conn-status-${connId}`, 'disconnected');
@@ -4419,6 +4437,78 @@ if (me.totp_enabled) {
           }
         });
       }
+    });
+
+    // Nuvio: an existing connection's saved refresh token can die (Nuvio
+    // rotates it on every use and rejects reuse) with no way back except a
+    // fresh email/password sign-in. This replaces the token in place and
+    // saves immediately, rather than requiring delete-and-re-add.
+    document.querySelectorAll('.nuvio-reauth').forEach(block => {
+      const connId = block.getAttribute('data-conn-id');
+      const card = block.closest('[data-connection-id]');
+      const toggleBtn = block.querySelector('.nuvio-reauth-toggle');
+      const form = block.querySelector('.nuvio-reauth-form');
+      const emailInput = block.querySelector('.nuvio-reauth-email') as HTMLInputElement | null;
+      const passwordInput = block.querySelector('.nuvio-reauth-password') as HTMLInputElement | null;
+      const submitBtn = block.querySelector('.nuvio-reauth-submit') as HTMLButtonElement | null;
+      const statusEl = block.querySelector('.nuvio-reauth-status') as HTMLElement | null;
+      const tokenInput = card?.querySelector('.conn-token-input') as HTMLInputElement | null;
+      const profileSelect = card?.querySelector('.conn-user-id-input') as HTMLSelectElement | null;
+
+      toggleBtn?.addEventListener('click', () => {
+        form?.classList.toggle('hidden');
+      });
+
+      submitBtn?.addEventListener('click', async () => {
+        const email = emailInput?.value.trim() || '';
+        const password = passwordInput?.value || '';
+        if (statusEl) statusEl.textContent = '';
+        if (!email || !password) {
+          if (statusEl) statusEl.textContent = 'Enter your Nuvio email and password.';
+          return;
+        }
+        if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Signing in…'; }
+        try {
+          const loginRes = await fetch('/api/proxy/auth/nuvio-login', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password, url: 'https://api.nuvio.tv' }),
+          });
+          const loginData = await loginRes.json();
+          if (!loginRes.ok) throw new Error(loginData.detail || 'Nuvio sign-in failed');
+
+          const profiles = loginData.profiles || [];
+          const previousProfileId = profileSelect?.value || '';
+          if (profileSelect) {
+            profileSelect.innerHTML = profiles.map((profile: any) =>
+              `<option value="${esc(String(profile.profile_index))}">${esc(profile.name || `Profile ${profile.profile_index}`)} (#${esc(String(profile.profile_index))})</option>`
+            ).join('');
+            if (previousProfileId && [...profileSelect.options].some(option => option.value === previousProfileId)) {
+              profileSelect.value = previousProfileId;
+            }
+          }
+          if (!profileSelect?.value) throw new Error('No Nuvio profile is available for this account.');
+
+          const saveRes = await fetch(`/api/proxy/auth/connections/${connId}`, {
+            method: 'PATCH',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: loginData.refresh_token, server_user_id: profileSelect.value }),
+          });
+          const saved = await saveRes.json();
+          if (!saveRes.ok) throw new Error(saved.detail || 'Signed in, but the new session could not be saved');
+
+          if (tokenInput) tokenInput.value = saved.token;
+          if (connId) setConnStatus(`conn-status-${connId}`, 'connected');
+          if (passwordInput) passwordInput.value = '';
+          form?.classList.add('hidden');
+          block.classList.add('hidden');
+          showMessage('Nuvio reconnected.');
+        } catch (err: any) {
+          if (statusEl) statusEl.textContent = err.message || 'Sign-in failed';
+        } finally {
+          if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Sign in'; }
+        }
+      });
     });
 
     // Add Connection toggle

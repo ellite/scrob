@@ -23,6 +23,7 @@ from routers.sync import (
     _nuvio_library_item,
     _nuvio_progress_item,
     _nuvio_watched_item,
+    _push_nuvio_library_delta,
     _run_full_push,
 )
 
@@ -119,6 +120,66 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(data["library"]), 501)
         self.assertEqual(len(data["watched"]), 1)
         self.assertEqual(len(data["progress"]), 1)
+
+    async def test_on_refresh_fires_before_a_later_pull_call_can_fail_it_away(self) -> None:
+        # Regression test: Nuvio's refresh token is single-use. If a pull RPC
+        # after the refresh fails, the caller must already have the new token
+        # in hand — otherwise it's stranded on a refresh token Nuvio has
+        # already invalidated, with no way back in short of a full re-login.
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(
+                    200,
+                    json={"access_token": "access-token", "refresh_token": "new-refresh", "expires_in": 3600},
+                )
+            if request.url.path.endswith("/sync_pull_profiles"):
+                return httpx.Response(200, json=[{"profile_index": 2, "name": "Main"}])
+            if request.url.path.endswith("/sync_pull_watch_progress"):
+                return httpx.Response(404, json={"message": "could not find the function"})
+            return httpx.Response(200, json=[])
+
+        refreshed: list[str] = []
+
+        async def on_refresh(session: nuvio.NuvioSession) -> None:
+            refreshed.append(session.refresh_token)
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            nuvio.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            with self.assertRaises(nuvio.NuvioAPIError):
+                await nuvio.pull_sync_data(
+                    "https://api.nuvio.tv/",
+                    "old-refresh",
+                    2,
+                    on_refresh=on_refresh,
+                )
+
+        self.assertEqual(refreshed, ["new-refresh"])
+
+    async def test_connection_lock_is_shared_by_connection_id(self) -> None:
+        self.assertIs(nuvio.connection_lock(9001), nuvio.connection_lock(9001))
+        self.assertIsNot(nuvio.connection_lock(9001), nuvio.connection_lock(9002))
+
+    async def test_refresh_error_surfaces_supabase_msg_and_error_code(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                400,
+                json={"code": 400, "error_code": "refresh_token_already_used", "msg": "Invalid Refresh Token: Already Used"},
+            )
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            nuvio.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            with self.assertRaises(nuvio.NuvioAPIError) as ctx:
+                await nuvio.refresh_session("https://api.nuvio.tv/", "stale-refresh")
+
+        self.assertIn("Invalid Refresh Token: Already Used", str(ctx.exception))
 
     async def test_pull_watch_progress_omits_unsupported_offset_param(self) -> None:
         """Regression test: sync_pull_watch_progress has no p_offset parameter
@@ -507,7 +568,7 @@ class NuvioCollectionFanoutTests(unittest.IsolatedAsyncioTestCase):
             )
 
         push_delta.assert_awaited_once()
-        _, current_items, changed_ids = push_delta.await_args.args
+        _, _, current_items, changed_ids = push_delta.await_args.args
         self.assertEqual(changed_ids, {"tt33764258"})
         self.assertEqual(
             current_items,
@@ -527,6 +588,38 @@ class NuvioCollectionFanoutTests(unittest.IsolatedAsyncioTestCase):
                 }
             ],
         )
+
+    async def test_library_delta_persists_rotated_token_even_if_the_push_fails(self) -> None:
+        # Regression test for the disconnect bug: merge_library refreshes the
+        # session and only then pushes the merged snapshot. If that push RPC
+        # fails, the connection must already hold the rotated token — it must
+        # not be silently discarded along with the failed push.
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(
+                    200,
+                    json={"access_token": "access-token", "refresh_token": "new-refresh", "expires_in": 3600},
+                )
+            if request.url.path.endswith("/sync_pull_library"):
+                return httpx.Response(200, json=[])
+            if request.url.path.endswith("/sync_push_library"):
+                return httpx.Response(500, json={"message": "internal error"})
+            return httpx.Response(404, json={"message": "unexpected request"})
+
+        conn = SimpleNamespace(id=77, url="https://api.nuvio.tv", token="old-refresh", server_user_id="2")
+        db = SimpleNamespace(commit=AsyncMock())
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            nuvio.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            with self.assertRaises(nuvio.NuvioAPIError):
+                await _push_nuvio_library_delta(db, conn, [], {"tt1"})
+
+        self.assertEqual(conn.token, "new-refresh")
+        db.commit.assert_awaited_once()
 
 
 class NuvioWatchHistoryTests(unittest.IsolatedAsyncioTestCase):

@@ -228,17 +228,22 @@ async def _push_watch_state(
         for conn in nuvio_connections:
             try:
                 profile_id = nuvio_client.parse_profile_id(conn.server_user_id)
-                if watched and nuvio_items:
-                    session = await nuvio_client.push_watched_items(
-                        conn.url, conn.token, profile_id, nuvio_items
-                    )
-                elif not watched and nuvio_keys:
-                    session = await nuvio_client.delete_watched_items(
-                        conn.url, conn.token, profile_id, nuvio_keys
-                    )
-                else:
-                    continue
-                conn.token = session.refresh_token
+
+                async def _persist_refresh(session: nuvio_client.NuvioSession, conn=conn) -> None:
+                    conn.token = session.refresh_token
+                    await db.commit()
+
+                async with nuvio_client.connection_lock(conn.id):
+                    if watched and nuvio_items:
+                        await nuvio_client.push_watched_items(
+                            conn.url, conn.token, profile_id, nuvio_items, on_refresh=_persist_refresh
+                        )
+                    elif not watched and nuvio_keys:
+                        await nuvio_client.delete_watched_items(
+                            conn.url, conn.token, profile_id, nuvio_keys, on_refresh=_persist_refresh
+                        )
+                    else:
+                        continue
             except Exception:
                 logger.exception("Failed to push watch state to Nuvio connection %s", conn.id)
                 continue

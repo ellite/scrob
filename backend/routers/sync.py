@@ -65,7 +65,6 @@ router = APIRouter()
 
 # Global semaphore — at most one sync running at a time across all users
 _sync_semaphore = asyncio.Semaphore(1)
-_nuvio_push_locks: dict[int, asyncio.Lock] = {}
 _stremio_push_locks: dict[int, asyncio.Lock] = {}
 
 BATCH_SIZE = 500
@@ -585,6 +584,7 @@ async def _build_nuvio_library_items(
 
 
 async def _push_nuvio_library_delta(
+    db: AsyncSession,
     conn: MediaServerConnection,
     current_items: list[dict],
     changed_content_ids: set[str],
@@ -596,16 +596,20 @@ async def _push_nuvio_library_delta(
         if content_id in items_by_id
     ]
     removals = changed_content_ids - items_by_id.keys()
-    lock = _nuvio_push_locks.setdefault(conn.id, asyncio.Lock())
-    async with lock:
-        session, _ = await nuvio.merge_library(
+
+    async def _persist_refresh(session: nuvio.NuvioSession) -> None:
+        conn.token = session.refresh_token
+        await db.commit()
+
+    async with nuvio.connection_lock(conn.id):
+        await nuvio.merge_library(
             conn.url,
             conn.token,
             _nuvio_profile_id(conn),
             additions=additions,
             removed_content_ids=set(removals),
+            on_refresh=_persist_refresh,
         )
-        conn.token = session.refresh_token
     return True
 
 
@@ -961,15 +965,18 @@ async def _fan_out_changes_to_other_connections(
         )
 
         async def _push_to_nuvio(conn: MediaServerConnection, items: list[dict]) -> bool:
-            lock = _nuvio_push_locks.setdefault(conn.id, asyncio.Lock())
-            async with lock:
-                session = await nuvio.push_watched_items(
+            async def _persist_refresh(session: nuvio.NuvioSession) -> None:
+                conn.token = session.refresh_token
+                await db.commit()
+
+            async with nuvio.connection_lock(conn.id):
+                await nuvio.push_watched_items(
                     conn.url,
                     conn.token,
                     _nuvio_profile_id(conn),
                     items,
+                    on_refresh=_persist_refresh,
                 )
-                conn.token = session.refresh_token
             return True
 
         for conn in push_candidates:
@@ -1003,6 +1010,7 @@ async def _fan_out_changes_to_other_connections(
                     push_tasks.append(
                         _guarded(
                             _push_nuvio_library_delta(
+                                db,
                                 conn,
                                 nuvio_library_items,
                                 nuvio_changed_content_ids,
@@ -3185,11 +3193,18 @@ async def _run_nuvio_sync(
             if profile_id < 1 or profile_id > 6:
                 raise RuntimeError("Invalid Nuvio profile index")
 
-            session, data = await nuvio.pull_sync_data(conn.url, conn.token, profile_id)
-            # Supabase refresh tokens rotate. Persist the replacement before doing
-            # any expensive metadata work so the connection remains recoverable.
-            conn.token = session.refresh_token
-            await db.commit()
+            # Supabase refresh tokens rotate; on_refresh persists the replacement
+            # the moment it's issued, inside pull_sync_data, before the pull RPCs
+            # run — a failed pull can no longer strand the connection on a
+            # refresh token that's already been redeemed and rejected.
+            async def _persist_refresh(refreshed: nuvio.NuvioSession) -> None:
+                conn.token = refreshed.refresh_token
+                await db.commit()
+
+            async with nuvio.connection_lock(conn.id):
+                _, data = await nuvio.pull_sync_data(
+                    conn.url, conn.token, profile_id, on_refresh=_persist_refresh
+                )
 
             library_records = data["library"] if conn.sync_collection else []
             watched_records = data["watched"] if conn.sync_watched else []
@@ -4625,33 +4640,34 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 )
                 await db.commit()
 
-                lock = _nuvio_push_locks.setdefault(conn.id, asyncio.Lock())
-                async with lock:
-                    token = conn.token
+                async def _persist_refresh(session: nuvio.NuvioSession) -> None:
+                    conn.token = session.refresh_token
+                    await db.commit()
+
+                async with nuvio.connection_lock(conn.id):
                     if conn.push_collection:
                         # Merge rather than replace: a full/scheduled push only knows
                         # the current local library, not what changed since last time,
                         # so it must never drop remote-only items it can't account for.
                         # Real removals still propagate through the real-time delta
                         # push (_push_nuvio_library_delta) when an item is uncollected.
-                        session, _ = await nuvio.merge_library(
+                        await nuvio.merge_library(
                             conn.url,
-                            token,
+                            conn.token,
                             _nuvio_profile_id(conn),
                             additions=library_items,
                             removed_content_ids=set(),
+                            on_refresh=_persist_refresh,
                         )
-                        token = session.refresh_token
                     if watched_items or progress_items:
-                        session = await nuvio.push_sync_items(
+                        await nuvio.push_sync_items(
                             conn.url,
-                            token,
+                            conn.token,
                             _nuvio_profile_id(conn),
                             watched_items,
                             progress_items,
+                            on_refresh=_persist_refresh,
                         )
-                        token = session.refresh_token
-                    conn.token = token
 
                 await db.execute(
                     update(SyncJob)

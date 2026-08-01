@@ -569,8 +569,19 @@ async def update_connection(
             candidate_url = update_data.get("url", conn.url)
             candidate_token = update_data.get("token", conn.token)
             profile_id = _parse_nuvio_profile_id(update_data.get("server_user_id", conn.server_user_id))
+
+            async def _persist_refresh(session: nuvio.NuvioSession) -> None:
+                # Persist the rotated token the moment it exists — if the
+                # profile lookup that follows fails, the connection must not
+                # be left holding a refresh token Nuvio has already redeemed.
+                conn.token = session.refresh_token
+                await db.commit()
+
             try:
-                session, profiles = await nuvio.validate_connection(candidate_url, candidate_token, profile_id)
+                async with nuvio.connection_lock(conn.id):
+                    session, profiles = await nuvio.validate_connection(
+                        candidate_url, candidate_token, profile_id, on_refresh=_persist_refresh
+                    )
             except nuvio.NuvioAPIError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
             update_data["token"] = session.refresh_token
@@ -1040,8 +1051,12 @@ async def get_connection_status(
                 connected = await plex.validate_connection(conn.url, conn.token)
             elif conn.type == "nuvio":
                 profile_id = _parse_nuvio_profile_id(conn.server_user_id)
-                session, profiles = await nuvio.validate_connection(conn.url, conn.token, profile_id)
-                conn.token = session.refresh_token
+                # Nuvio's refresh token is single-use; the lock keeps this
+                # status check from racing another request (e.g. a second
+                # open tab) that reads and redeems the same stale token.
+                async with nuvio.connection_lock(conn.id):
+                    session, profiles = await nuvio.validate_connection(conn.url, conn.token, profile_id)
+                    conn.token = session.refresh_token
                 conn.server_username = _nuvio_profile_name(profiles, profile_id)
                 connected = True
             elif conn.type == "stremio":
