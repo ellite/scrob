@@ -1,3 +1,6 @@
+import asyncio
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -7,6 +10,8 @@ from models.users import User
 from models.lists import List as UserList, ListItem
 from models.media import Media, MediaType
 from models.show import Show
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["compat"])
 
@@ -84,14 +89,49 @@ async def sonarr_list(
     await _get_list(list_id, user, db)
 
     rows = (await db.execute(
-        select(Media, Show.tvdb_id)
+        select(Media, Show.tvdb_id, Show.tmdb_data)
         .join(ListItem, ListItem.media_id == Media.id)
         .outerjoin(Show, Show.tmdb_id == Media.tmdb_id)
         .where(ListItem.list_id == list_id, Media.media_type == MediaType.series)
     )).all()
 
+    # Sonarr requires tvdbId to add a series from an import list. List items
+    # added from TMDB search often lack a linked Show row with tvdb_id, so
+    # fall back to the cached TMDB payload and finally to a live TMDB lookup —
+    # mirroring the resolution order used by the manual "Request on Sonarr"
+    # flow in routers/media.py.
+    unresolved: list[tuple[int, int]] = []
+    resolved: dict[int, int] = {}
+    for idx, (media, tvdb_id, tmdb_data) in enumerate(rows):
+        if not media.tmdb_id or tvdb_id:
+            continue
+        cached = (tmdb_data or {}).get("external_ids") or {}
+        cached_tvdb = cached.get("tvdb_id") if isinstance(cached, dict) else None
+        if cached_tvdb:
+            resolved[idx] = cached_tvdb
+        else:
+            unresolved.append((idx, media.tmdb_id))
+
+    if unresolved:
+        from core import tmdb as tmdb_core
+        from routers.media import get_user_tmdb_key
+
+        tmdb_key = await get_user_tmdb_key(db, user.id)
+
+        async def _lookup(idx: int, tmdb_id: int) -> tuple[int, int | None]:
+            try:
+                ext = await tmdb_core.get_external_ids(tmdb_id, "tv", api_key=tmdb_key)
+                return idx, ext.get("tvdb_id")
+            except Exception as e:
+                log.warning(f"sonarr-compat: TMDB external_ids lookup failed for tmdb:{tmdb_id}: {e}")
+                return idx, None
+
+        for idx, tvdb in await asyncio.gather(*[_lookup(i, t) for i, t in unresolved]):
+            if tvdb:
+                resolved[idx] = tvdb
+
     result = []
-    for media, tvdb_id in rows:
+    for idx, (media, tvdb_id, _tmdb_data) in enumerate(rows):
         if not media.tmdb_id:
             continue
         # Radarr/Sonarr deserialize this into a non-nullable int — a null year
@@ -114,7 +154,8 @@ async def sonarr_list(
             "monitored": True,
             "seasonFolder": True,
         }
-        if tvdb_id:
-            entry["tvdbId"] = tvdb_id
+        effective_tvdb = tvdb_id or resolved.get(idx)
+        if effective_tvdb:
+            entry["tvdbId"] = effective_tvdb
         result.append(entry)
     return result
