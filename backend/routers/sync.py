@@ -3450,6 +3450,32 @@ async def _stremio_series_metadata(content_ids: set[str]) -> dict[str, dict]:
     }
 
 
+def _stremio_valid_content_id(content_id: object) -> bool:
+    value = str(content_id or "")
+    return bool(re.fullmatch(r"tt\d+", value, flags=re.IGNORECASE)) or _parse_nuvio_tmdb_id(value) is not None
+
+
+def _stremio_series_imdb_id(item: dict) -> str | None:
+    """Cinemeta only understands IMDb ids, but a series' own `_id` may be a
+    tmdb:<id> catalog id (e.g. items added via a TMDB-based addon). Episode
+    identifiers embedded in state always carry the IMDb-prefixed episode id
+    regardless of the catalog the series was added from, so fall back to
+    those to find an IMDb id to key the Cinemeta lookup by."""
+    content_id = str(item.get("_id") or "")
+    if re.fullmatch(r"tt\d+", content_id, flags=re.IGNORECASE):
+        return content_id
+    state = item.get("state") if isinstance(item.get("state"), dict) else {}
+    candidates = [str(state.get("video_id") or "")]
+    watched = str(state.get("watched") or "")
+    if watched:
+        candidates.append(watched.rsplit(":", 2)[0])
+    for candidate in candidates:
+        imdb_id = candidate.split(":", 1)[0]
+        if re.fullmatch(r"tt\d+", imdb_id, flags=re.IGNORECASE):
+            return imdb_id
+    return None
+
+
 async def _stremio_records(
     items: list[dict],
 ) -> tuple[list[dict], list[dict], list[dict], set[str]]:
@@ -3457,12 +3483,12 @@ async def _stremio_records(
         item
         for item in items
         if str(item.get("type") or "") in ("movie", "series")
-        and re.fullmatch(r"tt\d+", str(item.get("_id") or ""), flags=re.IGNORECASE)
+        and _stremio_valid_content_id(item.get("_id"))
     ]
     removed_ids = {
         str(item.get("_id"))
         for item in items
-        if item.get("removed") and re.fullmatch(r"tt\d+", str(item.get("_id") or ""), flags=re.IGNORECASE)
+        if item.get("removed") and _stremio_valid_content_id(item.get("_id"))
     }
     series_needing_meta = [
         item
@@ -3473,9 +3499,12 @@ async def _stremio_records(
             or (item.get("state") or {}).get("video_id")
         )
     ]
-    metas = await _stremio_series_metadata(
-        {str(item["_id"]) for item in series_needing_meta}
-    )
+    series_imdb_ids = {
+        str(item["_id"]): imdb_id
+        for item in series_needing_meta
+        if (imdb_id := _stremio_series_imdb_id(item)) is not None
+    }
+    metas = await _stremio_series_metadata(set(series_imdb_ids.values()))
 
     library_records: list[dict] = []
     watched_records: list[dict] = []
@@ -3517,7 +3546,7 @@ async def _stremio_records(
                 )
             continue
 
-        videos = _stremio_sorted_videos(metas.get(content_id, {}))
+        videos = _stremio_sorted_videos(metas.get(series_imdb_ids.get(content_id, content_id), {}))
         video_ids = [str(video["id"]) for video in videos]
         watched_ids = stremio.decode_watched_bitfield(state.get("watched"), video_ids)
         for video in videos:

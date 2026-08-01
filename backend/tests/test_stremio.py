@@ -248,6 +248,52 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(removed, {"tt0944947"})
 
+    async def test_tmdb_catalog_series_still_resolves_episodes_via_cinemeta(self) -> None:
+        # Series added through a TMDB-based catalog addon carry a tmdb:<id>
+        # `_id`, but Stremio still tracks per-episode watch state using the
+        # IMDb-prefixed episode ids returned by Cinemeta.
+        videos = [
+            {"id": "tt34866681:1:1", "season": 1, "episode": 1, "name": "S1E1"},
+            {"id": "tt34866681:1:2", "season": 1, "episode": 2, "name": "S1E2"},
+        ]
+        watched = stremio.encode_watched_bitfield(
+            {"tt34866681:1:1"},
+            [video["id"] for video in videos],
+        )
+        item = {
+            "_id": "tmdb:278624",
+            "type": "series",
+            "name": "Lucky",
+            "removed": True,
+            "temp": True,
+            "state": {
+                "watched": watched,
+                "video_id": "tt34866681:1:2",
+                "timeOffset": 1,
+                "duration": 2_850_216,
+                "lastWatched": "2026-07-31T20:35:41.332Z",
+            },
+        }
+
+        with patch.object(
+            stremio,
+            "get_cinemeta_series",
+            AsyncMock(return_value={"videos": videos}),
+        ) as get_series:
+            library, watched_records, progress, removed = await _stremio_records([item])
+
+        get_series.assert_awaited_once_with("tt34866681")
+        self.assertEqual(library, [])
+        self.assertEqual(
+            [(record["content_id"], record["season"], record["episode"]) for record in watched_records],
+            [("tmdb:278624", 1, 1)],
+        )
+        self.assertEqual(
+            [(record["content_id"], record["season"], record["episode"]) for record in progress],
+            [("tmdb:278624", 1, 2)],
+        )
+        self.assertEqual(removed, {"tmdb:278624"})
+
     def test_noop_comparison_ignores_only_mtime(self) -> None:
         left = {"_id": "tt0133093", "_mtime": "old", "state": {"timeOffset": 42}, "custom": True}
         same = {**left, "_mtime": "new"}
