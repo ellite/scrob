@@ -7,6 +7,7 @@ interface Props {
   inLibrary: boolean;
   collectionPct: number;
   watchPct?: number;
+  watchStarted?: boolean;
   showTmdbId?: number;
   seasonNumber?: number;
   episodeNumber?: number;
@@ -34,6 +35,7 @@ const {
   inLibrary,
   collectionPct,
   watchPct = 0,
+  watchStarted = false,
   showTmdbId,
   seasonNumber,
   episodeNumber,
@@ -65,7 +67,10 @@ const label = "hidden md:block text-[10px] font-bold uppercase tracking-wider le
 // Consistent state classes per button colour — inactive / active
 // inactive: bg-zinc-800 text-zinc-500 hover:bg-[c]-500/10 hover:text-[c]-400
 // active:   bg-[c]-500/20 text-[c]-400 hover:bg-[c]-500/30
-const watchActive = isSeries ? watchPct > 0 : watched;
+// watchPct rounds down to 0 for e.g. 1 watched out of 200+ episodes - the
+// pill still shows "0%" (accurate), but needs watchStarted to know it
+// should render as active/green rather than looking untouched.
+const watchActive = isSeries ? (watchStarted || watchPct > 0) : watched;
 const watchedCls  = watchActive
   ? "bg-green-500/50  text-green-300  hover:bg-green-400/50"
   : "bg-zinc-800 text-zinc-500 hover:bg-green-400/50 hover:text-green-400";
@@ -88,7 +93,7 @@ const rewatchCls = rewatchActive
   : "bg-zinc-800 text-zinc-500 hover:bg-indigo-400/50 hover:text-indigo-400";
 const rewatchLabel = rewatchActive ? `${rewatch!.watched}/${rewatch!.total}` : "Rewatch";
 const rewatchTitle = rewatchActive
-  ? `Rewatching - ${rewatch!.watched}/${rewatch!.total} watched this cycle. Click to restart.`
+  ? `Rewatching - ${rewatch!.watched}/${rewatch!.total} watched this cycle. Click for options.`
   : "Start a rewatch";
 
 const needsCheck  = !requestStatus && !isMonitored;
@@ -157,15 +162,6 @@ const requestTitle = isMonitored
         </svg>
         <span class={label}>{rewatchLabel}</span>
         {isSeries && <span class="md:hidden text-[9px] font-bold leading-none">{rewatchLabel}</span>}
-        {rewatchActive && (
-          <span
-            data-action="rewatch-cancel"
-            title="Cancel rewatch"
-            class="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-black/80 backdrop-blur-md flex items-center justify-center text-[9px] leading-none text-zinc-300 hover:text-white hover:bg-black cursor-pointer"
-          >
-            &times;
-          </span>
-        )}
       </button>
     )}
 

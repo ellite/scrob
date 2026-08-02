@@ -557,6 +557,10 @@ async def enrich_with_state(
             _w = show_watched_count_map.get(tid, 0)
             _a = show_aired_count.get(tid, 0)
             item["watch_pct"] = min(100, int((_w / _a) * 100)) if _a > 0 else 0
+            # watch_pct rounds down to 0 for e.g. 1 watched out of 200+ episodes -
+            # this is the exact boolean the "watched" state pill needs, so it
+            # doesn't have to (mis)infer "any progress" from a rounded percentage.
+            item["watch_started"] = _w > 0
         elif t == "episode":
             item["watched"] = tid in watched_episodes
             in_lib = tid in collected_ep_ids

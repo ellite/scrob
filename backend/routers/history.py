@@ -20,7 +20,7 @@ from models.episode_order import EpisodeOrderMapping
 from models.rewatch import ShowRewatch, RewatchProgress
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations
-from core.rewatch import get_active_rewatch, record_rewatch_progress
+from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark
 
 from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
@@ -1356,15 +1356,10 @@ async def mark_season_watched(
     if not all_season_episodes:
         return {"status": "ok", "count": 0}
 
-    already_q = await db.execute(
-        select(WatchEvent.media_id).where(
-            WatchEvent.user_id == current_user.id,
-            WatchEvent.media_id.in_([ep.id for ep in all_season_episodes]),
-            WatchEvent.completed == True
-        )
+    already_watched = await get_already_watched_for_bulk_mark(
+        db, current_user.id, show, [ep.id for ep in all_season_episodes]
     )
-    already_watched = {r[0] for r in already_q.all()}
-    
+
     newly_watched = []
     new_events = []
     for ep in all_season_episodes:
@@ -1580,15 +1575,10 @@ async def mark_show_watched(
         
         if not season_eps_to_watch: continue
 
-        already_q = await db.execute(
-            select(WatchEvent.media_id).where(
-                WatchEvent.user_id == current_user.id,
-                WatchEvent.media_id.in_([ep.id for ep in season_eps_to_watch]),
-                WatchEvent.completed == True
-            )
+        already_watched = await get_already_watched_for_bulk_mark(
+            db, current_user.id, show, [ep.id for ep in season_eps_to_watch]
         )
-        already_watched = {r[0] for r in already_q.all()}
-        
+
         for ep in season_eps_to_watch:
             if ep.id not in already_watched:
                 event = WatchEvent(
@@ -1660,14 +1650,9 @@ async def mark_show_watched(
                     if not season_eps_to_watch:
                         continue
 
-                    already_q = await db.execute(
-                        select(WatchEvent.media_id).where(
-                            WatchEvent.user_id == current_user.id,
-                            WatchEvent.media_id.in_([ep.id for ep in season_eps_to_watch]),
-                            WatchEvent.completed == True
-                        )
+                    already_watched = await get_already_watched_for_bulk_mark(
+                        db, current_user.id, show, [ep.id for ep in season_eps_to_watch]
                     )
-                    already_watched = {r[0] for r in already_q.all()}
 
                     for ep in season_eps_to_watch:
                         if ep.id not in already_watched:

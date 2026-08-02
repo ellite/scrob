@@ -147,6 +147,7 @@ const seasonTitle = season
                 inLibrary={season.season_in_library}
                 collectionPct={season.season_collection_pct}
                 watchPct={season.season_watch_pct ?? 0}
+                watchStarted={season.season_watch_started ?? false}
                 seasonNumber={Number(season_number)}
                 showTmdbId={season.show.tmdb_id ?? undefined}
                 episodeOrder="tvdb"

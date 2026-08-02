@@ -224,9 +224,10 @@ class MarkSeasonWatchedDateTests(unittest.IsolatedAsyncioTestCase):
     async def _mark_season(self, **watched_at_kwargs) -> tuple[dict, WatchEvent]:
         show = Show(id=55, tmdb_id=100, title="Test Show")
         # execute() call order: show lookup, existing-episode lookup,
-        # already-watched lookup, PlaybackProgress delete, then
+        # already-watched lookup (get_active_rewatch -> none, then the raw
+        # WatchEvent query), PlaybackProgress delete, then
         # record_rewatch_progress's own Media lookup for the one new episode.
-        db = _FakeSession([show, [], [], None, None])
+        db = _FakeSession([show, [], None, [], None, None])
         db.info["tmdb_key_7"] = "test-key"  # pre-cache so get_user_tmdb_key skips its own query
         with (
             patch.object(history.tmdb, "get_season", AsyncMock(return_value=_SEASON_PAYLOAD)),
@@ -265,9 +266,10 @@ class MarkShowWatchedDateTests(unittest.IsolatedAsyncioTestCase):
             tmdb_data={"seasons": [{"season_number": 1, "episode_count": 1, "name": "Season 1"}]},
         )
         # execute() call order: show lookup, existing-episode lookup,
-        # already-watched lookup, PlaybackProgress delete, then
+        # already-watched lookup (get_active_rewatch -> none, then the raw
+        # WatchEvent query), PlaybackProgress delete, then
         # record_rewatch_progress's own Media lookup for the one new episode.
-        db = _FakeSession([show, [], [], None, None])
+        db = _FakeSession([show, [], None, [], None, None])
         db.info["tmdb_key_7"] = "test-key"
         with (
             patch.object(history.tmdb, "get_season", AsyncMock(return_value=_SEASON_PAYLOAD)),

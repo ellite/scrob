@@ -23,7 +23,8 @@ from models.playback_session import PlaybackSession
 from models.playback_progress import PlaybackProgress
 from models.library_selections import PlexLibrarySelection, JellyfinLibrarySelection, EmbyLibrarySelection
 from core.enrichment import enrich_media
-from core.rewatch import record_rewatch_progress
+from core.rewatch import record_rewatch_progress, get_active_rewatch
+from models.rewatch import RewatchProgress
 from core import tmdb
 from core import trakt as trakt_client
 from core import simkl as simkl_client
@@ -416,6 +417,33 @@ async def _write_watch_event(
         await _update_playback_progress(db, user_id, media_id, progress_percent, progress_seconds)
 
 
+async def _handle_unwatch_toggle(db: AsyncSession, user_id: int, media: Media) -> None:
+    """Server-reported "mark unwatched" for one item (currently only Jellyfin's
+    webhook plugin reports this - see the UserDataSaved/TogglePlayed handling
+    below). While a rewatch is active for the media's show, this only undoes
+    that episode's progress on the current cycle - real watch history is left
+    untouched either way. Without an active rewatch, it removes all watch
+    history for the item, matching this connection's normal bidirectional
+    watched-status sync."""
+    active_rewatch = None
+    if media.media_type == MediaType.episode and media.show_id:
+        active_rewatch = await get_active_rewatch(db, user_id, media.show_id)
+    if active_rewatch:
+        await db.execute(
+            delete(RewatchProgress).where(
+                RewatchProgress.rewatch_id == active_rewatch.id,
+                RewatchProgress.media_id == media.id,
+            )
+        )
+    else:
+        await db.execute(
+            delete(WatchEvent).where(
+                WatchEvent.user_id == user_id,
+                WatchEvent.media_id == media.id,
+            )
+        )
+
+
 # ── Jellyfin ───────────────────────────────────────────────────────────────────
 
 def parse_jellyfin_payload(payload: dict) -> dict | None:
@@ -746,12 +774,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                 await _maybe_mdblist_scrobble(settings, media, "stop", 1.0, db=db)
                 await _maybe_simkl_scrobble(settings, media, "stop", db=db)
             elif played is False:
-                await db.execute(
-                    delete(WatchEvent).where(
-                        WatchEvent.user_id == user.id,
-                        WatchEvent.media_id == media.id,
-                    )
-                )
+                await _handle_unwatch_toggle(db, user.id, media)
                 await db.commit()
                 from routers.history import _push_watch_state
                 await _push_watch_state(db, user.id, [media.id], watched=False)

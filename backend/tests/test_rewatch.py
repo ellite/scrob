@@ -9,13 +9,20 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 
 from sqlalchemy.sql.dml import Delete
 
-from core.rewatch import capped_season_episode_counts, total_aired_episodes, record_rewatch_progress
+from core.rewatch import (
+    capped_season_episode_counts,
+    total_aired_episodes,
+    record_rewatch_progress,
+    get_already_watched_for_bulk_mark,
+)
 from models.base import MediaType
 from models.events import WatchEvent
 from models.media import Media
 from models.rewatch import ShowRewatch
 from models.show import Show
 from routers import history
+from routers.webhooks import _handle_unwatch_toggle
+from routers.sync import is_fresh_rewatch_play
 
 
 class CappedSeasonEpisodeCountsTests(unittest.TestCase):
@@ -298,6 +305,124 @@ class GetItemEventsTests(unittest.IsolatedAsyncioTestCase):
             db=db, current_user=SimpleNamespace(id=1),
         )
         self.assertTrue(result["watched"])
+
+
+class _UnwatchFakeSession:
+    def __init__(self, results):
+        self._results = list(results)
+        self.executed_statements = []
+
+    async def execute(self, stmt):
+        self.executed_statements.append(stmt)
+        if isinstance(stmt, Delete):
+            return None
+        item = self._results.pop(0) if self._results else None
+        return _ScalarResult(item)
+
+    def _deleted_tables(self):
+        return [stmt.table.name for stmt in self.executed_statements if isinstance(stmt, Delete)]
+
+
+class HandleUnwatchToggleTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for: a media server reporting "marked unwatched"
+    (currently only Jellyfin's webhook plugin sends this) used to delete ALL
+    watch history for the item unconditionally - including plays from before
+    an active rewatch started."""
+
+    async def test_movie_deletes_all_watch_events(self):
+        movie = Media(id=10, media_type=MediaType.movie, title="A Movie")
+        db = _UnwatchFakeSession([])
+        await _handle_unwatch_toggle(db, user_id=1, media=movie)
+        self.assertEqual(db._deleted_tables(), ["watch_events"])
+
+    async def test_episode_without_active_rewatch_deletes_all_watch_events(self):
+        episode = Media(id=11, media_type=MediaType.episode, show_id=55, season_number=1, episode_number=1)
+        db = _UnwatchFakeSession([None])  # get_active_rewatch -> none
+        await _handle_unwatch_toggle(db, user_id=1, media=episode)
+        self.assertEqual(db._deleted_tables(), ["watch_events"])
+
+    async def test_episode_with_active_rewatch_only_removes_progress(self):
+        episode = Media(id=12, media_type=MediaType.episode, show_id=55, season_number=1, episode_number=1)
+        rewatch = ShowRewatch(id=7, user_id=1, show_id=55)
+        db = _UnwatchFakeSession([rewatch])
+        await _handle_unwatch_toggle(db, user_id=1, media=episode)
+        self.assertEqual(db._deleted_tables(), ["rewatch_progress"])
+
+
+class IsFreshRewatchPlayTests(unittest.TestCase):
+    """Regression tests for: a full-library sync used to skip creating a new
+    WatchEvent for any episode that already had watch history - true of
+    almost every rewatch by definition - so rewatch progress never advanced
+    from a sync, only from being online for the live playback webhook."""
+
+    def test_false_when_not_already_recorded(self):
+        # sync_items already lets a never-before-seen play through on its own -
+        # this helper must not also claim it, or it'd double-count.
+        rewatch = ShowRewatch(id=1, show_id=55, started_at=datetime(2026, 1, 1))
+        self.assertFalse(is_fresh_rewatch_play(False, MediaType.episode, 55, 1, {55: rewatch}, set(), datetime(2026, 1, 2)))
+
+    def test_false_for_movies(self):
+        self.assertFalse(is_fresh_rewatch_play(True, MediaType.movie, None, 1, {}, set(), datetime(2026, 1, 2)))
+
+    def test_false_without_show_id(self):
+        self.assertFalse(is_fresh_rewatch_play(True, MediaType.episode, None, 1, {}, set(), datetime(2026, 1, 2)))
+
+    def test_false_without_active_rewatch_for_show(self):
+        self.assertFalse(is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {}, set(), datetime(2026, 1, 2)))
+
+    def test_false_when_already_progressed_this_cycle(self):
+        rewatch = ShowRewatch(id=7, show_id=55, started_at=datetime(2026, 1, 1))
+        self.assertFalse(is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, {1}, datetime(2026, 1, 2)))
+
+    def test_false_without_a_last_played_date(self):
+        rewatch = ShowRewatch(id=7, show_id=55, started_at=datetime(2026, 1, 1))
+        self.assertFalse(is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, set(), None))
+
+    def test_false_when_last_played_predates_the_rewatch(self):
+        # The server's played flag stays true forever - an old play must not
+        # be mistaken for a fresh rewatch play just because progress is empty.
+        rewatch = ShowRewatch(id=7, show_id=55, started_at=datetime(2026, 1, 1))
+        self.assertFalse(is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, set(), datetime(2025, 6, 1)))
+
+    def test_true_when_last_played_is_after_the_rewatch_started(self):
+        rewatch = ShowRewatch(id=7, show_id=55, started_at=datetime(2026, 1, 1))
+        self.assertTrue(is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, set(), datetime(2026, 1, 2)))
+
+
+class GetAlreadyWatchedForBulkMarkTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for: mark_season_watched/mark_show_watched used to
+    skip every episode that already had watch history, so clicking "mark
+    season as watched" during an active rewatch silently did nothing for a
+    season that had already been watched before the rewatch - which is the
+    common case, since that's the point of a rewatch."""
+
+    async def test_empty_media_ids_short_circuits(self):
+        db = _EventsFakeSession([])
+        result = await get_already_watched_for_bulk_mark(db, user_id=1, show=Show(id=55), media_ids=[])
+        self.assertEqual(result, set())
+
+    async def test_without_active_rewatch_uses_full_history(self):
+        db = _EventsFakeSession([
+            _ScalarResult(None),  # get_active_rewatch -> none
+            _RowsResult([(10,), (11,)]),  # raw WatchEvent.media_id query
+        ])
+        result = await get_already_watched_for_bulk_mark(db, user_id=1, show=Show(id=55), media_ids=[10, 11, 12])
+        self.assertEqual(result, {10, 11})
+
+    async def test_with_active_rewatch_uses_only_that_rewatchs_progress(self):
+        """The exact reported bug: a season fully watched before the rewatch
+        must NOT be treated as "already watched" here - only episodes already
+        progressed for the active rewatch itself should be skipped."""
+        rewatch = ShowRewatch(id=7, user_id=1, show_id=55)
+        db = _EventsFakeSession([
+            _ScalarResult(rewatch),  # get_active_rewatch -> active
+            _RowsResult([(10,)]),  # only media_id 10 progressed so far this cycle
+        ])
+        result = await get_already_watched_for_bulk_mark(db, user_id=1, show=Show(id=55), media_ids=[10, 11, 12])
+        # 11 and 12 are NOT skipped even though (per the old bug) they'd
+        # certainly have raw history from before the rewatch - only 10 has
+        # been counted for this specific cycle.
+        self.assertEqual(result, {10})
 
 
 if __name__ == "__main__":

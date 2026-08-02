@@ -746,6 +746,7 @@ async def get_show(
                 "collection_pct": min(100, int((collected / total) * 100)) if total > 0 else 0,
                 "watched": watched >= total if total > 0 else False,
                 "watch_pct": min(100, int((watched / total) * 100)) if total > 0 else 0,
+                "watch_started": watched > 0,
                 "user_rating": season_ratings.get(sn),
             }
 
@@ -813,6 +814,7 @@ async def get_show(
             "in_lists": state_item.get("in_lists", []),
             "collection_pct": state_item.get("collection_pct", 0),
             "watch_pct": state_item.get("watch_pct", 0),
+            "watch_started": state_item.get("watch_started", False),
             "is_monitored": state_item.get("is_monitored", False),
             "request_enabled": state_item.get("request_enabled", False),
             "request_status": state_item.get("request_status"),
@@ -1250,6 +1252,7 @@ async def get_show_season(
             watched_count = sum(1 for ep in episodes if ep.get("watched"))
             season_watched = watched_count >= aired_denom if aired_denom > 0 else False
             season_watch_pct = min(100, int((watched_count / aired_denom) * 100)) if aired_denom > 0 else 0
+            season_watch_started = watched_count > 0
 
             # Season user rating (stored against show's Media row with season_number)
             season_user_rating = None
@@ -1285,6 +1288,7 @@ async def get_show_season(
                 "show_watched": show_state.get("watched", False),
                 "season_watched": season_watched,
                 "season_watch_pct": season_watch_pct,
+                "season_watch_started": season_watch_started,
                 "season_in_library": season_in_library,
                 "season_collection_pct": season_collection_pct,
                 "season_user_rating": season_user_rating,
@@ -1790,6 +1794,7 @@ async def get_tvdb_show(
             "collection_pct": min(100, int((collected / effective_total) * 100)) if effective_total > 0 else 0,
             "watched": watched >= effective_total if effective_total > 0 else False,
             "watch_pct": min(100, int((watched / effective_total) * 100)) if effective_total > 0 else 0,
+            "watch_started": watched > 0,
             "user_rating": season_ratings.get(season_number_value),
         }
 
@@ -1803,6 +1808,7 @@ async def get_tvdb_show(
     collection_pct = int(total_pct / non_special_seasons) if non_special_seasons else 0
     total_watch_pct = sum(v["watch_pct"] for sn, v in season_states.items() if sn != 0)
     watch_pct = int(total_watch_pct / non_special_seasons) if non_special_seasons else 0
+    watch_started = any(v["watch_started"] for sn, v in season_states.items() if sn != 0)
 
     # Sonarr state
     gs = await _get_global_settings(db)
@@ -1872,6 +1878,7 @@ async def get_tvdb_show(
         "in_lists": [],
         "collection_pct": collection_pct,
         "watch_pct": watch_pct,
+        "watch_started": watch_started,
         "is_monitored": is_monitored,
         "request_enabled": request_enabled,
         "request_status": None,
@@ -2155,6 +2162,7 @@ async def get_tvdb_season(
     season_collection_pct = min(100, int((len(collected_ep_ids) / total_eps) * 100)) if total_eps else 0
     season_watched = total_eps > 0 and len(watched_ep_ids) >= total_eps
     season_watch_pct = min(100, int((len(watched_ep_ids) / total_eps) * 100)) if total_eps else 0
+    season_watch_started = len(watched_ep_ids) > 0
 
     return {
         "tvdb_id": tvdb_id,
@@ -2169,6 +2177,7 @@ async def get_tvdb_season(
         "season_in_library": season_in_library,
         "season_watched": season_watched,
         "season_watch_pct": season_watch_pct,
+        "season_watch_started": season_watch_started,
         "season_collection_pct": season_collection_pct,
         "season_user_rating": season_user_rating,
         "show_in_library": show is not None,

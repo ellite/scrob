@@ -109,6 +109,7 @@ export interface SeasonState {
   in_library: boolean;
   collection_pct: number;
   watch_pct: number;
+  watch_started?: boolean;
   user_rating: number | null;
 }
 
@@ -149,6 +150,7 @@ export interface Season {
   show_watched: boolean;
   season_watched: boolean;
   season_watch_pct: number;
+  season_watch_started?: boolean;
   season_in_library: boolean;
   season_collection_pct: number;
   season_user_rating: number | null;
@@ -571,6 +573,7 @@ export interface MediaItem {
   in_lists?: number[];
   collection_pct?: number;
   watch_pct?: number;
+  watch_started?: boolean;
   is_monitored?: boolean;
   request_enabled?: boolean;
   user_rating?: number | null;
@@ -726,6 +729,7 @@ export interface TvdbSeason {
   episodes: TvdbEpisode[];
   season_in_library: boolean;
   season_watch_pct: number;
+  season_watch_started?: boolean;
   season_watched: boolean;
   season_collection_pct: number;
   season_user_rating: number | null;
@@ -786,6 +790,8 @@ export interface TvdbShow {
   cast: { tmdb_id: null; person_id: number | null; name: string; character: string; profile_path: string | null }[];
   in_library: boolean;
   watched: boolean;
+  watch_pct?: number;
+  watch_started?: boolean;
   in_lists: number[];
   collection_pct: number;
   is_monitored: boolean;
@@ -811,6 +817,8 @@ export interface Show {
   genres: string[];
   in_library: boolean;
   watched: boolean;
+  watch_pct?: number;
+  watch_started?: boolean;
   in_lists: number[];
   collection_pct: number;
   is_monitored?: boolean;

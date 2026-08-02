@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.rewatch import ShowRewatch, RewatchProgress
 from models.media import Media
+from models.events import WatchEvent
 from models.show import Show as ShowModel
 from models.base import MediaType
 
@@ -60,6 +61,35 @@ async def get_active_rewatches_for_shows(
 async def get_rewatch_progress_media_ids(db: AsyncSession, rewatch_id: int) -> set[int]:
     result = await db.execute(
         select(RewatchProgress.media_id).where(RewatchProgress.rewatch_id == rewatch_id)
+    )
+    return {row[0] for row in result.all()}
+
+
+async def get_already_watched_for_bulk_mark(
+    db: AsyncSession, user_id: int, show: ShowModel, media_ids: list[int]
+) -> set[int]:
+    """Which of these episode media_ids should be skipped as "already
+    watched" by a bulk mark-as-watched action (mark season/show watched).
+    Scoped to the active rewatch's own progress if one exists, rather than
+    full history - marking a season/show watched is an explicit user action,
+    so during a rewatch every episode gets a fresh chance to count for the
+    current cycle even though it's virtually guaranteed to already be in old
+    history (that's the point of a rewatch). Without an active rewatch this
+    is exactly the full-history check it replaces."""
+    if not media_ids:
+        return set()
+
+    active_rewatch = await get_active_rewatch(db, user_id, show.id)
+    if active_rewatch:
+        progressed = await get_rewatch_progress_media_ids(db, active_rewatch.id)
+        return progressed & set(media_ids)
+
+    result = await db.execute(
+        select(WatchEvent.media_id).where(
+            WatchEvent.user_id == user_id,
+            WatchEvent.media_id.in_(media_ids),
+            WatchEvent.completed == True,
+        )
     )
     return {row[0] for row in result.all()}
 

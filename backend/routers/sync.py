@@ -29,7 +29,8 @@ from core import jellyfin, emby, plex, nuvio, stremio, tmdb
 import core.trakt as trakt_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode
 from core.image_cache import pre_cache_all_collected_bg
-from core.rewatch import record_rewatch_progress
+from core.rewatch import record_rewatch_progress, get_active_rewatches_for_shows
+from models.rewatch import ShowRewatch, RewatchProgress
 
 from dependencies import get_current_user, get_current_user_or_api_key
 logger = logging.getLogger("uvicorn.error")
@@ -207,6 +208,33 @@ def extract_watch_state(item: dict, source: CollectionSource) -> dict:
             state["user_rating"] = float(r)
 
     return state
+
+
+def is_fresh_rewatch_play(
+    already_recorded: bool,
+    media_type: MediaType,
+    show_id: int | None,
+    media_id: int,
+    active_rewatches_by_show_id: dict,
+    rewatch_progressed_media_ids: set,
+    last_played,
+) -> bool:
+    """A full-library sync must not skip an episode just because it already
+    has watch history - that's true of almost every rewatch by definition.
+    But it also can't treat every "watched" flag as a fresh play, since
+    Plex/Jellyfin/Emby's played flag stays true forever once set - so this
+    only counts a play as belonging to the active rewatch if it hasn't been
+    counted for that cycle yet AND the server's own last-played date is on
+    or after the rewatch's start."""
+    if not already_recorded or media_type != MediaType.episode or show_id is None:
+        return False
+    active_rewatch = active_rewatches_by_show_id.get(show_id)
+    return bool(
+        active_rewatch
+        and media_id not in rewatch_progressed_media_ids
+        and last_played
+        and last_played >= active_rewatch.started_at
+    )
 
 
 def get_jellyfin_tmdb_id(provider_ids: dict) -> int | None:
@@ -1538,6 +1566,25 @@ async def sync_items(
     we_res = await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == user_id))
     existing_watched: set[int] = {row[0] for row in we_res}
 
+    # Rewatch-aware watched dedup: a show mid-rewatch must not skip an episode
+    # just because raw history already has it (it always will - that's the
+    # point of a rewatch) - it needs to check that rewatch's own progress
+    # instead. A play only counts as fresh if the server's own last-played
+    # date is after the rewatch started, since Plex/Jellyfin/Emby's "watched"
+    # flag stays true forever once set, so every sync would otherwise look
+    # like a fresh play for every episode.
+    active_rewatches_by_show_id: dict[int, ShowRewatch] = {}
+    rewatch_progressed_media_ids: set[int] = set()
+    if media_type == MediaType.episode and show_ids:
+        active_rewatches_by_show_id = await get_active_rewatches_for_shows(db, user_id, show_ids)
+        if active_rewatches_by_show_id:
+            progress_q = await db.execute(
+                select(RewatchProgress.media_id).where(
+                    RewatchProgress.rewatch_id.in_([r.id for r in active_rewatches_by_show_id.values()])
+                )
+            )
+            rewatch_progressed_media_ids = {row[0] for row in progress_q.all()}
+
     # Existing ratings: media_id → Rating
     rat_res = await db.execute(
         select(Rating).where(
@@ -1575,6 +1622,7 @@ async def sync_items(
 
                 file_entry = existing_files.get(source_id)
                 media_id_for_watch: int | None = None
+                show_id: int | None = None  # (re)assigned below for episodes; stays None for movies
 
                 # Detect re-match: same Plex ratingKey but TMDB ID changed.
                 # Evict the stale CollectionFile so the item is re-processed below.
@@ -1840,22 +1888,35 @@ async def sync_items(
 
                 if media_id_for_watch is not None:
                     watch_state = extract_watch_state(item, source)
-                    if sync_watched and (watch_state["completed"] or watch_state["play_count"] > 0) and media_id_for_watch not in existing_watched:
-                        watch_event = WatchEvent(
-                            user_id=user_id,
-                            media_id=media_id_for_watch,
-                            watched_at=watch_state["last_played"] or datetime.now(timezone.utc).replace(tzinfo=None),
-                            completed=watch_state["completed"],
-                            play_count=max(1, watch_state["play_count"]),
-                            progress_percent=1.0 if watch_state["completed"] else 0.0,
+                    if sync_watched and (watch_state["completed"] or watch_state["play_count"] > 0):
+                        already_recorded = media_id_for_watch in existing_watched
+                        rewatch_eligible = is_fresh_rewatch_play(
+                            already_recorded,
+                            media_type,
+                            show_id,
+                            media_id_for_watch,
+                            active_rewatches_by_show_id,
+                            rewatch_progressed_media_ids,
+                            watch_state["last_played"],
                         )
-                        db.add(watch_event)
-                        if watch_state["completed"]:
-                            await db.flush()
-                            await record_rewatch_progress(db, user_id, media_id_for_watch, watch_event.id)
-                        existing_watched.add(media_id_for_watch)
-                        if new_watched_ids is not None:
-                            new_watched_ids.add(media_id_for_watch)
+                        if not already_recorded or rewatch_eligible:
+                            watch_event = WatchEvent(
+                                user_id=user_id,
+                                media_id=media_id_for_watch,
+                                watched_at=watch_state["last_played"] or datetime.now(timezone.utc).replace(tzinfo=None),
+                                completed=watch_state["completed"],
+                                play_count=max(1, watch_state["play_count"]),
+                                progress_percent=1.0 if watch_state["completed"] else 0.0,
+                            )
+                            db.add(watch_event)
+                            if watch_state["completed"]:
+                                await db.flush()
+                                await record_rewatch_progress(db, user_id, media_id_for_watch, watch_event.id)
+                            existing_watched.add(media_id_for_watch)
+                            if rewatch_eligible:
+                                rewatch_progressed_media_ids.add(media_id_for_watch)
+                            if new_watched_ids is not None:
+                                new_watched_ids.add(media_id_for_watch)
 
                     if sync_ratings and watch_state["user_rating"] is not None:
                         existing_r = existing_ratings.get(media_id_for_watch)

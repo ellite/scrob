@@ -291,6 +291,26 @@ const bottomNavItem = (active: boolean) =>
     </div>
   </div>
 
+  <!-- Rewatch popover (shared, repositioned on use) -->
+  <div id="rewatch-popover" class="hidden absolute z-50 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl overflow-hidden">
+    <div class="px-3 py-2 border-b border-zinc-800 flex items-center justify-between">
+      <span class="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Rewatching</span>
+      <button id="rewatch-popover-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer" aria-label="Close">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="py-1">
+      <button id="rewatch-popover-restart" class="w-full px-3 py-2 text-sm text-indigo-400 hover:bg-zinc-800 transition text-left flex items-center gap-2 cursor-pointer">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+        Restart rewatch
+      </button>
+      <button id="rewatch-popover-cancel" class="w-full px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 transition text-left flex items-center gap-2 cursor-pointer">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Cancel rewatch
+      </button>
+    </div>
+  </div>
+
   <!-- Watch history modal -->
   <div id="watch-history-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
@@ -927,6 +947,54 @@ const bottomNavItem = (active: boolean) =>
       }
     });
 
+    // ── Rewatch popover ────────────────────────────────────────────────────────
+    let _activeRewatchBtn: HTMLElement | null = null;
+
+    function closeRewatchPopover() {
+      document.getElementById('rewatch-popover')!.classList.add('hidden');
+      _activeRewatchBtn = null;
+    }
+
+    function openRewatchPopover(btn: HTMLElement, seriesTmdbId: string) {
+      _activeRewatchBtn = btn;
+      const popover = document.getElementById('rewatch-popover')!;
+
+      document.getElementById('rewatch-popover-restart')!.onclick = async () => {
+        closeRewatchPopover();
+        try {
+          await apiFetch(`/history/rewatch?series_tmdb_id=${seriesTmdbId}`, 'POST');
+          window.location.reload();
+        } catch (err: any) {
+          alertFromError(err, 'Failed to restart rewatch');
+        }
+      };
+
+      document.getElementById('rewatch-popover-cancel')!.onclick = async () => {
+        closeRewatchPopover();
+        try {
+          await apiFetch(`/history/rewatch?series_tmdb_id=${seriesTmdbId}`, 'DELETE');
+          window.location.reload();
+        } catch (err: any) {
+          alertFromError(err, 'Failed to cancel rewatch');
+        }
+      };
+
+      const rect = btn.getBoundingClientRect();
+      popover.classList.remove('hidden');
+      const popW = popover.offsetWidth;
+      const left = Math.min(rect.left + window.scrollX, window.innerWidth - popW - 8);
+      popover.style.left = `${Math.max(8, left)}px`;
+      popover.style.top = `${rect.bottom + window.scrollY + 6}px`;
+    }
+
+    document.getElementById('rewatch-popover-close')!.addEventListener('click', () => closeRewatchPopover());
+    document.addEventListener('click', (e) => {
+      const popover = document.getElementById('rewatch-popover')!;
+      if (!popover.classList.contains('hidden') && !popover.contains(e.target as Node) && e.target !== _activeRewatchBtn) {
+        closeRewatchPopover();
+      }
+    });
+
     // ── Create list modal ──────────────────────────────────────────────────────
     function openCreateListModal() {
       const modal = document.getElementById('create-list-modal')!;
@@ -982,10 +1050,21 @@ const bottomNavItem = (active: boolean) =>
 
     // Updates a series-level Watched button (show or season card) to an
     // arbitrary percentage - used both for the 0%/100% cascades below and
-    // for live-syncing a season's badge from its episodes' DOM state.
-    function setSeriesWatchPctUI(targetBtn: HTMLElement, pct: number) {
-      const active = pct > 0;
-      targetBtn.dataset.watched = String(active);
+    // for live-syncing a season/show badge from its children's DOM state.
+    //
+    // data-watched deliberately only follows "fully watched" (pct >= 100) -
+    // the main click handler reads it to decide whether clicking should
+    // open "mark as watched" (still more to watch) or offer to unwatch
+    // (already fully watched), so it must never be true for a partial
+    // percentage. The green/active *look*, on the other hand, should show
+    // as soon as anything has been watched, even if that rounds to a
+    // displayed "0%" (e.g. 1 watched out of 200+ episodes) - that's what
+    // the separate `started` param (data-state) drives; pct > 0 is only a
+    // fallback for callers that don't have an exact "any watched" signal.
+    function setSeriesWatchPctUI(targetBtn: HTMLElement, pct: number, started?: boolean) {
+      const isFullyWatched = pct >= 100;
+      const active = started ?? pct > 0;
+      targetBtn.dataset.watched = String(isFullyWatched);
       targetBtn.dataset.watchPct = String(pct);
       targetBtn.dataset.state = active ? 'active' : 'inactive';
       targetBtn.title = `${pct}% watched`;
@@ -1038,7 +1117,33 @@ const bottomNavItem = (active: boolean) =>
       const seasonBtn = document.querySelector<HTMLElement>(
         `[data-card][data-media-type="series"][data-tmdb-id="${showTmdbId}"][data-season="${season}"] [data-action="watched"]`
       );
-      if (seasonBtn) setSeriesWatchPctUI(seasonBtn, pct);
+      if (seasonBtn) setSeriesWatchPctUI(seasonBtn, pct, watchedCount > 0);
+    }
+
+    // Same idea, one level up: marking/unmarking a whole season watched from
+    // the show page cascades down to that season's episode cards but never
+    // touched the show-level badge at the top - recompute it from the season
+    // cards now visible on the page. Averaging season percentages (rather
+    // than a precise watched/aired episode ratio, which isn't derivable from
+    // the DOM alone) matches how routers/shows.py get_tvdb_show already
+    // computes its own show-level watch_pct, so it's not a made-up shortcut.
+    function syncShowWatchPctFromDOM(showTmdbId: string) {
+      if (!showTmdbId) return;
+      const seasonBtns = document.querySelectorAll<HTMLElement>(
+        `[data-card][data-media-type="series"][data-tmdb-id="${showTmdbId}"][data-season]:not([data-season=""]) [data-action="watched"]`
+      );
+      if (seasonBtns.length === 0) return;
+      const seasonBtnList = Array.from(seasonBtns);
+      const pcts = seasonBtnList.map(b => Number(b.dataset.watchPct) || 0);
+      const avgPct = Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length);
+      // data-state (not data-watched, which only means "fully watched" for a
+      // season) is each season button's own "any progress" signal.
+      const anyStarted = seasonBtnList.some(b => b.dataset.state === 'active');
+
+      const showBtn = document.querySelector<HTMLElement>(
+        `[data-card][data-media-type="series"][data-tmdb-id="${showTmdbId}"][data-season=""] [data-action="watched"]`
+      );
+      if (showBtn) setSeriesWatchPctUI(showBtn, avgPct, anyStarted);
     }
 
     // ── Watch history modal ────────────────────────────────────────────────────
@@ -1289,6 +1394,7 @@ const bottomNavItem = (active: boolean) =>
               if (bulkTvdbId) body.series_tvdb_id = Number(bulkTvdbId);
               await apiFetch('/history/season', 'POST', body);
               cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, season, episodeOrder, true);
+              syncShowWatchPctFromDOM(seriesId);
             } else {
               const body: Record<string, unknown> = { series_tmdb_id: Number(seriesId), watched_at: watchedAt };
               if (bulkTvdbId) body.series_tvdb_id = Number(bulkTvdbId);
@@ -1345,7 +1451,7 @@ const bottomNavItem = (active: boolean) =>
       if (!card) return;
 
       const action = btn.dataset.action;
-      const mediaActions = ['watched', 'list', 'collected', 'request', 'rate', 'rewatch', 'rewatch-cancel'];
+      const mediaActions = ['watched', 'list', 'collected', 'request', 'rate', 'rewatch'];
       if (!action || !mediaActions.includes(action)) return;
 
       e.preventDefault();
@@ -1401,6 +1507,9 @@ const bottomNavItem = (active: boolean) =>
             await apiFetch(`/history/show-all?series_tmdb_id=${tmdbId}`, 'DELETE');
           }
           cascadeWatchedUI(btn, mediaType, tmdbId, seriesId, season || '', episodeOrder, false);
+          if (mediaType === 'series' && season) {
+            syncShowWatchPctFromDOM(seriesId);
+          }
         } catch { /* ignore */ }
 
       } else if (action === 'list') {
@@ -1512,30 +1621,21 @@ const bottomNavItem = (active: boolean) =>
           alertFromError(err, 'Request failed');
         }
 
-      } else if (action === 'rewatch' || action === 'rewatch-cancel') {
+      } else if (action === 'rewatch') {
         // Show-level card only (ActionBar only renders this button there) —
         // data-tmdb-id on the card IS the show's own tmdb id in that context.
         const seriesId = tmdbId;
-        const rewatchBtn = action === 'rewatch-cancel' ? btn.closest<HTMLElement>('[data-action="rewatch"]') : btn;
-        if (!rewatchBtn) return;
-        const isActive = rewatchBtn.dataset.rewatchActive === 'true';
+        const isActive = btn.dataset.rewatchActive === 'true';
 
-        if (action === 'rewatch-cancel') {
-          const ok = await showConfirm('Cancel rewatch?', 'Progress on this rewatch will be lost. Your watch history is untouched.');
-          if (!ok) return;
-          try {
-            await apiFetch(`/history/rewatch?series_tmdb_id=${seriesId}`, 'DELETE');
-            window.location.reload();
-          } catch (err: any) {
-            alertFromError(err, 'Failed to cancel rewatch');
+        if (isActive) {
+          if (document.getElementById('rewatch-popover')!.classList.contains('hidden') || _activeRewatchBtn !== btn) {
+            openRewatchPopover(btn, seriesId);
+          } else {
+            closeRewatchPopover();
           }
           return;
         }
 
-        if (isActive) {
-          const ok = await showConfirm('Restart rewatch?', 'Progress on the current rewatch will be lost and it will start over from the beginning.');
-          if (!ok) return;
-        }
         try {
           await apiFetch(`/history/rewatch?series_tmdb_id=${seriesId}`, 'POST');
           window.location.reload();
