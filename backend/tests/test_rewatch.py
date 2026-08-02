@@ -2,7 +2,7 @@ import os
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -81,6 +81,15 @@ class _Result:
 
     def scalar(self):
         return self.item
+
+    def all(self):
+        if isinstance(self.item, list):
+            return self.item
+        return [] if self.item is None else [self.item]
+
+    @property
+    def rowcount(self):
+        return len(self.item) if isinstance(self.item, list) else 0
 
 
 class _FakeSession:
@@ -213,6 +222,35 @@ class StartAndCancelRewatchEndpointTests(unittest.IsolatedAsyncioTestCase):
         response = await history.cancel_rewatch(series_tmdb_id=100, db=db, current_user=SimpleNamespace(id=1))
         self.assertEqual(response, {"status": "ok", "cancelled": False})
         self.assertEqual(db._deleted_show_rewatch_ids(), set())
+
+
+class _DeletedTablesSession(_FakeSession):
+    def _deleted_tables(self) -> list:
+        return [s.table.name for s in self.executed_statements if isinstance(s, Delete)]
+
+
+class ClearHistoryAndUnwatchShowRewatchCleanupTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for: clearing all watch history (or removing all
+    history for a whole show) left any active ShowRewatch behind, orphaned
+    at 0 progress forever - it has no direct link to WatchEvent, so nothing
+    cascaded it away automatically the way RewatchProgress does."""
+
+    async def test_clear_history_also_deletes_active_rewatches(self):
+        db = _DeletedTablesSession([])
+        response = await history.clear_history(db=db, current_user=SimpleNamespace(id=1))
+        self.assertEqual(response["status"], "ok")
+        self.assertEqual(db._deleted_tables(), ["show_rewatches", "watch_events"])
+
+    async def test_unwatch_show_also_deletes_the_shows_active_rewatch(self):
+        show = Show(id=55, tmdb_id=100, title="Test Show")
+        db = _DeletedTablesSession([
+            show,        # show lookup
+            [(11,), (12,)],  # episode id rows
+        ])
+        with patch("routers.history._push_watch_state", new_callable=AsyncMock):
+            response = await history.unwatch_show(series_tmdb_id=100, db=db, current_user=SimpleNamespace(id=1))
+        self.assertEqual(response["status"], "ok")
+        self.assertEqual(db._deleted_tables(), ["show_rewatches", "watch_events"])
 
 
 class _RowsResult:

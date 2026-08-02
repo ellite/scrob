@@ -1146,6 +1146,12 @@ async def clear_history(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Any active rewatch is meaningless once its underlying history is gone -
+    # RewatchProgress cascades from WatchEvent deletion already, but the
+    # ShowRewatch "currently rewatching" marker itself doesn't depend on any
+    # WatchEvent and would otherwise survive a full clear, stuck at 0
+    # progress forever with nothing left to progress it.
+    await db.execute(delete(ShowRewatch).where(ShowRewatch.user_id == current_user.id))
     await db.execute(delete(WatchEvent).where(WatchEvent.user_id == current_user.id))
     await db.commit()
     return {"status": "ok", "message": "Watch history cleared"}
@@ -1726,6 +1732,12 @@ async def unwatch_show(
     if not episode_ids:
         return {"status": "ok", "count": 0}
 
+    # Same reasoning as clear_history: an active rewatch for this show is
+    # meaningless once all of its history is gone, and would otherwise
+    # survive stuck at 0 progress. Unwatching a single season (unwatch_season,
+    # above) deliberately doesn't do this - the rewatch may still be
+    # legitimately in progress on the show's other seasons.
+    await db.execute(delete(ShowRewatch).where(ShowRewatch.user_id == current_user.id, ShowRewatch.show_id == show.id))
     result = await db.execute(
         delete(WatchEvent).where(
             WatchEvent.user_id == current_user.id,
