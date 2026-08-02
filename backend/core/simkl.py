@@ -118,7 +118,10 @@ async def get_ratings(client_id: str, access_token: str) -> dict:
     """Fetch all user ratings.
 
     Returns: {movies: [...], shows: [...]}
-    Each entry has: rating, rated_at, movie/show.ids.tmdb
+    Each entry has: user_rating, user_rated_at, movie/show.ids.tmdb - most
+    entries in this response are unrated (this endpoint returns the same
+    per-item shape as get_all_items, just with rating fields included), so
+    callers must filter on user_rating being present.
     """
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.get(
@@ -133,7 +136,7 @@ async def get_ratings(client_id: str, access_token: str) -> dict:
             movies = [e for e in data if e.get("movie")]
             shows  = [e for e in data if e.get("show")]
             return {"movies": movies, "shows": shows}
-        return data
+        return data if isinstance(data, dict) else {}
 
 
 # ── Outbound Push ─────────────────────────────────────────────────────────────

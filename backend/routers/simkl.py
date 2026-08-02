@@ -254,6 +254,22 @@ def _parse_watched_at(raw: str | None) -> datetime | None:
         return None
 
 
+def _simkl_rating_value(item: dict) -> float | None:
+    """Extract a Simkl sync/ratings entry's user-set rating, or None if this
+    item isn't actually rated.
+
+    Regression guard for issue #112: /sync/ratings returns the same per-item
+    shape as /sync/all-items (status, last_watched_at, etc.) for every item
+    the user has, rated or not - the rating itself lives under "user_rating"
+    (most entries have it as None), not the generic "rating" key that
+    Simkl's single-item rate/unrate endpoints use elsewhere in this API.
+    Reading the wrong key meant every entry looked unrated and nothing ever
+    imported, silently.
+    """
+    val = item.get("user_rating")
+    return float(val) if val else None
+
+
 # ── Background sync job ───────────────────────────────────────────────────────
 
 async def run_simkl_sync(user_id: int, job_id: int) -> None:
@@ -428,7 +444,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                 for item in ratings_data.get("movies", []):
                     movie_data = item.get("movie", {})
                     tmdb_id = movie_data.get("ids", {}).get("tmdb")
-                    rating_val = item.get("rating")
+                    rating_val = _simkl_rating_value(item)
                     if not tmdb_id or not rating_val:
                         continue
                     tmdb_id = int(tmdb_id)
@@ -449,7 +465,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                 for item in ratings_data.get("shows", []):
                     show_data = item.get("show", {})
                     tmdb_id = show_data.get("ids", {}).get("tmdb")
-                    rating_val = item.get("rating")
+                    rating_val = _simkl_rating_value(item)
                     if not tmdb_id or not rating_val:
                         continue
                     tmdb_id = int(tmdb_id)
