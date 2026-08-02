@@ -578,8 +578,26 @@ def _group_last_watched(
 def _has_aired(release_date: str | None, today: date) -> bool:
     """True if release_date (ISO 8601, e.g. from TMDB air_date) is on or before
     today, or unknown. ISO 8601 strings sort lexicographically the same as their
-    dates, so a plain string comparison is safe here."""
+    dates, so a plain string comparison is safe here.
+
+    Used for episodes already confirmed to exist (they're in a season's own
+    episode list, e.g. the bulk mark-season/show-watched loops) - there, an
+    unknown date is a metadata gap, not a sign the episode isn't real yet, so
+    it's treated as aired rather than hidden. See _has_confirmed_air_date for
+    the opposite case."""
     return not release_date or release_date <= today.isoformat()
+
+
+def _has_confirmed_air_date(release_date: str | None, today: date) -> bool:
+    """True only if release_date is set AND on or before today.
+
+    Used for Next Up specifically (issue #111): the suggested "next" episode
+    is often a placeholder TMDB has pre-created for a renewed show before an
+    air date is announced. Unlike _has_aired's callers, there's no other
+    confirmation this episode actually exists yet, so an unknown date must
+    NOT be treated as "aired" here - that would suggest watching something
+    that may not even be out."""
+    return bool(release_date) and release_date <= today.isoformat()
 
 
 @router.get("/next-up")
@@ -759,8 +777,10 @@ async def get_next_up(
         and (include_hidden or m.show_id not in hidden_set)
         # Don't surface an episode that hasn't aired yet — the immediately-next
         # episode for the show, not a later one, so we simply show nothing for
-        # this show until it airs rather than skipping ahead.
-        and _has_aired(m.release_date, today)
+        # this show until it airs rather than skipping ahead. An episode with
+        # no air date at all (a renewal placeholder TMDB hasn't dated yet) is
+        # treated the same as "not aired" here, not "assume it's fine" (#111).
+        and _has_confirmed_air_date(m.release_date, today)
     ]
     next_up.sort(key=lambda m: last_watched_at.get(m.show_id) or datetime.min, reverse=True)
     if limit is not None:

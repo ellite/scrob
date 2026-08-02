@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _compute_next_episode, _group_last_watched, _has_aired
+from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date
 
 
 class ComputeNextEpisodeTests(unittest.TestCase):
@@ -87,6 +87,29 @@ class HasAiredTests(unittest.TestCase):
         # metadata — that would silently empty out someone's Next Up row.
         self.assertTrue(_has_aired(None, date(2026, 1, 1)))
         self.assertTrue(_has_aired("", date(2026, 1, 1)))
+
+
+class HasConfirmedAirDateTests(unittest.TestCase):
+    """Regression tests for #111: Next Up must not suggest an episode with no
+    announced air date at all - unlike _has_aired's callers, there's nothing
+    else confirming the episode is real yet, so "unknown" must not be treated
+    as "safe to suggest"."""
+
+    def test_past_release_date_has_aired(self):
+        self.assertTrue(_has_confirmed_air_date("2020-01-01", date(2026, 1, 1)))
+
+    def test_todays_release_date_has_aired(self):
+        self.assertTrue(_has_confirmed_air_date("2026-01-01", date(2026, 1, 1)))
+
+    def test_future_release_date_has_not_aired(self):
+        self.assertFalse(_has_confirmed_air_date("2026-06-01", date(2026, 1, 1)))
+
+    def test_unknown_release_date_is_not_treated_as_aired(self):
+        # The exact bug: an unannounced renewal placeholder (e.g. SNL UK
+        # S2E1 in issue #111) must not be suggested just because its air
+        # date is missing rather than in the future.
+        self.assertFalse(_has_confirmed_air_date(None, date(2026, 1, 1)))
+        self.assertFalse(_has_confirmed_air_date("", date(2026, 1, 1)))
 
 
 if __name__ == "__main__":
