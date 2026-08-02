@@ -25,7 +25,7 @@ if (me.totp_enabled) {
   <div class="max-w-4xl mx-auto">
     <h1 class="page-title mb-8">Settings</h1>
 
-    <div id="js-message" class="hidden fixed top-4 right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
+    <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
     <div class="space-y-12">
       <!-- General Settings -->
@@ -751,21 +751,35 @@ if (me.totp_enabled) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
+  // Keeps the toast below the nav (so it never covers it or the account
+  // dropdown) while still sitting near the top once the nav scrolls away.
+  function positionMessage(msg: HTMLElement) {
+    const nav = document.querySelector('nav');
+    const navBottom = nav ? nav.getBoundingClientRect().bottom : 0;
+    msg.style.top = `${Math.max(16, navBottom + 12)}px`;
+  }
+
   function showMessage(text, type = 'success', opts: { scroll?: boolean } = {}) {
     const msg = document.getElementById('js-message');
     if (!msg) return;
     msg.textContent = text;
-    msg.className = `fixed top-4 right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border ${
+    msg.className = `fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border ${
       type === 'success'
         ? 'bg-zinc-900 border-green-500/50 text-green-400'
         : 'bg-zinc-900 border-red-500/50 text-red-400'
     }`;
+    positionMessage(msg);
     msg.classList.remove('hidden');
 
     // Always hide after 4 seconds
     if (window._messageTimeout) clearTimeout(window._messageTimeout);
     window._messageTimeout = setTimeout(() => msg.classList.add('hidden'), 4000);
   }
+
+  window.addEventListener('scroll', () => {
+    const msg = document.getElementById('js-message');
+    if (msg && !msg.classList.contains('hidden')) positionMessage(msg);
+  }, { passive: true });
 
   // ── Heal progress tracking ────────────────────────────────────────────────
   let healPoller: ReturnType<typeof setTimeout> | null = null;
