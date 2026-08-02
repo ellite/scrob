@@ -25,6 +25,7 @@ from .image_cache import ImageCache
 from .media_translation import MediaTranslation
 from .show_translation import ShowTranslation
 from .episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
+from .rewatch import ShowRewatch, RewatchProgress
 
 __all__ = [
     "Base",
@@ -54,4 +55,5 @@ __all__ = [
     "MediaTranslation",
     "ShowTranslation",
     "EpisodeOrderMapping", "UserShowEpisodeOrder",
+    "ShowRewatch", "RewatchProgress",
 ]

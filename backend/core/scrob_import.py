@@ -28,6 +28,7 @@ from models.media import Media
 from models.ratings import Rating, RatingChanges
 from models.scrobble_connection import ScrobbleConnection
 from models.show import Show
+from core.rewatch import record_rewatch_progress
 from models.sync import SyncJob
 from models.users import UserSettings
 
@@ -330,7 +331,10 @@ async def apply_scrob_import(
                         watched_at = _parse_iso(entry.get("watched_at"))
                         key = (media.id, watched_at)
                         if key not in existing_watched:
-                            db.add(WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1))
+                            event = WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1)
+                            db.add(event)
+                            await db.flush()
+                            await record_rewatch_progress(db, user_id, media.id, event.id)
                             existing_watched.add(key)
                             stats["episodes"] += 1
                         else:

@@ -17,8 +17,10 @@ from models.base import MediaType, CollectionSource
 from models.users import UserSettings
 from models.connections import MediaServerConnection
 from models.episode_order import EpisodeOrderMapping
+from models.rewatch import ShowRewatch, RewatchProgress
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations
+from core.rewatch import get_active_rewatch, record_rewatch_progress
 
 from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
@@ -588,23 +590,58 @@ async def get_next_up(
     include_hidden: bool = Query(False),
 ):
     """Next unwatched episode for each show the user is actively watching."""
+    # Shows the user is mid-rewatch on read their Next Up position from that
+    # rewatch's progress instead of full history - excluded from the Step 1
+    # history query below and handled separately in Step 1b, so a show
+    # already fully watched (the common rewatch case) still surfaces here.
+    active_rewatches_result = await db.execute(
+        select(ShowRewatch).where(ShowRewatch.user_id == current_user.id)
+    )
+    active_rewatches = active_rewatches_result.scalars().all()
+    active_rewatch_show_ids = {r.show_id for r in active_rewatches}
+    active_rewatch_by_show = {r.show_id: r for r in active_rewatches}
+
     # Step 1: Find the last watched / significantly-viewed episode per show,
     # and the most recent watch timestamp per show for final sorting.
+    watch_filters = [
+        WatchEvent.user_id == current_user.id,
+        Media.media_type == MediaType.episode,
+        Media.show_id.isnot(None),
+        or_(WatchEvent.completed == True, WatchEvent.progress_percent >= 0.5),
+    ]
+    if active_rewatch_show_ids:
+        watch_filters.append(Media.show_id.notin_(active_rewatch_show_ids))
     result = await db.execute(
         select(Media.show_id, Media.season_number, Media.episode_number, WatchEvent.watched_at)
         .join(WatchEvent, WatchEvent.media_id == Media.id)
-        .where(
-            WatchEvent.user_id == current_user.id,
-            Media.media_type == MediaType.episode,
-            Media.show_id.isnot(None),
-            or_(WatchEvent.completed == True, WatchEvent.progress_percent >= 0.5),
-        )
+        .where(*watch_filters)
         .order_by(Media.show_id, desc(Media.season_number), desc(Media.episode_number))
     )
     rows = result.all()
 
     # Keep only the furthest episode per show, and the most recent watched_at per show.
     last_per_show, last_watched_at = _group_last_watched(rows)
+
+    # Step 1b: Rewatching shows - candidate position comes from that rewatch's
+    # progress (furthest re-watched episode so far), defaulting to "before
+    # S1E1" so a freshly-started rewatch with no progress yet still surfaces
+    # the first episode instead of being skipped like a never-watched show.
+    if active_rewatch_show_ids:
+        progress_result = await db.execute(
+            select(ShowRewatch.show_id, Media.season_number, Media.episode_number, WatchEvent.watched_at)
+            .select_from(RewatchProgress)
+            .join(ShowRewatch, ShowRewatch.id == RewatchProgress.rewatch_id)
+            .join(Media, Media.id == RewatchProgress.media_id)
+            .join(WatchEvent, WatchEvent.id == RewatchProgress.watch_event_id)
+            .where(ShowRewatch.user_id == current_user.id)
+            .order_by(ShowRewatch.show_id, desc(Media.season_number), desc(Media.episode_number))
+        )
+        progress_last_per_show, progress_last_watched_at = _group_last_watched(progress_result.all())
+        for show_id in active_rewatch_show_ids:
+            last_per_show[show_id] = progress_last_per_show.get(show_id, (1, 0))
+            last_watched_at[show_id] = progress_last_watched_at.get(
+                show_id, active_rewatch_by_show[show_id].started_at
+            )
 
     if not last_per_show:
         return {"next_up": []}
@@ -682,16 +719,34 @@ async def get_next_up(
     if not next_per_show:
         return {"next_up": []}
 
-    # Remove episodes the user has already completed
-    completed_result = await db.execute(
-        select(WatchEvent.media_id)
-        .where(
-            WatchEvent.user_id == current_user.id,
-            WatchEvent.completed == True,
-            WatchEvent.media_id.in_([m.id for m in next_per_show.values()]),
+    # Remove episodes the user has already (re)watched. For a rewatching show
+    # this must check that rewatch's own progress, not full history - the
+    # candidate episode is very likely already in history from before the
+    # rewatch started, which shouldn't hide it again.
+    non_rewatch_ids = [m.id for m in next_per_show.values() if m.show_id not in active_rewatch_show_ids]
+    rewatch_ids = [m.id for m in next_per_show.values() if m.show_id in active_rewatch_show_ids]
+
+    completed_ids: set[int] = set()
+    if non_rewatch_ids:
+        completed_result = await db.execute(
+            select(WatchEvent.media_id)
+            .where(
+                WatchEvent.user_id == current_user.id,
+                WatchEvent.completed == True,
+                WatchEvent.media_id.in_(non_rewatch_ids),
+            )
         )
-    )
-    completed_ids = {row[0] for row in completed_result.all()}
+        completed_ids = {row[0] for row in completed_result.all()}
+    if rewatch_ids:
+        rewatch_completed_result = await db.execute(
+            select(RewatchProgress.media_id)
+            .join(ShowRewatch, ShowRewatch.id == RewatchProgress.rewatch_id)
+            .where(
+                ShowRewatch.user_id == current_user.id,
+                RewatchProgress.media_id.in_(rewatch_ids),
+            )
+        )
+        completed_ids |= {row[0] for row in rewatch_completed_result.all()}
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
@@ -953,6 +1008,10 @@ async def mark_as_watched(
         )
     await db.commit()
 
+    if event_in.completed:
+        await record_rewatch_progress(db, current_user.id, media.id, event.id)
+        await db.commit()
+
     # 4. Push to media servers if outbound push is enabled
     if event_in.completed:
         await _push_watch_state(
@@ -967,12 +1026,17 @@ async def mark_as_watched(
 async def get_item_events(
     tmdb_id: int = Query(...),
     media_type: MediaType = Query(...),
+    series_tmdb_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
-    """Return all completed watch events for a specific movie or episode."""
+    """Return all completed watch events for a specific movie or episode,
+    plus whether it currently counts as watched. Full play history is always
+    returned as-is - but for an episode whose show has an active rewatch,
+    "watched" reflects that rewatch's own progress rather than raw history,
+    since a pre-rewatch play shouldn't make an episode look watched again."""
     query = (
-        select(WatchEvent)
+        select(WatchEvent, Media.id)
         .join(Media, Media.id == WatchEvent.media_id)
         .where(
             WatchEvent.user_id == current_user.id,
@@ -983,11 +1047,39 @@ async def get_item_events(
         .order_by(WatchEvent.watched_at.desc().nulls_last(), WatchEvent.id.desc())
     )
     result = await db.execute(query)
-    events = result.scalars().all()
-    return [
-        {"id": e.id, "watched_at": e.watched_at.isoformat() if e.watched_at else None}
-        for e in events
-    ]
+    rows = result.all()
+    events = [row[0] for row in rows]
+    media_id = rows[0][1] if rows else None
+
+    watched = len(events) > 0
+    if media_type == MediaType.episode and series_tmdb_id:
+        show_q = await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
+        show = show_q.scalar_one_or_none()
+        if show:
+            active_rewatch = await get_active_rewatch(db, current_user.id, show.id)
+            if active_rewatch:
+                if media_id is None:
+                    media_q = await db.execute(
+                        select(Media.id).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.episode)
+                    )
+                    media_id = media_q.scalar_one_or_none()
+                watched = False
+                if media_id is not None:
+                    progress_q = await db.execute(
+                        select(RewatchProgress.id).where(
+                            RewatchProgress.rewatch_id == active_rewatch.id,
+                            RewatchProgress.media_id == media_id,
+                        )
+                    )
+                    watched = progress_q.scalar_one_or_none() is not None
+
+    return {
+        "watched": watched,
+        "events": [
+            {"id": e.id, "watched_at": e.watched_at.isoformat() if e.watched_at else None}
+            for e in events
+        ],
+    }
 
 
 @router.delete("/event/{event_id}")
@@ -1274,18 +1366,21 @@ async def mark_season_watched(
     already_watched = {r[0] for r in already_q.all()}
     
     newly_watched = []
+    new_events = []
     for ep in all_season_episodes:
         if ep.id not in already_watched:
-            db.add(WatchEvent(
+            event = WatchEvent(
                 user_id=current_user.id,
                 media_id=ep.id,
                 watched_at=resolved_watched_at,
                 completed=True,
                 play_count=1,
                 progress_percent=1.0,
-            ))
+            )
+            db.add(event)
+            new_events.append(event)
             newly_watched.append(ep.id)
-            
+
     if newly_watched:
         await db.execute(
             delete(PlaybackProgress).where(
@@ -1294,6 +1389,10 @@ async def mark_season_watched(
             )
         )
     await db.commit()
+    if new_events:
+        for event in new_events:
+            await record_rewatch_progress(db, current_user.id, event.media_id, event.id)
+        await db.commit()
     await _push_watch_state(db, current_user.id, newly_watched, watched=True)
     return {"status": "ok", "count": len(newly_watched)}
 
@@ -1424,6 +1523,7 @@ async def mark_show_watched(
     # 2. For each season, fetch episodes and ensure they exist + mark watched
     seasons = [s["season_number"] for s in show.tmdb_data["seasons"] if s["season_number"] > 0]
     all_newly_watched_ids = []
+    all_new_events = []
 
     now = datetime.utcnow()
     today = now.date()
@@ -1491,14 +1591,16 @@ async def mark_show_watched(
         
         for ep in season_eps_to_watch:
             if ep.id not in already_watched:
-                db.add(WatchEvent(
+                event = WatchEvent(
                     user_id=current_user.id,
                     media_id=ep.id,
                     watched_at=resolved_watched_at,
                     completed=True,
                     play_count=1,
                     progress_percent=1.0,
-                ))
+                )
+                db.add(event)
+                all_new_events.append(event)
                 all_newly_watched_ids.append(ep.id)
 
     # 3. Seasons TVDB has but TMDB doesn't (see #101) — mirrors step 2 above
@@ -1569,14 +1671,16 @@ async def mark_show_watched(
 
                     for ep in season_eps_to_watch:
                         if ep.id not in already_watched:
-                            db.add(WatchEvent(
+                            event = WatchEvent(
                                 user_id=current_user.id,
                                 media_id=ep.id,
                                 watched_at=resolved_watched_at,
                                 completed=True,
                                 play_count=1,
                                 progress_percent=1.0,
-                            ))
+                            )
+                            db.add(event)
+                            all_new_events.append(event)
                             all_newly_watched_ids.append(ep.id)
 
     if all_newly_watched_ids:
@@ -1587,6 +1691,10 @@ async def mark_show_watched(
             )
         )
     await db.commit()
+    if all_new_events:
+        for event in all_new_events:
+            await record_rewatch_progress(db, current_user.id, event.media_id, event.id)
+        await db.commit()
     await _push_watch_state(db, current_user.id, all_newly_watched_ids, watched=True)
     return {"status": "ok", "count": len(all_newly_watched_ids)}
 
@@ -1622,6 +1730,56 @@ async def unwatch_show(
     await db.commit()
     await _push_watch_state(db, current_user.id, episode_ids, watched=False)
     return {"status": "ok", "count": result.rowcount}
+
+
+@router.post("/rewatch")
+async def start_rewatch(
+    series_tmdb_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Start (or restart) a rewatch cycle for a show. Watch history is never
+    touched - this just makes the show/season/episode pages and Next Up
+    read watched status from a fresh, empty progress cycle instead of full
+    history until it's completed or cancelled. Calling this again while a
+    cycle is already active resets it, discarding that cycle's progress."""
+    show_q = await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
+    show = show_q.scalar_one_or_none()
+    if not show:
+        raise HTTPException(status_code=404, detail="Show not found")
+
+    existing = await get_active_rewatch(db, current_user.id, show.id)
+    if existing:
+        await db.execute(delete(ShowRewatch).where(ShowRewatch.id == existing.id))
+
+    rewatch = ShowRewatch(user_id=current_user.id, show_id=show.id)
+    db.add(rewatch)
+    await db.commit()
+    await db.refresh(rewatch)
+    return {"status": "ok", "started_at": rewatch.started_at.isoformat()}
+
+
+@router.delete("/rewatch")
+async def cancel_rewatch(
+    series_tmdb_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Cancel an active rewatch cycle without finishing it. Watch history is
+    untouched; the show goes back to reading watched status from full
+    history, same as a naturally-completed rewatch."""
+    show_q = await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
+    show = show_q.scalar_one_or_none()
+    if not show:
+        raise HTTPException(status_code=404, detail="Show not found")
+
+    existing = await get_active_rewatch(db, current_user.id, show.id)
+    if not existing:
+        return {"status": "ok", "cancelled": False}
+
+    await db.execute(delete(ShowRewatch).where(ShowRewatch.id == existing.id))
+    await db.commit()
+    return {"status": "ok", "cancelled": True}
 
 
 # ---------------------------------------------------------------------------
@@ -1810,6 +1968,7 @@ async def auto_complete_manual_sessions(db: AsyncSession) -> None:
         .where(PlaybackSession.source == "manual", PlaybackSession.state == "playing")
     )
     completed: list[tuple[int, int]] = []  # (user_id, media_id)
+    new_events: list[WatchEvent] = []
     for session, media in result.all():
         runtime_seconds = (media.runtime or 0) * 60
         if runtime_seconds <= 0:
@@ -1824,16 +1983,21 @@ async def auto_complete_manual_sessions(db: AsyncSession) -> None:
                 PlaybackProgress.media_id == session.media_id,
             )
         )
-        db.add(WatchEvent(
+        event = WatchEvent(
             user_id=session.user_id,
             media_id=session.media_id,
             watched_at=now,
             completed=True,
             play_count=1,
             progress_percent=1.0,
-        ))
+        )
+        db.add(event)
+        new_events.append(event)
         completed.append((session.user_id, session.media_id))
     if completed:
+        await db.commit()
+        for event in new_events:
+            await record_rewatch_progress(db, event.user_id, event.media_id, event.id)
         await db.commit()
         for user_id, media_id in completed:
             await _push_watch_state(db, user_id, [media_id], watched=True)
@@ -1865,14 +2029,18 @@ async def complete_manual_session(
         )
     )
 
-    db.add(WatchEvent(
+    event = WatchEvent(
         user_id=current_user.id,
         media_id=media_id,
         watched_at=datetime.utcnow(),
         completed=True,
         play_count=1,
         progress_percent=1.0,
-    ))
+    )
+    db.add(event)
+    await db.commit()
+
+    await record_rewatch_progress(db, current_user.id, media_id, event.id)
     await db.commit()
 
     await _push_watch_state(db, current_user.id, [media_id], watched=True)

@@ -29,6 +29,7 @@ from core import jellyfin, emby, plex, nuvio, stremio, tmdb
 import core.trakt as trakt_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode
 from core.image_cache import pre_cache_all_collected_bg
+from core.rewatch import record_rewatch_progress
 
 from dependencies import get_current_user, get_current_user_or_api_key
 logger = logging.getLogger("uvicorn.error")
@@ -1840,14 +1841,18 @@ async def sync_items(
                 if media_id_for_watch is not None:
                     watch_state = extract_watch_state(item, source)
                     if sync_watched and (watch_state["completed"] or watch_state["play_count"] > 0) and media_id_for_watch not in existing_watched:
-                        db.add(WatchEvent(
+                        watch_event = WatchEvent(
                             user_id=user_id,
                             media_id=media_id_for_watch,
                             watched_at=watch_state["last_played"] or datetime.now(timezone.utc).replace(tzinfo=None),
                             completed=watch_state["completed"],
                             play_count=max(1, watch_state["play_count"]),
                             progress_percent=1.0 if watch_state["completed"] else 0.0,
-                        ))
+                        )
+                        db.add(watch_event)
+                        if watch_state["completed"]:
+                            await db.flush()
+                            await record_rewatch_progress(db, user_id, media_id_for_watch, watch_event.id)
                         existing_watched.add(media_id_for_watch)
                         if new_watched_ids is not None:
                             new_watched_ids.add(media_id_for_watch)
@@ -3024,23 +3029,28 @@ async def _apply_nuvio_watch_history(
     )
     existing = set(existing_result.all())
     added_media_ids: set[int] = set()
+    new_events: list[WatchEvent] = []
     for media, watched_at in candidates:
         key = (media.id, watched_at)
         if key in existing:
             continue
-        db.add(
-            WatchEvent(
-                user_id=user_id,
-                media_id=media.id,
-                watched_at=watched_at,
-                completed=True,
-                play_count=1,
-                progress_percent=1.0,
-            )
+        event = WatchEvent(
+            user_id=user_id,
+            media_id=media.id,
+            watched_at=watched_at,
+            completed=True,
+            play_count=1,
+            progress_percent=1.0,
         )
+        db.add(event)
+        new_events.append(event)
         existing.add(key)
         added_media_ids.add(media.id)
     await db.commit()
+    for event in new_events:
+        await record_rewatch_progress(db, user_id, event.media_id, event.id)
+    if new_events:
+        await db.commit()
     return added_media_ids
 
 

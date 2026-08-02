@@ -88,7 +88,9 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         return patches, get_key, find_show, get_episode, enrich, push_state
 
     async def test_manual_episode_creates_parent_show_before_media(self):
-        db = _FakeSession([None, None, None])
+        # Trailing None: record_rewatch_progress's own Media lookup (no
+        # active rewatch involved in this test, so it no-ops from there).
+        db = _FakeSession([None, None, None, None])
         patches, get_key, find_show, get_episode, enrich, push_state = self._patch_dependencies()
 
         with patches[0], patches[1], patches[2], patches[3], patches[4]:
@@ -107,7 +109,9 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(push_call.kwargs["watched"], True)
         self.assertIn(media.id, push_call.kwargs["watched_at_by_media"])
         get_key.assert_awaited_once()
-        db.commit.assert_awaited_once()
+        # Called twice: once for the WatchEvent itself, once more after
+        # record_rewatch_progress (a no-op here, but still its own commit).
+        self.assertEqual(db.commit.await_count, 2)
 
     async def test_manual_episode_repairs_existing_orphan(self):
         orphan = Media(
@@ -120,7 +124,7 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
             show_id=None,
             poster_path=None,
         )
-        db = _FakeSession([None, orphan, None])
+        db = _FakeSession([None, orphan, None, None])  # trailing None: record_rewatch_progress's Media lookup
         patches, _, _, get_episode, enrich, _ = self._patch_dependencies()
 
         with patches[0], patches[1], patches[2], patches[3], patches[4]:
@@ -148,7 +152,7 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
             season_number=2,
             episode_number=3,
         )
-        db = _FakeSession([mapped_media, None])
+        db = _FakeSession([mapped_media, None, None])  # trailing None: record_rewatch_progress's Media lookup
         patches, _, _, get_episode, enrich, push_state = self._patch_dependencies()
 
         with patches[0], patches[1], patches[2], patches[3], patches[4]:
@@ -169,8 +173,10 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
 class UnknownWatchDateTests(unittest.IsolatedAsyncioTestCase):
     async def _mark(self, payload: dict):
         media = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club")
-        # Two execute() calls: the media lookup, then the PlaybackProgress delete.
-        db = _FakeSession([media, None])
+        # Three execute() calls: the media lookup, the PlaybackProgress delete,
+        # then record_rewatch_progress's own Media lookup (movies always no-op
+        # there, but the query still runs before that type check).
+        db = _FakeSession([media, None, None])
         with patch("routers.history._push_watch_state", new_callable=AsyncMock) as push:
             response = await history.mark_as_watched(
                 WatchEventCreate(**payload), db, SimpleNamespace(id=7)
@@ -218,8 +224,9 @@ class MarkSeasonWatchedDateTests(unittest.IsolatedAsyncioTestCase):
     async def _mark_season(self, **watched_at_kwargs) -> tuple[dict, WatchEvent]:
         show = Show(id=55, tmdb_id=100, title="Test Show")
         # execute() call order: show lookup, existing-episode lookup,
-        # already-watched lookup, PlaybackProgress delete.
-        db = _FakeSession([show, [], [], None])
+        # already-watched lookup, PlaybackProgress delete, then
+        # record_rewatch_progress's own Media lookup for the one new episode.
+        db = _FakeSession([show, [], [], None, None])
         db.info["tmdb_key_7"] = "test-key"  # pre-cache so get_user_tmdb_key skips its own query
         with (
             patch.object(history.tmdb, "get_season", AsyncMock(return_value=_SEASON_PAYLOAD)),
@@ -258,8 +265,9 @@ class MarkShowWatchedDateTests(unittest.IsolatedAsyncioTestCase):
             tmdb_data={"seasons": [{"season_number": 1, "episode_count": 1, "name": "Season 1"}]},
         )
         # execute() call order: show lookup, existing-episode lookup,
-        # already-watched lookup, PlaybackProgress delete.
-        db = _FakeSession([show, [], [], None])
+        # already-watched lookup, PlaybackProgress delete, then
+        # record_rewatch_progress's own Media lookup for the one new episode.
+        db = _FakeSession([show, [], [], None, None])
         db.info["tmdb_key_7"] = "test-key"
         with (
             patch.object(history.tmdb, "get_season", AsyncMock(return_value=_SEASON_PAYLOAD)),

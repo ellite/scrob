@@ -583,8 +583,12 @@ class StremioCompatibilityTests(unittest.IsolatedAsyncioTestCase):
             scalars=lambda: SimpleNamespace(all=lambda: [movie]),
         )
         existing_result = SimpleNamespace(all=lambda: [])
+        # record_rewatch_progress's own Media lookup for the one new
+        # WatchEvent - no-ops since this test isn't exercising rewatch
+        # behavior.
+        rewatch_media_result = SimpleNamespace(scalar_one_or_none=lambda: None)
         db = SimpleNamespace(
-            execute=AsyncMock(side_effect=[media_result, existing_result]),
+            execute=AsyncMock(side_effect=[media_result, existing_result, rewatch_media_result]),
             add=MagicMock(),
             commit=AsyncMock(),
         )

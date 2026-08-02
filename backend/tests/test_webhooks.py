@@ -33,6 +33,9 @@ class _FakeDB:
     def add(self, obj):
         self.added.append(obj)
 
+    async def flush(self):
+        pass
+
 
 class DuplicateWebhookDeliveryTests(unittest.TestCase):
     def setUp(self):

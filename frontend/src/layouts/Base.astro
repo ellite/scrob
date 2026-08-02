@@ -960,25 +960,9 @@ const bottomNavItem = (active: boolean) =>
     });
 
     // ── Watched button UI updater ──────────────────────────────────────────────
-    function updateWatchedButtonUI(targetBtn: HTMLElement, watched: boolean) {
-      targetBtn.dataset.watched = String(watched);
-      targetBtn.dataset.state = watched ? 'active' : 'inactive';
-      const card = targetBtn.closest<HTMLElement>('[data-card]');
-      const isSeries = card?.dataset.mediaType === 'series';
+    function setWatchedActiveClasses(targetBtn: HTMLElement, active: boolean) {
       const isCard = targetBtn.parentElement?.classList.contains('grid');
-      if (isSeries) {
-        const newPct = watched ? 100 : 0;
-        targetBtn.dataset.watchPct = String(newPct);
-        targetBtn.title = `${newPct}% watched`;
-        targetBtn.style.background = '';
-        const labelEl = targetBtn.querySelector('span');
-        if (labelEl) labelEl.textContent = `${newPct}%`;
-        const smLabelEl = targetBtn.querySelectorAll('span')[1];
-        if (smLabelEl) smLabelEl.textContent = `${newPct}%`;
-      } else {
-        targetBtn.title = watched ? 'Mark as unwatched' : 'Mark as watched';
-      }
-      if (watched) {
+      if (active) {
         targetBtn.classList.remove('bg-zinc-800', 'bg-zinc-900', 'text-zinc-500', 'text-zinc-400', 'hover:bg-green-500/10', 'hover:text-green-400', 'hover:text-green-500');
         if (isCard) {
           targetBtn.classList.add('bg-green-500/20', 'text-green-400');
@@ -993,7 +977,68 @@ const bottomNavItem = (active: boolean) =>
           targetBtn.classList.add('bg-zinc-800', 'text-zinc-500', 'hover:bg-green-500/10', 'hover:text-green-400');
         }
       }
-      targetBtn.querySelector('circle')?.setAttribute('fill', watched ? 'currentColor' : 'none');
+      targetBtn.querySelector('circle')?.setAttribute('fill', active ? 'currentColor' : 'none');
+    }
+
+    // Updates a series-level Watched button (show or season card) to an
+    // arbitrary percentage - used both for the 0%/100% cascades below and
+    // for live-syncing a season's badge from its episodes' DOM state.
+    function setSeriesWatchPctUI(targetBtn: HTMLElement, pct: number) {
+      const active = pct > 0;
+      targetBtn.dataset.watched = String(active);
+      targetBtn.dataset.watchPct = String(pct);
+      targetBtn.dataset.state = active ? 'active' : 'inactive';
+      targetBtn.title = `${pct}% watched`;
+      targetBtn.style.background = '';
+      const labelEl = targetBtn.querySelector('span');
+      if (labelEl) labelEl.textContent = `${pct}%`;
+      const smLabelEl = targetBtn.querySelectorAll('span')[1];
+      if (smLabelEl) smLabelEl.textContent = `${pct}%`;
+      setWatchedActiveClasses(targetBtn, active);
+    }
+
+    function updateWatchedButtonUI(targetBtn: HTMLElement, watched: boolean) {
+      targetBtn.dataset.watched = String(watched);
+      targetBtn.dataset.state = watched ? 'active' : 'inactive';
+      const card = targetBtn.closest<HTMLElement>('[data-card]');
+      const isSeries = card?.dataset.mediaType === 'series';
+      if (isSeries) {
+        setSeriesWatchPctUI(targetBtn, watched ? 100 : 0);
+        return;
+      }
+      targetBtn.title = watched ? 'Mark as unwatched' : 'Mark as watched';
+      setWatchedActiveClasses(targetBtn, watched);
+    }
+
+    // After marking a single episode watched/unwatched from the watch-history
+    // modal, the season-level ActionBar's percentage badge doesn't get touched
+    // by anything above (that only cascades show/season -> episodes, not the
+    // reverse) - recompute it from the now-updated episode buttons on the page.
+    function syncSeasonWatchPctFromDOM(showTmdbId: string, season: string) {
+      if (!showTmdbId || !season) return;
+      const epCards = document.querySelectorAll<HTMLElement>(
+        `[data-card][data-media-type="episode"][data-show-tmdb-id="${showTmdbId}"][data-season="${season}"]`
+      );
+      if (epCards.length === 0) return;
+
+      // Matches the backend's aired_denom logic (routers/shows.py get_show_season):
+      // only count released episodes, unless none have aired yet, in which case
+      // fall back to the full season total rather than dividing by zero.
+      const today = new Date().toISOString().slice(0, 10);
+      const isAired = (airDate: string) => !airDate || airDate <= today;
+      const allCards = Array.from(epCards);
+      const airedCards = allCards.filter(c => isAired(c.dataset.airDate || ''));
+      const denomCards = airedCards.length > 0 ? airedCards : allCards;
+
+      const watchedCount = denomCards.filter(
+        c => c.querySelector<HTMLElement>('[data-action="watched"]')?.dataset.watched === 'true'
+      ).length;
+      const pct = Math.round((watchedCount / denomCards.length) * 100);
+
+      const seasonBtn = document.querySelector<HTMLElement>(
+        `[data-card][data-media-type="series"][data-tmdb-id="${showTmdbId}"][data-season="${season}"] [data-action="watched"]`
+      );
+      if (seasonBtn) setSeriesWatchPctUI(seasonBtn, pct);
     }
 
     // ── Watch history modal ────────────────────────────────────────────────────
@@ -1107,8 +1152,11 @@ const bottomNavItem = (active: boolean) =>
       const unwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
       unwatchBtn.classList.add('hidden');
       try {
-        const events: Array<{ id: number; watched_at: string | null }> = await apiFetch(
-          `/history/item-events?tmdb_id=${_watchHistoryTmdbId}&media_type=${_watchHistoryMediaType}`
+        const seriesQuery = _watchHistoryMediaType === 'episode' && _watchHistoryShowTmdbId
+          ? `&series_tmdb_id=${_watchHistoryShowTmdbId}`
+          : '';
+        const { watched, events }: { watched: boolean; events: Array<{ id: number; watched_at: string | null }> } = await apiFetch(
+          `/history/item-events?tmdb_id=${_watchHistoryTmdbId}&media_type=${_watchHistoryMediaType}${seriesQuery}`
         );
         if (events.length === 0) {
           eventsEl.innerHTML = '<div class="px-4 py-3 text-sm text-zinc-500 italic">No plays recorded yet</div>';
@@ -1125,12 +1173,16 @@ const bottomNavItem = (active: boolean) =>
             </div>`;
           }).join('');
         }
-        const isWatched = events.length > 0;
-        unwatchBtn.classList.toggle('hidden', !isWatched);
-        document.getElementById('watch-history-log-btn')!.textContent = isWatched ? 'Log a rewatch' : 'Mark as watched';
+        // "Any plays at all" (controls the destructive "remove all history"
+        // button) is a different question from "counts as watched right now"
+        // (controls the ActionBar button) - they only diverge when a rewatch
+        // is active and every remaining play predates it.
+        const hasEvents = events.length > 0;
+        unwatchBtn.classList.toggle('hidden', !hasEvents);
+        document.getElementById('watch-history-log-btn')!.textContent = hasEvents ? 'Log a rewatch' : 'Mark as watched';
         document.querySelectorAll<HTMLElement>(
           `[data-card][data-tmdb-id="${_watchHistoryTmdbId}"][data-media-type="${_watchHistoryMediaType}"] [data-action="watched"]`
-        ).forEach(b => updateWatchedButtonUI(b, isWatched));
+        ).forEach(b => updateWatchedButtonUI(b, watched));
       } catch {
         eventsEl.innerHTML = '<div class="px-4 py-2 text-xs text-red-400">Failed to load</div>';
       }
@@ -1152,6 +1204,7 @@ const bottomNavItem = (active: boolean) =>
       try {
         await apiFetch(`/history/event/${delBtn.dataset.deleteEvent}`, 'DELETE');
         await loadWatchHistoryEvents();
+        syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
       } catch {
         delBtn.style.opacity = '';
         delBtn.style.pointerEvents = '';
@@ -1174,6 +1227,7 @@ const bottomNavItem = (active: boolean) =>
           'DELETE'
         );
         await loadWatchHistoryEvents();
+        syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
       } catch { /* keep the modal open so the user can retry */ }
       unwatchBtn.disabled = false;
       unwatchBtn.textContent = 'Mark as unwatched';
@@ -1265,6 +1319,7 @@ const bottomNavItem = (active: boolean) =>
           }
           await apiFetch('/history', 'POST', watchBody);
           await loadWatchHistoryEvents();
+          syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
           // Reset to "Just now" after logging
           _watchHistoryDateMode = 'now';
           (document.getElementById('watch-history-now-btn') as HTMLElement).className = activeClass;
@@ -1290,7 +1345,7 @@ const bottomNavItem = (active: boolean) =>
       if (!card) return;
 
       const action = btn.dataset.action;
-      const mediaActions = ['watched', 'list', 'collected', 'request', 'rate'];
+      const mediaActions = ['watched', 'list', 'collected', 'request', 'rate', 'rewatch', 'rewatch-cancel'];
       if (!action || !mediaActions.includes(action)) return;
 
       e.preventDefault();
@@ -1455,6 +1510,37 @@ const bottomNavItem = (active: boolean) =>
           btn.innerHTML = originalContent;
           btn.classList.remove('pointer-events-none');
           alertFromError(err, 'Request failed');
+        }
+
+      } else if (action === 'rewatch' || action === 'rewatch-cancel') {
+        // Show-level card only (ActionBar only renders this button there) —
+        // data-tmdb-id on the card IS the show's own tmdb id in that context.
+        const seriesId = tmdbId;
+        const rewatchBtn = action === 'rewatch-cancel' ? btn.closest<HTMLElement>('[data-action="rewatch"]') : btn;
+        if (!rewatchBtn) return;
+        const isActive = rewatchBtn.dataset.rewatchActive === 'true';
+
+        if (action === 'rewatch-cancel') {
+          const ok = await showConfirm('Cancel rewatch?', 'Progress on this rewatch will be lost. Your watch history is untouched.');
+          if (!ok) return;
+          try {
+            await apiFetch(`/history/rewatch?series_tmdb_id=${seriesId}`, 'DELETE');
+            window.location.reload();
+          } catch (err: any) {
+            alertFromError(err, 'Failed to cancel rewatch');
+          }
+          return;
+        }
+
+        if (isActive) {
+          const ok = await showConfirm('Restart rewatch?', 'Progress on the current rewatch will be lost and it will start over from the beginning.');
+          if (!ok) return;
+        }
+        try {
+          await apiFetch(`/history/rewatch?series_tmdb_id=${seriesId}`, 'POST');
+          window.location.reload();
+        } catch (err: any) {
+          alertFromError(err, 'Failed to start rewatch');
         }
       }
     });

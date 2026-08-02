@@ -304,6 +304,7 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
                     _ScalarOneResult(show),                             # show_result
                     _ExistingResult([mapping]),                         # mapping_result
                     _ExistingResult([mapped_episode, unmapped_episode]),  # ep_result
+                    _ScalarOneResult(None),                             # get_active_rewatch — none active
                     _ExistingResult([(201,), (202,)]),                  # watched_q — both watched
                     _ExistingResult([(201,)]),                          # collected_q — only 201 collected
                     _ExistingResult([]),                                # episode_ratings_q

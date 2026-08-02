@@ -149,6 +149,8 @@ const originalLanguage = show?.original_language
                 requestEnabled={show.request_enabled}
                 requestStatus={show.request_status}
                 userRating={show.user_rating}
+                showRewatch={true}
+                rewatch={show.rewatch ?? null}
               />
             </div>
             {show.tmdb_id_cross && (

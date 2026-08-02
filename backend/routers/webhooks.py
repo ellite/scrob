@@ -23,6 +23,7 @@ from models.playback_session import PlaybackSession
 from models.playback_progress import PlaybackProgress
 from models.library_selections import PlexLibrarySelection, JellyfinLibrarySelection, EmbyLibrarySelection
 from core.enrichment import enrich_media
+from core.rewatch import record_rewatch_progress
 from core import tmdb
 from core import trakt as trakt_client
 from core import simkl as simkl_client
@@ -391,7 +392,7 @@ async def _write_watch_event(
         )
         if existing.scalar_one_or_none() is not None:
             return
-        db.add(WatchEvent(
+        event = WatchEvent(
             user_id=user_id,
             media_id=media_id,
             watched_at=datetime.utcnow(),
@@ -399,7 +400,8 @@ async def _write_watch_event(
             progress_percent=1.0,
             completed=True,
             play_count=1,
-        ))
+        )
+        db.add(event)
         # Remove any in-progress marker since it's now done
         await db.execute(
             delete(PlaybackProgress).where(
@@ -407,6 +409,8 @@ async def _write_watch_event(
                 PlaybackProgress.media_id == media_id
             )
         )
+        await db.flush()
+        await record_rewatch_progress(db, user_id, media_id, event.id)
     else:
         # Just update in-progress state, don't add to WatchEvent (History)
         await _update_playback_progress(db, user_id, media_id, progress_percent, progress_seconds)

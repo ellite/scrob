@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import mdblist as mdblist_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode
+from core.rewatch import record_rewatch_progress
 from db import engine, get_db
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
@@ -418,15 +419,16 @@ async def _import_watched(
                         stats["skipped"] += 1
                         continue
                     watched_at = entry.get("watched_at") or entry.get("last_watched_at")
-                    db.add(
-                        WatchEvent(
-                            user_id=user_id,
-                            media_id=media.id,
-                            watched_at=_utc_naive(watched_at),
-                            completed=True,
-                            play_count=max(_integer(entry.get("plays")) or 1, 1),
-                        )
+                    event = WatchEvent(
+                        user_id=user_id,
+                        media_id=media.id,
+                        watched_at=_utc_naive(watched_at),
+                        completed=True,
+                        play_count=max(_integer(entry.get("plays")) or 1, 1),
                     )
+                    db.add(event)
+                    await db.flush()
+                    await record_rewatch_progress(db, user_id, media.id, event.id)
                     existing.add(media.id)
                     changed.add(media.id)
                     stats["watched"] += 1

@@ -752,6 +752,12 @@ export interface TvdbSeasonMeta {
   air_date: string | null;
 }
 
+export interface ShowRewatch {
+  started_at: string;
+  watched: number;
+  total: number;
+}
+
 export interface TvdbShow {
   id: number | null;
   tvdb_id: number;
@@ -788,6 +794,7 @@ export interface TvdbShow {
   user_rating: number | null;
   season_states: Record<number, SeasonState>;
   where_to_watch: { type: string; name: string; logo: string | null }[];
+  rewatch?: ShowRewatch | null;
 }
 
 export interface Show {
@@ -824,6 +831,7 @@ export interface Show {
   first_air_date: string | null;
   last_air_date: string | null;
   where_to_watch?: { type: string; name: string; logo: string | null }[];
+  rewatch?: ShowRewatch | null;
 }
 
 export interface ProfileWatchedItem {

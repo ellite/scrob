@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import simkl as simkl_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode
+from core.rewatch import record_rewatch_progress
 from db import get_db, engine
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
@@ -381,13 +382,16 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                                             continue
                                         if media.id not in existing_watched:
                                             watched_at = _parse_watched_at(ep_entry.get("watched_at"))
-                                            db.add(WatchEvent(
+                                            event = WatchEvent(
                                                 user_id=user_id,
                                                 media_id=media.id,
                                                 watched_at=watched_at or datetime.utcnow(),
                                                 completed=True,
                                                 play_count=1,
-                                            ))
+                                            )
+                                            db.add(event)
+                                            await db.flush()
+                                            await record_rewatch_progress(db, user_id, media.id, event.id)
                                             existing_watched.add(media.id)
                                             _new_watched.add(media.id)
                                             stats["episodes"] += 1

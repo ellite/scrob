@@ -405,13 +405,15 @@ class MDBListNormalizationTests(unittest.IsolatedAsyncioTestCase):
 
 class _WatchedFakeSession:
     """Fakes just enough of AsyncSession for _import_watched: an empty
-    existing-watch-events query, plus recording every WatchEvent added."""
+    existing-watch-events query, plus recording every WatchEvent added.
+    Also backs record_rewatch_progress's own lookups (always empty here,
+    so it no-ops - this test isn't exercising rewatch behavior)."""
 
     def __init__(self) -> None:
         self.added: list = []
 
     async def execute(self, statement):
-        return SimpleNamespace(all=lambda: [])
+        return SimpleNamespace(all=lambda: [], scalar_one_or_none=lambda: None)
 
     def begin_nested(self):
         return self
@@ -424,6 +426,9 @@ class _WatchedFakeSession:
 
     def add(self, obj):
         self.added.append(obj)
+
+    async def flush(self):
+        pass
 
 
 class ImportWatchedSkipsShowRollupTests(unittest.IsolatedAsyncioTestCase):

@@ -27,6 +27,8 @@ from models.media_request import MediaRequest, RequestStatus
 from models.episode_order import EpisodeOrderMapping
 from models.profile import UserProfileData
 from core import tmdb
+from core.rewatch import get_active_rewatches_for_shows
+from models.rewatch import ShowRewatch, RewatchProgress
 from core.translations import (
     get_user_metadata_language,
     get_media_translations,
@@ -193,18 +195,21 @@ async def enrich_with_state(
 
     watched_shows: set[int] = set()
     show_watched_count_map: dict[int, int] = {}
+    # tmdb_id -> ShowRewatch, for shows currently mid-rewatch. Their watched
+    # counts come from that rewatch's progress instead of full history below.
+    show_active_rewatch_by_tmdb: dict[int, ShowRewatch] = {}
     if show_tmdb_ids:
         # Count distinct watched episodes per show, deduplicated by (season, episode).
         # Use a join on ShowModel by tmdb_id to group episodes by their show's TMDB ID.
         # This handles cases where multiple Show rows might exist for the same TMDB ID.
         # Count distinct watched episodes per show, deduplicated by (season, episode).
-        # We need to find all watched episodes for these shows. 
+        # We need to find all watched episodes for these shows.
         # Most episodes will be linked via Media.show_id -> ShowModel.id -> ShowModel.tmdb_id.
         # But some might have a null show_id. We can find those by matching their TMDB ID
-        # if we know which episode TMDB IDs belong to which show. 
+        # if we know which episode TMDB IDs belong to which show.
         # To keep it efficient and avoid extra TMDB lookups, let's use the show_id join
         # but also allow matching by show_id directly if we have the local Show IDs.
-        
+
         # 1. Get local Show IDs for the TMDB IDs we are interested in.
         show_id_map_q = await db.execute(
             select(ShowModel.tmdb_id, ShowModel.id)
@@ -213,44 +218,84 @@ async def enrich_with_state(
         show_tmdb_to_local_id = {r[0]: r[1] for r in show_id_map_q.all()}
         local_show_ids = list(show_tmdb_to_local_id.values())
 
-        watched_eps_sq = (
-            select(ShowModel.tmdb_id.label("show_tmdb_id"), Media.season_number, Media.episode_number)
-            .join(WatchEvent, WatchEvent.media_id == Media.id)
-            .join(ShowModel, ShowModel.id == Media.show_id)
-            .where(
-                WatchEvent.user_id == user_id,
-                WatchEvent.completed == True,
-                Media.media_type == MediaType.episode,
-                Media.season_number.isnot(None),
-                Media.season_number != 0,
-                Media.episode_number.isnot(None),
-                ShowModel.tmdb_id.in_(show_tmdb_ids),
+        active_rewatches_by_show_id = await get_active_rewatches_for_shows(db, user_id, local_show_ids)
+        show_active_rewatch_by_tmdb = {
+            tid: active_rewatches_by_show_id[lid]
+            for tid, lid in show_tmdb_to_local_id.items()
+            if lid in active_rewatches_by_show_id
+        }
+        non_rewatching_tmdb_ids = [t for t in show_tmdb_ids if t not in show_active_rewatch_by_tmdb]
+
+        if non_rewatching_tmdb_ids:
+            watched_eps_sq = (
+                select(ShowModel.tmdb_id.label("show_tmdb_id"), Media.season_number, Media.episode_number)
+                .join(WatchEvent, WatchEvent.media_id == Media.id)
+                .join(ShowModel, ShowModel.id == Media.show_id)
+                .where(
+                    WatchEvent.user_id == user_id,
+                    WatchEvent.completed == True,
+                    Media.media_type == MediaType.episode,
+                    Media.season_number.isnot(None),
+                    Media.season_number != 0,
+                    Media.episode_number.isnot(None),
+                    ShowModel.tmdb_id.in_(non_rewatching_tmdb_ids),
+                )
+                .group_by(ShowModel.tmdb_id, Media.season_number, Media.episode_number)
+                .subquery()
             )
-            .group_by(ShowModel.tmdb_id, Media.season_number, Media.episode_number)
-            .subquery()
-        )
-        watched_count_q = await db.execute(
-            select(watched_eps_sq.c.show_tmdb_id, func.count())
-            .group_by(watched_eps_sq.c.show_tmdb_id)
-        )
-        show_watched_count_map = {r[0]: r[1] for r in watched_count_q.all()}
+            watched_count_q = await db.execute(
+                select(watched_eps_sq.c.show_tmdb_id, func.count())
+                .group_by(watched_eps_sq.c.show_tmdb_id)
+            )
+            show_watched_count_map = {r[0]: r[1] for r in watched_count_q.all()}
 
         # 2. Add episodes that might have a null show_id but are watched.
-        # This is harder without knowing episode TMDB IDs. 
+        # This is harder without knowing episode TMDB IDs.
         # But if the user marked them watched via Scrob, they SHOULD have show_id set.
         # Let's check if there are any episodes with null show_id that belong to these shows.
         # Actually, let's just make the existing logic more robust by ensuring show_id is set
         # when marking as watched (which we already do in history.py).
 
+        # 3. Shows currently mid-rewatch: watched count comes from that
+        # rewatch's progress, not full history.
+        if show_active_rewatch_by_tmdb:
+            rewatch_id_to_tmdb = {r.id: tid for tid, r in show_active_rewatch_by_tmdb.items()}
+            progress_count_q = await db.execute(
+                select(RewatchProgress.rewatch_id, func.count(func.distinct(RewatchProgress.media_id)))
+                .where(RewatchProgress.rewatch_id.in_(rewatch_id_to_tmdb.keys()))
+                .group_by(RewatchProgress.rewatch_id)
+            )
+            for rewatch_id, count in progress_count_q.all():
+                show_watched_count_map[rewatch_id_to_tmdb[rewatch_id]] = count
+
     watched_episodes: set[int] = set()
     if ep_tmdb_ids:
-        q = await db.execute(
-            select(Media.tmdb_id)
-            .join(WatchEvent, WatchEvent.media_id == Media.id)
-            .where(WatchEvent.user_id == user_id, WatchEvent.completed == True, Media.tmdb_id.in_(ep_tmdb_ids), Media.media_type == MediaType.episode)
-            .distinct()
+        ep_show_q = await db.execute(
+            select(Media.tmdb_id, Media.id, Media.show_id)
+            .where(Media.tmdb_id.in_(ep_tmdb_ids), Media.media_type == MediaType.episode)
         )
-        watched_episodes = {r[0] for r in q.all()}
+        ep_rows = ep_show_q.all()
+        ep_show_ids = [row[2] for row in ep_rows if row[2] is not None]
+        active_rewatches_by_show = await get_active_rewatches_for_shows(db, user_id, ep_show_ids)
+
+        rewatching_media_ids = {row[1] for row in ep_rows if row[2] in active_rewatches_by_show}
+        non_rewatching_tmdb_ids = [row[0] for row in ep_rows if row[2] not in active_rewatches_by_show]
+
+        if non_rewatching_tmdb_ids:
+            q = await db.execute(
+                select(Media.tmdb_id)
+                .join(WatchEvent, WatchEvent.media_id == Media.id)
+                .where(WatchEvent.user_id == user_id, WatchEvent.completed == True, Media.tmdb_id.in_(non_rewatching_tmdb_ids), Media.media_type == MediaType.episode)
+                .distinct()
+            )
+            watched_episodes = {r[0] for r in q.all()}
+
+        if rewatching_media_ids:
+            media_id_to_tmdb = {row[1]: row[0] for row in ep_rows}
+            progress_q = await db.execute(
+                select(RewatchProgress.media_id).where(RewatchProgress.media_id.in_(rewatching_media_ids))
+            )
+            watched_episodes |= {media_id_to_tmdb[r[0]] for r in progress_q.all()}
 
     # --- List membership ---
     user_list_ids_q = await db.execute(select(UserList.id).where(UserList.user_id == user_id))
@@ -326,27 +371,32 @@ async def enrich_with_state(
         # Count distinct watched episodes per show, deduplicated by (season, episode).
         # We find episodes by their show_id link.
         # Primary path: show_id -> ShowModel.id -> ShowModel.tmdb_id
-        watched_eps_sq = (
-            select(ShowModel.tmdb_id.label("show_tmdb_id"), Media.season_number, Media.episode_number)
-            .join(WatchEvent, WatchEvent.media_id == Media.id)
-            .join(ShowModel, ShowModel.id == Media.show_id)
-            .where(
-                WatchEvent.user_id == user_id,
-                WatchEvent.completed == True,
-                Media.media_type == MediaType.episode,
-                Media.season_number.isnot(None),
-                Media.season_number != 0,
-                Media.episode_number.isnot(None),
-                ShowModel.tmdb_id.in_(show_tmdb_ids),
+        # Recomputed here from scratch (duplicates the "Watched state" block
+        # above) - shows mid-rewatch must stay excluded and keep the
+        # progress-based counts computed there, not be overwritten with
+        # full-history counts.
+        if non_rewatching_tmdb_ids:
+            watched_eps_sq = (
+                select(ShowModel.tmdb_id.label("show_tmdb_id"), Media.season_number, Media.episode_number)
+                .join(WatchEvent, WatchEvent.media_id == Media.id)
+                .join(ShowModel, ShowModel.id == Media.show_id)
+                .where(
+                    WatchEvent.user_id == user_id,
+                    WatchEvent.completed == True,
+                    Media.media_type == MediaType.episode,
+                    Media.season_number.isnot(None),
+                    Media.season_number != 0,
+                    Media.episode_number.isnot(None),
+                    ShowModel.tmdb_id.in_(non_rewatching_tmdb_ids),
+                )
+                .group_by(ShowModel.tmdb_id, Media.season_number, Media.episode_number)
+                .subquery()
             )
-            .group_by(ShowModel.tmdb_id, Media.season_number, Media.episode_number)
-            .subquery()
-        )
-        watched_count_q = await db.execute(
-            select(watched_eps_sq.c.show_tmdb_id, func.count())
-            .group_by(watched_eps_sq.c.show_tmdb_id)
-        )
-        show_watched_count_map = {r[0]: r[1] for r in watched_count_q.all()}
+            watched_count_q = await db.execute(
+                select(watched_eps_sq.c.show_tmdb_id, func.count())
+                .group_by(watched_eps_sq.c.show_tmdb_id)
+            )
+            show_watched_count_map.update({r[0]: r[1] for r in watched_count_q.all()})
 
         # Count distinct collected episodes per show
         ep_dedup_sq = (

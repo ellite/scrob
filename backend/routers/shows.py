@@ -19,6 +19,7 @@ from models.show import Show as ShowModel
 from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
+from models.rewatch import RewatchProgress
 from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch, _effective_sonarr, _get_global_settings
 
 from dependencies import get_current_user, get_current_user_or_api_key
@@ -26,6 +27,13 @@ from core import tmdb
 from core import tvdb as tvdb_client
 from core.episode_order import ensure_episode_order_mapping, get_episode_order, validate_episode_order
 from core.enrichment import tmdb_season_covers, enrich_episode_from_tvdb
+from core.rewatch import (
+    capped_season_episode_counts,
+    total_aired_episodes,
+    get_active_rewatch,
+    get_active_rewatches_for_shows,
+    get_rewatch_progress_media_ids,
+)
 from core.translations import (
     get_user_metadata_language,
     get_media_translations,
@@ -649,25 +657,43 @@ async def get_show(
             state_item["_last_episode_to_air"] = tmdb_extra["last_episode_to_air"]
         await enrich_with_state(db, current_user.id, [state_item])
 
+        # While a rewatch is active, "watched" for this show reads from that
+        # rewatch's progress instead of full history - computed once here and
+        # reused below for the season stats, top-level rewatch field, and
+        # (via enrich_with_state) the show's own watched/watch_pct.
+        active_rewatch = await get_active_rewatch(db, current_user.id, show.id)
+
         # --- Per-season states ---
         season_states: dict = {}
 
         # Collected and watched episode counts per season in one query
-        coll_a  = aliased(Collection)
-        watch_a = aliased(WatchEvent)
-        season_stats_q = await db.execute(
+        coll_a = aliased(Collection)
+        if active_rewatch:
+            watched_case = case((RewatchProgress.id.isnot(None), Media.episode_number), else_=None)
+        else:
+            watch_a = aliased(WatchEvent)
+            watched_case = case((watch_a.id.isnot(None), Media.episode_number), else_=None)
+        season_stats_query = (
             select(
                 Media.season_number,
                 func.count(func.distinct(
                     case((coll_a.id.isnot(None), Media.episode_number), else_=None)
                 )).label("collected"),
-                func.count(func.distinct(
-                    case((watch_a.id.isnot(None), Media.episode_number), else_=None)
-                )).label("watched"),
+                func.count(func.distinct(watched_case)).label("watched"),
             )
             .outerjoin(coll_a, and_(coll_a.media_id == Media.id, coll_a.user_id == current_user.id))
-            .outerjoin(watch_a, and_(watch_a.media_id == Media.id, watch_a.user_id == current_user.id))
-            .where(
+        )
+        if active_rewatch:
+            season_stats_query = season_stats_query.outerjoin(
+                RewatchProgress,
+                and_(RewatchProgress.media_id == Media.id, RewatchProgress.rewatch_id == active_rewatch.id),
+            )
+        else:
+            season_stats_query = season_stats_query.outerjoin(
+                watch_a, and_(watch_a.media_id == Media.id, watch_a.user_id == current_user.id)
+            )
+        season_stats_q = await db.execute(
+            season_stats_query.where(
                 Media.show_id == show.id,
                 Media.media_type == MediaType.episode,
                 Media.season_number.isnot(None),
@@ -703,24 +729,9 @@ async def get_show(
             )
             season_ratings = dict(ratings_q.all())
 
-        # Episode counts per season from stored TMDB metadata
-        season_ep_counts: dict = {
-            s["season_number"]: s.get("episode_count", 0)
-            for s in (show.tmdb_data or {}).get("seasons", [])
-        }
-
-        # For shows that are still airing, adjust the counts to only include aired episodes
-        last_ep = (tmdb_extra or show.tmdb_data or {}).get("last_episode_to_air")
-        if last_ep:
-            last_sn = last_ep.get("season_number")
-            last_en = last_ep.get("episode_number")
-            if last_sn in season_ep_counts:
-                # Capped at the last aired episode number for the current season
-                season_ep_counts[last_sn] = last_en
-            # Future seasons have 0 aired episodes
-            for sn in season_ep_counts:
-                if sn > last_sn:
-                    season_ep_counts[sn] = 0
+        # Episode counts per season from stored TMDB metadata, capped at the
+        # last aired episode for shows still airing.
+        season_ep_counts = capped_season_episode_counts(show, tmdb_extra)
 
         # Build season states for all known seasons
         for sn in set(list(coll_per_season.keys()) + list(season_ep_counts.keys())):
@@ -767,6 +778,15 @@ async def get_show(
                 for ep_list in seasons.values():
                     apply_media_translations(ep_list, ep_trans)
 
+        rewatch_info = None
+        if active_rewatch:
+            progress_ids = await get_rewatch_progress_media_ids(db, active_rewatch.id)
+            rewatch_info = {
+                "started_at": active_rewatch.started_at.isoformat(),
+                "watched": len(progress_ids),
+                "total": total_aired_episodes(show),
+            }
+
         show_dict = format_show(show)
         if metadata_lang and tmdb_extra:
             for field, tmdb_key in [("title", "name"), ("overview", "overview"), ("tagline", "tagline")]:
@@ -789,6 +809,7 @@ async def get_show(
             "adult": (tmdb_extra or show.tmdb_data or {}).get("adult", False),
             "in_library": state_item.get("collection_pct", 0) > 0 if state_item else False,
             "watched": state_item.get("watched", False) if state_item else False,
+            "rewatch": rewatch_info,
             "in_lists": state_item.get("in_lists", []),
             "collection_pct": state_item.get("collection_pct", 0),
             "watch_pct": state_item.get("watch_pct", 0),
@@ -1022,12 +1043,21 @@ async def get_show_season(
             local_media_ids = [m.id for m in local_media_by_tmdb.values()]
 
             if local_media_ids:
-                watched_q = await db.execute(
-                    select(WatchEvent.media_id).where(
-                        WatchEvent.user_id == current_user.id,
-                        WatchEvent.media_id.in_(local_media_ids),
-                    ).distinct()
-                )
+                active_rewatch = await get_active_rewatch(db, current_user.id, show.id) if show else None
+                if active_rewatch:
+                    watched_q = await db.execute(
+                        select(RewatchProgress.media_id).where(
+                            RewatchProgress.rewatch_id == active_rewatch.id,
+                            RewatchProgress.media_id.in_(local_media_ids),
+                        ).distinct()
+                    )
+                else:
+                    watched_q = await db.execute(
+                        select(WatchEvent.media_id).where(
+                            WatchEvent.user_id == current_user.id,
+                            WatchEvent.media_id.in_(local_media_ids),
+                        ).distinct()
+                    )
                 watched_ep_ids = {r[0] for r in watched_q.all()}
 
                 ep_ratings_q = await db.execute(
@@ -1684,13 +1714,23 @@ async def get_tvdb_show(
                     Collection.media_id.in_(local_media_ids),
                 )
             )
-            watched_result = await db.execute(
-                select(WatchEvent.media_id).where(
-                    WatchEvent.user_id == current_user.id,
-                    WatchEvent.media_id.in_(local_media_ids),
-                )
-            )
             collected_ids = {row[0] for row in collected_result.all()}
+
+            active_rewatch = await get_active_rewatch(db, current_user.id, show.id)
+            if active_rewatch:
+                watched_result = await db.execute(
+                    select(RewatchProgress.media_id).where(
+                        RewatchProgress.rewatch_id == active_rewatch.id,
+                        RewatchProgress.media_id.in_(local_media_ids),
+                    )
+                )
+            else:
+                watched_result = await db.execute(
+                    select(WatchEvent.media_id).where(
+                        WatchEvent.user_id == current_user.id,
+                        WatchEvent.media_id.in_(local_media_ids),
+                    )
+                )
             watched_ids = {row[0] for row in watched_result.all()}
 
         for episode in local_eps:
@@ -1804,6 +1844,17 @@ async def get_tvdb_show(
     networks = [{"id": None, "name": n.get("name"), "logo_path": None, "origin_country": None}
                 for n in (raw.get("networks") or []) if n.get("name")]
 
+    rewatch_info = None
+    if show:
+        active_rewatch = await get_active_rewatch(db, current_user.id, show.id)
+        if active_rewatch:
+            progress_ids = await get_rewatch_progress_media_ids(db, active_rewatch.id)
+            rewatch_info = {
+                "started_at": active_rewatch.started_at.isoformat(),
+                "watched": len(progress_ids),
+                "total": total_aired_episodes(show),
+            }
+
     return {
         **show_data,
         "id": show.id if show else None,
@@ -1817,6 +1868,7 @@ async def get_tvdb_show(
         "adult": False,
         "in_library": in_library,
         "watched": watched_overall,
+        "rewatch": rewatch_info,
         "in_lists": [],
         "collection_pct": collection_pct,
         "watch_pct": watch_pct,
@@ -2022,14 +2074,25 @@ async def get_tvdb_season(
     collected_ep_ids: set[int] = set()
     episode_ratings: dict[int, float] = {}
     if local_media_ids:
-        watched_q = await db.execute(
-            select(WatchEvent.media_id)
-            .where(
-                WatchEvent.user_id == current_user.id,
-                WatchEvent.media_id.in_(local_media_ids),
+        active_rewatch = await get_active_rewatch(db, current_user.id, show.id)
+        if active_rewatch:
+            watched_q = await db.execute(
+                select(RewatchProgress.media_id)
+                .where(
+                    RewatchProgress.rewatch_id == active_rewatch.id,
+                    RewatchProgress.media_id.in_(local_media_ids),
+                )
+                .distinct()
             )
-            .distinct()
-        )
+        else:
+            watched_q = await db.execute(
+                select(WatchEvent.media_id)
+                .where(
+                    WatchEvent.user_id == current_user.id,
+                    WatchEvent.media_id.in_(local_media_ids),
+                )
+                .distinct()
+            )
         watched_ep_ids = {row[0] for row in watched_q.all()}
         collected_q = await db.execute(
             select(Collection.media_id)
@@ -2295,12 +2358,21 @@ async def get_tvdb_episode(
                 )
             )
             in_library = coll_q.scalar_one() > 0
-            watched_q = await db.execute(
-                select(func.count()).select_from(WatchEvent).where(
-                    WatchEvent.media_id == local_ep.id,
-                    WatchEvent.user_id == current_user.id,
+            active_rewatch = await get_active_rewatch(db, current_user.id, show.id)
+            if active_rewatch:
+                watched_q = await db.execute(
+                    select(func.count()).select_from(RewatchProgress).where(
+                        RewatchProgress.media_id == local_ep.id,
+                        RewatchProgress.rewatch_id == active_rewatch.id,
+                    )
                 )
-            )
+            else:
+                watched_q = await db.execute(
+                    select(func.count()).select_from(WatchEvent).where(
+                        WatchEvent.media_id == local_ep.id,
+                        WatchEvent.user_id == current_user.id,
+                    )
+                )
             play_count = watched_q.scalar_one()
             watched = play_count > 0
             rating_q = await db.execute(

@@ -630,6 +630,11 @@ class NuvioWatchHistoryTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=[
                     _Result(scalars=[movie]),
                     _Result(rows=[]),
+                    # record_rewatch_progress's own Media lookup, once per new
+                    # WatchEvent (2 distinct timestamps below) - no-ops since
+                    # this test isn't exercising rewatch behavior.
+                    _Result(),
+                    _Result(),
                 ]
             ),
             add=MagicMock(),

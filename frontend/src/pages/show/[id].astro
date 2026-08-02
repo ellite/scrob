@@ -176,6 +176,8 @@ const originalLanguage = show?.original_language
                 requestEnabled={show.request_enabled ?? false}
                 requestStatus={show.request_status ?? null}
                 userRating={show.user_rating ?? null}
+                showRewatch={true}
+                rewatch={show.rewatch ?? null}
               />
             </div>
             {show.tvdb_id && hasTvdbKey && (
