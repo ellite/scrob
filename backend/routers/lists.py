@@ -305,7 +305,7 @@ async def _push_list_item_to_plex_watchlist(
     plex_type = "movie" if media.media_type == MediaType.movie else "show"
     for conn in conns:
         try:
-            rating_key = await plex_client.resolve_tmdb_ratingkey(conn.token, media.tmdb_id, plex_type)
+            rating_key = await plex_client.resolve_tmdb_ratingkey(conn.token, media.tmdb_id, plex_type, media.title)
             if not rating_key:
                 logger.warning(
                     "Could not resolve Plex ratingKey for tmdb_id=%s (%s), connection %s — skipping watchlist %s",

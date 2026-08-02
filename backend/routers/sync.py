@@ -2451,6 +2451,17 @@ async def _backfill_plex_languages(user_id: int, connection_id: int, p_url: str,
         return total
 
 
+def plex_sync_needs_library_scan(conn) -> bool:
+    """Whether _run_plex_sync's per-library scan (movies/shows/episodes)
+    should run at all. That scan only ever produces collection/watched/
+    ratings data, so a connection with all three of those off - e.g. a
+    watchlist-only pull - must skip it rather than re-fetching and
+    iterating the user's entire Plex library just to throw the results
+    away. The watchlist pull itself is a separate step that doesn't depend
+    on this scan having run."""
+    return bool(conn.sync_collection or conn.sync_watched or conn.sync_ratings)
+
+
 async def run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
     async with _sync_semaphore:
         await _run_plex_sync(user_id, job_id, movie_limit, show_limit, connection_id)
@@ -2503,6 +2514,10 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             selected_keys = {row.library_key for row in sel_result.scalars().all()}
             if selected_keys:
                 libraries = [lib for lib in libraries if lib.get("key") in selected_keys]
+
+            if not plex_sync_needs_library_scan(conn):
+                print("  Skipping library scan - collection/watched/ratings sync are all disabled for this connection")
+                libraries = []
 
             print(f"  Found {len(libraries)} libraries to sync")
             stats = {"movies": 0, "episodes": 0, "ratings": 0, "skipped": 0, "errors": 0}
@@ -4813,7 +4828,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             if media.tmdb_id in remote_tmdb_ids:
                                 continue
                             plex_type = "movie" if media.media_type == MediaType.movie else "show"
-                            rating_key = await plex.resolve_tmdb_ratingkey(conn.token, media.tmdb_id, plex_type)
+                            rating_key = await plex.resolve_tmdb_ratingkey(conn.token, media.tmdb_id, plex_type, media.title)
                             if not rating_key:
                                 logger.warning(
                                     "Full push: could not resolve Plex ratingKey for tmdb_id=%s (%s), connection %s",
@@ -5106,6 +5121,7 @@ async def push_upstream(
         or conn.push_watched
         or conn.push_ratings
         or conn.push_playback
+        or conn.plex_push_watchlist
     ):
         raise HTTPException(
             status_code=400,

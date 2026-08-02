@@ -1,6 +1,9 @@
+import logging
 import httpx
 import xmltodict
 from typing import Optional, List, Dict
+
+logger = logging.getLogger(__name__)
 
 TIMEOUT = httpx.Timeout(120.0)
 
@@ -344,26 +347,80 @@ async def enrich_plex_item(token: str, plex_id: str) -> Optional[Dict]:
         return None
 
 
-async def resolve_tmdb_ratingkey(token: str, tmdb_id: int, media_type: str) -> str | None:
+_RESOLVE_CANDIDATE_CHECK_LIMIT = 10
+
+
+async def resolve_tmdb_ratingkey(token: str, tmdb_id: int, media_type: str, title: str) -> str | None:
     """Return the Plex Discover ratingKey for an item identified by TMDB ID.
+
+    Discover has no endpoint that filters its global catalog by external
+    guid directly - `/library/sections/computer/all?guid=...` (the original
+    approach here) isn't a real Discover section and always came back empty.
+    The approach actually used by Plex's own clients (and python-plexapi's
+    MyPlexAccount.searchDiscover) is a title search against `/library/search`.
+
+    That search's results do NOT include each candidate's external Guid list
+    despite `includeMetadata=1` (confirmed live against issue #119/#83 - every
+    candidate came back with Guid=None even for an exact title match), so
+    title text alone can't be trusted to pick the right candidate on its own
+    (remakes, unrelated titles that share a name). Each candidate's ratingKey
+    is verified against enrich_plex_item's full metadata (which does carry
+    Guid) until the exact tmdb match is found, checking only the closest
+    _RESOLVE_CANDIDATE_CHECK_LIMIT results since Discover search is already
+    relevance-ranked and the right item is normally at or near the top.
 
     media_type must be 'movie' or 'show'.
     Returns None if the item cannot be found.
     """
-    plex_type = "1" if media_type == "movie" else "2"
+    libtype = "movies" if media_type == "movie" else "tv"
+    want_guid = f"tmdb://{tmdb_id}"
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
             res = await client.get(
-                f"{DISCOVER_BASE}/library/sections/computer/all",
+                f"{DISCOVER_BASE}/library/search",
                 headers={"X-Plex-Token": token, "Accept": "application/json"},
-                params={"X-Plex-Token": token, "guid": f"tmdb://{tmdb_id}", "type": plex_type, "includeGuids": 1},
+                params={
+                    "X-Plex-Token": token,
+                    "query": title,
+                    "limit": 30,
+                    "searchTypes": libtype,
+                    "searchProviders": "discover",
+                    "includeMetadata": 1,
+                },
             )
             if res.status_code >= 400:
+                logger.warning(
+                    "Discover search failed for tmdb_id=%s title=%r: HTTP %s - %s",
+                    tmdb_id, title, res.status_code, res.text[:500],
+                )
                 return None
             data = res.json()
-        items = data.get("MediaContainer", {}).get("Metadata", [])
-        return items[0]["ratingKey"] if items else None
+        search_results = data.get("MediaContainer", {}).get("SearchResults", [])
+        external = next(
+            (s.get("SearchResult", []) for s in search_results if s.get("id") == "external"),
+            [],
+        )
+        candidates = [
+            rk for r in external
+            if (rk := r.get("Metadata", {}).get("ratingKey"))
+        ][:_RESOLVE_CANDIDATE_CHECK_LIMIT]
+
+        checked = []
+        for rating_key in candidates:
+            full = await enrich_plex_item(token, rating_key)
+            guids = (full or {}).get("Guid", []) or []
+            checked.append({"ratingKey": rating_key, "guids": guids})
+            if any(g.get("id") == want_guid for g in guids):
+                return rating_key
+
+        logger.warning(
+            "No Discover match for tmdb_id=%s title=%r (want %s): %s section(s), "
+            "%s external candidate(s), checked=%s",
+            tmdb_id, title, want_guid, len(search_results), len(external), checked,
+        )
+        return None
     except Exception:
+        logger.exception("Discover search errored for tmdb_id=%s title=%r", tmdb_id, title)
         return None
 
 

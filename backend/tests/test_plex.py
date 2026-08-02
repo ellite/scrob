@@ -97,5 +97,146 @@ class PlexSeasonRatingTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+def _search_response(rating_keys: list[str], section_id: str = "external") -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "MediaContainer": {
+                "SearchResults": [
+                    {
+                        "id": section_id,
+                        "SearchResult": [
+                            {"Metadata": {"type": "movie", "ratingKey": rk}} for rk in rating_keys
+                        ],
+                    }
+                ]
+            }
+        },
+    )
+
+
+def _metadata_response(guids: list[str]) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={"MediaContainer": {"Metadata": [{"Guid": [{"id": g} for g in guids]}]}},
+    )
+
+
+class ResolveTmdbRatingkeyTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for issues #119/#83: the original implementation
+    queried `/library/sections/computer/all?guid=...` on Discover, which
+    isn't a real Discover section and always came back empty, so pushing to
+    the Plex watchlist silently no-op'd. The fix searches `/library/search`
+    by title (Discover's actual documented pattern, per python-plexapi's
+    MyPlexAccount.searchDiscover) - but that search's results never carry
+    Guid data even with includeMetadata=1 (confirmed live), so each
+    candidate's ratingKey is separately verified via enrich_plex_item's full
+    metadata lookup (which does carry Guid) until the exact tmdb match is
+    found."""
+
+    async def test_matches_the_right_candidate_by_verifying_each_ratingkey(self) -> None:
+        requested_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_paths.append(request.url.path)
+            if request.url.path == "/library/search":
+                self.assertEqual(request.url.params["query"], "Fight Club")
+                self.assertEqual(request.url.params["searchTypes"], "movies")
+                return _search_response(["wrong", "right"])
+            if request.url.path == "/library/metadata/wrong":
+                return _metadata_response(["tmdb://999"])
+            if request.url.path == "/library/metadata/right":
+                return _metadata_response(["tmdb://550"])
+            self.fail(f"Unexpected Plex path: {request.url.path}")
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            plex.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            rating_key = await plex.resolve_tmdb_ratingkey("token", 550, "movie", "Fight Club")
+
+        self.assertEqual(rating_key, "right")
+        # Stops as soon as the match is found - doesn't keep checking further.
+        self.assertEqual(requested_paths, ["/library/search", "/library/metadata/wrong", "/library/metadata/right"])
+
+    async def test_no_match_returns_none(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/library/search":
+                return _search_response(["other"])
+            if request.url.path == "/library/metadata/other":
+                return _metadata_response(["tmdb://1"])
+            self.fail(f"Unexpected Plex path: {request.url.path}")
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            plex.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            rating_key = await plex.resolve_tmdb_ratingkey("token", 550, "movie", "Fight Club")
+
+        self.assertIsNone(rating_key)
+
+    async def test_search_results_without_guid_data_still_resolve_via_enrichment(self) -> None:
+        """The exact live-reproduced bug: /library/search returns candidates
+        with Guid=None even for an exact title match - resolution must not
+        depend on Guid data being present in the search response itself."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/library/search":
+                return _search_response(["right"])  # no Guid in this response at all
+            if request.url.path == "/library/metadata/right":
+                return _metadata_response(["tmdb://550"])
+            self.fail(f"Unexpected Plex path: {request.url.path}")
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            plex.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            rating_key = await plex.resolve_tmdb_ratingkey("token", 550, "movie", "Project Hail Mary")
+
+        self.assertEqual(rating_key, "right")
+
+    async def test_non_external_search_sections_are_ignored(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/library/search":
+                return _search_response(["local-only"], section_id="server")
+            self.fail(f"Unexpected Plex path: {request.url.path}")
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            plex.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            rating_key = await plex.resolve_tmdb_ratingkey("token", 550, "movie", "Fight Club")
+
+        self.assertIsNone(rating_key)
+
+    async def test_stops_checking_after_candidate_limit(self) -> None:
+        many_keys = [f"key{i}" for i in range(plex._RESOLVE_CANDIDATE_CHECK_LIMIT + 5)]
+        checked_metadata_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/library/search":
+                return _search_response(many_keys)
+            checked_metadata_paths.append(request.url.path)
+            return _metadata_response(["tmdb://999999"])  # never matches
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            plex.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            rating_key = await plex.resolve_tmdb_ratingkey("token", 550, "movie", "Fight Club")
+
+        self.assertIsNone(rating_key)
+        self.assertEqual(len(checked_metadata_paths), plex._RESOLVE_CANDIDATE_CHECK_LIMIT)
+
+
 if __name__ == "__main__":
     unittest.main()
