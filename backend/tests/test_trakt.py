@@ -19,6 +19,7 @@ from core import trakt
 from core.trakt_export import TraktExportData
 from models.base import MediaType
 from models.media import Media
+from models.sync import SyncStatus
 from routers import trakt as trakt_router
 
 
@@ -360,6 +361,7 @@ class _FakeSession:
         self.shows = shows
         self.commit = AsyncMock()
         self.added: list = []
+        self.job_updates: list = []
 
     async def __aenter__(self):
         return self
@@ -380,6 +382,11 @@ class _FakeSession:
 
     async def execute(self, statement):
         sql = str(statement)
+        if "sync_jobs" in sql and hasattr(statement, "compile"):
+            try:
+                self.job_updates.append(dict(statement.compile().params))
+            except Exception:
+                pass
         if "FROM user_settings" in sql:
             return _Result(scalar=self.settings)
         if "FROM watch_events" in sql:
@@ -858,17 +865,16 @@ class TraktExportSyncTests(unittest.IsolatedAsyncioTestCase):
         )
         session = _FakeSession(settings, [], [], [])
         export_data = TraktExportData(history_movies=[], history_episodes=[])
-        fan_out = AsyncMock()
 
-        with (
-            patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session),
-            patch("routers.sync._fan_out_changes_to_other_connections", fan_out),
-        ):
+        with patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session):
             await trakt_router.run_trakt_export_sync(user_id=1, job_id=30, export_data=export_data)
 
-        # Reaching the fan-out call means the job completed successfully rather
-        # than failing early (both except branches return before this point).
-        fan_out.assert_awaited_once()
+        # The job reaching status=completed (rather than failed/cancelled) means
+        # it ran the whole success path rather than failing early. An import only
+        # populates scrob's own data — it never auto-pushes to other connections
+        # (see the comment in run_trakt_export_sync), so there's no fan-out call
+        # to assert on here anymore.
+        self.assertEqual(session.job_updates[-1]["status"], SyncStatus.completed)
         # Export import is a full snapshot, not an incremental live pull — it
         # must never touch the live-sync cursor.
         self.assertIsNone(settings.trakt_history_cursor_at)
@@ -993,7 +999,7 @@ class ApplyTraktImportEpisodeRatingsTests(unittest.IsolatedAsyncioTestCase):
             )
 
         show_mock.assert_awaited_once_with(ANY, 78309, "The Chalet", None)
-        media_mock.assert_awaited_once_with(ANY, 42, 78309, 1, 1, None)
+        media_mock.assert_awaited_once_with(ANY, 42, 78309, 1, 1, None, {})
         self.assertEqual(len(applied), 1)
         self.assertEqual(applied[0][0], media_stub)
         self.assertIsNone(applied[0][1])
