@@ -37,6 +37,7 @@ router = APIRouter()
 
 TMDB_CONCURRENCY = 10
 SIMKL_WATCHLIST_SLUG = "__simkl_watchlist__"
+SIMKL_PUSH_BATCH_SIZE = 50
 
 
 def _require_simkl_config(settings: UserSettings) -> None:
@@ -712,7 +713,8 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                 shows_result = await db.execute(select(Show).where(Show.id.in_(show_ids)))
                 shows_by_id = {s.id: s for s in shows_result.scalars().all()}
 
-            push_tasks = []
+            movie_candidates: list[tuple[int, datetime]] = []
+            episode_candidates: list[tuple[int, int, int, datetime]] = []
 
             if settings.simkl_push_watched:
                 for mid in watched_ids:
@@ -725,38 +727,120 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                     if watched_at is None:
                         continue
                     if media.media_type == MediaType.movie:
-                        push_tasks.append(simkl_client.add_movie_to_history(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, watched_at))
+                        movie_candidates.append((media.tmdb_id, watched_at))
                     elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
                         show = shows_by_id.get(media.show_id)
                         if show and show.tmdb_id:
-                            push_tasks.append(simkl_client.add_episode_to_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number, watched_at))
+                            episode_candidates.append((show.tmdb_id, media.season_number, media.episode_number, watched_at))
+                # Push oldest-first so a mid-run failure (e.g. a rate limit) drops
+                # the least-recently-watched items rather than an arbitrary slice.
+                movie_candidates.sort(key=lambda item: item[1])
+                episode_candidates.sort(key=lambda item: item[3])
+
+            movie_rating_candidates: list[tuple[int, float]] = []
+            show_rating_candidates: list[tuple[int, float]] = []
 
             if settings.simkl_push_ratings:
+                # Simkl has no "rated but not watched" state: rating an item that isn't
+                # already in one of its lists auto-files it as watched (today's date),
+                # and removing that watched status removes the rating right along with
+                # it. So there's no way to represent "rated, never watched" on Simkl —
+                # only push ratings for items scrob also considers watched.
+                # Determined independent of settings.simkl_push_watched — a movie/show
+                # can have local watch history even when the user chose not to push
+                # watched history to Simkl this run.
+                rating_media_ids = list(ratings_map.keys())
+                watch_check_result = await db.execute(
+                    select(WatchEvent.media_id).where(
+                        WatchEvent.user_id == user_id,
+                        WatchEvent.media_id.in_(rating_media_ids),
+                    ).distinct()
+                )
+                media_ids_with_watch_event = {row[0] for row in watch_check_result.all()}
+
+                rated_show_tmdb_ids = {
+                    media_by_id[mid].tmdb_id
+                    for mid in rating_media_ids
+                    if media_by_id.get(mid) and media_by_id[mid].media_type == MediaType.series and media_by_id[mid].tmdb_id
+                }
+                shows_with_watched_episode: set[int] = set()
+                if rated_show_tmdb_ids:
+                    watched_show_result = await db.execute(
+                        select(Show.tmdb_id)
+                        .join(Media, Media.show_id == Show.id)
+                        .join(WatchEvent, WatchEvent.media_id == Media.id)
+                        .where(WatchEvent.user_id == user_id, Show.tmdb_id.in_(rated_show_tmdb_ids))
+                        .distinct()
+                    )
+                    shows_with_watched_episode = {row[0] for row in watched_show_result.all()}
+
                 for mid, rating in ratings_map.items():
                     media = media_by_id.get(mid)
                     if not media or not media.tmdb_id or is_unmapped_tvdb_episode(media):
                         continue
                     if media.media_type == MediaType.movie:
-                        push_tasks.append(simkl_client.set_movie_rating(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, rating))
-                    elif media.media_type in (MediaType.series, MediaType.episode):
-                        push_tasks.append(simkl_client.set_show_rating(settings.simkl_client_id, settings.simkl_access_token, media.tmdb_id, rating))
+                        if mid not in media_ids_with_watch_event:
+                            continue
+                        movie_rating_candidates.append((media.tmdb_id, rating))
+                    elif media.media_type == MediaType.series:
+                        if media.tmdb_id not in shows_with_watched_episode:
+                            continue
+                        show_rating_candidates.append((media.tmdb_id, rating))
+                    # MediaType.episode ratings have no Simkl equivalent — Simkl only
+                    # supports whole-movie/whole-show ratings, not season or episode
+                    # ratings — so they're intentionally dropped rather than pushed
+                    # as a (wrong) show-level rating.
 
-            total = len(push_tasks)
+            # Combine items into multi-item request bodies (Simkl's /sync/history and
+            # /ratings endpoints both accept arrays) instead of one HTTP call per item —
+            # pushing thousands of items individually blows through Simkl's rate limit
+            # (1000 requests/10 min) with no backoff, failing everything past the cliff.
+            push_tasks: list[tuple[str, int, "asyncio.Future"]] = []
+
+            history_pending: list[tuple[str, tuple]] = [("movie", item) for item in movie_candidates]
+            history_pending.extend(("episode", item) for item in episode_candidates)
+            for i in range(0, len(history_pending), SIMKL_PUSH_BATCH_SIZE):
+                chunk = history_pending[i:i + SIMKL_PUSH_BATCH_SIZE]
+                movies = [item for kind, item in chunk if kind == "movie"]
+                episodes = [item for kind, item in chunk if kind == "episode"]
+                push_tasks.append((
+                    "watched",
+                    len(chunk),
+                    simkl_client.add_history_batch(settings.simkl_client_id, settings.simkl_access_token, movies, episodes),
+                ))
+
+            rating_pending: list[tuple[str, tuple]] = [("movie", item) for item in movie_rating_candidates]
+            rating_pending.extend(("show", item) for item in show_rating_candidates)
+            for i in range(0, len(rating_pending), SIMKL_PUSH_BATCH_SIZE):
+                chunk = rating_pending[i:i + SIMKL_PUSH_BATCH_SIZE]
+                movie_ratings = [item for kind, item in chunk if kind == "movie"]
+                show_ratings = [item for kind, item in chunk if kind == "show"]
+                push_tasks.append((
+                    "ratings",
+                    len(chunk),
+                    simkl_client.set_ratings_batch(settings.simkl_client_id, settings.simkl_access_token, movie_ratings, show_ratings),
+                ))
+
+            total = sum(item_count for _, item_count, _ in push_tasks)
 
             if not push_tasks:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats={"succeeded": 0, "failed": 0}, processed_items=0))
                 await db.commit()
                 return
 
-            print(f"Simkl full push: pushing {total} items…")
-            BATCH_SIZE = 50
+            print(f"Simkl full push: pushing {total} items in {len(push_tasks)} batch requests…")
+            REQUEST_CONCURRENCY = 50
             succeeded = 0
             failed = 0
-            for i in range(0, total, BATCH_SIZE):
-                batch = push_tasks[i:i + BATCH_SIZE]
-                results = await asyncio.gather(*batch, return_exceptions=True)
-                succeeded += sum(1 for r in results if not isinstance(r, Exception))
-                failed    += sum(1 for r in results if isinstance(r, Exception))
+            for i in range(0, len(push_tasks), REQUEST_CONCURRENCY):
+                batch = push_tasks[i:i + REQUEST_CONCURRENCY]
+                results = await asyncio.gather(*[task for _, _, task in batch], return_exceptions=True)
+                for (category, item_count, _), result in zip(batch, results):
+                    if isinstance(result, Exception):
+                        failed += item_count
+                        logger.warning("Simkl push batch failed (%s, %d items): %s", category, item_count, result)
+                    else:
+                        succeeded += item_count
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=succeeded + failed))
                 await db.commit()
                 await _raise_if_cancelled(db, job_id)

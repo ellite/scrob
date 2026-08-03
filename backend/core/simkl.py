@@ -160,11 +160,61 @@ async def add_movie_to_history(
         resp.raise_for_status()
 
 
+async def add_history_batch(
+    client_id: str,
+    access_token: str,
+    movies: list[tuple[int, Optional[datetime]]],
+    episodes: list[tuple[int, int, int, Optional[datetime]]],
+) -> None:
+    """Add multiple movies and/or episodes to Simkl history in a single API call.
+
+    movies: list of (tmdb_id, watched_at)
+    episodes: list of (show_tmdb_id, season_number, episode_number, watched_at)
+    """
+    if not movies and not episodes:
+        return
+    body: dict = {}
+    if movies:
+        body["movies"] = []
+        for tmdb_id, watched_at in movies:
+            m: dict = {"ids": {"tmdb": tmdb_id}}
+            if watched_at:
+                m["watched_at"] = _iso_utc(watched_at)
+            body["movies"].append(m)
+    if episodes:
+        shows_map: dict[int, dict[int, list[tuple[int, Optional[datetime]]]]] = {}
+        for show_tmdb_id, season, ep_num, watched_at in episodes:
+            shows_map.setdefault(show_tmdb_id, {}).setdefault(season, []).append((ep_num, watched_at))
+        body["shows"] = [
+            {
+                "ids": {"tmdb": show_tmdb_id},
+                "seasons": [
+                    {
+                        "number": season,
+                        "episodes": [
+                            ({"number": n, "watched_at": _iso_utc(watched_at)} if watched_at else {"number": n})
+                            for n, watched_at in eps
+                        ],
+                    }
+                    for season, eps in seasons.items()
+                ],
+            }
+            for show_tmdb_id, seasons in shows_map.items()
+        ]
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{SIMKL_BASE}/sync/history",
+            json=body,
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
+
+
 async def remove_movie_from_history(client_id: str, access_token: str, tmdb_id: int) -> None:
     """Mark a movie as unwatched on Simkl."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.delete(
-            f"{SIMKL_BASE}/sync/history",
+        resp = await client.post(
+            f"{SIMKL_BASE}/sync/history/remove",
             json={"movies": [{"ids": {"tmdb": tmdb_id}}]},
             headers=_headers(client_id, access_token),
         )
@@ -209,8 +259,8 @@ async def remove_episode_from_history(
 ) -> None:
     """Mark an episode as unwatched on Simkl."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.delete(
-            f"{SIMKL_BASE}/sync/history",
+        resp = await client.post(
+            f"{SIMKL_BASE}/sync/history/remove",
             json={
                 "shows": [{
                     "ids": {"tmdb": show_tmdb_id},
@@ -229,7 +279,7 @@ async def set_movie_rating(client_id: str, access_token: str, tmdb_id: int, rati
     """Rate a movie on Simkl (1–10 integer scale)."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
-            f"{SIMKL_BASE}/ratings",
+            f"{SIMKL_BASE}/sync/ratings",
             json={"movies": [{"rating": max(1, min(10, round(rating))), "ids": {"tmdb": tmdb_id}}]},
             headers=_headers(client_id, access_token),
         )
@@ -239,8 +289,8 @@ async def set_movie_rating(client_id: str, access_token: str, tmdb_id: int, rati
 async def remove_movie_rating(client_id: str, access_token: str, tmdb_id: int) -> None:
     """Remove a movie rating on Simkl."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.delete(
-            f"{SIMKL_BASE}/ratings",
+        resp = await client.post(
+            f"{SIMKL_BASE}/sync/ratings/remove",
             json={"movies": [{"ids": {"tmdb": tmdb_id}}]},
             headers=_headers(client_id, access_token),
         )
@@ -251,8 +301,37 @@ async def set_show_rating(client_id: str, access_token: str, tmdb_id: int, ratin
     """Rate a show on Simkl (1–10 integer scale)."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
-            f"{SIMKL_BASE}/ratings",
+            f"{SIMKL_BASE}/sync/ratings",
             json={"shows": [{"rating": max(1, min(10, round(rating))), "ids": {"tmdb": tmdb_id}}]},
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
+
+
+async def set_ratings_batch(
+    client_id: str,
+    access_token: str,
+    movie_ratings: list[tuple[int, float]],
+    show_ratings: list[tuple[int, float]],
+) -> None:
+    """Rate multiple movies and/or shows on Simkl in a single API call (1-10 integer scale)."""
+    if not movie_ratings and not show_ratings:
+        return
+    body: dict = {}
+    if movie_ratings:
+        body["movies"] = [
+            {"rating": max(1, min(10, round(rating))), "ids": {"tmdb": tmdb_id}}
+            for tmdb_id, rating in movie_ratings
+        ]
+    if show_ratings:
+        body["shows"] = [
+            {"rating": max(1, min(10, round(rating))), "ids": {"tmdb": tmdb_id}}
+            for tmdb_id, rating in show_ratings
+        ]
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{SIMKL_BASE}/sync/ratings",
+            json=body,
             headers=_headers(client_id, access_token),
         )
         resp.raise_for_status()
@@ -261,8 +340,8 @@ async def set_show_rating(client_id: str, access_token: str, tmdb_id: int, ratin
 async def remove_show_rating(client_id: str, access_token: str, tmdb_id: int) -> None:
     """Remove a show rating on Simkl."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.delete(
-            f"{SIMKL_BASE}/ratings",
+        resp = await client.post(
+            f"{SIMKL_BASE}/sync/ratings/remove",
             json={"shows": [{"ids": {"tmdb": tmdb_id}}]},
             headers=_headers(client_id, access_token),
         )

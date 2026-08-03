@@ -1391,6 +1391,45 @@ async def _fan_out_changes_to_other_connections(
                             )
                         )
 
+        # Simkl has no "rated but not watched" state: rating an item that isn't
+        # already in one of its lists auto-files it as watched (today's date), and
+        # removing that watched status removes the rating right along with it — so
+        # there's no way to represent "rated, never watched" on Simkl. Only push
+        # ratings for items scrob also considers watched (independent of whether
+        # settings.simkl_push_watched is on, since local watch history can predate
+        # or be unrelated to this run's watched-push setting).
+        media_ids_with_watch_event: set[int] = set()
+        shows_with_watched_episode: set[int] = set()
+        if push_simkl_ratings and new_ratings:
+            rated_movie_ids = {
+                media_id
+                for (media_id, season_number) in new_ratings
+                if season_number is None and (m := media_by_id.get(media_id)) and m.media_type == MediaType.movie
+            }
+            if rated_movie_ids:
+                watch_check_result = await db.execute(
+                    select(WatchEvent.media_id).where(
+                        WatchEvent.user_id == user_id,
+                        WatchEvent.media_id.in_(list(rated_movie_ids)),
+                    ).distinct()
+                )
+                media_ids_with_watch_event = {row[0] for row in watch_check_result.all()}
+
+            rated_show_tmdb_ids = {
+                m.tmdb_id
+                for (media_id, season_number) in new_ratings
+                if season_number is None and (m := media_by_id.get(media_id)) and m.media_type == MediaType.series and m.tmdb_id
+            }
+            if rated_show_tmdb_ids:
+                watched_show_result = await db.execute(
+                    select(Show.tmdb_id)
+                    .join(Media, Media.show_id == Show.id)
+                    .join(WatchEvent, WatchEvent.media_id == Media.id)
+                    .where(WatchEvent.user_id == user_id, Show.tmdb_id.in_(rated_show_tmdb_ids))
+                    .distinct()
+                )
+                shows_with_watched_episode = {row[0] for row in watched_show_result.all()}
+
         for key, rating in new_ratings.items():
             media_id, season_number = key
             if season_number is not None:
@@ -1399,6 +1438,8 @@ async def _fan_out_changes_to_other_connections(
             if not media or not media.tmdb_id:
                 continue
             if media.media_type == MediaType.movie:
+                if media_id not in media_ids_with_watch_event:
+                    continue
                 push_tasks.append(
                     simkl_client.set_movie_rating(
                         settings.simkl_client_id,
@@ -1408,6 +1449,8 @@ async def _fan_out_changes_to_other_connections(
                     )
                 )
             elif media.media_type == MediaType.series:
+                if media.tmdb_id not in shows_with_watched_episode:
+                    continue
                 push_tasks.append(
                     simkl_client.set_show_rating(
                         settings.simkl_client_id,
