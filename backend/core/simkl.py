@@ -13,10 +13,24 @@ from typing import Optional
 
 import httpx
 
+from core.config import settings as app_settings
+
 logger = logging.getLogger(__name__)
 
 SIMKL_BASE = "https://api.simkl.com"
 TIMEOUT = 30.0
+USER_AGENT = f"scrob/{app_settings.app_version}"
+
+
+def _scrobble_params(client_id: str) -> dict:
+    """Query params every /scrobble/* endpoint requires in addition to auth —
+    unlike the rest of the API, these are mandatory here (missing them causes
+    a 404 at Simkl's gateway, not a 400 from the app)."""
+    return {
+        "client_id": client_id,
+        "app-name": "scrob",
+        "app-version": app_settings.app_version,
+    }
 
 
 def _iso_utc(value: datetime) -> str:
@@ -36,6 +50,7 @@ def _headers(client_id: str, access_token: Optional[str] = None) -> dict:
     h = {
         "Content-Type": "application/json",
         "simkl-api-key": client_id,
+        "User-Agent": USER_AGENT,
     }
     if access_token:
         h["Authorization"] = f"Bearer {access_token}"
@@ -354,8 +369,12 @@ async def checkin_movie(
     tmdb_id: int,
     title: Optional[str] = None,
     year: Optional[int] = None,
+    progress: float = 0.0,
 ) -> None:
-    """Check into a movie on Simkl (now watching)."""
+    """Check into a movie on Simkl (now watching) — fire-and-forget; Simkl
+    runtime-extrapolates the progress bar itself from here, no further calls
+    needed until stop_scrobble_movie. progress must reflect where playback
+    actually started (e.g. a resume), or Simkl assumes it started at 0."""
     movie: dict = {"ids": {"tmdb": tmdb_id}}
     if title:
         movie["title"] = title
@@ -363,8 +382,9 @@ async def checkin_movie(
         movie["year"] = year
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
-            f"{SIMKL_BASE}/checkin",
-            json={"movie": movie},
+            f"{SIMKL_BASE}/scrobble/checkin",
+            params=_scrobble_params(client_id),
+            json={"movie": movie, "progress": progress},
             headers=_headers(client_id, access_token),
         )
         resp.raise_for_status()
@@ -377,30 +397,65 @@ async def checkin_episode(
     season_number: int,
     episode_number: int,
     show_title: Optional[str] = None,
+    progress: float = 0.0,
 ) -> None:
-    """Check into a TV episode on Simkl (now watching)."""
+    """Check into a TV episode on Simkl (now watching). See checkin_movie for
+    why progress must reflect the real starting point, not always 0."""
     show: dict = {"ids": {"tmdb": show_tmdb_id}}
     if show_title:
         show["title"] = show_title
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
-            f"{SIMKL_BASE}/checkin",
+            f"{SIMKL_BASE}/scrobble/checkin",
+            params=_scrobble_params(client_id),
             json={
                 "show": show,
-                "episode": {"season": season_number, "episode": episode_number},
+                "episode": {"season": season_number, "number": episode_number},
+                "progress": progress,
             },
             headers=_headers(client_id, access_token),
         )
         resp.raise_for_status()
 
 
-async def delete_checkin(client_id: str, access_token: str) -> None:
-    """Delete the current Simkl checkin (stopped watching).
-    Simkl returns 400 when there is no active checkin; treat that as a no-op."""
+async def stop_scrobble_movie(
+    client_id: str,
+    access_token: str,
+    tmdb_id: int,
+    progress: float,
+) -> None:
+    """End a Simkl scrobble session for a movie. Simkl marks it watched at
+    progress >= 80, otherwise saves it as a resumable pause — there is no
+    separate cancel/delete endpoint; only the progress at the moment of stop
+    matters, so this is the sole way to finalize (or walk back) a checkin."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.delete(
-            f"{SIMKL_BASE}/checkin",
+        resp = await client.post(
+            f"{SIMKL_BASE}/scrobble/stop",
+            params=_scrobble_params(client_id),
+            json={"movie": {"ids": {"tmdb": tmdb_id}}, "progress": progress},
             headers=_headers(client_id, access_token),
         )
-        if resp.status_code not in (400, 404):
-            resp.raise_for_status()
+        resp.raise_for_status()
+
+
+async def stop_scrobble_episode(
+    client_id: str,
+    access_token: str,
+    show_tmdb_id: int,
+    season_number: int,
+    episode_number: int,
+    progress: float,
+) -> None:
+    """End a Simkl scrobble session for a TV episode. See stop_scrobble_movie."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{SIMKL_BASE}/scrobble/stop",
+            params=_scrobble_params(client_id),
+            json={
+                "show": {"ids": {"tmdb": show_tmdb_id}},
+                "episode": {"season": season_number, "number": episode_number},
+                "progress": progress,
+            },
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
