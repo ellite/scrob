@@ -1,4 +1,5 @@
 import asyncio
+import time
 import httpx
 from core.config import settings
 
@@ -7,6 +8,38 @@ TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
 
 # Errors that are worth retrying (transient). 404/4xx are permanent — don't retry.
 _RETRYABLE = (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError)
+
+DEFAULT_CACHE_TTL = 1800  # 30 minutes — TMDB metadata/discovery results don't need to be fresher than this
+
+
+class _TTLCache:
+    """Minimal bounded in-process cache: TTL expiry checked lazily on read, oldest
+    entry evicted on overflow (dict insertion order). No shared/multi-worker
+    guarantees — fine here since scrob runs a single uvicorn process; this just
+    avoids re-hitting TMDB for identical requests within the TTL window, which is
+    what was actually making every click slow for users far from TMDB's servers."""
+
+    def __init__(self, maxsize: int = 2000):
+        self._store: dict[tuple, tuple[float, dict]] = {}
+        self._maxsize = maxsize
+
+    def get(self, key: tuple):
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        expires_at, value = entry
+        if time.monotonic() >= expires_at:
+            del self._store[key]
+            return None
+        return value
+
+    def set(self, key: tuple, value: dict, ttl: float) -> None:
+        if key not in self._store and len(self._store) >= self._maxsize:
+            self._store.pop(next(iter(self._store)))
+        self._store[key] = (time.monotonic() + ttl, value)
+
+
+_cache = _TTLCache()
 
 
 def get_headers(api_key: str = None) -> dict:
@@ -19,8 +52,29 @@ def get_headers(api_key: str = None) -> dict:
     }
 
 
-async def _get(url: str, *, headers: dict = None, params: dict = None, max_retries: int = 3) -> dict:
-    """Shared GET helper with retry + exponential backoff for transient failures."""
+async def _get(
+    url: str,
+    *,
+    headers: dict = None,
+    params: dict = None,
+    max_retries: int = 3,
+    cache_ttl: float | None = DEFAULT_CACHE_TTL,
+) -> dict:
+    """Shared GET helper with retry + exponential backoff for transient failures.
+
+    cache_ttl: seconds to cache the response for, keyed by (url, params) — the
+    api_key in `headers` is auth-only and doesn't change TMDB's response content,
+    so it's deliberately excluded from the cache key to share hits across users/
+    jobs. Pass cache_ttl=None to bypass caching (e.g. validate_api_key, where the
+    response genuinely depends on which key was used).
+    """
+    cache_key = None
+    if cache_ttl is not None:
+        cache_key = (url, tuple(sorted((params or {}).items())))
+        cached = _cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     last_exc: Exception = None
     for attempt in range(max_retries + 1):
         try:
@@ -31,7 +85,10 @@ async def _get(url: str, *, headers: dict = None, params: dict = None, max_retri
                     await asyncio.sleep(wait)
                     continue
                 r.raise_for_status()
-                return r.json()
+                data = r.json()
+                if cache_key is not None:
+                    _cache.set(cache_key, data, cache_ttl)
+                return data
         except _RETRYABLE as e:
             last_exc = e
             if attempt < max_retries:
@@ -45,7 +102,7 @@ async def validate_api_key(api_key: str) -> bool:
     if not api_key:
         return False
     try:
-        await _get(f"{TMDB_BASE}/authentication", headers=get_headers(api_key))
+        await _get(f"{TMDB_BASE}/authentication", headers=get_headers(api_key), cache_ttl=None)
         return True
     except Exception:
         return False
@@ -254,14 +311,7 @@ async def discover_movies(
         params["watch_region"] = watch_region
     if with_original_language:
         params["with_original_language"] = with_original_language
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{TMDB_BASE}/discover/movie",
-            headers=get_headers(api_key),
-            params=params,
-        )
-        r.raise_for_status()
-        return r.json()
+    return await _get(f"{TMDB_BASE}/discover/movie", headers=get_headers(api_key), params=params)
 
 
 async def discover_shows(
@@ -299,14 +349,7 @@ async def discover_shows(
         params["watch_region"] = watch_region
     if with_original_language:
         params["with_original_language"] = with_original_language
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{TMDB_BASE}/discover/tv",
-            headers=get_headers(api_key),
-            params=params,
-        )
-        r.raise_for_status()
-        return r.json()
+    return await _get(f"{TMDB_BASE}/discover/tv", headers=get_headers(api_key), params=params)
 
 
 async def get_collection(collection_id: int, api_key: str = None) -> dict:
