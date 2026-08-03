@@ -23,6 +23,7 @@ async def _request(
     *,
     params: dict[str, Any] | None = None,
     payload: dict[str, Any] | None = None,
+    ignore_statuses: set[int] | None = None,
 ) -> dict[str, Any]:
     query = dict(params or {})
     query["apikey"] = api_key
@@ -34,6 +35,8 @@ async def _request(
                 params=query,
                 json=payload,
             )
+        if ignore_statuses and response.status_code in ignore_statuses:
+            return {}
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text.strip()[:500]
@@ -202,11 +205,16 @@ async def remove_collection(api_key: str, payload: dict[str, list[dict[str, Any]
 async def scrobble_movie(api_key: str, action: str, tmdb_id: int, progress: float | None = None) -> dict[str, Any]:
     """Start/pause/stop/clear a movie scrobble session on MDBList.
 
-    ``progress`` is omitted for ``action="clear"``, which takes no progress value."""
+    ``progress`` is omitted for ``action="clear"``, which takes no progress value.
+    A 404 on ``clear`` means there was no session to clear in the first place
+    (e.g. a near-zero-progress stop that MDBList never turned into a resumable
+    paused session) — that's the outcome we wanted, so it's treated as a no-op
+    rather than an error."""
     body: dict[str, Any] = {"movie": {"ids": {"tmdb": tmdb_id}}}
     if progress is not None:
         body["progress"] = round(min(100.0, max(0.0, progress)), 1)
-    return await _request("POST", f"/scrobble/{action}", api_key, payload=body)
+    ignore_statuses = {404} if action == "clear" else None
+    return await _request("POST", f"/scrobble/{action}", api_key, payload=body, ignore_statuses=ignore_statuses)
 
 
 async def scrobble_episode(
@@ -219,13 +227,15 @@ async def scrobble_episode(
 ) -> dict[str, Any]:
     """Start/pause/stop/clear an episode scrobble session on MDBList.
 
-    ``progress`` is omitted for ``action="clear"``, which takes no progress value."""
+    ``progress`` is omitted for ``action="clear"``, which takes no progress value.
+    See scrobble_movie for why a 404 on ``clear`` is treated as a no-op."""
     body: dict[str, Any] = {
         "show": {"ids": {"tmdb": show_tmdb_id}, "season": season_number, "episode": episode_number},
     }
     if progress is not None:
         body["progress"] = round(min(100.0, max(0.0, progress)), 1)
-    return await _request("POST", f"/scrobble/{action}", api_key, payload=body)
+    ignore_statuses = {404} if action == "clear" else None
+    return await _request("POST", f"/scrobble/{action}", api_key, payload=body, ignore_statuses=ignore_statuses)
 
 
 async def push_ratings(
