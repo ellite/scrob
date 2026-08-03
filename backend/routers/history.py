@@ -600,6 +600,11 @@ def _has_confirmed_air_date(release_date: str | None, today: date) -> bool:
     return bool(release_date) and release_date <= today.isoformat()
 
 
+class _NextUpEpisodeNotOnTmdb(Exception):
+    """Internal signal to roll back a speculative next-up episode row when TMDB
+    doesn't actually have it — not a real error, never raised past get_next_up."""
+
+
 @router.get("/next-up")
 async def get_next_up(
     db: AsyncSession = Depends(get_db),
@@ -721,16 +726,29 @@ async def get_next_up(
 
                 media = Media(
                     media_type=MediaType.episode,
+                    title="",  # title is NOT NULL; enrich_media below fills in the
+                    # real one — it now runs after the flush, not before, so this
+                    # placeholder is needed for that first INSERT to succeed.
                     show_id=show.id,
                     season_number=next_season_num,
                     episode_number=next_episode_num,
                 )
-                await enrich_media(media, api_key=api_key, series_tmdb_id=show.tmdb_id)
-                if not media.tmdb_id:
-                    continue  # TMDB lookup failed (e.g. unreleased episode) — nothing to show yet
+                # Flush inside a savepoint before enriching, not after — gives the
+                # row a real id for enrich_media's own failure logging, without
+                # permanently persisting a phantom episode if the TMDB lookup
+                # below turns out to fail (e.g. unreleased episode, or a
+                # provider numbering mismatch): the savepoint rolls the insert
+                # back on that path instead of ever committing it.
+                try:
+                    async with db.begin_nested():
+                        db.add(media)
+                        await db.flush()
+                        await enrich_media(media, api_key=api_key, series_tmdb_id=show.tmdb_id)
+                        if not media.tmdb_id:
+                            raise _NextUpEpisodeNotOnTmdb()
+                except _NextUpEpisodeNotOnTmdb:
+                    continue
                 media.show = show
-                db.add(media)
-                await db.flush()
                 next_per_show[show_id] = media
             await db.commit()
 
