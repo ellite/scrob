@@ -44,10 +44,16 @@ _TVDB_LANG: dict[str, str] = {
 
 
 def tvdb_language(metadata_language: str | None) -> str | None:
-    """Convert a BCP 47 metadata_language code to the ISO 639-3 code TVDB expects."""
-    if not metadata_language:
-        return None
-    return _TVDB_LANG.get(metadata_language)
+    """Convert a BCP 47 metadata_language code to the ISO 639-3 code TVDB expects.
+
+    An unset preference defaults to English: the settings UI shows an empty
+    metadata_language as "-- English (default) --", but TVDB's own default
+    when no language is requested is the show's original/native language
+    (e.g. Japanese for anime) — unlike TMDB, which implicitly defaults to
+    en-US. Passing None straight through here would silently break that
+    "default is English" promise for every TVDB-sourced call.
+    """
+    return _TVDB_LANG.get(metadata_language or "en")
 
 
 def _image_url(path: str | None) -> str | None:
@@ -170,16 +176,27 @@ def format_season(raw: dict, language: str | None = None) -> dict:
     }
 
 
-async def get_series_episodes(tvdb_id: int, season_number: int, api_key: str, language: str | None = None) -> list[dict]:
-    """Fetch episodes for a specific season (season_type=official)."""
+async def get_series_episodes(tvdb_id: int, season_number: int | None, api_key: str, language: str | None = None) -> list[dict]:
+    """Fetch episodes for a specific season (season_type=official), or every
+    episode in the series if season_number is None.
+
+    TVDB v4 has no `language` query param on this endpoint — it's silently
+    ignored if passed. Translated episode name/overview require the separate
+    `.../episodes/{season-type}/{lang}` path variant instead — and that variant
+    silently ignores the `season` query param too, always returning the show's
+    entire episode list regardless of what season was requested. So when a
+    specific season_number is given, the filter is re-applied client-side
+    below, unconditionally, rather than trusting the server to have honored it.
+    """
     episodes = []
     page = 0
+    path = f"/series/{tvdb_id}/episodes/official/{language}" if language else f"/series/{tvdb_id}/episodes/official"
     while True:
-        params: dict = {"page": page, "season": season_number}
-        if language:
-            params["language"] = language
+        params: dict = {"page": page}
+        if season_number is not None:
+            params["season"] = season_number
         data = await _get(
-            f"/series/{tvdb_id}/episodes/official",
+            path,
             api_key,
             params=params,
         )
@@ -191,7 +208,9 @@ async def get_series_episodes(tvdb_id: int, season_number: int, api_key: str, la
         if len(batch) < 500:
             break
         page += 1
-    return episodes
+    if season_number is None:
+        return episodes
+    return [e for e in episodes if e.get("seasonNumber") == season_number]
 
 
 def format_series(raw: dict, language: str | None = None) -> dict:

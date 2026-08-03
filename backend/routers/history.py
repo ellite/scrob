@@ -974,8 +974,9 @@ async def mark_as_watched(
                     tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
                     if not tvdb_api_key:
                         raise HTTPException(status_code=404, detail="Episode not found on TMDB, and no TVDB key configured to check TVDB")
+                    tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
                     try:
-                        raw_eps = await tvdb_client.get_series_episodes(show.tvdb_id, event_in.season_number, tvdb_api_key)
+                        raw_eps = await tvdb_client.get_series_episodes(show.tvdb_id, event_in.season_number, tvdb_api_key, language=tvdb_lang)
                     except Exception as e:
                         raise HTTPException(status_code=404, detail=f"Episode not found on TMDB or TVDB: {e}")
                     tvdb_ep = next(
@@ -1263,8 +1264,9 @@ async def mark_season_watched(
             tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
             if not tvdb_api_key:
                 raise HTTPException(status_code=400, detail="TVDB API key not configured")
+            tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
             try:
-                raw_eps = await tvdb_client.get_series_episodes(show.tvdb_id, body.season_number, tvdb_api_key)
+                raw_eps = await tvdb_client.get_series_episodes(show.tvdb_id, body.season_number, tvdb_api_key, language=tvdb_lang)
             except Exception as e:
                 raise HTTPException(status_code=404, detail=f"TVDB season fetch failed: {e}")
             tvdb_fallback_episodes = [tvdb_client.format_episode(e) for e in raw_eps]
@@ -1628,9 +1630,10 @@ async def mark_show_watched(
 
         tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
         if tvdb_api_key:
+            tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
             tmdb_season_numbers = {s["season_number"] for s in show.tmdb_data.get("seasons", [])}
             try:
-                tvdb_show_data = tvdb_client.format_series(await tvdb_client.get_series(show.tvdb_id, tvdb_api_key))
+                tvdb_show_data = tvdb_client.format_series(await tvdb_client.get_series(show.tvdb_id, tvdb_api_key), language=tvdb_lang)
             except Exception:
                 tvdb_show_data = None
 
@@ -1641,7 +1644,7 @@ async def mark_show_watched(
                 ]
                 for sn in tvdb_only_seasons:
                     try:
-                        tvdb_eps = [tvdb_client.format_episode(e) for e in await tvdb_client.get_series_episodes(show.tvdb_id, sn, tvdb_api_key)]
+                        tvdb_eps = [tvdb_client.format_episode(e) for e in await tvdb_client.get_series_episodes(show.tvdb_id, sn, tvdb_api_key, language=tvdb_lang)]
                     except Exception:
                         continue
 

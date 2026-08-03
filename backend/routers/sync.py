@@ -29,6 +29,7 @@ from core import jellyfin, emby, plex, nuvio, stremio, tmdb
 import core.trakt as trakt_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode
 from core.image_cache import pre_cache_all_collected_bg
+from core.translations import get_user_metadata_language
 from core.rewatch import record_rewatch_progress, get_active_rewatches_for_shows
 from models.rewatch import ShowRewatch, RewatchProgress
 
@@ -6037,6 +6038,7 @@ async def match_unmatched_show(
         tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
         if not tvdb_api_key:
             raise HTTPException(status_code=400, detail="TVDB API key required")
+        tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
 
         # Find or create Show row keyed by tvdb_id
         target_show_result = await db.execute(select(Show).where(Show.tvdb_id == body.tvdb_id))
@@ -6045,7 +6047,7 @@ async def match_unmatched_show(
             raw = await tvdb_client.get_series(body.tvdb_id, tvdb_api_key)
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Could not fetch show from TVDB: {e}")
-        show_fmt = tvdb_client.format_series(raw)
+        show_fmt = tvdb_client.format_series(raw, language=tvdb_lang)
         if not target_show:
             target_show = Show(
                 tvdb_id=body.tvdb_id,
@@ -6077,7 +6079,7 @@ async def match_unmatched_show(
             nonlocal matched, skipped
             async with sem:
                 try:
-                    raw_eps = await tvdb_client.get_series_episodes(body.tvdb_id, season_number, tvdb_api_key)
+                    raw_eps = await tvdb_client.get_series_episodes(body.tvdb_id, season_number, tvdb_api_key, language=tvdb_lang)
                 except Exception:
                     for media in season_episodes:
                         media.show_id = target_show.id

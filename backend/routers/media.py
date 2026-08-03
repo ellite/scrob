@@ -2665,7 +2665,8 @@ async def _resolve_season_episodes(
 
 
 async def _resolve_season_episodes_from_tvdb(
-    db: AsyncSession, show: "ShowModel", tvdb_id: int, season_number: int, tvdb_key: str
+    db: AsyncSession, show: "ShowModel", tvdb_id: int, season_number: int, tvdb_key: str,
+    language: str | None = None,
 ) -> list:
     """TVDB equivalent of _resolve_season_episodes, for a season TMDB doesn't
     have at all (see #101). Enriches new rows via enrich_episode_from_tvdb,
@@ -2675,7 +2676,7 @@ async def _resolve_season_episodes_from_tvdb(
     from core.enrichment import enrich_episode_from_tvdb
 
     try:
-        raw_eps = await tvdb_client.get_series_episodes(tvdb_id, season_number, tvdb_key)
+        raw_eps = await tvdb_client.get_series_episodes(tvdb_id, season_number, tvdb_key, language=language)
     except Exception:
         q = await db.execute(
             select(Media).where(
@@ -2814,12 +2815,14 @@ async def collect_season(
             if season_on_tmdb or not show.tvdb_id:
                 raise HTTPException(status_code=400, detail="TVDB episode mapping is not available")
             from routers.shows import get_user_tvdb_key
+            import core.tvdb as tvdb_client
 
             tvdb_key = await get_user_tvdb_key(db, current_user.id)
             if not tvdb_key:
                 raise HTTPException(status_code=400, detail="TVDB API key not configured")
+            tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
             episodes = await _resolve_season_episodes_from_tvdb(
-                db, show, show.tvdb_id, body.season_number, tvdb_key
+                db, show, show.tvdb_id, body.season_number, tvdb_key, language=tvdb_lang
             )
         else:
             target_positions = {
@@ -2923,9 +2926,10 @@ async def collect_show(
 
         tvdb_key = await get_user_tvdb_key(db, current_user.id)
         if tvdb_key:
+            tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
             tmdb_season_numbers = set(season_numbers)
             try:
-                tvdb_show_data = tvdb_client.format_series(await tvdb_client.get_series(show.tvdb_id, tvdb_key))
+                tvdb_show_data = tvdb_client.format_series(await tvdb_client.get_series(show.tvdb_id, tvdb_key), language=tvdb_lang)
             except Exception:
                 tvdb_show_data = None
 
@@ -2935,7 +2939,7 @@ async def collect_show(
                     if s.get("season_number") and s["season_number"] > 0 and s["season_number"] not in tmdb_season_numbers
                 ]
                 for sn in tvdb_only_seasons:
-                    episodes = await _resolve_season_episodes_from_tvdb(db, show, show.tvdb_id, sn, tvdb_key)
+                    episodes = await _resolve_season_episodes_from_tvdb(db, show, show.tvdb_id, sn, tvdb_key, language=tvdb_lang)
                     total_added += await _collect_episodes(db, current_user.id, episodes)
                     collected_media_ids.update(episode.id for episode in episodes)
 

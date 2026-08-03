@@ -2472,6 +2472,9 @@ async def refresh_tvdb_show_metadata(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"TVDB fetch failed: {e}")
 
+    metadata_lang = await get_user_metadata_language(db, current_user.id)
+    tvdb_lang = tvdb_client.tvdb_language(metadata_lang)
+
     if show.tmdb_id:
         tmdb_api_key = await get_user_tmdb_key(db, current_user.id)
         if not check_tmdb_key(tmdb_api_key):
@@ -2492,7 +2495,7 @@ async def refresh_tvdb_show_metadata(
             "mapping": mapping,
         }
 
-    show_fmt = tvdb_client.format_series(raw)
+    show_fmt = tvdb_client.format_series(raw, language=tvdb_lang)
     show.title = show_fmt["title"] or show.title
     show.original_title = show_fmt.get("original_title")
     show.overview = show_fmt.get("overview")
