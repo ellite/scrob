@@ -783,6 +783,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     )}
                   </div>
                 </div>
+                <div class="border-t border-zinc-800 px-6 py-4 flex gap-2">
+                  <button type="button" data-action="save_trakt_settings" class="js-action-btn text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer">Save changes</button>
+                </div>
               </div>
             </div>
 
@@ -923,6 +926,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     </div>
                   )}
                 </div>
+                <div class="border-t border-zinc-800 px-6 py-4 flex gap-2">
+                  <button type="button" data-action="save_simkl_settings" class="js-action-btn text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer">Save changes</button>
+                </div>
               </div>
             </div>
 
@@ -1062,6 +1068,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     )}
                   </div>
                 </div>
+                <div class="border-t border-zinc-800 px-6 py-4 flex gap-2">
+                  <button type="button" data-action="save_mdblist_settings" class="js-action-btn text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer">Save changes</button>
+                </div>
               </div>
             </div>
           </div>
@@ -1132,6 +1141,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       </div>
                     </div>
                   </div>
+                </div>
+                <div class="border-t border-zinc-800 px-6 py-4 flex gap-2">
+                  <button type="button" data-action="save_radarr_settings" class="js-action-btn text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer">Save changes</button>
                 </div>
               </div>
             </div>
@@ -1204,18 +1216,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     </label>
                   </div>
                 </div>
+                <div class="border-t border-zinc-800 px-6 py-4 flex gap-2">
+                  <button type="button" data-action="save_sonarr_settings" class="js-action-btn text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer">Save changes</button>
+                </div>
               </div>
             </div>
-          </div>
-
-          <div class="pt-6">
-            <button
-              id="save-settings-btn"
-              type="submit"
-              class="w-full sm:w-auto bg-zinc-100 text-zinc-950 font-bold px-8 py-3 rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50"
-            >
-              Save Changes
-            </button>
           </div>
         </form>
       </section>
@@ -2691,6 +2696,147 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             }
             showMessage('Saved.');
             return;
+          } else if (action === 'save_trakt_settings') {
+            const body: Record<string, any> = {
+              trakt_client_id: (document.getElementById('trakt_client_id') as HTMLInputElement)?.value || null,
+              trakt_client_secret: (document.getElementById('trakt_client_secret') as HTMLInputElement)?.value || null,
+              trakt_auto_sync_interval: (() => {
+                const v = (document.querySelector('[name="trakt_auto_sync_interval"]') as HTMLSelectElement)?.value;
+                return v ? parseFloat(v) : null;
+              })(),
+              trakt_auto_push_interval: (() => {
+                const v = (document.querySelector('[name="trakt_auto_push_interval"]') as HTMLSelectElement)?.value;
+                return v ? parseFloat(v) : null;
+              })(),
+            };
+            const traktSyncKeys = [
+              'trakt_sync_watched', 'trakt_sync_ratings', 'trakt_sync_lists', 'trakt_watchlist_split',
+              'trakt_push_watched', 'trakt_push_ratings', 'trakt_push_collection', 'trakt_push_lists', 'trakt_scrobble',
+            ];
+            for (const key of traktSyncKeys) {
+              const el = document.getElementById(key) as HTMLInputElement | null;
+              if (el) body[key] = el.checked;
+            }
+            const traktRes = await fetch('/api/proxy/auth/settings', {
+              method: 'PATCH',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (!traktRes.ok) {
+              const err = await traktRes.json();
+              throw new Error(err.detail || 'Failed to save Trakt settings');
+            }
+            showMessage('Trakt settings saved.');
+            return;
+          } else if (action === 'save_simkl_settings') {
+            const body: Record<string, any> = {
+              simkl_client_id: (document.getElementById('simkl_client_id') as HTMLInputElement)?.value || null,
+              simkl_auto_sync_interval: (() => {
+                const v = (document.querySelector('[name="simkl_auto_sync_interval"]') as HTMLSelectElement)?.value;
+                return v ? parseFloat(v) : null;
+              })(),
+              simkl_auto_push_interval: (() => {
+                const v = (document.querySelector('[name="simkl_auto_push_interval"]') as HTMLSelectElement)?.value;
+                return v ? parseFloat(v) : null;
+              })(),
+            };
+            const simklSyncKeys = [
+              'simkl_sync_watched', 'simkl_sync_ratings', 'simkl_sync_lists',
+              'simkl_push_watched', 'simkl_push_ratings', 'simkl_scrobble',
+            ];
+            for (const key of simklSyncKeys) {
+              const el = document.getElementById(key) as HTMLInputElement | null;
+              if (el) body[key] = el.checked;
+            }
+            const simklRes = await fetch('/api/proxy/auth/settings', {
+              method: 'PATCH',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (!simklRes.ok) {
+              const err = await simklRes.json();
+              throw new Error(err.detail || 'Failed to save Simkl settings');
+            }
+            showMessage('Simkl settings saved.');
+            return;
+          } else if (action === 'save_mdblist_settings') {
+            const body: Record<string, any> = {
+              mdblist_api_key: (document.getElementById('mdblist_api_key') as HTMLInputElement)?.value || null,
+              mdblist_auto_sync_interval: (() => {
+                const v = (document.querySelector('[name="mdblist_auto_sync_interval"]') as HTMLSelectElement)?.value;
+                return v ? parseFloat(v) : null;
+              })(),
+              mdblist_auto_push_interval: (() => {
+                const v = (document.querySelector('[name="mdblist_auto_push_interval"]') as HTMLSelectElement)?.value;
+                return v ? parseFloat(v) : null;
+              })(),
+            };
+            const mdblistSyncKeys = [
+              'mdblist_sync_watched', 'mdblist_sync_ratings', 'mdblist_sync_watchlist',
+              'mdblist_push_watched', 'mdblist_push_ratings', 'mdblist_push_watchlist', 'mdblist_push_collection', 'mdblist_scrobble',
+            ];
+            for (const key of mdblistSyncKeys) {
+              const el = document.getElementById(key) as HTMLInputElement | null;
+              if (el) body[key] = el.checked;
+            }
+            const mdblistRes = await fetch('/api/proxy/auth/settings', {
+              method: 'PATCH',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (!mdblistRes.ok) {
+              const err = await mdblistRes.json();
+              throw new Error(err.detail || 'Failed to save MDBList settings');
+            }
+            showMessage('MDBList settings saved.');
+            return;
+          } else if (action === 'save_radarr_settings') {
+            const radarrTagInputs = document.querySelectorAll('#radarr_tags_list input[name="radarr_tags"]');
+            const body = {
+              radarr_url: (document.getElementById('radarr_url') as HTMLInputElement)?.value || null,
+              radarr_token: (document.getElementById('radarr_token') as HTMLInputElement)?.value || null,
+              radarr_root_folder: (document.getElementById('radarr_root_folder') as HTMLSelectElement)?.value || null,
+              radarr_quality_profile: (() => {
+                const v = (document.getElementById('radarr_quality_profile') as HTMLSelectElement)?.value;
+                return v ? parseInt(v) : null;
+              })(),
+              radarr_tags: Array.from(radarrTagInputs).map((i: any) => parseInt(i.value)),
+            };
+            const radarrRes = await fetch('/api/proxy/auth/settings', {
+              method: 'PATCH',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (!radarrRes.ok) {
+              const err = await radarrRes.json();
+              throw new Error(err.detail || 'Failed to save Radarr settings');
+            }
+            showMessage('Radarr settings saved.');
+            return;
+          } else if (action === 'save_sonarr_settings') {
+            const sonarrTagInputs = document.querySelectorAll('#sonarr_tags_list input[name="sonarr_tags"]');
+            const body = {
+              sonarr_url: (document.getElementById('sonarr_url') as HTMLInputElement)?.value || null,
+              sonarr_token: (document.getElementById('sonarr_token') as HTMLInputElement)?.value || null,
+              sonarr_root_folder: (document.getElementById('sonarr_root_folder') as HTMLSelectElement)?.value || null,
+              sonarr_quality_profile: (() => {
+                const v = (document.getElementById('sonarr_quality_profile') as HTMLSelectElement)?.value;
+                return v ? parseInt(v) : null;
+              })(),
+              sonarr_tags: Array.from(sonarrTagInputs).map((i: any) => parseInt(i.value)),
+              sonarr_season_folder: (document.getElementById('sonarr_season_folder') as HTMLInputElement)?.checked ?? true,
+            };
+            const sonarrRes = await fetch('/api/proxy/auth/settings', {
+              method: 'PATCH',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (!sonarrRes.ok) {
+              const err = await sonarrRes.json();
+              throw new Error(err.detail || 'Failed to save Sonarr settings');
+            }
+            showMessage('Sonarr settings saved.');
+            return;
           } else if (action === 'delete_scrobble_connection') {
             const connId = newBtn.getAttribute('data-conn-id');
             const connName = newBtn.getAttribute('data-conn-name');
@@ -4030,8 +4176,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
   }
   function setupSettingsForm() {
     const form = document.getElementById('connections-form');
-    const saveBtn = document.getElementById('save-settings-btn');
-    if (!form || !saveBtn) return;
+    if (!form) return;
 
     // Plex "Also monitor users" — toggle picker visibility and lazy-load friends
     async function loadPlexFriends(picker: HTMLElement, token: string) {
@@ -4088,84 +4233,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         splitRow.classList.toggle('hidden', !syncListsCb.checked);
       });
     }
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      
-      saveBtn.disabled = true;
-      const originalText = saveBtn.textContent;
-      saveBtn.textContent = 'Saving...';
-
-      try {
-        const saves = [];
-
-        // Gather general settings
-        const formData = new FormData(form);
-        const settings = {
-          radarr_url: formData.get('radarr_url') || null,
-          radarr_token: formData.get('radarr_token') || null,
-          radarr_root_folder: formData.get('radarr_root_folder') || null,
-          radarr_quality_profile: formData.get('radarr_quality_profile') ? parseInt(formData.get('radarr_quality_profile')) : null,
-          radarr_tags: formData.getAll('radarr_tags').map(id => parseInt(id)),
-
-          sonarr_url: formData.get('sonarr_url') || null,
-          sonarr_token: formData.get('sonarr_token') || null,
-          sonarr_root_folder: formData.get('sonarr_root_folder') || null,
-          sonarr_quality_profile: formData.get('sonarr_quality_profile') ? parseInt(formData.get('sonarr_quality_profile')) : null,
-          sonarr_tags: formData.getAll('sonarr_tags').map(id => parseInt(id)),
-          sonarr_season_folder: formData.get('sonarr_season_folder') === 'true',
-
-          trakt_client_id: formData.get('trakt_client_id') || null,
-          trakt_client_secret: formData.get('trakt_client_secret') || null,
-          trakt_auto_sync_interval: formData.get('trakt_auto_sync_interval') ? parseFloat(formData.get('trakt_auto_sync_interval') as string) : null,
-          trakt_auto_push_interval: formData.get('trakt_auto_push_interval') ? parseFloat(formData.get('trakt_auto_push_interval') as string) : null,
-
-          simkl_client_id: formData.get('simkl_client_id') || null,
-          simkl_auto_sync_interval: formData.get('simkl_auto_sync_interval') ? parseFloat(formData.get('simkl_auto_sync_interval') as string) : null,
-          simkl_auto_push_interval: formData.get('simkl_auto_push_interval') ? parseFloat(formData.get('simkl_auto_push_interval') as string) : null,
-
-          mdblist_api_key: formData.get('mdblist_api_key') || null,
-          mdblist_auto_sync_interval: formData.get('mdblist_auto_sync_interval') ? parseFloat(formData.get('mdblist_auto_sync_interval') as string) : null,
-          mdblist_auto_push_interval: formData.get('mdblist_auto_push_interval') ? parseFloat(formData.get('mdblist_auto_push_interval') as string) : null,
-        };
-
-        // Collect boolean checkboxes (cloud sync preferences)
-        const syncKeys = [
-          'trakt_sync_watched', 'trakt_sync_ratings', 'trakt_sync_lists', 'trakt_watchlist_split',
-          'trakt_push_watched', 'trakt_push_ratings', 'trakt_push_collection', 'trakt_push_lists', 'trakt_scrobble',
-          'simkl_sync_watched', 'simkl_sync_ratings', 'simkl_sync_lists',
-          'simkl_push_watched', 'simkl_push_ratings', 'simkl_scrobble',
-          'mdblist_sync_watched', 'mdblist_sync_ratings', 'mdblist_sync_watchlist',
-          'mdblist_push_watched', 'mdblist_push_ratings', 'mdblist_push_watchlist', 'mdblist_push_collection', 'mdblist_scrobble',
-        ] as const;
-        const syncPrefs: Record<string, boolean> = {};
-        for (const key of syncKeys) {
-          const el = form.querySelector<HTMLInputElement>(`[name="${key}"]`);
-          if (el) syncPrefs[key] = el.checked;
-        }
-
-        saves.push(fetch(`/api/proxy/auth/settings`, {
-          method: 'PATCH',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...settings, ...syncPrefs }),
-        }));
-
-        const results = await Promise.all(saves);
-        const failed = results.find(r => !r.ok);
-        
-        if (failed) {
-          const data = await failed.json();
-          throw new Error(data.detail || 'Failed to update settings');
-        }
-
-        showMessage('Settings updated successfully!');
-      } catch (e) {
-        showMessage(e.message, 'error');
-      } finally {
-        saveBtn.disabled = false;
-        saveBtn.textContent = originalText;
-      }
-    });
   }
   async function copyToClipboard(text: string): Promise<void> {
     if (navigator.clipboard && window.isSecureContext) {
