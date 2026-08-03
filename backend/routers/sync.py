@@ -1525,6 +1525,7 @@ async def sync_items(
     new_ratings: RatingChanges | None = None,  # accumulated across calls; mutated in-place
     new_collected_ids: set[int] | None = None,  # accumulated across calls; mutated in-place
     connection_id: int | None = None,
+    ratingkey_to_media_id: dict[str, int] | None = None,  # accumulated across calls; mutated in-place
 ) -> list[dict]:  # returns warnings
     print(f"  Syncing {len(items)} {media_type.value}s from {source.value}...")
 
@@ -1939,6 +1940,9 @@ async def sync_items(
                                 subtitle_languages=quality.get("subtitle_languages"),
                             ))
                         media_id_for_watch = media.id
+
+                if ratingkey_to_media_id is not None and media_id_for_watch is not None:
+                    ratingkey_to_media_id[source_id] = media_id_for_watch
 
                 if media_id_for_watch is not None:
                     watch_state = extract_watch_state(item, source)
@@ -2507,6 +2511,104 @@ async def _backfill_plex_languages(user_id: int, connection_id: int, p_url: str,
         return total
 
 
+PLEX_HISTORY_OVERLAP = timedelta(minutes=5)
+_PLEX_HISTORY_CHUNK = 200  # WatchEvents per commit, for a large first-time backfill
+
+
+async def _backfill_plex_watch_history(
+    user_id: int,
+    connection_id: int,
+    p_url: str,
+    p_token: str,
+    server_username: str | None,
+    ratingkey_to_media: dict[str, int],
+    job_id: int | None = None,
+) -> tuple[int, int]:
+    """Import every distinct Plex play as its own WatchEvent, not just the most
+    recent one — Plex's library-scan endpoints (get_movies/get_shows/get_episodes)
+    only expose aggregate viewCount/lastViewedAt, which is why the regular
+    sync_items() pass can only ever record a single WatchEvent per item
+    (see GitHub #126). This uses Plex's actual per-play history endpoint instead,
+    mirroring Trakt's /sync/history import: dedup by (media_id, watched_at)
+    rather than by media_id alone, so every distinct play gets its own row.
+
+    Runs in its own DB session, same rationale as _backfill_plex_languages.
+    ratingkey_to_media is built by the sync_items() calls that just ran (via
+    their ratingkey_to_media_id out-param), not queried from CollectionFile —
+    CollectionFile rows only ever exist when sync_collection is enabled, but
+    watched-history sync is an independent setting, so relying on CollectionFile
+    here would leave every play unmatched on a watched-only connection.
+
+    Returns (new_events, unmatched) for the caller to log.
+    """
+    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with async_session() as db:
+        conn = await db.get(MediaServerConnection, connection_id)
+        if not conn:
+            return 0, 0
+
+        account_id = await plex.get_account_id(p_url, p_token, server_username) if server_username else None
+
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None)
+        since = None if conn.plex_history_cursor_at is None else conn.plex_history_cursor_at - PLEX_HISTORY_OVERLAP
+
+        history = await plex.get_history(p_url, p_token, since=since)
+        history = [h for h in history if h.get("type") in ("movie", "episode")]
+        if account_id is not None:
+            history = [h for h in history if h.get("accountID") == account_id]
+        elif len({h.get("accountID") for h in history if h.get("accountID") is not None}) > 1:
+            print(
+                f"  Plex history for connection {connection_id} spans multiple accounts and "
+                f"no server_username is configured — plays from other users on this server "
+                f"may be attributed to this connection. Configure a Plex username to scope this."
+            )
+
+        if not history:
+            return 0, 0
+
+        we_res = await db.execute(
+            select(WatchEvent.media_id, WatchEvent.watched_at).where(WatchEvent.user_id == user_id)
+        )
+        existing_watched: set[tuple[int, datetime | None]] = {(row[0], row[1]) for row in we_res}
+
+        new_events = 0
+        unmatched = 0
+        for i, entry in enumerate(history):
+            media_id = ratingkey_to_media.get(str(entry.get("ratingKey")))
+            if media_id is None:
+                unmatched += 1
+                continue
+            viewed_at = entry.get("viewedAt")
+            if not viewed_at:
+                unmatched += 1
+                continue
+            watched_at = datetime.fromtimestamp(viewed_at, tz=timezone.utc).replace(tzinfo=None)
+            key = (media_id, watched_at)
+            if key not in existing_watched:
+                watch_event = WatchEvent(
+                    user_id=user_id,
+                    media_id=media_id,
+                    watched_at=watched_at,
+                    completed=True,
+                    play_count=1,
+                )
+                db.add(watch_event)
+                await db.flush()
+                await record_rewatch_progress(db, user_id, media_id, watch_event.id)
+                existing_watched.add(key)
+                new_events += 1
+
+            if (i + 1) % _PLEX_HISTORY_CHUNK == 0:
+                await db.commit()
+                if job_id is not None:
+                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=i + 1, total_items=len(history)))
+                    await db.commit()
+
+        conn.plex_history_cursor_at = cutoff
+        await db.commit()
+        return new_events, unmatched
+
+
 def plex_sync_needs_library_scan(conn) -> bool:
     """Whether _run_plex_sync's per-library scan (movies/shows/episodes)
     should run at all. That scan only ever produces collection/watched/
@@ -2582,6 +2684,11 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             _new_watched: set[int] = set()
             _new_ratings: RatingChanges = {}
             _new_collected: set[int] = set()
+            # ratingKey -> media_id, accumulated across every movie/show library this
+            # run so _backfill_plex_watch_history can resolve play history afterward —
+            # built here (not via CollectionFile) since it must exist even when
+            # sync_collection is off, as watched-history sync doesn't depend on it.
+            _plex_ratingkey_to_media: dict[str, int] = {}
             ratings_result = await db.execute(
                 select(Rating).where(
                     Rating.user_id == user_id,
@@ -2647,7 +2754,8 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.plex, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id)
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        ratingkey_to_media_id=_plex_ratingkey_to_media)
                     all_warnings.extend(w)
 
                 elif lib_type == "show":
@@ -2789,6 +2897,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
                         new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        ratingkey_to_media_id=_plex_ratingkey_to_media,
                     )
                     all_warnings.extend(w)
 
@@ -2799,6 +2908,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
                             new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                            ratingkey_to_media_id=_plex_ratingkey_to_media,
                         )
                         all_warnings.extend(w)
 
@@ -2928,6 +3038,14 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             backfilled = await _backfill_plex_languages(user_id, conn.id, p_url, p_token, job_id)
             if backfilled:
                 print(f"Plex sync job {job_id}: backfilled language data for {backfilled} file(s).")
+
+            if conn.sync_watched:
+                new_events, unmatched = await _backfill_plex_watch_history(
+                    user_id, conn.id, p_url, p_token, conn.server_username, _plex_ratingkey_to_media, job_id,
+                )
+                if new_events or unmatched:
+                    print(f"Plex sync job {job_id}: backfilled {new_events} historical play(s) ({unmatched} unmatched).")
+
             print(f"Plex sync job {job_id} completed. Stats: {stats}")
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).

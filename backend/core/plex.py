@@ -1,6 +1,7 @@
 import logging
 import httpx
 import xmltodict
+from datetime import datetime
 from typing import Optional, List, Dict
 
 logger = logging.getLogger(__name__)
@@ -245,6 +246,57 @@ async def get_recently_added(url: str, token: str, section_id: str, media_type: 
         return data.get("MediaContainer", {}).get("Metadata", [])
     except Exception:
         return []
+
+
+async def get_history(url: str, token: str, since: Optional[datetime] = None) -> List[Dict]:
+    """Fetch per-play viewing history from this server (one row per actual play,
+    unlike get_movies/get_shows/get_episodes which only expose the aggregate
+    viewCount/lastViewedAt fields).
+
+    since: if given, only plays at or after this time are returned (Plex's
+    viewedAt> filter). Paginated the same way as get_watchlist.
+    Returns [] rather than raising on failure (old server, missing endpoint,
+    insufficient token permission) so a sync can just skip the backfill.
+    """
+    items: List[Dict] = []
+    start = 0
+    params: Dict = {"sort": "viewedAt:asc"}
+    if since is not None:
+        params["viewedAt>"] = int(since.timestamp())
+    try:
+        while True:
+            data = await _get(
+                f"{url.rstrip('/')}/status/sessions/history/all",
+                token,
+                params={**params, "X-Plex-Container-Start": start},
+            )
+            container = data.get("MediaContainer", {})
+            batch = container.get("Metadata", [])
+            items.extend(batch)
+            total = container.get("totalSize", 0) or len(items)
+            start += len(batch)
+            if not batch or start >= total:
+                break
+        return items
+    except Exception:
+        logger.warning("Could not fetch Plex play history from %s", url)
+        return []
+
+
+async def get_account_id(url: str, token: str, username: str) -> Optional[int]:
+    """Resolve a server-local Plex username (MediaServerConnection.server_username)
+    to its numeric account id, for scoping history to one user on a shared server."""
+    try:
+        data = await _get(f"{url.rstrip('/')}/accounts", token)
+        accounts = data.get("MediaContainer", {}).get("Account", [])
+        for account in accounts:
+            name = account.get("name") or account.get("title") or ""
+            if name.strip().lower() == username.strip().lower():
+                account_id = account.get("id")
+                return int(account_id) if account_id is not None else None
+    except Exception:
+        logger.warning("Could not resolve Plex account id for username=%s", username)
+    return None
 
 
 METADATA_BASE = "https://metadata.provider.plex.tv"

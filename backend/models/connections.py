@@ -52,4 +52,7 @@ class MediaServerConnection(Base):
     plex_sync_watchlist : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     plex_push_watchlist : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
+    # Plex per-play watch history backfill cursor (Plex connections only)
+    plex_history_cursor_at : Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     created_at       : Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
