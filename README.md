@@ -463,7 +463,7 @@ https://your-scrob-url/api/proxy/webhooks/kodi?api_key=YOUR_API_KEY
 1. In Jellyfin, go to **Dashboard → Plugins → Catalogue**, install **Webhook**, then restart.
 2. Go to **Dashboard → Plugins → Webhook → Add Generic Destination**.
 3. Paste your Scrob Jellyfin webhook URL.
-4. Enable notification types: `Playback Start`, `Playback Progress`, `Playback Stop`, `User Data Saved` (this is what fires when you manually mark something watched/unwatched - the plugin has no separate "Mark Played" event).
+4. Enable notification types: `Playback Start`, `Playback Progress`, `Playback Stop`, `User Data Saved` (this is what fires when you manually mark something watched/unwatched - the plugin has no separate "Mark Played" event), `Item Added`, and `Item Deleted` (keeps your Scrob collection in sync with your library without waiting for playback or a full resync).
 5. Enable item types: `Movies` and `Episodes`.
 6. **Leave the Template field blank** and check **"Send all properties (ignore templates)"**.
 
@@ -481,7 +481,7 @@ Plex webhooks require a **Plex Pass** subscription.
 
 1. In Emby, go to **Dashboard → Notifications → Add Notification → Webhook**.
 2. Paste your Scrob Emby webhook URL.
-3. Enable events: `Playback Start`, `Playback Progress`, `Playback Stop`.
+3. Enable events: `Playback Start`, `Playback Progress`, `Playback Stop`, `Item Added`, `Item Deleted`.
 
 ### Kodi
 

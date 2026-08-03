@@ -740,6 +740,21 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                     db, user.id, media.id, CollectionSource.jellyfin, data["jellyfin_id"], data.get("quality"),
                     connection_id=conn.id if conn else None,
                 )
+                # Needed here specifically for ItemAdded: unlike the playback
+                # notification types, nothing later in this request commits —
+                # without this, the insert is silently rolled back when the
+                # request's session closes (see #129 followup).
+                await db.commit()
+
+    # See #129 — the counterpart to ItemAdded above: a title removed from the
+    # Jellyfin library should leave the user's collection too, rather than
+    # only being cleaned up on the next full sync.
+    elif notification_type == "ItemDeleted":
+        if (not conn or conn.sync_collection) and data.get("jellyfin_id"):
+            await _remove_collection_entry(
+                db, user.id, media.id, CollectionSource.jellyfin, data["jellyfin_id"],
+            )
+            await db.commit()
 
     if notification_type in ("PlaybackStart", "playback.start"):
         if not conn or conn.sync_playback:
@@ -903,6 +918,16 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
                     db, user.id, media.id, CollectionSource.emby, data["jellyfin_id"], data.get("quality"),
                     connection_id=conn.id if conn else None,
                 )
+                # See the matching comment in _handle_jellyfin_webhook (#129).
+                await db.commit()
+
+    # See the matching comment in _handle_jellyfin_webhook (#129).
+    elif notification_type == "ItemDeleted":
+        if (not conn or conn.sync_collection) and data.get("jellyfin_id"):
+            await _remove_collection_entry(
+                db, user.id, media.id, CollectionSource.emby, data["jellyfin_id"],
+            )
+            await db.commit()
 
     if notification_type in ("PlaybackStart", "playback.start"):
         if not conn or conn.sync_playback:
@@ -995,6 +1020,15 @@ async def _handle_jellyfin_scrobble_webhook(
                 db, user.id, media.id, coll_source, data["jellyfin_id"], data.get("quality"),
                 connection_id=None,
             )
+            # See the matching comment in _handle_jellyfin_webhook (#129).
+            await db.commit()
+
+    elif notification_type == "ItemDeleted":
+        if conn.sync_collection and data.get("jellyfin_id"):
+            await _remove_collection_entry(
+                db, user.id, media.id, coll_source, data["jellyfin_id"],
+            )
+            await db.commit()
 
     if notification_type in ("PlaybackStart", "playback.start"):
         if conn.sync_playback:
@@ -1235,6 +1269,43 @@ async def _ensure_collection_entry(
 
     await db.execute(file_stmt)
     await db.flush()
+
+
+async def _remove_collection_entry(
+    db: AsyncSession,
+    user_id: int,
+    media_id: int,
+    source: CollectionSource,
+    source_id: str,
+) -> None:
+    """Removes the CollectionFile for this (source, source_id), and the parent
+    Collection too if that was the last file backing it (an item can be
+    collected from more than one source, e.g. both Plex and Jellyfin — only
+    delisting it everywhere should remove it from the user's collection)."""
+    from sqlalchemy import delete as sa_delete
+
+    coll_result = await db.execute(
+        select(Collection.id).where(Collection.user_id == user_id, Collection.media_id == media_id)
+    )
+    collection_id = coll_result.scalar_one_or_none()
+    if collection_id is None:
+        return
+
+    await db.execute(
+        sa_delete(CollectionFile).where(
+            CollectionFile.collection_id == collection_id,
+            CollectionFile.source == source,
+            CollectionFile.source_id == source_id,
+        )
+    )
+    await db.flush()
+
+    remaining = await db.execute(
+        select(CollectionFile.id).where(CollectionFile.collection_id == collection_id)
+    )
+    if remaining.first() is None:
+        await db.execute(sa_delete(Collection).where(Collection.id == collection_id))
+        await db.flush()
 
 
 async def find_or_create_media_plex(data: dict, db: AsyncSession, api_key: str = None, conn: MediaServerConnection | None = None) -> Media | None:
