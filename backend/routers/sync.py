@@ -237,9 +237,25 @@ def is_fresh_rewatch_play(
     )
 
 
+_TMDB_PROVIDER_PATH_RE = re.compile(r"/(?:movie|tv)/(\d+)")
+
+
 def get_jellyfin_tmdb_id(provider_ids: dict) -> int | None:
     tid = provider_ids.get("Tmdb") or provider_ids.get("tmdb")
-    return int(tid) if tid else None
+    if not tid:
+        return None
+    tid = str(tid)
+    if tid.isdigit():
+        return int(tid)
+    # Some Emby TMDB metadata plugins encode an episode's provider id as a
+    # relative path to its parent show/movie (e.g. "../tv/203124/season/1/episode/1")
+    # instead of a plain numeric id (see GitHub #125) — pull the id out of that
+    # instead of crashing the whole sync on int().
+    m = _TMDB_PROVIDER_PATH_RE.search(tid)
+    if m:
+        return int(m.group(1))
+    logger.warning("Could not parse Tmdb provider id: %r", tid)
+    return None
 
 
 def extract_jellyfin_quality(item: dict) -> dict:
