@@ -92,13 +92,13 @@ async def enrich_media(media: Media, api_key: str = None, series_tmdb_id: int = 
                 "genres": [g["name"] for g in data.get("genres", [])],
                 "external_ids": data.get("external_ids", {}),
                 "cast": [
-                    {"name": c["name"], "character": c["character"], "profile_path": tmdb.poster_url(c.get("profile_path"), size="w185")}
+                    {"name": c["name"], "character": c.get("character", ""), "profile_path": tmdb.poster_url(c.get("profile_path"), size="w185")}
                     for c in data.get("credits", {}).get("cast", [])[:10]
                 ],
                 "tagline": data.get("tagline"),
                 "status": data.get("status"),
                 "adult": data.get("adult", False),
-                "release_dates": _extract_release_dates(data.get("release_dates", {}).get("results", [])),
+                "release_dates": _extract_release_dates((data.get("release_dates") or {}).get("results", [])),
             }
             media.adult = data.get("adult", False)
 
@@ -140,7 +140,7 @@ async def enrich_media(media: Media, api_key: str = None, series_tmdb_id: int = 
                 "cast": [
                     {
                         "name": c["name"],
-                        "character": c["character"],
+                        "character": c.get("character", ""),
                         "profile_path": tmdb.poster_url(c.get("profile_path"), size="w185")
                     }
                     for c in data.get("credits", {}).get("cast", [])[:10]
@@ -154,9 +154,19 @@ async def enrich_media(media: Media, api_key: str = None, series_tmdb_id: int = 
         if media.tmdb_data is None:
             media.tmdb_data = {}
         from httpx import HTTPStatusError
+        # media.title/tmdb_id are frequently still unset at this point (title is
+        # only assigned a few lines up, from the TMDB response that just failed;
+        # tmdb_id for episodes is only assigned on a successful fetch) — include
+        # the row's own identity (id, if already flushed; type; season/episode;
+        # show_id) so a repeat failure can actually be traced back to a row.
+        context = (
+            f"media_id={media.id!r} type={media.media_type} "
+            f"season={media.season_number!r} episode={media.episode_number!r} "
+            f"show_id={media.show_id!r} series_tmdb_id={series_tmdb_id!r}"
+        )
         if isinstance(e, HTTPStatusError) and e.response.status_code == 404:
-            print(f"  TMDB enrich SKIPPED for {media.title}: not found on TMDB (id={media.tmdb_id})")
+            print(f"  TMDB enrich SKIPPED for {media.title!r} (tmdb_id={media.tmdb_id!r}): not found on TMDB [{context}]")
         else:
             import traceback
-            print(f"  TMDB enrich FAILED for {media.title}: {e}")
+            print(f"  TMDB enrich FAILED for {media.title!r} (tmdb_id={media.tmdb_id!r}): {e} [{context}]")
             traceback.print_exc()

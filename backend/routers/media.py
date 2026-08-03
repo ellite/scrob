@@ -4661,8 +4661,8 @@ async def get_media_details(
                 {
                     "tmdb_id": c["id"],
                     "name": c["name"],
-                    "character": c["character"],
-                    "profile_path": tmdb.poster_url(c["profile_path"]),
+                    "character": c.get("character", ""),
+                    "profile_path": tmdb.poster_url(c.get("profile_path")),
                 }
                 for c in data.get("credits", {}).get("cast", [])[:12]
             ],
