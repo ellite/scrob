@@ -1433,6 +1433,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           { key: "watched", label: "Watched History" },
           { key: "ratings", label: "Ratings" },
           { key: "lists", label: "Lists" },
+          { key: "comments", label: "Comments" },
         ].map(({ key, label }) => (
           <button
             type="button"
@@ -2179,7 +2180,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     });
   }
 
-  type TraktImportSelection = { watched: boolean; ratings: boolean; lists: boolean };
+  type TraktImportSelection = { watched: boolean; ratings: boolean; lists: boolean; comments: boolean };
 
   function showTraktImportModal(filename: string): Promise<TraktImportSelection | null> {
     return new Promise(resolve => {
@@ -2231,6 +2232,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         watched: selected.has('watched'),
         ratings: selected.has('ratings'),
         lists: selected.has('lists'),
+        comments: selected.has('comments'),
       });
       const onCancel = () => cleanup(null);
       confirmBtn.addEventListener('click', onConfirm, { once: true });
@@ -3327,7 +3329,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
         const selection = await showTraktImportModal(file.name);
         if (!selection) return;
-        if (!selection.watched && !selection.ratings && !selection.lists) {
+        if (!selection.watched && !selection.ratings && !selection.lists && !selection.comments) {
           showMessage('Select at least one item to import.', 'error');
           return;
         }
@@ -3338,6 +3340,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           form.append('sync_watched', String(selection.watched));
           form.append('sync_ratings', String(selection.ratings));
           form.append('sync_lists', String(selection.lists));
+          form.append('sync_comments', String(selection.comments));
           const res = await fetch('/api/proxy/trakt/import/upload', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}` },

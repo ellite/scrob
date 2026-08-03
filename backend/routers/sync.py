@@ -1488,8 +1488,19 @@ async def _fan_out_changes_to_other_connections(
         target_count += 1 if (push_mdblist_watched or push_mdblist_ratings) else 0
         target_count += 1 if (push_simkl_watched or push_simkl_ratings) else 0
         print(f"  Fanning out {len(push_tasks)} changes to {target_count} other connection(s)...")
-        results = await asyncio.gather(*push_tasks, return_exceptions=True)
-        failed = sum(1 for r in results if isinstance(r, Exception))
+        # Chunked rather than one giant gather() — a large one-time import can
+        # produce thousands of individual per-item media-server push tasks (Plex/
+        # Jellyfin/Emby have no bulk "mark watched" endpoint), and creating that
+        # many pending asyncio tasks at once degrades responsiveness for the whole
+        # process, not just this request. The per-item concurrency is still capped
+        # by each task's own semaphore (see _guarded above); this only bounds how
+        # many tasks are queued into the event loop at once.
+        FAN_OUT_CHUNK_SIZE = 200
+        failed = 0
+        for i in range(0, len(push_tasks), FAN_OUT_CHUNK_SIZE):
+            chunk = push_tasks[i:i + FAN_OUT_CHUNK_SIZE]
+            results = await asyncio.gather(*chunk, return_exceptions=True)
+            failed += sum(1 for r in results if isinstance(r, Exception))
         if failed:
             print(f"  {failed}/{len(push_tasks)} fan-out push tasks failed (non-fatal)")
     if any(conn.type in ("nuvio", "stremio") for conn in push_candidates):
@@ -2210,7 +2221,8 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                         all_warnings.extend(w)
 
             print(f"Jellyfin sync job {job_id} completed. Stats: {stats}")
-            await _fan_out_changes_to_other_connections(db, user_id, conn.id, _new_watched, _new_ratings, settings=settings, new_collected_ids=_new_collected)
+            # A pull only populates scrob's own data — it never automatically pushes to
+            # other connections; users push explicitly per-service (the "Push" buttons).
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
@@ -2405,7 +2417,8 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         all_warnings.extend(w)
 
             print(f"Emby sync job {job_id} completed. Stats: {stats}")
-            await _fan_out_changes_to_other_connections(db, user_id, conn.id, _new_watched, _new_ratings, settings=settings, new_collected_ids=_new_collected)
+            # A pull only populates scrob's own data — it never automatically pushes to
+            # other connections; users push explicitly per-service (the "Push" buttons).
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
@@ -2916,7 +2929,8 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             if backfilled:
                 print(f"Plex sync job {job_id}: backfilled language data for {backfilled} file(s).")
             print(f"Plex sync job {job_id} completed. Stats: {stats}")
-            await _fan_out_changes_to_other_connections(db, user_id, conn.id, _new_watched, _new_ratings, settings=settings, new_collected_ids=_new_collected)
+            # A pull only populates scrob's own data — it never automatically pushes to
+            # other connections; users push explicitly per-service (the "Push" buttons).
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
@@ -3503,16 +3517,8 @@ async def _run_nuvio_sync(
             if progress_records:
                 await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids)
 
-            await _fan_out_changes_to_other_connections(
-                db,
-                user_id,
-                conn.id,
-                new_watched_ids,
-                {},
-                settings=settings,
-                exclude_cloud_source=CollectionSource.nuvio,
-                new_collected_ids=new_collected_ids,
-            )
+            # A pull only populates scrob's own data — it never automatically pushes to
+            # other connections; users push explicitly per-service (the "Push" buttons).
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
             await db.execute(
                 update(SyncJob)
@@ -4009,17 +4015,8 @@ async def _run_stremio_sync(
                 removed_ids=removed_ids,
                 complete_snapshot_ids=complete_snapshot_ids,
             )
-            await _fan_out_changes_to_other_connections(
-                db,
-                user_id,
-                conn.id,
-                new_watched_ids,
-                {},
-                settings=settings,
-                exclude_cloud_source=CollectionSource.stremio,
-                new_collected_ids=new_collected_ids,
-                removed_collected_ids=removed_collected_ids,
-            )
+            # A pull only populates scrob's own data — it never automatically pushes to
+            # other connections; users push explicitly per-service (the "Push" buttons).
             conn.stremio_pull_cursor_at = pull_started_at
             conn.stremio_full_sync_done = True
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)

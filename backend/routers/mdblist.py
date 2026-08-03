@@ -663,17 +663,8 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
                 )
             await db.commit()
 
-            from routers.sync import _fan_out_changes_to_other_connections
-
-            await _fan_out_changes_to_other_connections(
-                db,
-                user_id,
-                None,
-                new_watched,
-                new_ratings,
-                settings=settings,
-                exclude_cloud_source=CollectionSource.mdblist,
-            )
+            # A pull only populates scrob's own data — it never automatically pushes to
+            # other connections; users push explicitly per-service (the "Push" buttons).
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed,

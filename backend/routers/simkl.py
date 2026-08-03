@@ -580,16 +580,10 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                 f"Lists: {stats['lists']} new, {stats['list_items']} items. "
                 f"Skipped: {stats['skipped']}. Errors: {stats['errors']}."
             )
-            from routers.sync import _fan_out_changes_to_other_connections
-            await _fan_out_changes_to_other_connections(
-                db,
-                user_id,
-                None,
-                _new_watched,
-                _new_ratings,
-                settings=settings,
-                exclude_cloud_source=CollectionSource.simkl,
-            )
+            # A pull only populates scrob's own data — it never automatically pushes
+            # to other connections. Users push explicitly per-service (the "Push"
+            # buttons), so a bulk pull of thousands of items doesn't unexpectedly
+            # blast them out everywhere else at once.
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed,

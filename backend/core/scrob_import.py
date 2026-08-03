@@ -248,6 +248,11 @@ async def apply_scrob_import(
         "skipped": 0, "errors": 0,
     }
     processed = 0
+    # Shared for the whole import run: a (show_tmdb_id, season_number) TMDB season
+    # fetch is expensive and covers every episode in that season, so without this
+    # cache, importing N already-uncreated episodes from the same season would
+    # redundantly re-fetch the same season from TMDB N times instead of once.
+    season_cache: dict[tuple[int, int], dict] = {}
 
     total = 0
     if include_watched:
@@ -324,7 +329,7 @@ async def apply_scrob_import(
                         if not show:
                             stats["errors"] += 1
                             continue
-                        media = await _get_or_create_episode_media(db, show.id, show_tmdb_id, season_number, episode_number, api_key)
+                        media = await _get_or_create_episode_media(db, show.id, show_tmdb_id, season_number, episode_number, api_key, season_cache)
                         if not media:
                             stats["errors"] += 1
                             continue
@@ -383,7 +388,7 @@ async def apply_scrob_import(
                                         if show:
                                             shows_by_tmdb2[show_tmdb_id] = show
                                     if show:
-                                        media = await _get_or_create_episode_media(db, show.id, show_tmdb_id, ep_data["season"], ep_data["number"], api_key)
+                                        media = await _get_or_create_episode_media(db, show.id, show_tmdb_id, ep_data["season"], ep_data["number"], api_key, season_cache)
 
                             if not media:
                                 stats["skipped"] += 1
@@ -451,7 +456,7 @@ async def apply_scrob_import(
                         if not show:
                             stats["errors"] += 1
                             continue
-                        media = await _get_or_create_episode_media(db, show.id, show_tmdb_id, season_number, episode_number, api_key)
+                        media = await _get_or_create_episode_media(db, show.id, show_tmdb_id, season_number, episode_number, api_key, season_cache)
                         if media and await _add_to_collection(media):
                             stats["collected"] += 1
                         else:

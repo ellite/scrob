@@ -29,6 +29,7 @@ class TraktExportData:
     watchlist: list[dict] = field(default_factory=list)
     lists: list[dict] = field(default_factory=list)
     list_items: dict[str, list[dict]] = field(default_factory=dict)
+    comments: dict[str, list[dict]] = field(default_factory=dict)
 
 
 def parse_trakt_export(content: bytes) -> TraktExportData:
@@ -102,6 +103,13 @@ def parse_trakt_export(content: bytes) -> TraktExportData:
         "episodes": _load("ratings-episodes.json"),
     }
 
+    comments = {
+        "movies": _load("comments-movies.json"),
+        "shows": _load("comments-shows.json"),
+        "seasons": _load("comments-seasons.json"),
+        "episodes": _load("comments-episodes.json"),
+    }
+
     watchlist = _load("lists-watchlist.json")
     lists_meta = _load("lists-lists.json")
 
@@ -126,4 +134,5 @@ def parse_trakt_export(content: bytes) -> TraktExportData:
         watchlist=watchlist,
         lists=lists_meta,
         list_items=list_items,
+        comments=comments,
     )

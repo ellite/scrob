@@ -25,6 +25,7 @@ from db import get_db, engine
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
 from models.collection import Collection
+from models.comments import Comment
 from models.events import WatchEvent
 from models.lists import List as ListModel, ListItem
 from models.media import Media
@@ -342,6 +343,7 @@ async def _get_or_create_episode_media(
     season_number: int,
     episode_number: int,
     api_key: str | None,
+    season_cache: dict[tuple[int, int], dict] | None = None,
 ) -> Media | None:
     result = await db.execute(
         select(Media).where(
@@ -357,9 +359,15 @@ async def _get_or_create_episode_media(
     from core import tmdb
     # Fetch episode detail from TMDB
     try:
-        semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
-        async with semaphore:
-            season_data = await tmdb.get_season(show_tmdb_id, season_number, api_key=api_key)
+        cache_key = (show_tmdb_id, season_number)
+        if season_cache is not None and cache_key in season_cache:
+            season_data = season_cache[cache_key]
+        else:
+            semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
+            async with semaphore:
+                season_data = await tmdb.get_season(show_tmdb_id, season_number, api_key=api_key)
+            if season_cache is not None:
+                season_cache[cache_key] = season_data
         ep_map = {ep["episode_number"]: ep for ep in season_data.get("episodes", [])}
         ep = ep_map.get(episode_number)
         if not ep:
@@ -446,6 +454,9 @@ class ExportTraktSource:
     async def get_list_items(self, list_slug: str):
         return self.data.list_items.get(list_slug, [])
 
+    async def get_comments(self):
+        return self.data.comments
+
 
 async def _apply_trakt_import(
     db: AsyncSession,
@@ -477,6 +488,12 @@ async def _apply_trakt_import(
     history_error_count = stats["errors"]
     history_had_errors = False
     stats["history_mode"] = "full" if history_start is None else "incremental"
+    # Shared for the whole import/sync run: a (show_tmdb_id, season_number) TMDB
+    # season fetch covers every episode in that season, so without this cache,
+    # each already-uncreated episode from the same season (across both the watched
+    # history and ratings sections below) would redundantly re-fetch the same
+    # season from TMDB instead of once.
+    season_cache: dict[tuple[int, int], dict] = {}
 
     # ── Watched Movies ────────────────────────────────────────────────
     # Uses /sync/history (one row per play) rather than /sync/watched
@@ -601,7 +618,7 @@ async def _apply_trakt_import(
                     try:
                         async with db.begin_nested():
                             media = await _get_or_create_episode_media(
-                                db, show.id, show_tmdb_id, season_num, ep_num, api_key
+                                db, show.id, show_tmdb_id, season_num, ep_num, api_key, season_cache
                             )
                             if not media:
                                 stats["errors"] += 1
@@ -693,7 +710,7 @@ async def _apply_trakt_import(
                                 ep_show = await _get_or_create_show(db, show_tmdb_id, show_data.get("title", ""), api_key)
                                 if ep_show:
                                     media = await _get_or_create_episode_media(
-                                        db, ep_show.id, show_tmdb_id, ep_season, ep_number, api_key
+                                        db, ep_show.id, show_tmdb_id, ep_season, ep_number, api_key, season_cache
                                     )
                         else:
                             show_data = item.get("show", {})
@@ -1037,6 +1054,7 @@ def _trakt_import_summary(job_id: int, label: str, stats: dict) -> str:
         f"Episodes: {stats['episodes']} new. "
         f"Ratings: {stats['ratings']} new. "
         f"Lists: {stats['lists']} new, {stats['list_items']} items added. "
+        f"Comments: {stats.get('comments', 0)} new. "
         f"Errors: {stats['errors']}."
     )
 
@@ -1121,8 +1139,8 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
                 settings.trakt_history_cursor_at = history_end
 
             print(_trakt_import_summary(job_id, "sync", stats))
-            from routers.sync import _fan_out_changes_to_other_connections
-            await _fan_out_changes_to_other_connections(db, user_id, None, _new_watched, _new_ratings, settings=settings, exclude_cloud_source=CollectionSource.trakt)
+            # A pull only populates scrob's own data — it never automatically pushes to
+            # other connections; users push explicitly per-service (the "Push" buttons).
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed,
@@ -1149,6 +1167,75 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
             await db.commit()
 
 
+def _extract_trakt_comment(kind: str, entry: dict) -> tuple[str, int | None, int | None, int | None, dict] | None:
+    """Map a raw Trakt export comment entry to (media_type, tmdb_id, season_number,
+    episode_number, comment_dict). tmdb_id is the show's tmdb_id for season/episode
+    comments, matching Comment.tmdb_id's documented convention. Returns None if the
+    entry can't be resolved to a tmdb id (comment.py has no other identity to fall
+    back to)."""
+    comment = entry.get("comment") or {}
+    if kind == "movies":
+        tmdb_id = entry.get("movie", {}).get("ids", {}).get("tmdb")
+        return ("movie", tmdb_id, None, None, comment) if tmdb_id else None
+    if kind == "shows":
+        tmdb_id = entry.get("show", {}).get("ids", {}).get("tmdb")
+        return ("series", tmdb_id, None, None, comment) if tmdb_id else None
+    if kind == "seasons":
+        tmdb_id = entry.get("show", {}).get("ids", {}).get("tmdb")
+        season_number = entry.get("season", {}).get("number")
+        return ("series", tmdb_id, season_number, None, comment) if tmdb_id else None
+    if kind == "episodes":
+        tmdb_id = entry.get("show", {}).get("ids", {}).get("tmdb")
+        ep_data = entry.get("episode", {})
+        return ("episode", tmdb_id, ep_data.get("season"), ep_data.get("number"), comment) if tmdb_id else None
+    return None
+
+
+async def _apply_trakt_comments_import(
+    db: AsyncSession,
+    user_id: int,
+    comments_data: dict[str, list[dict]],
+    stats: dict,
+) -> None:
+    """Applies Trakt export comments to the current user's account.
+
+    Comments have no media-catalog dependency (Comment is keyed directly by
+    tmdb_id/season/episode, not a Media row), so unlike watched history and
+    ratings this needs no TMDB lookups at all.
+    """
+    existing_result = await db.execute(select(Comment).where(Comment.user_id == user_id))
+    existing_keys = {
+        (c.media_type, c.tmdb_id, c.season_number, c.episode_number, c.content)
+        for c in existing_result.scalars().all()
+    }
+
+    for kind, entries in comments_data.items():
+        for entry in entries:
+            extracted = _extract_trakt_comment(kind, entry)
+            if not extracted:
+                stats["skipped"] += 1
+                continue
+            media_type, tmdb_id, season_number, episode_number, comment = extracted
+            content = comment.get("comment") or ""
+            key = (media_type, tmdb_id, season_number, episode_number, content)
+            if key in existing_keys:
+                stats["skipped"] += 1
+                continue
+            db.add(Comment(
+                user_id=user_id,
+                media_type=media_type,
+                tmdb_id=tmdb_id,
+                season_number=season_number,
+                episode_number=episode_number,
+                content=content,
+                is_spoiler=bool(comment.get("spoiler")),
+                created_at=_parse_trakt_datetime(comment.get("created_at")) or datetime.utcnow(),
+            ))
+            existing_keys.add(key)
+            stats["comments"] = stats.get("comments", 0) + 1
+    await db.commit()
+
+
 async def run_trakt_export_sync(
     user_id: int,
     job_id: int,
@@ -1156,6 +1243,7 @@ async def run_trakt_export_sync(
     sync_watched: bool = True,
     sync_ratings: bool = True,
     sync_lists: bool = True,
+    sync_comments: bool = True,
 ):
     from routers.sync import SyncCancelled, _raise_if_cancelled
     print(f"Starting Trakt export import for user {user_id}, job {job_id}")
@@ -1200,9 +1288,13 @@ async def run_trakt_export_sync(
                 history_end,
             )
 
+            if sync_comments:
+                await _apply_trakt_comments_import(db, user_id, await source.get_comments(), stats)
+                watched_processed += stats.get("comments", 0)
+
             print(_trakt_import_summary(job_id, "export import", stats))
-            from routers.sync import _fan_out_changes_to_other_connections
-            await _fan_out_changes_to_other_connections(db, user_id, None, _new_watched, _new_ratings, settings=settings, exclude_cloud_source=CollectionSource.trakt)
+            # An import only populates scrob's own data — it never automatically pushes
+            # to other connections; users push explicitly per-service (the "Push" buttons).
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed,
@@ -1268,21 +1360,22 @@ async def trakt_import_upload(
     sync_watched: bool = Form(True),
     sync_ratings: bool = Form(True),
     sync_lists: bool = Form(True),
+    sync_comments: bool = Form(True),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Import watched history, ratings, and/or lists from a Trakt data export zip.
+    """Import watched history, ratings, lists, and/or comments from a Trakt data export zip.
 
     Unlike /trakt/sync, this doesn't require a Trakt API app (client ID/secret) —
     Trakt now requires a VIP subscription to create one, so this is the only way
     non-VIP users can get their Trakt data into Scrob. What to import is chosen
-    per-upload (sync_watched/sync_ratings/sync_lists) rather than read from the
-    trakt_sync_* preferences, which only gate the continuous OAuth pull.
+    per-upload (sync_watched/sync_ratings/sync_lists/sync_comments) rather than
+    read from the trakt_sync_* preferences, which only gate the continuous OAuth pull.
     """
     if not (file.filename or "").lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only .zip export files are accepted.")
 
-    if not (sync_watched or sync_ratings or sync_lists):
+    if not (sync_watched or sync_ratings or sync_lists or sync_comments):
         raise HTTPException(status_code=400, detail="Select at least one item to import.")
 
     # Read in bounded chunks rather than a single file.read() — otherwise an
@@ -1322,7 +1415,7 @@ async def trakt_import_upload(
     await db.commit()
     await db.refresh(job)
 
-    background_tasks.add_task(run_trakt_export_sync, current_user.id, job.id, export_data, sync_watched, sync_ratings, sync_lists)
+    background_tasks.add_task(run_trakt_export_sync, current_user.id, job.id, export_data, sync_watched, sync_ratings, sync_lists, sync_comments)
     return {"status": "started", "job_id": job.id, "message": "Trakt export import is running in the background"}
 
 
