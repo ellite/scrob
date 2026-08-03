@@ -708,7 +708,11 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
     if media is None:
         return {"status": "ignored", "reason": "episode could not be identified (no season/episode/tmdb_id)"}
 
-    if notification_type in ("PlaybackStart", "PlaybackProgress", "PlaybackStop", "MarkPlayed", "playback.start", "playback.progress", "playback.stop", "item.markplayed"):
+    # ItemAdded fires once, right when a title lands in the library — often
+    # long before anyone plays it, so "add to collection" can't wait on a
+    # playback event to piggy-back on (see #129: an added-but-unwatched item
+    # never showed up in Scrob until it was played or a full sync ran).
+    if notification_type in ("PlaybackStart", "PlaybackProgress", "PlaybackStop", "MarkPlayed", "ItemAdded", "playback.start", "playback.progress", "playback.stop", "item.markplayed"):
         if not conn or conn.sync_collection:
             allow_collection = True
             jellyfin_id = data.get("jellyfin_id")
@@ -870,7 +874,8 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
     if media is None:
         return {"status": "ignored", "reason": "episode could not be identified (no season/episode/tmdb_id)"}
 
-    if notification_type in ("PlaybackStart", "PlaybackProgress", "PlaybackStop", "MarkPlayed", "playback.start", "playback.progress", "playback.stop", "item.markplayed"):
+    # See the matching comment in _handle_jellyfin_webhook (#129).
+    if notification_type in ("PlaybackStart", "PlaybackProgress", "PlaybackStop", "MarkPlayed", "ItemAdded", "playback.start", "playback.progress", "playback.stop", "item.markplayed"):
         if not conn or conn.sync_collection:
             allow_collection = True
             emby_item_id = data.get("jellyfin_id")
@@ -983,7 +988,8 @@ async def _handle_jellyfin_scrobble_webhook(
 
     coll_source = CollectionSource.jellyfin if source == "jellyfin" else CollectionSource.emby
 
-    if notification_type in ("PlaybackStart", "PlaybackProgress", "PlaybackStop", "MarkPlayed", "playback.start", "playback.progress", "playback.stop", "item.markplayed"):
+    # See the matching comment in _handle_jellyfin_webhook (#129).
+    if notification_type in ("PlaybackStart", "PlaybackProgress", "PlaybackStop", "MarkPlayed", "ItemAdded", "playback.start", "playback.progress", "playback.stop", "item.markplayed"):
         if conn.sync_collection:
             await _ensure_collection_entry(
                 db, user.id, media.id, coll_source, data["jellyfin_id"], data.get("quality"),
@@ -1857,6 +1863,23 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
                 connection_id=None,
             )
         await db.commit()
+
+    # library.new fires once, right when a title is added — often long before
+    # anyone plays it, so "add to collection" can't wait on a playback event
+    # (see #129). Unlike the full Plex connection's library.new handler, there's
+    # no server URL/token here to re-fetch or check library selection against,
+    # but parse_plex_payload already extracts everything needed (Guid array,
+    # quality) straight from the webhook body itself.
+    elif event == "library.new":
+        if conn.sync_collection:
+            media = await find_or_create_media_plex(data, db, api_key=tmdb_key, conn=None)
+            if media:
+                quality = data.get("quality")
+                await _ensure_collection_entry(
+                    db, user.id, media.id, CollectionSource.plex, data["plex_rating_key"], quality,
+                    connection_id=None,
+                )
+                await db.commit()
 
     return {"status": "ok", "event": event, "title": data["title"]}
 
