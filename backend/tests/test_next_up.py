@@ -68,6 +68,23 @@ class GroupLastWatchedTests(unittest.TestCase):
         last_per_show, last_watched_at = _group_last_watched(rows)
         self.assertEqual(last_watched_at[1], newer)
 
+    def test_null_season_row_is_skipped_not_used_as_last_watched(self):
+        # Regression for #132: a faulty history entry with a NULL season (e.g.
+        # a pre-fix Season-0 scrobble) must not become a show's "furthest
+        # watched" position — get_next_up would later pass that None straight
+        # into an int comparison and crash the whole endpoint.
+        rows = [
+            (1, None, 3, datetime(2026, 1, 2, tzinfo=timezone.utc)),
+            (1, 1, 5, datetime(2026, 1, 1, tzinfo=timezone.utc)),
+        ]
+        last_per_show, last_watched_at = _group_last_watched(rows)
+        self.assertEqual(last_per_show[1], (1, 5))
+
+    def test_show_with_only_null_season_rows_has_no_entry(self):
+        rows = [(1, None, 1, None), (1, None, 2, None)]
+        last_per_show, last_watched_at = _group_last_watched(rows)
+        self.assertNotIn(1, last_per_show)
+
 
 class HasAiredTests(unittest.TestCase):
     """Regression tests for #104: Next Up must not suggest an episode before

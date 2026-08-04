@@ -612,7 +612,7 @@ async def _apply_trakt_import(
                     ep_data = entry.get("episode", {})
                     season_num = ep_data.get("season")
                     ep_num = ep_data.get("number")
-                    if season_num is None or season_num == 0 or ep_num is None:
+                    if season_num is None or ep_num is None:
                         stats["skipped"] += 1
                         continue
                     try:

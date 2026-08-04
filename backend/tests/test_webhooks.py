@@ -66,6 +66,37 @@ class WriteWatchEventDedupTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(db.added), 0)
 
 
+class ParseJellyfinFlatPayloadSeasonZeroTests(unittest.TestCase):
+    """Regression test for #132: a Season 0 (specials) episode has
+    SeasonNumber: 0 in the flat webhook payload, which a falsy check like
+    `payload.get("SeasonNumber") or None` incorrectly coerces to None."""
+
+    def test_season_zero_is_preserved_not_coerced_to_none(self):
+        payload = {
+            "NotificationType": "PlaybackStart",
+            "ItemType": "Episode",
+            "ItemId": "abc123",
+            "Name": "Behind the Scenes",
+            "SeriesName": "Some Show",
+            "SeasonNumber": 0,
+            "EpisodeNumber": 1,
+            "Provider_tmdb": "999",
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertIsNotNone(data)
+        self.assertEqual(data["season_number"], 0)
+
+    def test_movie_has_no_season_number(self):
+        payload = {
+            "NotificationType": "PlaybackStart",
+            "ItemType": "Movie",
+            "ItemId": "xyz",
+            "Name": "A Movie",
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertIsNone(data["season_number"])
+
+
 class ParseJellyfinUserDataSavedPayloadTests(unittest.TestCase):
     """Regression test for #69: Jellyfin's official Webhook plugin has no
     "MarkPlayed" event — manually toggling watched/unwatched raises

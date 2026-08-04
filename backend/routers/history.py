@@ -568,6 +568,12 @@ def _group_last_watched(
     last_per_show: dict[int, tuple[int, int]] = {}
     last_watched_at: dict[int, datetime] = {}
     for show_id, season, episode, watched_at in rows:
+        if season is None or episode is None:
+            # Faulty history entry with an unknown season/episode (e.g. a
+            # pre-fix scrobble that lost season 0) - skip it rather than let
+            # it corrupt this show's position or crash the fallback lookup
+            # below, which assumes season/episode are always ints.
+            continue
         if show_id not in last_per_show:
             last_per_show[show_id] = (season, episode)
         if watched_at and (show_id not in last_watched_at or watched_at > last_watched_at[show_id]):

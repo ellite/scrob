@@ -521,9 +521,10 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
     position_ticks = payload.get("PlaybackPositionTicks") or payload.get("PositionTicks") or 0
     runtime_ticks = payload.get("RunTimeTicks") or 0
 
-    # SeasonNumber/EpisodeNumber are 1-indexed in the plugin template; 0 means absent
-    season_num = payload.get("SeasonNumber") or None
-    episode_num = payload.get("EpisodeNumber") or None
+    # SeasonNumber/EpisodeNumber are absent from the payload for movies;
+    # 0 is a valid season number (specials), so don't coerce it away.
+    season_num = payload.get("SeasonNumber")
+    episode_num = payload.get("EpisodeNumber")
 
     return {
         "notification_type": notification_type,
