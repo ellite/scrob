@@ -2529,6 +2529,13 @@ async def _backfill_plex_languages(user_id: int, connection_id: int, p_url: str,
 
 
 PLEX_HISTORY_OVERLAP = timedelta(minutes=5)
+# How long a webhook-created (provisional) WatchEvent's watched_at — this
+# server's receipt time for the completion webhook — can plausibly lag behind
+# Plex's own recorded viewedAt for that same play, before this stops treating
+# them as the same play. Bounded by webhook delivery/processing latency only,
+# not by content runtime — unlike a runtime-based guess, this reflects the
+# actual mechanism of the drift (see GitHub #135).
+PLEX_WEBHOOK_RECONCILE_WINDOW = timedelta(minutes=10)
 _PLEX_HISTORY_CHUNK = 200  # WatchEvents per commit, for a large first-time backfill
 
 
@@ -2546,8 +2553,19 @@ async def _backfill_plex_watch_history(
     only expose aggregate viewCount/lastViewedAt, which is why the regular
     sync_items() pass can only ever record a single WatchEvent per item
     (see GitHub #126). This uses Plex's actual per-play history endpoint instead,
-    mirroring Trakt's /sync/history import: dedup by (media_id, watched_at)
-    rather than by media_id alone, so every distinct play gets its own row.
+    mirroring Trakt's /sync/history import.
+
+    Every WatchEvent this function itself previously wrote has a watched_at
+    computed identically from Plex's own viewedAt, so re-runs dedup those by an
+    exact (media_id, watched_at) match — no tolerance needed, it's deterministic.
+    The one non-deterministic case is a WatchEvent the real-time Plex webhook
+    already wrote for this same play (see webhooks.py:_write_watch_event):
+    its watched_at is this server's receipt time, not Plex's, so it can differ
+    from the authoritative viewedAt here by a webhook-latency-sized gap. Those
+    rows are marked provisional=True specifically so this function can find and
+    correct the one that matches, instead of either exact-matching (missing it)
+    or fuzzy-matching every existing play regardless of source (over-merging
+    unrelated history — see GitHub #135's original fix attempt).
 
     Runs in its own DB session, same rationale as _backfill_plex_languages.
     ratingkey_to_media is built by the sync_items() calls that just ran (via
@@ -2556,13 +2574,15 @@ async def _backfill_plex_watch_history(
     watched-history sync is an independent setting, so relying on CollectionFile
     here would leave every play unmatched on a watched-only connection.
 
-    Returns (new_events, unmatched) for the caller to log.
+    Returns (new_events, reconciled, unmatched) for the caller to log.
     """
+    from collections import defaultdict
+
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         conn = await db.get(MediaServerConnection, connection_id)
         if not conn:
-            return 0, 0
+            return 0, 0, 0
 
         account_id = await plex.get_account_id(p_url, p_token, server_username) if server_username else None
 
@@ -2581,14 +2601,35 @@ async def _backfill_plex_watch_history(
             )
 
         if not history:
-            return 0, 0
+            return 0, 0, 0
 
         we_res = await db.execute(
-            select(WatchEvent.media_id, WatchEvent.watched_at).where(WatchEvent.user_id == user_id)
+            select(WatchEvent.id, WatchEvent.media_id, WatchEvent.watched_at, WatchEvent.provisional)
+            .where(WatchEvent.user_id == user_id)
         )
-        existing_watched: set[tuple[int, datetime | None]] = {(row[0], row[1]) for row in we_res}
+        confirmed_watched_by_media: dict[int, set[datetime]] = defaultdict(set)
+        # media_id -> list of (event_id, watched_at) still awaiting reconciliation
+        provisional_by_media: dict[int, list[tuple[int, datetime]]] = defaultdict(list)
+        for event_id, media_id, watched_at, provisional in we_res:
+            if watched_at is None:
+                continue
+            if provisional:
+                provisional_by_media[media_id].append((event_id, watched_at))
+            else:
+                confirmed_watched_by_media[media_id].add(watched_at)
+
+        def _closest_provisional(media_id: int, watched_at: datetime) -> tuple[int, datetime] | None:
+            candidates = provisional_by_media.get(media_id) or []
+            in_range = [
+                c for c in candidates
+                if abs((watched_at - c[1]).total_seconds()) <= PLEX_WEBHOOK_RECONCILE_WINDOW.total_seconds()
+            ]
+            if not in_range:
+                return None
+            return min(in_range, key=lambda c: abs((watched_at - c[1]).total_seconds()))
 
         new_events = 0
+        reconciled = 0
         unmatched = 0
         for i, entry in enumerate(history):
             media_id = ratingkey_to_media.get(str(entry.get("ratingKey")))
@@ -2600,8 +2641,20 @@ async def _backfill_plex_watch_history(
                 unmatched += 1
                 continue
             watched_at = datetime.fromtimestamp(viewed_at, tz=timezone.utc).replace(tzinfo=None)
-            key = (media_id, watched_at)
-            if key not in existing_watched:
+
+            if watched_at in confirmed_watched_by_media.get(media_id, ()):
+                pass  # already recorded by a previous run of this same backfill
+            elif (match := _closest_provisional(media_id, watched_at)) is not None:
+                # Confirm the webhook's estimate with Plex's authoritative time,
+                # rather than inserting a second row for the same play.
+                match_id, match_watched_at = match
+                await db.execute(
+                    update(WatchEvent).where(WatchEvent.id == match_id).values(watched_at=watched_at, provisional=False)
+                )
+                provisional_by_media[media_id].remove(match)
+                confirmed_watched_by_media[media_id].add(watched_at)
+                reconciled += 1
+            else:
                 watch_event = WatchEvent(
                     user_id=user_id,
                     media_id=media_id,
@@ -2612,7 +2665,7 @@ async def _backfill_plex_watch_history(
                 db.add(watch_event)
                 await db.flush()
                 await record_rewatch_progress(db, user_id, media_id, watch_event.id)
-                existing_watched.add(key)
+                confirmed_watched_by_media[media_id].add(watched_at)
                 new_events += 1
 
             if (i + 1) % _PLEX_HISTORY_CHUNK == 0:
@@ -2623,7 +2676,7 @@ async def _backfill_plex_watch_history(
 
         conn.plex_history_cursor_at = cutoff
         await db.commit()
-        return new_events, unmatched
+        return new_events, reconciled, unmatched
 
 
 def plex_sync_needs_library_scan(conn) -> bool:
@@ -3057,11 +3110,14 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                 print(f"Plex sync job {job_id}: backfilled language data for {backfilled} file(s).")
 
             if conn.sync_watched:
-                new_events, unmatched = await _backfill_plex_watch_history(
+                new_events, reconciled, unmatched = await _backfill_plex_watch_history(
                     user_id, conn.id, p_url, p_token, conn.server_username, _plex_ratingkey_to_media, job_id,
                 )
-                if new_events or unmatched:
-                    print(f"Plex sync job {job_id}: backfilled {new_events} historical play(s) ({unmatched} unmatched).")
+                if new_events or reconciled or unmatched:
+                    print(
+                        f"Plex sync job {job_id}: backfilled {new_events} historical play(s), "
+                        f"reconciled {reconciled} webhook estimate(s) ({unmatched} unmatched)."
+                    )
 
             print(f"Plex sync job {job_id} completed. Stats: {stats}")
             # A pull only populates scrob's own data — it never automatically pushes to

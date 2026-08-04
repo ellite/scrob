@@ -22,6 +22,13 @@ class WatchEvent(Base):
     progress_percent : Mapped[Optional[float]] = mapped_column(Float)
     completed        : Mapped[bool]            = mapped_column(Boolean, default=False, nullable=False)
     play_count       : Mapped[int]             = mapped_column(Integer, default=1, nullable=False)
+    # True only for events whose watched_at is an estimate (currently: the Plex
+    # webhook's server-receipt time) rather than a timestamp sourced directly
+    # from the media server's own record of the play. Lets a later authoritative
+    # sync (e.g. _backfill_plex_watch_history) recognize and correct one of
+    # these instead of exact-matching against it and creating a duplicate
+    # (see GitHub #135).
+    provisional      : Mapped[bool]            = mapped_column(Boolean, default=False, nullable=False, server_default="false")
 
     user  : Mapped["User"]  = relationship(back_populates="watch_events")
     media : Mapped["Media"] = relationship(back_populates="watch_events")

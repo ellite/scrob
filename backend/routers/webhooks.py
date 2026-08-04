@@ -422,6 +422,10 @@ async def _write_watch_event(
             progress_percent=1.0,
             completed=True,
             play_count=1,
+            # watched_at is this server's receipt time, not the media server's own
+            # record of the play — provisional until an authoritative sync (e.g.
+            # Plex's history backfill) confirms/corrects it. See GitHub #135.
+            provisional=True,
         )
         db.add(event)
         # Remove any in-progress marker since it's now done
