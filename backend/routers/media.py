@@ -1452,6 +1452,15 @@ async def recently_added(
     ]
     if type:
         media_filters.append(Media.media_type == type)
+    settings_q = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
+    user_settings = settings_q.scalar_one_or_none()
+    if user_settings and user_settings.hide_watched_from_recently_added:
+        watched_exists = (
+            select(WatchEvent.id)
+            .where(WatchEvent.media_id == Media.id, WatchEvent.user_id == current_user.id, WatchEvent.completed == True)
+            .exists()
+        )
+        media_filters.append(~watched_exists)
     query = (
         select(Media)
         .join(coll_subq, coll_subq.c.media_id == Media.id)

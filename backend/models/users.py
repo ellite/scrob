@@ -126,6 +126,7 @@ class UserSettings(Base):
     shuffle_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     minimalist_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     next_up_hidden_shows : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="'[]'")
+    hide_watched_from_recently_added : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # MDBList — API key authentication
     mdblist_api_key: Mapped[Optional[str]] = mapped_column(String(255))
