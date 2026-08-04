@@ -92,22 +92,37 @@ def parse_trakt_export(content: bytes) -> TraktExportData:
             items.extend(_load(n))
         return items
 
+    def _load_prefixed(prefix: str) -> list[dict]:
+        # Trakt exports a category as a single unnumbered "<prefix>.json" when
+        # it's small, but pages larger ones into "<prefix>-1.json",
+        # "<prefix>-2.json", etc. (same convention as watched-history). Cover
+        # both shapes so large rating/comment sets aren't silently dropped.
+        pattern = re.compile(rf"^{re.escape(prefix)}(?:-(\d+))?\.json$")
+        matches = sorted(
+            (n for n in names if pattern.match(n)),
+            key=lambda n: int(pattern.match(n).group(1) or 0),
+        )
+        items: list[dict] = []
+        for n in matches:
+            items.extend(_load(n))
+        return items
+
     history = _load_history()
     history_movies = [e for e in history if e.get("type") == "movie"]
     history_episodes = [e for e in history if e.get("type") == "episode"]
 
     ratings = {
-        "movies": _load("ratings-movies.json"),
-        "shows": _load("ratings-shows.json"),
-        "seasons": _load("ratings-seasons.json"),
-        "episodes": _load("ratings-episodes.json"),
+        "movies": _load_prefixed("ratings-movies"),
+        "shows": _load_prefixed("ratings-shows"),
+        "seasons": _load_prefixed("ratings-seasons"),
+        "episodes": _load_prefixed("ratings-episodes"),
     }
 
     comments = {
-        "movies": _load("comments-movies.json"),
-        "shows": _load("comments-shows.json"),
-        "seasons": _load("comments-seasons.json"),
-        "episodes": _load("comments-episodes.json"),
+        "movies": _load_prefixed("comments-movies"),
+        "shows": _load_prefixed("comments-shows"),
+        "seasons": _load_prefixed("comments-seasons"),
+        "episodes": _load_prefixed("comments-episodes"),
     }
 
     watchlist = _load("lists-watchlist.json")

@@ -79,6 +79,23 @@ class ParseTraktExportTests(unittest.TestCase):
         self.assertEqual(len(data.ratings["seasons"]), 1)
         self.assertEqual(len(data.ratings["episodes"]), 1)
 
+    def test_loads_paginated_ratings_and_comments_files(self) -> None:
+        # Regression (#123): Trakt pages large ratings/comments categories into
+        # numbered files ("ratings-movies-1.json", "-2.json", ...) exactly like
+        # watched-history, instead of a single unnumbered file. Users with a
+        # lot of movie/episode ratings were getting zero imported because the
+        # parser only ever looked for the unnumbered name.
+        content = _make_zip({
+            "watched-history-1.json": [_MOVIE_PLAY],
+            "ratings-movies-2.json": [{"rating": 9, "movie": {"ids": {"tmdb": 2}}}],
+            "ratings-movies-1.json": [{"rating": 8, "movie": {"ids": {"tmdb": 1}}}],
+            "comments-episodes-1.json": [{"comment": "great", "episode": {"season": 1, "number": 1}, "show": {"ids": {"tmdb": 2}}}],
+            "comments-episodes-2.json": [{"comment": "also great", "episode": {"season": 1, "number": 2}, "show": {"ids": {"tmdb": 2}}}],
+        })
+        data = parse_trakt_export(content)
+        self.assertEqual([r["movie"]["ids"]["tmdb"] for r in data.ratings["movies"]], [1, 2])
+        self.assertEqual(len(data.comments["episodes"]), 2)
+
     def test_matches_list_items_by_trakt_id_not_filename_slug(self) -> None:
         # The item file's slug segment need not match ids.slug exactly — only
         # the numeric trakt id prefix should be relied on.
