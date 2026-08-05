@@ -418,5 +418,72 @@ class RemoveStaleCollectionFilesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(removed, {100, 101, 102})
 
 
+class ExpandMultiEpisodeItemsTests(unittest.TestCase):
+    """Regression tests for #138: Jellyfin/Emby can mux several episodes into
+    one video file (exposed via IndexNumber..IndexNumberEnd) - a combined item
+    like that was previously synced as just its first episode."""
+
+    def test_combined_episode_file_is_expanded_per_episode(self):
+        item = {"Id": "file-1", "IndexNumber": 1, "IndexNumberEnd": 2, "Name": "Ep 1-2"}
+
+        expanded = sync._expand_multi_episode_items(
+            [item], sync.MediaType.episode, sync.CollectionSource.jellyfin,
+        )
+
+        self.assertEqual(len(expanded), 2)
+        self.assertEqual([e["IndexNumber"] for e in expanded], [1, 2])
+        self.assertTrue(all(e["Id"] == "file-1" for e in expanded))
+        # Original item must be untouched - other code still iterates the raw list.
+        self.assertEqual(item["IndexNumber"], 1)
+
+    def test_three_episode_span_expands_to_three(self):
+        item = {"Id": "file-2", "IndexNumber": 5, "IndexNumberEnd": 7}
+
+        expanded = sync._expand_multi_episode_items(
+            [item], sync.MediaType.episode, sync.CollectionSource.emby,
+        )
+
+        self.assertEqual([e["IndexNumber"] for e in expanded], [5, 6, 7])
+
+    def test_single_episode_item_is_returned_as_is(self):
+        item = {"Id": "file-3", "IndexNumber": 4, "IndexNumberEnd": None}
+
+        expanded = sync._expand_multi_episode_items(
+            [item], sync.MediaType.episode, sync.CollectionSource.jellyfin,
+        )
+
+        self.assertEqual(expanded, [item])
+
+    def test_equal_start_and_end_is_not_expanded(self):
+        item = {"Id": "file-4", "IndexNumber": 4, "IndexNumberEnd": 4}
+
+        expanded = sync._expand_multi_episode_items(
+            [item], sync.MediaType.episode, sync.CollectionSource.jellyfin,
+        )
+
+        self.assertEqual(expanded, [item])
+
+    def test_movies_are_never_expanded(self):
+        # Movies don't carry IndexNumber/IndexNumberEnd, but the media_type
+        # gate alone must be enough to skip this entirely.
+        item = {"Id": "movie-1", "IndexNumber": 1, "IndexNumberEnd": 2}
+
+        expanded = sync._expand_multi_episode_items(
+            [item], sync.MediaType.movie, sync.CollectionSource.jellyfin,
+        )
+
+        self.assertEqual(expanded, [item])
+
+    def test_plex_source_is_never_expanded(self):
+        # Scoped to Jellyfin/Emby only - Plex doesn't expose this field at all.
+        item = {"ratingKey": "1", "index": 1, "IndexNumberEnd": 2}
+
+        expanded = sync._expand_multi_episode_items(
+            [item], sync.MediaType.episode, sync.CollectionSource.plex,
+        )
+
+        self.assertEqual(expanded, [item])
+
+
 if __name__ == "__main__":
     unittest.main()

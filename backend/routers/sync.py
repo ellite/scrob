@@ -1587,6 +1587,30 @@ async def _remove_stale_collection_files(
     return removed_media_ids
 
 
+def _expand_multi_episode_items(items: list, media_type: MediaType, source: CollectionSource) -> list:
+    """Jellyfin/Emby can represent multiple episodes muxed into one video file as
+    a single library item, exposing the span via IndexNumber..IndexNumberEnd (e.g.
+    a cartoon with two episodes per file). sync_items is built around one file ==
+    one episode, so expand a combined item into one shallow copy per episode number
+    in the range - each copy still points at the same underlying source_id/file, so
+    they all end up as separate CollectionFiles on that one Jellyfin item (see #138:
+    previously only the first episode of a combined file was ever collected)."""
+    if media_type != MediaType.episode or source not in _MEDIA_BROWSER_ITEM_SOURCES:
+        return items
+    expanded = []
+    for item in items:
+        start = item.get("IndexNumber")
+        end = item.get("IndexNumberEnd")
+        if start is not None and end is not None and end > start:
+            for ep in range(start, end + 1):
+                copy = dict(item)
+                copy["IndexNumber"] = ep
+                expanded.append(copy)
+        else:
+            expanded.append(item)
+    return expanded
+
+
 async def sync_items(
     items: list,
     media_type: MediaType,
@@ -1608,11 +1632,15 @@ async def sync_items(
     ratingkey_to_media_id: dict[str, int] | None = None,  # accumulated across calls; mutated in-place
     seen_source_ids: set[str] | None = None,  # accumulated across calls; every source_id encountered this run, used to prune deletions afterward
 ) -> list[dict]:  # returns warnings
+    items = _expand_multi_episode_items(items, media_type, source)
     print(f"  Syncing {len(items)} {media_type.value}s from {source.value}...")
 
     # ── Phase 1: Pre-load existing data (replaces all N+1 queries) ────────────
 
-    # All existing CollectionFiles for this user+source: source_id → (CollectionFile, media_id, Media)
+    # All existing CollectionFiles for this user+source: (source_id, episode_number) →
+    # (CollectionFile, media_id, Media). Keyed on episode_number too (None for movies,
+    # where it's a no-op) so a multi-episode Jellyfin file - several CollectionFiles
+    # sharing one source_id - doesn't collide into a single dict entry (see #138).
     files_q = await db.execute(
         select(CollectionFile, Collection.media_id, Media)
         .join(Collection, Collection.id == CollectionFile.collection_id)
@@ -1620,8 +1648,8 @@ async def sync_items(
         .where(Collection.user_id == user_id, CollectionFile.source == source)
     )
     files_rows = files_q.all()
-    existing_files: dict[str, tuple[CollectionFile, int, Media]] = {
-        f.source_id: (f, media_id, m) for f, media_id, m in files_rows
+    existing_files: dict[tuple[str, int | None], tuple[CollectionFile, int, Media]] = {
+        (f.source_id, m.episode_number): (f, media_id, m) for f, media_id, m in files_rows
     }
     # (media_id, source) → CollectionFile — to detect webhook-vs-sync source_id mismatches
     files_by_media_source: dict[tuple[int, CollectionSource], CollectionFile] = {
@@ -1759,7 +1787,7 @@ async def sync_items(
                 if seen_source_ids is not None:
                     seen_source_ids.add(source_id)
 
-                file_entry = existing_files.get(source_id)
+                file_entry = existing_files.get((source_id, episode_num))
                 media_id_for_watch: int | None = None
                 show_id: int | None = None  # (re)assigned below for episodes; stays None for movies
 
@@ -1782,7 +1810,7 @@ async def sync_items(
                             if stale_coll:
                                 await db.delete(stale_coll)
                                 existing_coll_by_media_id.pop(_existing_media_id, None)
-                        existing_files.pop(source_id, None)
+                        existing_files.pop((source_id, episode_num), None)
                         files_by_media_source.pop((_existing_media_id, source), None)
                         file_entry = None
 
@@ -1902,8 +1930,8 @@ async def sync_items(
                                 existing_alt_file.connection_id = connection_id
                             # Keep in-memory maps consistent
                             old_source_id = existing_alt_file.source_id
-                            existing_files.pop(old_source_id, None)
-                            existing_files[source_id] = (existing_alt_file, media.id, tmdb_id)
+                            existing_files.pop((old_source_id, episode_num), None)
+                            existing_files[(source_id, episode_num)] = (existing_alt_file, media.id, tmdb_id)
                             files_by_media_source[(media.id, source)] = existing_alt_file
                         stats["skipped"] += 1
                         media_id_for_watch = media.id
