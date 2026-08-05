@@ -1524,6 +1524,69 @@ async def _fan_out_changes_to_other_connections(
         await db.commit()
 
 
+# Safety circuit breaker for _remove_stale_collection_files: a full scan that
+# comes back empty/truncated (transient API hiccup, a library mid-rescan on
+# the media server, a stale library-selection filter) never raises - the
+# fetch helpers only raise on actual HTTP errors - so it would otherwise look
+# indistinguishable from "the user deleted everything". Refuse to prune when
+# most of an existing collection would vanish in one pass; a real deletion of
+# that size is vanishingly rare, a bad scan is not.
+_STALE_REMOVAL_MIN_EXISTING = 10
+_STALE_REMOVAL_MAX_FRACTION = 0.5
+
+
+async def _remove_stale_collection_files(
+    db: AsyncSession,
+    user_id: int,
+    source: CollectionSource,
+    connection_id: int,
+    seen_source_ids: set[str],
+) -> set[int]:
+    """After a full library scan, prunes CollectionFiles for this connection
+    whose source_id wasn't seen this run - i.e. it's no longer on the media
+    server (see #139: deleting a title in Plex/Jellyfin/Emby never removed it
+    from the collection, since sync only ever added/updated). Only safe to
+    call when the scan covered the connection's entire selected library, or
+    everything not scanned this pass looks "deleted" and gets pruned too."""
+    result = await db.execute(
+        select(CollectionFile, Collection.media_id)
+        .join(Collection, Collection.id == CollectionFile.collection_id)
+        .where(
+            Collection.user_id == user_id,
+            CollectionFile.source == source,
+            CollectionFile.connection_id == connection_id,
+        )
+    )
+    rows = result.all()
+    stale = [(cf, media_id) for cf, media_id in rows if cf.source_id not in seen_source_ids]
+
+    if len(rows) >= _STALE_REMOVAL_MIN_EXISTING and len(stale) / len(rows) > _STALE_REMOVAL_MAX_FRACTION:
+        logger.warning(
+            "Refusing to prune %d/%d %s collection files for connection %s (user %s) - "
+            "this looks like a bad/partial scan rather than real deletions on the server; "
+            "skipping stale-collection cleanup for this sync run.",
+            len(stale), len(rows), source.value, connection_id, user_id,
+        )
+        return set()
+
+    removed_media_ids: set[int] = set()
+    for collection_file, media_id in stale:
+        collection_id = collection_file.collection_id
+        await db.delete(collection_file)
+        await db.flush()
+        remaining = await db.execute(
+            select(func.count(CollectionFile.id)).where(
+                CollectionFile.collection_id == collection_id
+            )
+        )
+        if remaining.scalar_one() == 0:
+            collection = await db.get(Collection, collection_id)
+            if collection:
+                await db.delete(collection)
+                removed_media_ids.add(media_id)
+    return removed_media_ids
+
+
 async def sync_items(
     items: list,
     media_type: MediaType,
@@ -1543,6 +1606,7 @@ async def sync_items(
     new_collected_ids: set[int] | None = None,  # accumulated across calls; mutated in-place
     connection_id: int | None = None,
     ratingkey_to_media_id: dict[str, int] | None = None,  # accumulated across calls; mutated in-place
+    seen_source_ids: set[str] | None = None,  # accumulated across calls; every source_id encountered this run, used to prune deletions afterward
 ) -> list[dict]:  # returns warnings
     print(f"  Syncing {len(items)} {media_type.value}s from {source.value}...")
 
@@ -1691,6 +1755,9 @@ async def sync_items(
                     name = item.get("title")
                     season_num = item.get("parentIndex")
                     episode_num = item.get("index")
+
+                if seen_source_ids is not None:
+                    seen_source_ids.add(source_id)
 
                 file_entry = existing_files.get(source_id)
                 media_id_for_watch: int | None = None
@@ -2129,6 +2196,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
             _new_watched: set[int] = set()
             _new_ratings: RatingChanges = {}
             _new_collected: set[int] = set()
+            _seen_collection_source_ids: set[str] = set()
 
             for lib in libraries:
                 lib_type = (lib.get("CollectionType") or "").lower()
@@ -2185,7 +2253,8 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.jellyfin, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id)
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        seen_source_ids=_seen_collection_source_ids)
                     all_warnings.extend(w)
 
                 elif lib_type in ("tvshows", "tv"):
@@ -2228,6 +2297,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
                         new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        seen_source_ids=_seen_collection_source_ids,
                     )
                     all_warnings.extend(w)
 
@@ -2238,8 +2308,18 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
                             new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                            seen_source_ids=_seen_collection_source_ids,
                         )
                         all_warnings.extend(w)
+
+            if conn.sync_collection and not movie_limit and not show_limit:
+                removed_media_ids = await _remove_stale_collection_files(
+                    db, user_id, CollectionSource.jellyfin, conn.id, _seen_collection_source_ids,
+                )
+                if removed_media_ids:
+                    stats["removed"] = len(removed_media_ids)
+                    await db.commit()
+                    print(f"Jellyfin sync job {job_id}: removed {len(removed_media_ids)} item(s) no longer in Jellyfin.")
 
             print(f"Jellyfin sync job {job_id} completed. Stats: {stats}")
             # A pull only populates scrob's own data — it never automatically pushes to
@@ -2323,6 +2403,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             _new_watched: set[int] = set()
             _new_ratings: RatingChanges = {}
             _new_collected: set[int] = set()
+            _seen_collection_source_ids: set[str] = set()
 
             for lib in libraries:
                 lib_type = (lib.get("CollectionType") or "").lower()
@@ -2379,7 +2460,8 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.emby, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id)
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        seen_source_ids=_seen_collection_source_ids)
                     all_warnings.extend(w)
 
                 elif lib_type in ("tvshows", "tv"):
@@ -2424,6 +2506,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
                         new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        seen_source_ids=_seen_collection_source_ids,
                     )
                     all_warnings.extend(w)
 
@@ -2434,8 +2517,18 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
                             new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                            seen_source_ids=_seen_collection_source_ids,
                         )
                         all_warnings.extend(w)
+
+            if conn.sync_collection and not movie_limit and not show_limit:
+                removed_media_ids = await _remove_stale_collection_files(
+                    db, user_id, CollectionSource.emby, conn.id, _seen_collection_source_ids,
+                )
+                if removed_media_ids:
+                    stats["removed"] = len(removed_media_ids)
+                    await db.commit()
+                    print(f"Emby sync job {job_id}: removed {len(removed_media_ids)} item(s) no longer in Emby.")
 
             print(f"Emby sync job {job_id} completed. Stats: {stats}")
             # A pull only populates scrob's own data — it never automatically pushes to
@@ -2743,7 +2836,8 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             if selected_keys:
                 libraries = [lib for lib in libraries if lib.get("key") in selected_keys]
 
-            if not plex_sync_needs_library_scan(conn):
+            did_library_scan = plex_sync_needs_library_scan(conn)
+            if not did_library_scan:
                 print("  Skipping library scan - collection/watched/ratings sync are all disabled for this connection")
                 libraries = []
 
@@ -2754,6 +2848,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             _new_watched: set[int] = set()
             _new_ratings: RatingChanges = {}
             _new_collected: set[int] = set()
+            _seen_collection_source_ids: set[str] = set()
             # ratingKey -> media_id, accumulated across every movie/show library this
             # run so _backfill_plex_watch_history can resolve play history afterward —
             # built here (not via CollectionFile) since it must exist even when
@@ -2825,7 +2920,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                     w = await sync_items(items, MediaType.movie, CollectionSource.plex, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
                         new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
-                        ratingkey_to_media_id=_plex_ratingkey_to_media)
+                        ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids)
                     all_warnings.extend(w)
 
                 elif lib_type == "show":
@@ -2967,7 +3062,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
                         new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
-                        ratingkey_to_media_id=_plex_ratingkey_to_media,
+                        ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids,
                     )
                     all_warnings.extend(w)
 
@@ -2978,7 +3073,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
                             new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
-                            ratingkey_to_media_id=_plex_ratingkey_to_media,
+                            ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids,
                         )
                         all_warnings.extend(w)
 
@@ -3118,6 +3213,15 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         f"Plex sync job {job_id}: backfilled {new_events} historical play(s), "
                         f"reconciled {reconciled} webhook estimate(s) ({unmatched} unmatched)."
                     )
+
+            if conn.sync_collection and did_library_scan and not movie_limit and not show_limit:
+                removed_media_ids = await _remove_stale_collection_files(
+                    db, user_id, CollectionSource.plex, conn.id, _seen_collection_source_ids,
+                )
+                if removed_media_ids:
+                    stats["removed"] = len(removed_media_ids)
+                    await db.commit()
+                    print(f"Plex sync job {job_id}: removed {len(removed_media_ids)} item(s) no longer in Plex.")
 
             print(f"Plex sync job {job_id} completed. Stats: {stats}")
             # A pull only populates scrob's own data — it never automatically pushes to

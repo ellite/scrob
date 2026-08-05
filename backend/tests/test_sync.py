@@ -278,5 +278,145 @@ class BackfillPlexWatchHistoryDedupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.added, [])
 
 
+class _StaleCollectionFakeDB:
+    """Minimal async-session double for _remove_stale_collection_files: serves
+    the initial CollectionFile+Collection.media_id join, then a func.count
+    remaining-files query per candidate removal (in the same order the
+    function issues them)."""
+
+    def __init__(self, rows, remaining_counts):
+        self.rows = rows
+        self.remaining_counts = list(remaining_counts)
+        self.deleted_files: list = []
+        self.deleted_collections: list = []
+        self._call = 0
+
+    async def execute(self, stmt):
+        self._call += 1
+        if self._call == 1:
+            return SimpleNamespace(all=lambda: self.rows)
+        count = self.remaining_counts.pop(0)
+        return SimpleNamespace(scalar_one=lambda: count)
+
+    async def delete(self, obj):
+        if hasattr(obj, "source_id"):
+            self.deleted_files.append(obj)
+        else:
+            self.deleted_collections.append(obj)
+
+    async def flush(self):
+        pass
+
+    async def get(self, model, obj_id):
+        return SimpleNamespace(id=obj_id)
+
+
+class RemoveStaleCollectionFilesTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for #139: a title deleted from Plex/Jellyfin/Emby
+    never left the user's Scrob collection, since a full sync only ever
+    added/updated CollectionFiles for items it still saw - it never noticed
+    one had dropped out."""
+
+    async def test_item_missing_from_scan_is_removed(self):
+        file = SimpleNamespace(id=1, collection_id=10, source_id="rk-1")
+        db = _StaleCollectionFakeDB(rows=[(file, 100)], remaining_counts=[0])
+
+        removed = await sync._remove_stale_collection_files(
+            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+            seen_source_ids=set(),  # nothing seen this run - rk-1 is gone
+        )
+
+        self.assertEqual(removed, {100})
+        self.assertEqual(db.deleted_files, [file])
+        self.assertEqual(len(db.deleted_collections), 1)
+
+    async def test_item_still_in_scan_is_kept(self):
+        file = SimpleNamespace(id=1, collection_id=10, source_id="rk-1")
+        db = _StaleCollectionFakeDB(rows=[(file, 100)], remaining_counts=[])
+
+        removed = await sync._remove_stale_collection_files(
+            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+            seen_source_ids={"rk-1"},
+        )
+
+        self.assertEqual(removed, set())
+        self.assertEqual(db.deleted_files, [])
+        self.assertEqual(db.deleted_collections, [])
+
+    async def test_multi_source_item_keeps_collection_alive(self):
+        # Same media collected from both Plex and Jellyfin - losing it from
+        # Plex should drop the Plex CollectionFile but not the Collection
+        # itself, since Jellyfin still backs it.
+        file = SimpleNamespace(id=1, collection_id=10, source_id="rk-1")
+        db = _StaleCollectionFakeDB(rows=[(file, 100)], remaining_counts=[1])
+
+        removed = await sync._remove_stale_collection_files(
+            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+            seen_source_ids=set(),
+        )
+
+        self.assertEqual(removed, set())
+        self.assertEqual(db.deleted_files, [file])
+        self.assertEqual(db.deleted_collections, [])
+
+    async def test_refuses_to_prune_when_majority_of_collection_vanished(self):
+        # 12 existing files, only 2 still seen this run. A real deletion this
+        # large is vanishingly rare - this shape is what a bad/partial scan
+        # (transient API hiccup, stale library-selection filter) looks like,
+        # and the circuit breaker must refuse rather than guess (see #139
+        # follow-up: don't repeat the #135 duplicate-watch-events blunder,
+        # this time in a destructive direction).
+        rows = [
+            (SimpleNamespace(id=i, collection_id=i, source_id=f"rk-{i}"), 100 + i)
+            for i in range(12)
+        ]
+        seen = {"rk-0", "rk-1"}
+        db = _StaleCollectionFakeDB(rows=rows, remaining_counts=[])
+
+        removed = await sync._remove_stale_collection_files(
+            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+            seen_source_ids=seen,
+        )
+
+        self.assertEqual(removed, set())
+        self.assertEqual(db.deleted_files, [])
+        self.assertEqual(db.deleted_collections, [])
+
+    async def test_prunes_normally_when_only_a_minority_is_gone(self):
+        # 12 existing files, 10 still seen - losing 2 real items is exactly
+        # what the fix is for, and shouldn't trip the circuit breaker.
+        rows = [
+            (SimpleNamespace(id=i, collection_id=i, source_id=f"rk-{i}"), 100 + i)
+            for i in range(12)
+        ]
+        seen = {f"rk-{i}" for i in range(2, 12)}
+        db = _StaleCollectionFakeDB(rows=rows, remaining_counts=[0, 0])
+
+        removed = await sync._remove_stale_collection_files(
+            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+            seen_source_ids=seen,
+        )
+
+        self.assertEqual(removed, {100, 101})
+        self.assertEqual(len(db.deleted_files), 2)
+
+    async def test_small_collections_are_exempt_from_the_circuit_breaker(self):
+        # Below the minimum-existing threshold, even losing everything is
+        # allowed through - a user with 3 items who deletes all 3 shouldn't
+        # be silently ignored just because the sample is small.
+        rows = [
+            (SimpleNamespace(id=i, collection_id=i, source_id=f"rk-{i}"), 100 + i)
+            for i in range(3)
+        ]
+        db = _StaleCollectionFakeDB(rows=rows, remaining_counts=[0, 0, 0])
+
+        removed = await sync._remove_stale_collection_files(
+            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+            seen_source_ids=set(),
+        )
+
+        self.assertEqual(removed, {100, 101, 102})
+
+
 if __name__ == "__main__":
     unittest.main()
