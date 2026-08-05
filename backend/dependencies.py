@@ -96,3 +96,26 @@ async def get_current_user_or_api_key(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+async def get_optional_user_or_api_key(
+    db: AsyncSession = Depends(get_db),
+    jwt_user: Optional[User] = Depends(get_optional_user),
+    api_key: Optional[str] = Query(None, description="Scrob API key, as an alternative to a JWT Bearer token"),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> Optional[User]:
+    """Same as get_current_user_or_api_key, but returns None instead of raising
+    when neither a JWT nor an API key is present — for endpoints that fall back
+    to treating the caller as an anonymous visitor rather than rejecting them
+    outright (e.g. a list/profile page that may itself be public)."""
+    if jwt_user:
+        return jwt_user
+
+    key = api_key or x_api_key
+    if key:
+        result = await db.execute(select(User).where(User.api_key == key))
+        user = result.scalar_one_or_none()
+        if user:
+            return user
+
+    return None

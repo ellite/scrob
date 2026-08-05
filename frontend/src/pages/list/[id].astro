@@ -14,15 +14,26 @@ let publicLists: PublicList[] = [];
 let error = "";
 
 try {
-  [list, { lists: otherLists }, { lists: publicLists }] = await Promise.all([
-    api.lists.get(Number(id), token!),
-    api.lists.getAll(token!),
-    api.lists.getPublic(token!),
-  ]);
-  otherLists = otherLists.filter((l) => l.id !== Number(id));
-  publicLists = publicLists.filter((l) => l.username !== user?.username);
+  list = await api.lists.get(Number(id), token);
+  // "Other lists to add to" and "browse other public lists" are logged-in-only
+  // features (sidebar actions), an anonymous viewer just sees this one list.
+  if (token) {
+    const [{ lists: allLists }, { lists: pubLists }] = await Promise.all([
+      api.lists.getAll(token),
+      api.lists.getPublic(token),
+    ]);
+    otherLists = allLists.filter((l) => l.id !== Number(id));
+    publicLists = pubLists.filter((l) => l.username !== user?.username);
+  }
 } catch (e: unknown) {
-  error = e instanceof Error ? e.message : String(e);
+  const message = e instanceof Error ? e.message : String(e);
+  if (message.includes("403")) {
+    error = "This list is private.";
+  } else if (message.includes("404")) {
+    error = "List not found.";
+  } else {
+    error = message;
+  }
 }
 
 if (!list && !error) {

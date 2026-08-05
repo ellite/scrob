@@ -8,6 +8,7 @@ interface Props {
 }
 
 const { item } = Astro.props;
+const { user } = Astro.locals;
 
 const isPerson = item.type === "person";
 const isCollection = item.type === "collection";
@@ -44,7 +45,7 @@ const posterPath = tmdbImageUrl(
   "w500"
 );
 
-const showActionBar = !isPerson && !isCollection;
+const showActionBar = !isPerson && !isCollection && !!user;
 const watched = item.watched ?? false;
 const inLists = item.in_lists ?? [];
 const collectionPct = item.collection_pct ?? (item.in_library ? 100 : 0);

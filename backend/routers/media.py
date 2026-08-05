@@ -5001,7 +5001,7 @@ from jose import jwt, JWTError
 from core.security import ALGORITHM
 from core.config import settings
 
-async def verify_image_token(request: Request) -> int:
+async def verify_image_token(request: Request, db: AsyncSession = Depends(get_db)) -> int | None:
     credentials_exception = HTTPException(
         status_code=401,
         detail="Could not validate credentials",
@@ -5020,6 +5020,12 @@ async def verify_image_token(request: Request) -> int:
                 token = urllib.parse.unquote(match.group(1))
 
     if not token:
+        # Poster/backdrop images carry no per-user data (just a TMDB path), so
+        # once the admin opts into anonymous profile viewing, letting those
+        # pages load images without a session is safe too.
+        gs = await _get_global_settings(db)
+        if gs and gs.allow_public_profiles:
+            return None
         raise credentials_exception
 
     try:

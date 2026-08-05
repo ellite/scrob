@@ -266,6 +266,18 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           </div>
         </div>
 
+        <!-- Privacy -->
+        <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <label class="flex items-center justify-between gap-3 cursor-pointer">
+            <div>
+              <span class="block text-sm font-semibold text-zinc-200">Allow public profiles &amp; lists without login</span>
+              <span class="block text-xs text-zinc-500 mt-0.5">Lets anyone view a user's profile page or an individual list without signing in, as long as its privacy is set to Public.</span>
+            </div>
+            <input type="checkbox" name="allow_public_profiles" id="allow_public_profiles" value="true" class="sr-only peer" checked={globalSettings.allow_public_profiles ?? false} />
+            <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
+          </label>
+        </div>
+
         <div class="pt-2">
           <button type="submit" id="save-settings-btn"
             class="w-full sm:w-auto bg-zinc-100 text-zinc-950 font-bold px-8 py-3 rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50">
@@ -827,6 +839,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     body['sonarr_season_folder']      = fd.get('sonarr_season_folder') === 'true';
     body['radarr_require_approval']   = fd.get('radarr_require_approval') === 'true';
     body['sonarr_require_approval']   = fd.get('sonarr_require_approval') === 'true';
+    body['allow_public_profiles']     = fd.get('allow_public_profiles') === 'true';
     const radarrTags = fd.getAll('radarr_tags').map(v => parseInt(v as string)).filter(n => !isNaN(n));
     body['radarr_tags'] = radarrTags.length ? radarrTags : null;
     const sonarrTags = fd.getAll('sonarr_tags').map(v => parseInt(v as string)).filter(n => !isNaN(n));

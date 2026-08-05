@@ -123,30 +123,36 @@ const bottomNavItem = (active: boolean) =>
             <img src={logo.src} alt="Scrob Logo" width="32" height="32" loading="eager" class="w-7 h-7 md:w-8 md:h-8 object-contain group-hover:scale-105 transition-transform" />
             <span>Scrob</span>
           </a>
-          <div class="hidden md:flex items-center gap-6 text-sm">
-            <a href="/movies" class={navLink(activeMovies)}>Movies</a>
-            <a href="/shows" class={navLink(activeShows)}>Shows</a>
-            <a href="/lists" class={navLink(activeLists)}>Lists</a>
-            <a href="/history" class={navLink(activeHistory)}>History</a>
-          </div>
-          <!-- Desktop search -->
-          <form action="/search" method="GET" class="relative hidden md:block">
-            <input
-              id="desktop-search-input"
-              type="text"
-              name="q"
-              placeholder="Search movies & shows..."
-              class="bg-zinc-900 border border-zinc-800 rounded-full px-4 py-2 w-64 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-700 focus:border-zinc-700 transition-all placeholder:text-zinc-400"
-            />
-            <kbd class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-sans pointer-events-none border border-zinc-800 rounded px-1.5 py-0.5 bg-zinc-950">/</kbd>
-          </form>
+          {user && (
+            <div class="hidden md:flex items-center gap-6 text-sm">
+              <a href="/movies" class={navLink(activeMovies)}>Movies</a>
+              <a href="/shows" class={navLink(activeShows)}>Shows</a>
+              <a href="/lists" class={navLink(activeLists)}>Lists</a>
+              <a href="/history" class={navLink(activeHistory)}>History</a>
+            </div>
+          )}
+          {user && (
+            <!-- Desktop search -->
+            <form action="/search" method="GET" class="relative hidden md:block">
+              <input
+                id="desktop-search-input"
+                type="text"
+                name="q"
+                placeholder="Search movies & shows..."
+                class="bg-zinc-900 border border-zinc-800 rounded-full px-4 py-2 w-64 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-700 focus:border-zinc-700 transition-all placeholder:text-zinc-400"
+              />
+              <kbd class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-sans pointer-events-none border border-zinc-800 rounded px-1.5 py-0.5 bg-zinc-950">/</kbd>
+            </form>
+          )}
         </div>
         <!-- Right: mobile search icon + theme + user -->
         <div class="flex items-center gap-2">
-          <!-- Mobile search icon -->
-          <button id="mobile-search-open" class="md:hidden p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors" aria-label="Search">
-            <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          </button>
+          {user && (
+            <!-- Mobile search icon -->
+            <button id="mobile-search-open" class="md:hidden p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors" aria-label="Search">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            </button>
+          )}
           <!-- Theme toggle -->
           <button id="theme-toggle" class="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-all hover:scale-110 active:scale-95" aria-label="Toggle Theme">
             <span id="sun-icon">
@@ -195,27 +201,29 @@ const bottomNavItem = (active: boolean) =>
               </div>
             </div>
           ) : (
-            <a href="/login" class="text-zinc-400 hover:text-zinc-100 transition text-sm">Login</a>
+            <a href="/login" class="text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 transition-colors px-4 py-3 rounded-xl">Login</a>
           )}
         </div>
       </div>
 
-      <!-- Mobile search bar (hidden by default, shown when search icon tapped) -->
-      <div id="nav-search" class="hidden items-center gap-2 safe-area-top">
-        <button id="mobile-search-close" class="p-2 text-zinc-400 hover:text-zinc-100 transition-colors shrink-0" aria-label="Close search">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-        </button>
-        <form action="/search" method="GET" class="flex-1 flex items-center gap-2">
-          <input
-            id="mobile-search-input"
-            type="text"
-            name="q"
-            placeholder="Search movies & shows..."
-            class="flex-1 bg-zinc-900 border border-zinc-800 rounded-full px-4 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-zinc-500"
-          />
-          <button type="submit" class="self-stretch px-4 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-full transition-colors shrink-0">Go</button>
-        </form>
-      </div>
+      {user && (
+        <!-- Mobile search bar (hidden by default, shown when search icon tapped) -->
+        <div id="nav-search" class="hidden items-center gap-2 safe-area-top">
+          <button id="mobile-search-close" class="p-2 text-zinc-400 hover:text-zinc-100 transition-colors shrink-0" aria-label="Close search">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+          <form action="/search" method="GET" class="flex-1 flex items-center gap-2">
+            <input
+              id="mobile-search-input"
+              type="text"
+              name="q"
+              placeholder="Search movies & shows..."
+              class="flex-1 bg-zinc-900 border border-zinc-800 rounded-full px-4 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-zinc-500"
+            />
+            <button type="submit" class="self-stretch px-4 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-full transition-colors shrink-0">Go</button>
+          </form>
+        </div>
+      )}
     </nav>
   )}
 
@@ -230,7 +238,7 @@ const bottomNavItem = (active: boolean) =>
   </main>
 
   <!-- Mobile bottom nav -->
-  {!hideNav && (
+  {!hideNav && user && (
     <nav id="bottom-nav" class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-zinc-900 border-t border-zinc-800 flex items-stretch safe-area-bottom">
       <a href="/" class={bottomNavItem(activeHome)}>
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
@@ -448,10 +456,10 @@ const bottomNavItem = (active: boolean) =>
         const desktopInput = document.getElementById('desktop-search-input') as HTMLInputElement | null;
         if (desktopInput && getComputedStyle(desktopInput).display !== 'none') {
           desktopInput.focus();
-        } else {
+        } else if (navSearch) {
           navDefault?.classList.add('hidden');
-          navSearch?.classList.remove('hidden');
-          navSearch?.classList.add('flex');
+          navSearch.classList.remove('hidden');
+          navSearch.classList.add('flex');
           mobileSearchInput?.focus();
         }
       }

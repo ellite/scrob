@@ -14,7 +14,7 @@ from db import get_db, AsyncSessionLocal
 from core import tmdb as tmdb_client
 from core.translations import upsert_media_translation, upsert_show_translation
 
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
 from models.users import User
 from models.profile import UserProfileData, PrivacyLevel
 from models.events import WatchEvent
@@ -25,10 +25,21 @@ from models.show import Show as ShowModel
 from models.comments import Comment as CommentModel
 from models.lists import List as ListModel, ListItem
 from models.follows import Follow
+from models.global_settings import GlobalSettings
 from core.config import settings
 import schemas
 
 router = APIRouter()
+
+
+@router.get("/public-access-status")
+async def get_public_access_status(db: AsyncSession = Depends(get_db)):
+    """Unauthenticated: whether the admin allows viewing public profiles without
+    being logged in. Read by the frontend's auth middleware to decide whether an
+    anonymous request to a profile page should be let through."""
+    result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
+    gs = result.scalar_one_or_none()
+    return {"allow_public_profiles": bool(gs and gs.allow_public_profiles)}
 
 
 async def _check_profile_access(user_id: int, current_user, db: AsyncSession):
@@ -61,6 +72,19 @@ async def _check_profile_access(user_id: int, current_user, db: AsyncSession):
 
     if not (is_owner or is_admin or privacy == PrivacyLevel.public or is_mutual_follow):
         raise HTTPException(status_code=403, detail="This profile is private")
+
+    # A request with no valid session (no JWT, or an API key that doesn't match
+    # any user) reaches here as current_user=None and only gets this far because
+    # privacy is public. Gate that specific case on the admin's global toggle too,
+    # server-side, rather than trusting the frontend's page-level gate alone,
+    # since that gate lives in middleware and can be bypassed by any request
+    # carrying an api_key query param (even an invalid one), which the proxy
+    # treats as "public route" before ever checking this setting.
+    if not current_user and privacy == PrivacyLevel.public:
+        gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
+        gs = gs_result.scalar_one_or_none()
+        if not (gs and gs.allow_public_profiles):
+            raise HTTPException(status_code=403, detail="This profile is private")
 
     return user, profile
 
@@ -343,7 +367,13 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/avatar/{user_id}")
-async def get_avatar(user_id: int, db: AsyncSession = Depends(get_db)):
+async def get_avatar(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
+):
+    await _check_profile_access(user_id, current_user, db)
+
     result = await db.execute(select(UserProfileData).where(UserProfileData.user_id == user_id))
     profile = result.scalar_one_or_none()
     if not profile or not profile.avatar_path:
@@ -362,8 +392,12 @@ async def get_avatar(user_id: int, db: AsyncSession = Depends(get_db)):
 async def search_users(
     q: str = "",
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
+    """Unlike viewing a single profile/list by ID, this is a directory-style
+    enumeration of every public/friends_only user matching a pattern, so it
+    stays behind real authentication regardless of the allow_public_profiles
+    toggle, there's no anonymous "browse all public users" use case to support."""
     if len(q.strip()) < 1:
         return {"results": []}
 
@@ -376,7 +410,7 @@ async def search_users(
         .where(
             (User.username.ilike(pattern)) | (UserProfileData.display_name.ilike(pattern)),
             (UserProfileData.privacy_level.in_([PrivacyLevel.public, PrivacyLevel.friends_only]))
-            | (User.id == (current_user.id if current_user else -1)),
+            | (User.id == current_user.id),
         )
         .order_by(User.username)
         .limit(24)
@@ -494,7 +528,7 @@ async def unfollow_user(
 async def get_public_profile(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_optional_user),
+    current_user: User = Depends(get_optional_user_or_api_key),
 ):
     user, profile = await _check_profile_access(user_id, current_user, db)
     is_owner = current_user and current_user.id == user_id
@@ -840,7 +874,7 @@ async def get_user_stats(
     since: Optional[DateType] = None,
     until: Optional[DateType] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_optional_user),
+    current_user: User = Depends(get_optional_user_or_api_key),
 ):
     await _check_profile_access(user_id, current_user, db)
 

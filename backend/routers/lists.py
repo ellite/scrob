@@ -12,14 +12,50 @@ from models.media import Media
 from models.base import MediaType, PrivacyLevel
 from models.show import Show as ShowModel
 from models.users import UserSettings
-from dependencies import get_current_user, get_current_user_or_api_key
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
 from models.users import User
+from models.follows import Follow
+from models.global_settings import GlobalSettings
 from routers.media import enrich_with_state
 from core.enrichment import is_unmapped_tvdb_episode
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _check_list_access(lst: ListModel, current_user: Optional[User], db: AsyncSession) -> None:
+    """Raises 403 if current_user (None for an anonymous viewer) can't view this list."""
+    is_owner = bool(current_user and current_user.id == lst.user_id)
+    is_admin = bool(current_user and current_user.role == "admin")
+
+    is_mutual_follow = False
+    if current_user and not is_owner and lst.privacy_level == PrivacyLevel.friends_only:
+        mutual_q = await db.execute(
+            select(func.count())
+            .select_from(Follow)
+            .where(Follow.follower_id == current_user.id, Follow.following_id == lst.user_id)
+            .where(
+                select(Follow.id)
+                .where(Follow.follower_id == lst.user_id, Follow.following_id == current_user.id)
+                .exists()
+            )
+        )
+        is_mutual_follow = mutual_q.scalar_one() > 0
+
+    if not (is_owner or is_admin or lst.privacy_level == PrivacyLevel.public or is_mutual_follow):
+        raise HTTPException(status_code=403, detail="This list is private")
+
+    # Same reasoning as _check_profile_access in routers/profile.py: a request
+    # with no valid session only gets this far because the list is public.
+    # Enforce the admin's global toggle here too, server-side, since the
+    # frontend's page-level gate can be bypassed by attaching any api_key query
+    # param (even an invalid one) to the proxied request.
+    if not current_user and lst.privacy_level == PrivacyLevel.public:
+        gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
+        gs = gs_result.scalar_one_or_none()
+        if not (gs and gs.allow_public_profiles):
+            raise HTTPException(status_code=403, detail="This list is private")
 
 
 class ListCreate(BaseModel):
@@ -168,7 +204,7 @@ async def create_list(
 async def get_list(
     list_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
 ):
     result = await db.execute(
         select(ListModel)
@@ -182,8 +218,7 @@ async def get_list(
     lst = result.scalar_one_or_none()
     if not lst:
         raise HTTPException(status_code=404, detail="List not found")
-    if lst.user_id != current_user.id and lst.privacy_level == PrivacyLevel.private:
-        raise HTTPException(status_code=403, detail="Access denied")
+    await _check_list_access(lst, current_user, db)
 
     items_sorted = sorted(lst.items, key=lambda x: (x.sort_order, x.added_at))
     formatted_items = [_format_item(i) for i in items_sorted]
@@ -215,12 +250,13 @@ async def get_list(
                     m["title"] = show.title
 
     media_dicts = [item["media"] for item in formatted_items]
-    await enrich_with_state(db, current_user.id, media_dicts)
+    if current_user:
+        await enrich_with_state(db, current_user.id, media_dicts)
 
     return {
         **_format_list(lst),
         "items": formatted_items,
-        "is_owner": lst.user_id == current_user.id,
+        "is_owner": bool(current_user and lst.user_id == current_user.id),
     }
 
 

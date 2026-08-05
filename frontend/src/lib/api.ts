@@ -319,6 +319,9 @@ export interface GlobalSettings {
   sonarr_season_folder: boolean;
   radarr_require_approval: boolean;
   sonarr_require_approval: boolean;
+  image_cache_enabled: boolean;
+  image_cache_limit_gb: number | null;
+  allow_public_profiles: boolean;
 }
 
 export interface MediaRequestItem {
@@ -1262,7 +1265,7 @@ export const api = {
       get<{ lists: PublicList[] }>("/lists/public", undefined, token),
     create: (body: { name: string; description?: string; privacy_level?: PrivacyLevel }, token: string) =>
       post<UserList>("/lists", body, token),
-    get: (id: number, token: string) =>
+    get: (id: number, token?: string) =>
       get<ListDetail>(`/lists/${id}`, undefined, token),
     update: (id: number, body: { name?: string; description?: string; privacy_level?: PrivacyLevel }, token: string) =>
       patch<UserList>(`/lists/${id}`, body, token),
@@ -1302,6 +1305,8 @@ export const api = {
       get<UserPreferences>("/profile/me", undefined, token),
     getPublic: (userId: number, token?: string) =>
       get<PublicProfile>(`/profile/${userId}`, undefined, token),
+    publicAccessStatus: () =>
+      get<{ allow_public_profiles: boolean }>("/profile/public-access-status"),
     update: (body: Partial<UserPreferences>, token: string) =>
       patch<UserPreferences>("/profile/me", body, token),
     uploadAvatar: (formData: FormData, token: string) =>
