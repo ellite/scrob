@@ -98,6 +98,11 @@ async def get_episodes(library_id: str, url: str, token: str, user_id: str) -> l
             "ParentId": library_id,
             "IncludeItemTypes": "Episode",
             "Recursive": True,
+            # Jellyfin returns virtual records for missing episodes unless they
+            # are explicitly excluded. They have no local media file and must
+            # never be imported into a user's collection.
+            "ExcludeLocationTypes": "Virtual",
+            "IsMissing": False,
             "Fields": "ProviderIds,MediaStreams,Overview,Genres,CommunityRating,RunTimeTicks,PremiereDate,UserData",
             "Limit": page_size,
             "StartIndex": start,
