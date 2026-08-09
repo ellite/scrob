@@ -27,6 +27,7 @@ from core.enrichment import enrich_media
 from core.rewatch import record_rewatch_progress, get_active_rewatch
 from models.rewatch import RewatchProgress
 from core import tmdb
+from core import external_ids
 from core import trakt as trakt_client
 from core import simkl as simkl_client
 from core import mdblist as mdblist_client
@@ -1445,33 +1446,25 @@ async def find_or_create_media_plex(data: dict, db: AsyncSession, api_key: str =
     if data["media_type"] == "episode" and not series_tmdb_id:
         # 1. Try grandparent TVDB/IMDb
         if data.get("grandparent_tvdb_id"):
-            try:
-                res = await tmdb.find_by_external_id(data["grandparent_tvdb_id"], "tvdb_id", api_key=api_key)
-                if res.get("tv_results"):
-                    series_tmdb_id = res["tv_results"][0]["id"]
-            except Exception: pass
+            series_tmdb_id = await external_ids.resolve_one(
+                external_ids.TVDB, data["grandparent_tvdb_id"], external_ids.TV, api_key
+            )
 
         if not series_tmdb_id and data.get("grandparent_imdb_id"):
-            try:
-                res = await tmdb.find_by_external_id(data["grandparent_imdb_id"], "imdb_id", api_key=api_key)
-                if res.get("tv_results"):
-                    series_tmdb_id = res["tv_results"][0]["id"]
-            except Exception: pass
+            series_tmdb_id = await external_ids.resolve_one(
+                external_ids.IMDB, data["grandparent_imdb_id"], external_ids.TV, api_key
+            )
 
         # 2. Try episode identifiers (TMDB Find returns show context)
         if not series_tmdb_id and data.get("tvdb_id"):
-            try:
-                res = await tmdb.find_by_external_id(data["tvdb_id"], "tvdb_id", api_key=api_key)
-                if res.get("tv_episode_results"):
-                    series_tmdb_id = res["tv_episode_results"][0].get("show_id")
-            except Exception: pass
+            series_tmdb_id = await external_ids.resolve_one(
+                external_ids.TVDB, data["tvdb_id"], external_ids.TV_EPISODE_SHOW, api_key
+            )
 
         if not series_tmdb_id and data.get("imdb_id"):
-            try:
-                res = await tmdb.find_by_external_id(data["imdb_id"], "imdb_id", api_key=api_key)
-                if res.get("tv_episode_results"):
-                    series_tmdb_id = res["tv_episode_results"][0].get("show_id")
-            except Exception: pass
+            series_tmdb_id = await external_ids.resolve_one(
+                external_ids.IMDB, data["imdb_id"], external_ids.TV_EPISODE_SHOW, api_key
+            )
 
         # 3. Fetch grandparent show from Plex to extract its TMDB GUID
         #    (needed when grandparentGuid is a plex://show/xxx internal ID)
@@ -1503,13 +1496,11 @@ async def find_or_create_media_plex(data: dict, db: AsyncSession, api_key: str =
                             gid = g.get("id", "")
                             tvdb_m = re.search(r'(?:^tvdb|thetvdb(?:\.com)?)://(\d+)', gid, re.IGNORECASE)
                             if tvdb_m:
-                                try:
-                                    res = await tmdb.find_by_external_id(tvdb_m.group(1), "tvdb_id", api_key=api_key)
-                                    if res.get("tv_results"):
-                                        series_tmdb_id = res["tv_results"][0]["id"]
-                                        break
-                                except Exception:
-                                    pass
+                                series_tmdb_id = await external_ids.resolve_one(
+                                    external_ids.TVDB, tvdb_m.group(1), external_ids.TV, api_key
+                                )
+                                if series_tmdb_id:
+                                    break
             except Exception:
                 pass
 
@@ -2163,21 +2154,21 @@ async def find_or_create_media_kodi(data: dict, db: AsyncSession, api_key: str =
     series_tmdb_id: Optional[int] = None
 
     if data["media_type"] == "episode":
+        # NOTE: these read the series bucket ("tv") even though Kodi's
+        # item.uniqueid on an episode is episode-level, where the Plex path
+        # uses TV_EPISODE_SHOW for the same kind of id. That looks wrong, but
+        # it is long-standing behaviour with no test coverage, so it is
+        # preserved verbatim here rather than changed as a side effect of
+        # this refactor. Worth revisiting on its own.
         if data.get("tvdb_id"):
-            try:
-                res = await tmdb.find_by_external_id(data["tvdb_id"], "tvdb_id", api_key=api_key)
-                if res.get("tv_results"):
-                    series_tmdb_id = res["tv_results"][0]["id"]
-            except Exception:
-                pass
+            series_tmdb_id = await external_ids.resolve_one(
+                external_ids.TVDB, data["tvdb_id"], external_ids.TV, api_key
+            )
 
         if not series_tmdb_id and data.get("imdb_id"):
-            try:
-                res = await tmdb.find_by_external_id(data["imdb_id"], "imdb_id", api_key=api_key)
-                if res.get("tv_results"):
-                    series_tmdb_id = res["tv_results"][0]["id"]
-            except Exception:
-                pass
+            series_tmdb_id = await external_ids.resolve_one(
+                external_ids.IMDB, data["imdb_id"], external_ids.TV, api_key
+            )
 
         if not series_tmdb_id and data.get("series_name"):
             local = await db.execute(select(Show).where(Show.title.ilike(data["series_name"])))

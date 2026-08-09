@@ -451,8 +451,16 @@ class PlexSeriesResolutionLadderTests(IsolatedAsyncioTestCase):
     """find_or_create_media_plex walks several identifiers to establish the
     parent show. These pin that ladder down before it is refactored."""
 
+    def setUp(self) -> None:
+        webhooks.external_ids.reset_memo()
+
     async def _run(self, data, find_response=None, find_side_effect=None):
-        """Returns (series_tmdb_id passed to _find_or_create_show, find calls)."""
+        """Returns (series_tmdb_id passed to _find_or_create_show, find calls).
+
+        Resolution runs through core.external_ids for real, with its storage
+        stubbed out (cold cache, no writes), so TMDB stays the observable and
+        these assertions keep testing the ladder end to end.
+        """
         episode = SimpleNamespace(
             media_type=webhooks.MediaType.episode, show_id=None, id=1, tmdb_id=62085
         )
@@ -463,7 +471,9 @@ class PlexSeriesResolutionLadderTests(IsolatedAsyncioTestCase):
             return SimpleNamespace(id=7)
 
         find = AsyncMock(return_value=find_response or {}, side_effect=find_side_effect)
-        with patch.object(webhooks.tmdb, "find_by_external_id", find), \
+        with patch.object(webhooks.external_ids, "_load", AsyncMock(return_value={})), \
+             patch.object(webhooks.external_ids, "_store", AsyncMock()), \
+             patch.object(webhooks.external_ids.tmdb, "find_by_external_id", find), \
              patch.object(webhooks, "_find_or_create_show", fake_find_or_create_show), \
              patch.object(webhooks, "enrich_media", AsyncMock()):
             await webhooks.find_or_create_media_plex(data, _LadderDB([episode]), "key")
@@ -535,7 +545,9 @@ class PlexSeriesResolutionLadderTests(IsolatedAsyncioTestCase):
         """Plex sometimes puts a movie's TMDB id on an episode it cannot match."""
         data = _episode_payload(season_number=None, episode_number=None)
         find = AsyncMock(return_value={})
-        with patch.object(webhooks.tmdb, "find_by_external_id", find), \
+        with patch.object(webhooks.external_ids, "_load", AsyncMock(return_value={})), \
+             patch.object(webhooks.external_ids, "_store", AsyncMock()), \
+             patch.object(webhooks.external_ids.tmdb, "find_by_external_id", find), \
              patch.object(webhooks.tmdb, "search_shows", AsyncMock(return_value={"results": []})):
             got = await webhooks.find_or_create_media_plex(data, _LadderDB([]), "key")
         self.assertIsNone(got)
