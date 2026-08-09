@@ -405,3 +405,138 @@ class EpisodeForProgressTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _LadderDB:
+    """Returns a queued result per execute() call. find_or_create_media_plex
+    queries CollectionFile first (when plex_rating_key is set) and then Media
+    by tmdb_id."""
+
+    def __init__(self, results):
+        self._results = list(results)
+
+    async def execute(self, stmt):
+        value = self._results.pop(0) if self._results else None
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: value))
+
+    def add(self, obj):
+        pass
+
+    async def flush(self):
+        pass
+
+
+def _episode_payload(**overrides):
+    data = {
+        "media_type": "episode",
+        "title": "Cat's in the Bag...",
+        "tmdb_id": "62085",
+        "season_number": 1,
+        "episode_number": 2,
+        "grandparent_title": "Breaking Bad",
+        "plex_rating_key": None,
+        "grandparent_tmdb_id": None,
+        "grandparent_tvdb_id": None,
+        "grandparent_imdb_id": None,
+        "tvdb_id": None,
+        "imdb_id": None,
+        "grandparent_rating_key": None,
+        "year": None,
+    }
+    data.update(overrides)
+    return data
+
+
+class PlexSeriesResolutionLadderTests(IsolatedAsyncioTestCase):
+    """find_or_create_media_plex walks several identifiers to establish the
+    parent show. These pin that ladder down before it is refactored."""
+
+    async def _run(self, data, find_response=None, find_side_effect=None):
+        """Returns (series_tmdb_id passed to _find_or_create_show, find calls)."""
+        episode = SimpleNamespace(
+            media_type=webhooks.MediaType.episode, show_id=None, id=1, tmdb_id=62085
+        )
+        seen = {}
+
+        async def fake_find_or_create_show(db, series_tmdb_id, api_key):
+            seen["series_tmdb_id"] = series_tmdb_id
+            return SimpleNamespace(id=7)
+
+        find = AsyncMock(return_value=find_response or {}, side_effect=find_side_effect)
+        with patch.object(webhooks.tmdb, "find_by_external_id", find), \
+             patch.object(webhooks, "_find_or_create_show", fake_find_or_create_show), \
+             patch.object(webhooks, "enrich_media", AsyncMock()):
+            await webhooks.find_or_create_media_plex(data, _LadderDB([episode]), "key")
+        return seen.get("series_tmdb_id"), find
+
+    async def test_grandparent_tvdb_id_resolves_via_tv_results(self) -> None:
+        got, find = await self._run(
+            _episode_payload(grandparent_tvdb_id="81189"),
+            find_response={"tv_results": [{"id": 1396}]},
+        )
+        self.assertEqual(got, 1396)
+        self.assertEqual(find.await_args.args, ("81189", "tvdb_id"))
+
+    async def test_grandparent_imdb_id_is_tried_when_tvdb_is_absent(self) -> None:
+        got, find = await self._run(
+            _episode_payload(grandparent_imdb_id="tt0903747"),
+            find_response={"tv_results": [{"id": 1396}]},
+        )
+        self.assertEqual(got, 1396)
+        self.assertEqual(find.await_args.args, ("tt0903747", "imdb_id"))
+
+    async def test_episode_tvdb_id_resolves_the_parent_via_show_id(self) -> None:
+        """The episode-level rungs read tv_episode_results[0].show_id — the
+        SHOW's id, not the episode's."""
+        got, find = await self._run(
+            _episode_payload(tvdb_id="349232"),
+            find_response={"tv_episode_results": [{"id": 62085, "show_id": 1396}]},
+        )
+        self.assertEqual(got, 1396)
+
+    async def test_episode_imdb_id_resolves_the_parent_via_show_id(self) -> None:
+        got, find = await self._run(
+            _episode_payload(imdb_id="tt0959621"),
+            find_response={"tv_episode_results": [{"id": 62085, "show_id": 1396}]},
+        )
+        self.assertEqual(got, 1396)
+
+    async def test_rungs_are_tried_in_order_and_stop_at_the_first_hit(self) -> None:
+        got, find = await self._run(
+            _episode_payload(grandparent_tvdb_id="81189", grandparent_imdb_id="tt0903747",
+                             tvdb_id="349232", imdb_id="tt0959621"),
+            find_response={"tv_results": [{"id": 1396}]},
+        )
+        self.assertEqual(got, 1396)
+        self.assertEqual(find.await_count, 1)  # stopped after grandparent tvdb
+
+    async def test_a_failing_lookup_falls_through_to_the_next_rung(self) -> None:
+        calls = []
+
+        async def flaky(external_id, source, api_key=None):
+            calls.append((external_id, source))
+            if source == "tvdb_id":
+                raise RuntimeError("TMDB down")
+            return {"tv_results": [{"id": 1396}]}
+
+        got, _ = await self._run(
+            _episode_payload(grandparent_tvdb_id="81189", grandparent_imdb_id="tt0903747"),
+            find_side_effect=flaky,
+        )
+        self.assertEqual(got, 1396)
+        self.assertEqual(calls, [("81189", "tvdb_id"), ("tt0903747", "imdb_id")])
+
+    async def test_grandparent_tmdb_id_short_circuits_the_whole_ladder(self) -> None:
+        got, find = await self._run(_episode_payload(grandparent_tmdb_id="1396"))
+        self.assertEqual(got, 1396)
+        find.assert_not_awaited()
+
+    async def test_unresolvable_episode_discards_the_plex_supplied_tmdb_id(self) -> None:
+        """Plex sometimes puts a movie's TMDB id on an episode it cannot match."""
+        data = _episode_payload(season_number=None, episode_number=None)
+        find = AsyncMock(return_value={})
+        with patch.object(webhooks.tmdb, "find_by_external_id", find), \
+             patch.object(webhooks.tmdb, "search_shows", AsyncMock(return_value={"results": []})):
+            got = await webhooks.find_or_create_media_plex(data, _LadderDB([]), "key")
+        self.assertIsNone(got)
+        self.assertIsNone(data["tmdb_id"])
