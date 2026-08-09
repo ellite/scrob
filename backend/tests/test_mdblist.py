@@ -177,9 +177,15 @@ class MDBListNormalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_episode_identity(entry), (1396, 3, 2, "Caballo sin Nombre"))
 
     async def test_show_imdb_id_resolves_to_tmdb_once(self) -> None:
+        from core import external_ids
+
+        external_ids.reset_memo()
         find = AsyncMock(return_value={"tv_results": [{"id": 1396}]})
-        cache: dict[tuple[str, str], int | None] = {}
-        with patch("core.tmdb.find_by_external_id", find):
+        cache: dict[tuple[str, str, str], int | None] = {}
+        # Cold durable cache, writes discarded — so TMDB stays the observable.
+        with patch.object(external_ids, "_load", AsyncMock(return_value={})), \
+             patch.object(external_ids, "_store", AsyncMock()), \
+             patch("core.tmdb.find_by_external_id", find):
             first = await _resolve_external_tmdb_id(
                 {"ids": {"imdb": "tt0903747"}},
                 "tv",
@@ -195,6 +201,30 @@ class MDBListNormalizationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual((first, second), (1396, 1396))
         find.assert_awaited_once_with("tt0903747", "imdb_id", api_key="tmdb-token")
+
+    async def test_a_missing_imdb_id_still_tries_tvdb_on_the_cached_path(self) -> None:
+        """The per-run cache used to short-circuit to None on an IMDb miss,
+        so whether tvdb was tried depended on whether imdb had been looked up
+        before."""
+        from core import external_ids
+
+        external_ids.reset_memo()
+        cache: dict[tuple[str, str, str], int | None] = {
+            (external_ids.IMDB, "tt0903747", external_ids.TV): None,
+        }
+        resolve_one = AsyncMock(return_value=1396)
+        with patch.object(external_ids, "resolve_one", resolve_one):
+            got = await _resolve_external_tmdb_id(
+                {"ids": {"imdb": "tt0903747", "tvdb": 81189}},
+                "tv",
+                "tmdb-token",
+                cache,
+            )
+
+        self.assertEqual(got, 1396)
+        resolve_one.assert_awaited_once_with(
+            external_ids.TVDB, 81189, external_ids.TV, "tmdb-token"
+        )
 
     def test_payload_item_nests_episode_under_parent_show(self) -> None:
         """Regression test: an episode's own TMDB id is a completely different

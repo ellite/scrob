@@ -12,6 +12,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import mdblist as mdblist_client
+from core import external_ids
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode
 from core.rewatch import record_rewatch_progress
 from db import engine, get_db
@@ -82,43 +83,40 @@ async def _resolve_external_tmdb_id(
     data: dict[str, Any],
     media_type: str,
     api_key: str | None,
-    cache: dict[tuple[str, str], int | None],
+    cache: dict[tuple[str, str, str], int | None],
 ) -> int | None:
+    """Resolve an MDBList entry to a TMDB id, preferring a direct tmdb id.
+
+    `cache` is a per-run dict in front of core.external_ids, which saves a
+    database round trip per entry on a large import. The durable cache lives
+    in external_ids; this one just avoids re-asking it within a single run.
+    """
     direct_id = _tmdb_id(data)
     if direct_id:
         return direct_id
 
     ids = data.get("ids")
     ids = ids if isinstance(ids, dict) else {}
-    from core import tmdb
+    kind = external_ids.MOVIE if media_type == "movie" else external_ids.TV
 
-    for provider, external_source in (("imdb", "imdb_id"), ("tvdb", "tvdb_id")):
+    for provider, external_source in (("imdb", external_ids.IMDB), ("tvdb", external_ids.TVDB)):
         external_id = ids.get(provider) or data.get(f"{provider}_id")
         if external_id is None:
             continue
-        cache_key = (external_source, str(external_id))
+        cache_key = (external_source, str(external_id), kind)
         if cache_key in cache:
-            return cache[cache_key]
-        try:
-            result = await tmdb.find_by_external_id(
-                str(external_id),
-                external_source,
-                api_key=api_key,
+            resolved = cache[cache_key]
+        else:
+            resolved = await external_ids.resolve_one(
+                external_source, external_id, kind, api_key
             )
-            result_key = "movie_results" if media_type == "movie" else "tv_results"
-            matches = result.get(result_key) or []
-            resolved = _integer(matches[0].get("id")) if matches else None
-        except Exception as exc:
-            logger.warning(
-                "Could not resolve MDBList %s=%s through TMDB: %s",
-                provider,
-                external_id,
-                exc,
-            )
-            resolved = None
-        cache[cache_key] = resolved
+            cache[cache_key] = resolved
         if resolved:
             return resolved
+        # A miss falls through to the next provider. This previously returned
+        # None immediately when the miss came from the cache, while an
+        # uncached miss fell through — so whether tvdb got tried depended on
+        # lookup order.
     return None
 
 
@@ -186,7 +184,7 @@ async def _resolve_media(
     kind: str,
     entry: dict[str, Any],
     api_key: str | None,
-    external_cache: dict[tuple[str, str], int | None],
+    external_cache: dict[tuple[str, str, str], int | None],
 ) -> Media | None:
     data = _entry_data(kind, entry)
     title = str(data.get("title") or data.get("name") or "")
@@ -390,7 +388,7 @@ async def _import_watched(
     user_id: int,
     payload: dict[str, Any],
     api_key: str | None,
-    external_cache: dict[tuple[str, str], int | None],
+    external_cache: dict[tuple[str, str, str], int | None],
     stats: dict[str, int],
 ) -> set[int]:
     existing_result = await db.execute(
@@ -445,7 +443,7 @@ async def _import_ratings(
     user_id: int,
     payload: dict[str, Any],
     api_key: str | None,
-    external_cache: dict[tuple[str, str], int | None],
+    external_cache: dict[tuple[str, str, str], int | None],
     stats: dict[str, int],
 ) -> RatingChanges:
     ratings_result = await db.execute(
@@ -535,7 +533,7 @@ async def _import_watchlist(
     user_id: int,
     payload: dict[str, Any],
     api_key: str | None,
-    external_cache: dict[tuple[str, str], int | None],
+    external_cache: dict[tuple[str, str, str], int | None],
     stats: dict[str, int],
 ) -> None:
     list_result = await db.execute(
@@ -645,7 +643,7 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
             }
             new_watched: set[int] = set()
             new_ratings: RatingChanges = {}
-            external_cache: dict[tuple[str, str], int | None] = {}
+            external_cache: dict[tuple[str, str, str], int | None] = {}
 
             if "watched" in snapshots:
                 new_watched = await _import_watched(
