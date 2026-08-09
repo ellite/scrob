@@ -86,6 +86,53 @@ _MEDIA_BROWSER_ITEM_SOURCES = (
 )
 
 
+async def _prepass_external_ids(items, get_external_id, set_tmdb_id, source, media_kind, api_key):
+    """Resolve a library scan's external ids to TMDB ids in one cached batch.
+
+    Library scans used to issue a /find per unmatched item on every sync,
+    inside the same fan-out as the title-search fallback. Hoisting the lookup
+    out means each id is fetched once ever, and the (fuzzy, uncacheable)
+    title search is left to handle only what genuinely has no external id.
+
+    Returns the items still unresolved, for the caller's title-search pass.
+    """
+    by_pair: dict[tuple, list] = {}
+    for item in items:
+        pair = external_ids.make_pair(source, get_external_id(item), media_kind)
+        if pair:
+            by_pair.setdefault(pair, []).append(item)
+    if not by_pair:
+        return list(items)
+
+    hits = await external_ids.resolve_many(by_pair.keys(), api_key)
+    resolved_items = set()
+    for pair, matched in by_pair.items():
+        tmdb_id = hits.get(pair)
+        if tmdb_id is None:
+            continue
+        for item in matched:
+            set_tmdb_id(item, tmdb_id)
+            resolved_items.add(id(item))
+    return [item for item in items if id(item) not in resolved_items]
+
+
+def _jellyfin_imdb_id(item: dict) -> str | None:
+    pids = item.get("ProviderIds") or {}
+    return pids.get("Imdb") or pids.get("imdb")
+
+
+def _set_jellyfin_tmdb_id(item: dict, tmdb_id: int) -> None:
+    item.setdefault("ProviderIds", {})["Tmdb"] = str(tmdb_id)
+
+
+def _plex_imdb_id(item: dict) -> str | None:
+    return plex.extract_imdb_id(item.get("Guid", []))
+
+
+def _set_plex_tmdb_id(item: dict, tmdb_id: int) -> None:
+    item.setdefault("Guid", []).append({"id": f"tmdb://{tmdb_id}"})
+
+
 async def _select_in_chunks(db: AsyncSession, stmt_builder, ids: list):
     """Execute a select statement using chunked IN clauses to avoid the 32767-parameter limit.
     stmt_builder(chunk) should return a SQLAlchemy select() statement for that chunk of IDs.
@@ -2249,19 +2296,19 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                     ]
                     if movies_without_tmdb:
                         print(f"    Resolving {len(movies_without_tmdb)} movies via IMDb/title fallback...")
+                        movies_without_tmdb = await _prepass_external_ids(
+                            movies_without_tmdb,
+                            _jellyfin_imdb_id,
+                            _set_jellyfin_tmdb_id,
+                            external_ids.IMDB,
+                            external_ids.MOVIE,
+                            tmdb_api_key,
+                        )
                         semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
 
                         async def resolve_movie_tmdb_id(m: dict) -> None:
                             async with semaphore:
-                                pids = m.get("ProviderIds", {})
-                                imdb_id = pids.get("Imdb") or pids.get("imdb")
                                 try:
-                                    if imdb_id:
-                                        res = await tmdb.find_by_external_id(imdb_id, "imdb_id", api_key=tmdb_api_key)
-                                        if res.get("movie_results"):
-                                            tid = res["movie_results"][0]["id"]
-                                            m.setdefault("ProviderIds", {})["Tmdb"] = str(tid)
-                                            return
                                     title = m.get("Name")
                                     year = m.get("ProductionYear")
                                     if title:
@@ -2456,19 +2503,19 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                     ]
                     if movies_without_tmdb:
                         print(f"    Resolving {len(movies_without_tmdb)} movies via IMDb/title fallback...")
+                        movies_without_tmdb = await _prepass_external_ids(
+                            movies_without_tmdb,
+                            _jellyfin_imdb_id,
+                            _set_jellyfin_tmdb_id,
+                            external_ids.IMDB,
+                            external_ids.MOVIE,
+                            tmdb_api_key,
+                        )
                         semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
 
                         async def resolve_emby_movie_tmdb_id(m: dict) -> None:
                             async with semaphore:
-                                pids = m.get("ProviderIds", {})
-                                imdb_id = pids.get("Imdb") or pids.get("imdb")
                                 try:
-                                    if imdb_id:
-                                        res = await tmdb.find_by_external_id(imdb_id, "imdb_id", api_key=tmdb_api_key)
-                                        if res.get("movie_results"):
-                                            tid = res["movie_results"][0]["id"]
-                                            m.setdefault("ProviderIds", {})["Tmdb"] = str(tid)
-                                            return
                                     title = m.get("Name")
                                     year = m.get("ProductionYear")
                                     if title:
@@ -2915,19 +2962,19 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                     ]
                     if movies_without_tmdb:
                         print(f"    Resolving {len(movies_without_tmdb)} movies via IMDb/title fallback...")
+                        movies_without_tmdb = await _prepass_external_ids(
+                            movies_without_tmdb,
+                            _plex_imdb_id,
+                            _set_plex_tmdb_id,
+                            external_ids.IMDB,
+                            external_ids.MOVIE,
+                            tmdb_api_key,
+                        )
                         semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
 
                         async def resolve_movie_tmdb_id(m: dict) -> None:
                             async with semaphore:
-                                guids = m.get("Guid", [])
-                                imdb_id = plex.extract_imdb_id(guids)
                                 try:
-                                    if imdb_id:
-                                        res = await tmdb.find_by_external_id(imdb_id, "imdb_id", api_key=tmdb_api_key)
-                                        if res.get("movie_results"):
-                                            tid = res["movie_results"][0]["id"]
-                                            m.setdefault("Guid", []).append({"id": f"tmdb://{tid}"})
-                                            return
                                     title = m.get("title")
                                     year = m.get("year")
                                     if title:
@@ -2973,24 +3020,28 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
                     if shows_without_tmdb:
                         print(f"    Resolving {len(shows_without_tmdb)} shows via TVDB/IMDb fallback...")
+
+                        def _map_show(s: dict, tmdb_id: int) -> None:
+                            series_tmdb_map[s["ratingKey"]] = tmdb_id
+
+                        # TVDB first, then IMDb over only what is still
+                        # unresolved — same order and same call economics as
+                        # the per-item ladder this replaces.
+                        shows_without_tmdb = await _prepass_external_ids(
+                            shows_without_tmdb,
+                            lambda s: plex.extract_tvdb_id(plex.get_guids(s)),
+                            _map_show, external_ids.TVDB, external_ids.TV, tmdb_api_key,
+                        )
+                        shows_without_tmdb = await _prepass_external_ids(
+                            shows_without_tmdb,
+                            lambda s: plex.extract_imdb_id(plex.get_guids(s)),
+                            _map_show, external_ids.IMDB, external_ids.TV, tmdb_api_key,
+                        )
                         semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
 
                         async def resolve_show_tmdb_id(s: dict) -> None:
                             async with semaphore:
-                                guids = plex.get_guids(s)
-                                tvdb_id = plex.extract_tvdb_id(guids)
-                                imdb_id = plex.extract_imdb_id(guids)
                                 try:
-                                    if tvdb_id:
-                                        res = await tmdb.find_by_external_id(tvdb_id, "tvdb_id", api_key=tmdb_api_key)
-                                        if res.get("tv_results"):
-                                            series_tmdb_map[s["ratingKey"]] = res["tv_results"][0]["id"]
-                                            return
-                                    if imdb_id:
-                                        res = await tmdb.find_by_external_id(imdb_id, "imdb_id", api_key=tmdb_api_key)
-                                        if res.get("tv_results"):
-                                            series_tmdb_map[s["ratingKey"]] = res["tv_results"][0]["id"]
-                                            return
                                     title = s.get("title") or s.get("titleSort")
                                     if title:
                                         res = await tmdb.search_shows(title, api_key=tmdb_api_key)

@@ -561,3 +561,90 @@ class ContentIdResolutionTests(unittest.IsolatedAsyncioTestCase):
         ])
         self.assertEqual(result, {})
         self.assertNotIn("pairs", asked)
+
+
+class PrepassExternalIdsTests(unittest.IsolatedAsyncioTestCase):
+    """_prepass_external_ids hoists the external-id lookup out of the
+    per-item fan-out in the Jellyfin/Emby/Plex library scans."""
+
+    async def _run(self, items, get_id, set_id, hits, source=None, kind=None):
+        source = source or sync.external_ids.IMDB
+        kind = kind or sync.external_ids.MOVIE
+        asked = {}
+
+        async def fake_resolve_many(pairs, api_key):
+            asked["pairs"] = list(pairs)
+            return dict(hits)
+
+        with patch.object(sync.external_ids, "resolve_many", side_effect=fake_resolve_many):
+            remaining = await sync._prepass_external_ids(
+                items, get_id, set_id, source, kind, "key"
+            )
+        return remaining, asked.get("pairs", [])
+
+    async def test_jellyfin_items_get_their_tmdb_provider_id_set(self) -> None:
+        items = [{"ProviderIds": {"Imdb": "tt0111161"}, "Name": "Shawshank"}]
+        remaining, pairs = await self._run(
+            items, sync._jellyfin_imdb_id, sync._set_jellyfin_tmdb_id,
+            {("imdb_id", "tt0111161", "movie"): 278},
+        )
+        self.assertEqual(items[0]["ProviderIds"]["Tmdb"], "278")
+        self.assertEqual(remaining, [])
+        self.assertEqual(pairs, [("imdb_id", "tt0111161", "movie")])
+
+    async def test_plex_items_get_a_tmdb_guid_appended(self) -> None:
+        items = [{"Guid": [{"id": "imdb://tt0111161"}], "title": "Shawshank"}]
+        remaining, _ = await self._run(
+            items, sync._plex_imdb_id, sync._set_plex_tmdb_id,
+            {("imdb_id", "tt0111161", "movie"): 278},
+        )
+        self.assertIn({"id": "tmdb://278"}, items[0]["Guid"])
+        self.assertEqual(remaining, [])
+
+    async def test_unresolved_items_are_returned_for_the_title_search(self) -> None:
+        items = [
+            {"ProviderIds": {"Imdb": "tt0111161"}, "Name": "Shawshank"},
+            {"ProviderIds": {"Imdb": "tt0000000"}, "Name": "Nope"},
+            {"ProviderIds": {}, "Name": "No External Id"},
+        ]
+        remaining, _ = await self._run(
+            items, sync._jellyfin_imdb_id, sync._set_jellyfin_tmdb_id,
+            {("imdb_id", "tt0111161", "movie"): 278,
+             ("imdb_id", "tt0000000", "movie"): None},
+        )
+        self.assertEqual([i["Name"] for i in remaining], ["Nope", "No External Id"])
+
+    async def test_items_sharing_an_external_id_are_asked_for_once(self) -> None:
+        items = [
+            {"ProviderIds": {"Imdb": "tt0111161"}, "Name": "A"},
+            {"ProviderIds": {"Imdb": "tt0111161"}, "Name": "B"},
+        ]
+        remaining, pairs = await self._run(
+            items, sync._jellyfin_imdb_id, sync._set_jellyfin_tmdb_id,
+            {("imdb_id", "tt0111161", "movie"): 278},
+        )
+        self.assertEqual(pairs, [("imdb_id", "tt0111161", "movie")])
+        # ...but both items are updated
+        self.assertEqual([i["ProviderIds"]["Tmdb"] for i in items], ["278", "278"])
+        self.assertEqual(remaining, [])
+
+    async def test_no_usable_ids_short_circuits_without_calling_the_resolver(self) -> None:
+        items = [{"ProviderIds": {}, "Name": "A"}, {"ProviderIds": {"Imdb": "junk"}, "Name": "B"}]
+        remaining, pairs = await self._run(
+            items, sync._jellyfin_imdb_id, sync._set_jellyfin_tmdb_id, {},
+        )
+        self.assertEqual(remaining, items)
+        self.assertEqual(pairs, [])
+
+    async def test_duplicate_titles_are_not_conflated_by_value_equality(self) -> None:
+        """Two distinct dicts that compare equal must be tracked separately."""
+        items = [
+            {"ProviderIds": {"Imdb": "tt0111161"}, "Name": "Same"},
+            {"ProviderIds": {"Imdb": "tt0111161"}, "Name": "Same"},
+        ]
+        remaining, _ = await self._run(
+            items, sync._jellyfin_imdb_id, sync._set_jellyfin_tmdb_id,
+            {("imdb_id", "tt0111161", "movie"): 278},
+        )
+        self.assertEqual(remaining, [])
+        self.assertTrue(all(i["ProviderIds"].get("Tmdb") == "278" for i in items))
