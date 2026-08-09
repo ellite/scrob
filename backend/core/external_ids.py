@@ -32,10 +32,11 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Iterable, Sequence
 
-from sqlalchemy import and_, case, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from core import tmdb
+from core.config import settings
 from db import AsyncSessionLocal
 from models.external_id_mapping import ExternalIdMapping
 
@@ -61,7 +62,10 @@ _BUCKETS = {
 # (source, external_id, media_kind)
 Pair = tuple[str, str, str]
 
-CONCURRENCY = 5
+# This module now issues essentially all of scrob's /find traffic, so it has
+# to honour the same knob as the other TMDB fan-outs — otherwise raising
+# TMDB_CONCURRENCY would leave the phase that makes the most calls at 5.
+CONCURRENCY = settings.tmdb_concurrency
 
 # asyncpg caps a statement at 32767 bind parameters; 500 rows x 7 columns is
 # well under, and matches the batch size used elsewhere in the codebase.
@@ -167,13 +171,22 @@ async def _store(rows: list[dict]) -> None:
                 stmt.on_conflict_do_update(
                     constraint="uq_external_id_mappings_lookup",
                     set_={
-                        "tmdb_id": stmt.excluded.tmdb_id,
+                        # A negative must never overwrite a positive. /find
+                        # returns empty for titles TMDB has not indexed yet,
+                        # while record() writes ids taken from TMDB's own
+                        # /{type}/{id}/external_ids — so the two disagree
+                        # legitimately, and letting the empty answer win would
+                        # bury a correct mapping behind the negative backoff
+                        # for up to 30 days.
+                        "tmdb_id": func.coalesce(stmt.excluded.tmdb_id, ExternalIdMapping.tmdb_id),
                         "checked_at": stmt.excluded.checked_at,
-                        # Reset the backoff on a hit; deepen it on a repeat miss.
-                        # Computed server-side so concurrent syncs cannot lose
-                        # an increment.
+                        # Reset the backoff on a hit; deepen it on a repeat
+                        # miss; leave it alone when a miss lost to an existing
+                        # positive. Computed server-side so concurrent syncs
+                        # cannot lose an increment.
                         "miss_count": case(
                             (stmt.excluded.tmdb_id.isnot(None), 0),
+                            (ExternalIdMapping.tmdb_id.isnot(None), ExternalIdMapping.miss_count),
                             else_=ExternalIdMapping.miss_count + 1,
                         ),
                     },
@@ -208,13 +221,25 @@ async def _fetch(pairs: list[Pair], api_key: str | None) -> tuple[dict[Pair, int
                     resolutions[(source, external_id, kind)] = None
                 return
 
+        # Anything below must not raise either — resolve_many promises never to
+        # fail for an individual id, and callers rely on that to fall through to
+        # their own fallbacks rather than aborting a whole scan or 500ing a
+        # scrobble.
+        if not isinstance(payload, dict):
+            logger.warning(
+                "TMDB /find returned %s for %s=%s", type(payload).__name__, source, external_id
+            )
+            for kind in kinds:
+                resolutions[(source, external_id, kind)] = None
+            return
+
         for kind, (bucket, id_field) in _BUCKETS.items():
             matches = payload.get(bucket) or []
             tmdb_id = None
             if matches:
                 try:
                     tmdb_id = int(matches[0].get(id_field))
-                except (TypeError, ValueError):
+                except (AttributeError, IndexError, TypeError, ValueError):
                     tmdb_id = None
             if tmdb_id is not None:
                 # Record every non-empty bucket, even ones nobody asked about —
@@ -297,13 +322,16 @@ async def resolve_one(
 async def resolve_first(
     candidates: Sequence[tuple[str, str | int]], media_kind: str, api_key: str | None
 ) -> int | None:
-    """Try candidates in order, first hit wins — e.g. [(IMDB, ...), (TVDB, ...)]."""
-    pairs = [p for p in (make_pair(s, v, media_kind) for s, v in candidates) if p]
-    if not pairs:
-        return None
-    resolved = await resolve_many(pairs, api_key)
-    for pair in pairs:
-        if (tmdb_id := resolved.get(pair)) is not None:
+    """Try candidates in order, first hit wins — e.g. [(IMDB, ...), (TVDB, ...)].
+
+    Evaluated lazily and strictly in order: a caller whose IMDb id resolves
+    must not also pay for a TVDB lookup it will discard.
+    """
+    for source, value in candidates:
+        pair = make_pair(source, value, media_kind)
+        if pair is None:
+            continue
+        if (tmdb_id := (await resolve_many([pair], api_key)).get(pair)) is not None:
             return tmdb_id
     return None
 
@@ -317,12 +345,25 @@ async def record(
     pair = make_pair(source, external_id, media_kind)
     if pair is None or not tmdb_id:
         return
+    await record_many([(source, external_id, media_kind, tmdb_id)])
+
+
+async def record_many(entries: Iterable[tuple[str, str | int, str, int]]) -> None:
+    """Batch form of record(). Prefer this inside a fan-out: record() opens a
+    session and commits per call, which on a first push of a large library is
+    thousands of checkouts against a pool of 20."""
     now = datetime.utcnow()
-    await _store([{
-        "source": pair[0], "external_id": pair[1], "media_kind": pair[2],
-        "tmdb_id": int(tmdb_id), "miss_count": 0, "checked_at": now, "created_at": now,
-    }])
-    _memo_set(pair, int(tmdb_id))
+    rows = []
+    for source, external_id, media_kind, tmdb_id in entries:
+        pair = make_pair(source, external_id, media_kind)
+        if pair is None or not tmdb_id:
+            continue
+        rows.append({
+            "source": pair[0], "external_id": pair[1], "media_kind": pair[2],
+            "tmdb_id": int(tmdb_id), "miss_count": 0, "checked_at": now, "created_at": now,
+        })
+        _memo_set(pair, int(tmdb_id))
+    await _store(rows)
 
 
 async def tmdb_to_external(
@@ -338,11 +379,18 @@ async def tmdb_to_external(
     async with AsyncSessionLocal() as db:
         for i in range(0, len(ids), BATCH_SIZE):
             result = await db.execute(
-                select(ExternalIdMapping.tmdb_id, ExternalIdMapping.external_id).where(
+                select(ExternalIdMapping.tmdb_id, ExternalIdMapping.external_id)
+                .where(
                     ExternalIdMapping.source == source,
                     ExternalIdMapping.media_kind == media_kind,
                     ExternalIdMapping.tmdb_id.in_(ids[i : i + BATCH_SIZE]),
                 )
+                # The reverse direction is not unique — the migration seeds the
+                # same tmdb_id from two places without cross-checking them — and
+                # callers treat the answer as authoritative (it is written into
+                # tmdb_data and served to Sonarr as tvdbId). Order so the choice
+                # is at least deterministic and prefers the freshest row.
+                .order_by(ExternalIdMapping.checked_at.desc(), ExternalIdMapping.id.desc())
             )
             for tmdb_id, external_id in result.all():
                 out.setdefault(int(tmdb_id), external_id)

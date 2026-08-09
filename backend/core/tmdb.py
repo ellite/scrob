@@ -24,11 +24,22 @@ DEFAULT_CACHE_TTL = 1800  # 30 minutes — TMDB metadata/discovery results don't
 _ASYNC_CLIENT_CLS = httpx.AsyncClient
 
 _TIMEOUT = httpx.Timeout(30.0)
+# Sized from the concurrency setting, with headroom for the user-facing router
+# paths that run alongside a sync. A fixed ceiling below tmdb_concurrency would
+# invert the knob: excess coroutines would block on pool acquisition, and
+# PoolTimeout subclasses TimeoutException, so _get would back off 2/4/8s and
+# retry into the same saturated pool — making a raised setting *slower*.
+#
 # max_keepalive == max_connections so a released connection is never dropped
 # merely because the keepalive pool is full. The expiry is raised well above
 # httpx's 5s default because sync phases have multi-second gaps, and a 5s
 # expiry would hand every phase back the handshake this pooling removes.
-_LIMITS = httpx.Limits(max_connections=32, max_keepalive_connections=32, keepalive_expiry=60.0)
+_MAX_CONNECTIONS = max(32, settings.tmdb_concurrency * 2)
+_LIMITS = httpx.Limits(
+    max_connections=_MAX_CONNECTIONS,
+    max_keepalive_connections=_MAX_CONNECTIONS,
+    keepalive_expiry=60.0,
+)
 
 # Keyed by event loop: httpx binds its connection pool (and the anyio
 # primitives under it) to the loop that created it. A module-level singleton
@@ -146,6 +157,13 @@ async def _get(
             client = _get_client()
             r = await client.get(url, headers=headers or {}, params=params)
             if r.status_code == 429:
+                # Remember it: if every attempt is rate limited we fall out of
+                # the loop and `raise last_exc` — which was None, so exhausting
+                # the retries on 429s raised TypeError rather than something
+                # the callers' `except Exception` handlers are shaped for.
+                last_exc = httpx.HTTPStatusError(
+                    "TMDB rate limited after retries", request=r.request, response=r
+                )
                 wait = int(r.headers.get("Retry-After", 2 ** (attempt + 1)))
                 await asyncio.sleep(wait)
                 continue

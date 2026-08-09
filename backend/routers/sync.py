@@ -570,6 +570,10 @@ async def _ensure_nuvio_imdb_ids(
         return
 
     semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
+    # Collected across the fan-out and stored once — a per-item record() would
+    # be a session checkout and commit per entity, thousands of them on a first
+    # push, which is the very per-item cost this whole change removes.
+    learned: list[tuple[str, str | int, str, int]] = []
 
     async def fetch_imdb_id(target_type: str, tmdb_id: int, entity: Media | Show) -> None:
         async with semaphore:
@@ -587,16 +591,13 @@ async def _ensure_nuvio_imdb_ids(
         if not (imdb_id.startswith("tt") and imdb_id[2:].isdigit()):
             return
         _store_imdb_id(entity, imdb_id)
-        # Write back so the inbound path never has to resolve this id. The
+        # Feed the cache so the inbound path never has to resolve this id. The
         # tmdb_id is the one we just queried TMDB with, so it is authoritative
         # by construction.
         kind = external_ids.MOVIE if target_type == "movie" else external_ids.TV
-        try:
-            await external_ids.record(external_ids.IMDB, imdb_id, kind, tmdb_id)
-            if tvdb_id := payload.get("tvdb_id"):
-                await external_ids.record(external_ids.TVDB, tvdb_id, kind, tmdb_id)
-        except Exception as exc:
-            logger.warning("Could not cache external ids for TMDB %s: %s", tmdb_id, exc)
+        learned.append((external_ids.IMDB, imdb_id, kind, tmdb_id))
+        if tvdb_id := payload.get("tvdb_id"):
+            learned.append((external_ids.TVDB, tvdb_id, kind, tmdb_id))
 
     await asyncio.gather(
         *[
@@ -604,6 +605,10 @@ async def _ensure_nuvio_imdb_ids(
             for (target_type, tmdb_id), entity in targets.items()
         ]
     )
+    try:
+        await external_ids.record_many(learned)
+    except Exception as exc:
+        logger.warning("Could not cache outbound external ids: %s", exc)
     logger.info("Resolved %s outbound Nuvio IMDb identifiers through TMDB", len(targets))
 def _nuvio_library_content_id(media: Media, show: Show | None = None) -> str | None:
     return _nuvio_imdb_id(show or media)

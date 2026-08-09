@@ -205,3 +205,76 @@ class ResolveTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NegativeMustNotClobberPositiveTests(unittest.IsolatedAsyncioTestCase):
+    """The upsert used to write excluded.tmdb_id unconditionally, so an empty
+    /find result overwrote an id that record() had taken from TMDB's own
+    external_ids endpoint — and started the negative backoff, hiding the
+    correct mapping for up to 30 days."""
+
+    def setUp(self) -> None:
+        external_ids.reset_memo()
+
+    async def test_resolve_first_stops_at_the_first_hit(self) -> None:
+        """It used to hand every candidate to resolve_many, fetching a TVDB id
+        for a caller whose IMDb id had already resolved."""
+        asked = []
+
+        async def fake_resolve_many(pairs, api_key):
+            pairs = list(pairs)
+            asked.extend(pairs)
+            return {p: (1396 if p[0] == "imdb_id" else 9999) for p in pairs}
+
+        with patch.object(external_ids, "resolve_many", side_effect=fake_resolve_many):
+            got = await external_ids.resolve_first(
+                [(external_ids.IMDB, "tt0903747"), (external_ids.TVDB, 81189)],
+                external_ids.TV, "key",
+            )
+
+        self.assertEqual(got, 1396)
+        self.assertEqual(asked, [("imdb_id", "tt0903747", "tv")])  # tvdb never asked
+
+
+class MalformedPayloadTests(unittest.IsolatedAsyncioTestCase):
+    """resolve_many promises never to raise for an individual id — callers rely
+    on that to fall through to their own fallbacks."""
+
+    def setUp(self) -> None:
+        external_ids.reset_memo()
+
+    async def test_a_non_dict_payload_does_not_escape(self) -> None:
+        pair = ("imdb_id", "tt0903747", "tv")
+        with patch.object(external_ids, "_load", AsyncMock(return_value={})), \
+             patch.object(external_ids, "_store", AsyncMock()), \
+             patch.object(external_ids.tmdb, "find_by_external_id",
+                          AsyncMock(return_value=["unexpected"])):
+            got = await external_ids.resolve_many([pair], "key")
+        self.assertEqual(got, {pair: None})
+
+    async def test_a_non_dict_match_entry_does_not_escape(self) -> None:
+        pair = ("imdb_id", "tt0903747", "tv")
+        with patch.object(external_ids, "_load", AsyncMock(return_value={})), \
+             patch.object(external_ids, "_store", AsyncMock()), \
+             patch.object(external_ids.tmdb, "find_by_external_id",
+                          AsyncMock(return_value={"tv_results": ["not-a-dict"]})):
+            got = await external_ids.resolve_many([pair], "key")
+        self.assertEqual(got, {pair: None})
+
+
+class RecordManyTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        external_ids.reset_memo()
+
+    async def test_a_batch_is_stored_in_one_call(self) -> None:
+        with patch.object(external_ids, "_store", AsyncMock()) as store:
+            await external_ids.record_many([
+                (external_ids.IMDB, "tt0903747", external_ids.TV, 1396),
+                (external_ids.TVDB, 81189, external_ids.TV, 1396),
+                (external_ids.IMDB, "garbage", external_ids.TV, 1),   # dropped
+                (external_ids.IMDB, "tt0111161", external_ids.MOVIE, 0),  # dropped
+            ])
+        store.assert_awaited_once()
+        rows = store.await_args.args[0]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["external_id"] for r in rows}, {"tt0903747", "81189"})

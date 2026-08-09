@@ -387,7 +387,7 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
         with patch("routers.sync.tmdb.get_external_ids", side_effect=external_ids) as get_external_ids, \
              patch("routers.sync.external_ids.tmdb_to_external",
                    new=AsyncMock(return_value={})) as reverse, \
-             patch("routers.sync.external_ids.record", new=AsyncMock()) as record:
+             patch("routers.sync.external_ids.record_many", new=AsyncMock()) as record_many:
             await _ensure_nuvio_imdb_ids(
                 [movie, episode],
                 {show.id: show},
@@ -397,10 +397,12 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_external_ids.await_count, 2)
         self.assertEqual(movie.tmdb_data["external_ids"]["imdb_id"], "tt0137523")
         self.assertEqual(show.tmdb_data["external_ids"]["imdb_id"], "tt14688458")
-        # The cache is consulted before TMDB, and fed with what TMDB returns.
+        # The cache is consulted before TMDB, and fed with what TMDB returns —
+        # in ONE batched write, not a session checkout per entity.
         self.assertEqual(reverse.await_count, 2)  # once per media kind
+        record_many.assert_awaited_once()
         self.assertEqual(
-            sorted(c.args[:3] for c in record.await_args_list),
+            sorted(e[:3] for e in record_many.await_args.args[0]),
             [("imdb_id", "tt0137523", "movie"), ("imdb_id", "tt14688458", "tv")],
         )
 
@@ -413,7 +415,7 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("routers.sync.tmdb.get_external_ids", new=AsyncMock()) as get_external_ids, \
              patch("routers.sync.external_ids.tmdb_to_external", side_effect=reverse), \
-             patch("routers.sync.external_ids.record", new=AsyncMock()):
+             patch("routers.sync.external_ids.record_many", new=AsyncMock()):
             await _ensure_nuvio_imdb_ids([movie], {}, "tmdb-token")
 
         self.assertEqual(movie.tmdb_data["external_ids"]["imdb_id"], "tt0137523")

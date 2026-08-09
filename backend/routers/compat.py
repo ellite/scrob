@@ -152,8 +152,10 @@ async def sonarr_list(
                 # the cache, skips this lookup entirely.
                 try:
                     await external_ids.record(external_ids.TVDB, tvdb, external_ids.TV, tmdb_id)
-                except Exception:
-                    log.warning("sonarr-compat: could not cache tvdb:%s -> tmdb:%s", tvdb, tmdb_id)
+                except Exception as e:
+                    log.warning(
+                        "sonarr-compat: could not cache tvdb:%s -> tmdb:%s: %s", tvdb, tmdb_id, e
+                    )
 
     result = []
     for idx, (media, tvdb_id, _tmdb_data) in enumerate(rows):
