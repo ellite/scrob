@@ -384,7 +384,10 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
                 }[(media_type, tmdb_id)]
             }
 
-        with patch("routers.sync.tmdb.get_external_ids", side_effect=external_ids) as get_external_ids:
+        with patch("routers.sync.tmdb.get_external_ids", side_effect=external_ids) as get_external_ids, \
+             patch("routers.sync.external_ids.tmdb_to_external",
+                   new=AsyncMock(return_value={})) as reverse, \
+             patch("routers.sync.external_ids.record", new=AsyncMock()) as record:
             await _ensure_nuvio_imdb_ids(
                 [movie, episode],
                 {show.id: show},
@@ -394,6 +397,27 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_external_ids.await_count, 2)
         self.assertEqual(movie.tmdb_data["external_ids"]["imdb_id"], "tt0137523")
         self.assertEqual(show.tmdb_data["external_ids"]["imdb_id"], "tt14688458")
+        # The cache is consulted before TMDB, and fed with what TMDB returns.
+        self.assertEqual(reverse.await_count, 2)  # once per media kind
+        self.assertEqual(
+            sorted(c.args[:3] for c in record.await_args_list),
+            [("imdb_id", "tt0137523", "movie"), ("imdb_id", "tt14688458", "tv")],
+        )
+
+    async def test_ids_already_in_the_shared_cache_skip_tmdb_entirely(self) -> None:
+        movie = Media(id=10, tmdb_id=550, media_type=MediaType.movie,
+                      title="Fight Club", tmdb_data={})
+
+        async def reverse(tmdb_ids, source, media_kind):
+            return {550: "tt0137523"} if media_kind == "movie" else {}
+
+        with patch("routers.sync.tmdb.get_external_ids", new=AsyncMock()) as get_external_ids, \
+             patch("routers.sync.external_ids.tmdb_to_external", side_effect=reverse), \
+             patch("routers.sync.external_ids.record", new=AsyncMock()):
+            await _ensure_nuvio_imdb_ids([movie], {}, "tmdb-token")
+
+        self.assertEqual(movie.tmdb_data["external_ids"]["imdb_id"], "tt0137523")
+        get_external_ids.assert_not_awaited()
 
 
     async def test_merge_library_preserves_unrelated_remote_items(self) -> None:

@@ -61,6 +61,8 @@ class MissingYearTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeSession(lst, [(_series_media(), None, None)])
 
         with patch("routers.media.get_user_tmdb_key", new=AsyncMock(return_value=None)), \
+             patch("core.external_ids.tmdb_to_external", new=AsyncMock(return_value={})), \
+             patch("core.external_ids.record", new=AsyncMock()), \
              patch("core.tmdb.get_external_ids", new=AsyncMock(return_value={})):
             result = await compat.sonarr_list(list_id=1, user=user, db=db)
 
@@ -106,12 +108,44 @@ class SonarrTvdbResolutionTests(unittest.IsolatedAsyncioTestCase):
             return {"tvdb_id": 393926} if tmdb_id == 93870 else {}
 
         with patch("routers.media.get_user_tmdb_key", new=AsyncMock(return_value="k")), \
+             patch("core.external_ids.tmdb_to_external", new=AsyncMock(return_value={})), \
+             patch("core.external_ids.record", new=AsyncMock()), \
              patch("core.tmdb.get_external_ids", side_effect=fake_external_ids) as m:
             result = await compat.sonarr_list(list_id=1, user=user, db=db)
 
         self.assertEqual(result[0]["tvdbId"], 393926)
         self.assertNotIn("tvdbId", result[1])
         self.assertEqual(m.await_count, 2)
+
+    async def test_shared_cache_short_circuits_the_tmdb_lookup(self) -> None:
+        user = SimpleNamespace(id=1)
+        lst = SimpleNamespace(user_id=1)
+        db = _FakeSession(lst, [(_series_media(tmdb_id=93870), None, None)])
+
+        with patch("routers.media.get_user_tmdb_key", new=AsyncMock(return_value="k")), \
+             patch("core.external_ids.tmdb_to_external",
+                   new=AsyncMock(return_value={93870: "393926"})), \
+             patch("core.external_ids.record", new=AsyncMock()), \
+             patch("core.tmdb.get_external_ids", new=AsyncMock()) as m:
+            result = await compat.sonarr_list(list_id=1, user=user, db=db)
+
+        self.assertEqual(result[0]["tvdbId"], 393926)
+        m.assert_not_awaited()
+
+    async def test_a_live_lookup_is_written_back_to_the_shared_cache(self) -> None:
+        user = SimpleNamespace(id=1)
+        lst = SimpleNamespace(user_id=1)
+        db = _FakeSession(lst, [(_series_media(tmdb_id=93870), None, None)])
+        record = AsyncMock()
+
+        with patch("routers.media.get_user_tmdb_key", new=AsyncMock(return_value="k")), \
+             patch("core.external_ids.tmdb_to_external", new=AsyncMock(return_value={})), \
+             patch("core.external_ids.record", record), \
+             patch("core.tmdb.get_external_ids",
+                   new=AsyncMock(return_value={"tvdb_id": 393926})):
+            await compat.sonarr_list(list_id=1, user=user, db=db)
+
+        record.assert_awaited_once_with("tvdb_id", 393926, "tv", 93870)
 
     async def test_tmdb_lookup_fan_out_is_capped_by_concurrency_limit(self) -> None:
         user = SimpleNamespace(id=1)
@@ -137,6 +171,8 @@ class SonarrTvdbResolutionTests(unittest.IsolatedAsyncioTestCase):
             return {"tvdb_id": tmdb_id}
 
         with patch("routers.media.get_user_tmdb_key", new=AsyncMock(return_value="k")), \
+             patch("core.external_ids.tmdb_to_external", new=AsyncMock(return_value={})), \
+             patch("core.external_ids.record", new=AsyncMock()), \
              patch("core.tmdb.get_external_ids", side_effect=fake_external_ids):
             result = await compat.sonarr_list(list_id=1, user=user, db=db)
 

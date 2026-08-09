@@ -115,24 +115,45 @@ async def sonarr_list(
             unresolved.append((idx, media.tmdb_id))
 
     if unresolved:
+        # Third: the shared external id cache, which any earlier sync or
+        # scrobble may already have populated for this show.
+        from core import external_ids
+
+        cached_reverse = await external_ids.tmdb_to_external(
+            [tmdb_id for _idx, tmdb_id in unresolved],
+            external_ids.TVDB,
+            external_ids.TV,
+        )
+        for idx, tmdb_id in list(unresolved):
+            if (tvdb := cached_reverse.get(tmdb_id)):
+                resolved[idx] = int(tvdb)
+        unresolved = [(i, t) for i, t in unresolved if i not in resolved]
+
+    if unresolved:
         from core import tmdb as tmdb_core
         from routers.media import get_user_tmdb_key
 
         tmdb_key = await get_user_tmdb_key(db, user.id)
         semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
 
-        async def _lookup(idx: int, tmdb_id: int) -> tuple[int, int | None]:
+        async def _lookup(idx: int, tmdb_id: int) -> tuple[int, int, int | None]:
             try:
                 async with semaphore:
                     ext = await tmdb_core.get_external_ids(tmdb_id, "tv", api_key=tmdb_key)
-                return idx, ext.get("tvdb_id")
+                return idx, tmdb_id, ext.get("tvdb_id")
             except Exception as e:
                 log.warning(f"sonarr-compat: TMDB external_ids lookup failed for tmdb:{tmdb_id}: {e}")
-                return idx, None
+                return idx, tmdb_id, None
 
-        for idx, tvdb in await asyncio.gather(*[_lookup(i, t) for i, t in unresolved]):
+        for idx, tmdb_id, tvdb in await asyncio.gather(*[_lookup(i, t) for i, t in unresolved]):
             if tvdb:
                 resolved[idx] = tvdb
+                # Write back so the next request, and every other consumer of
+                # the cache, skips this lookup entirely.
+                try:
+                    await external_ids.record(external_ids.TVDB, tvdb, external_ids.TV, tmdb_id)
+                except Exception:
+                    log.warning("sonarr-compat: could not cache tvdb:%s -> tmdb:%s", tvdb, tmdb_id)
 
     result = []
     for idx, (media, tvdb_id, _tmdb_data) in enumerate(rows):

@@ -544,12 +544,36 @@ async def _ensure_nuvio_imdb_ids(
     if not targets:
         return
 
+    def _store_imdb_id(entity: Media | Show, imdb_id: str) -> None:
+        tmdb_data = dict(entity.tmdb_data or {})
+        stored = dict(tmdb_data.get("external_ids") or {})
+        stored["imdb_id"] = imdb_id
+        tmdb_data["external_ids"] = stored
+        entity.tmdb_data = tmdb_data
+
+    # This is the inverse of what the inbound path resolves, and the same row
+    # answers both directions — so anything a pull or a scrobble already
+    # resolved is free here.
+    for kind, target_type in ((external_ids.MOVIE, "movie"), (external_ids.TV, "tv")):
+        pending = [tid for (ttype, tid) in targets if ttype == target_type]
+        if not pending:
+            continue
+        for tmdb_id, imdb_id in (
+            await external_ids.tmdb_to_external(pending, external_ids.IMDB, kind)
+        ).items():
+            entity = targets.pop((target_type, tmdb_id), None)
+            if entity is not None:
+                _store_imdb_id(entity, imdb_id)
+
+    if not targets:
+        return
+
     semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
 
     async def fetch_imdb_id(target_type: str, tmdb_id: int, entity: Media | Show) -> None:
         async with semaphore:
             try:
-                external_ids = await tmdb.get_external_ids(tmdb_id, target_type, api_key=api_key)
+                payload = await tmdb.get_external_ids(tmdb_id, target_type, api_key=api_key)
             except Exception as exc:
                 logger.warning(
                     "Failed to resolve outbound Nuvio IMDb ID for TMDB %s (%s): %s",
@@ -558,14 +582,20 @@ async def _ensure_nuvio_imdb_ids(
                     exc,
                 )
                 return
-        imdb_id = str(external_ids.get("imdb_id") or "").strip()
+        imdb_id = str(payload.get("imdb_id") or "").strip()
         if not (imdb_id.startswith("tt") and imdb_id[2:].isdigit()):
             return
-        tmdb_data = dict(entity.tmdb_data or {})
-        stored_external_ids = dict(tmdb_data.get("external_ids") or {})
-        stored_external_ids["imdb_id"] = imdb_id
-        tmdb_data["external_ids"] = stored_external_ids
-        entity.tmdb_data = tmdb_data
+        _store_imdb_id(entity, imdb_id)
+        # Write back so the inbound path never has to resolve this id. The
+        # tmdb_id is the one we just queried TMDB with, so it is authoritative
+        # by construction.
+        kind = external_ids.MOVIE if target_type == "movie" else external_ids.TV
+        try:
+            await external_ids.record(external_ids.IMDB, imdb_id, kind, tmdb_id)
+            if tvdb_id := payload.get("tvdb_id"):
+                await external_ids.record(external_ids.TVDB, tvdb_id, kind, tmdb_id)
+        except Exception as exc:
+            logger.warning("Could not cache external ids for TMDB %s: %s", tmdb_id, exc)
 
     await asyncio.gather(
         *[
