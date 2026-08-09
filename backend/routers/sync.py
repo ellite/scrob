@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from models.base import MediaType, CollectionSource
 from models.global_settings import GlobalSettings
-from core import jellyfin, emby, plex, nuvio, stremio, tmdb
+from core import jellyfin, emby, plex, nuvio, stremio, tmdb, external_ids
 import core.trakt as trakt_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode
 from core.image_cache import pre_cache_all_collected_bg
@@ -3276,7 +3276,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             await db.commit()
 
 
-def _parse_nuvio_tmdb_id(content_id: object) -> int | None:
+def _parse_content_id_tmdb_id(content_id: object) -> int | None:
     value = str(content_id or "")
     if not value.startswith("tmdb:"):
         return None
@@ -3286,66 +3286,57 @@ def _parse_nuvio_tmdb_id(content_id: object) -> int | None:
         return None
 
 
-async def _resolve_nuvio_tmdb_ids(
+async def _resolve_content_id_tmdb_ids(
     records: list[dict],
-    db: AsyncSession,
-    user_id: int,
     api_key: str,
-    source: CollectionSource = CollectionSource.nuvio,
 ) -> dict[str, int]:
-    content_types: dict[str, str] = {}
+    """Map Stremio-format content ids ("tt…" or "tmdb:…") to TMDB ids.
+
+    Shared by the Nuvio and Stremio connectors — both speak Stremio ids.
+
+    Resolution is delegated to core.external_ids, which caches globally and
+    permanently. This previously read back CollectionFile.source_id as an
+    ad-hoc cache, which had two defects: it only existed for users with
+    collection sync enabled (so watched-only users re-resolved their whole
+    library every sync), and for episodes it mapped the SHOW's IMDb id to the
+    EPISODE's TMDB id, because source_id carries the show id while the joined
+    media row is the episode. That wrong id then reached sync_shows_batch.
+    """
+    content_kinds: dict[str, str] = {}
     resolved: dict[str, int] = {}
     for record in records:
         content_id = str(record.get("content_id") or "").strip()
         if not content_id:
             continue
-        if tmdb_id := _parse_nuvio_tmdb_id(content_id):
+        if tmdb_id := _parse_content_id_tmdb_id(content_id):
             resolved[content_id] = tmdb_id
         elif re.fullmatch(r"tt\d+", content_id, flags=re.IGNORECASE):
-            content_types.setdefault(content_id, str(record.get("content_type") or "").lower())
-
-    unresolved = set(content_types) - set(resolved)
-    if unresolved:
-        existing_result = await db.execute(
-            select(CollectionFile.source_id, Media.tmdb_id)
-            .join(Collection, Collection.id == CollectionFile.collection_id)
-            .join(Media, Media.id == Collection.media_id)
-            .where(
-                Collection.user_id == user_id,
-                CollectionFile.source == source,
-                Media.tmdb_id.isnot(None),
+            content_kinds.setdefault(
+                content_id,
+                external_ids.MOVIE
+                if str(record.get("content_type") or "").lower() == "movie"
+                else external_ids.TV,
             )
-        )
-        for source_id, tmdb_id in existing_result.all():
-            parts = str(source_id).split(":")
-            if len(parts) >= 2 and parts[1] in unresolved:
-                resolved[parts[1]] = int(tmdb_id)
-        unresolved -= set(resolved)
 
-    semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
+    unresolved = {cid: kind for cid, kind in content_kinds.items() if cid not in resolved}
+    if not unresolved:
+        return resolved
 
-    async def resolve_imdb_id(content_id: str) -> None:
-        async with semaphore:
-            try:
-                result = await tmdb.find_by_external_id(content_id, "imdb_id", api_key=api_key)
-                result_key = "movie_results" if content_types[content_id] == "movie" else "tv_results"
-                matches = result.get(result_key) or []
-                if matches and matches[0].get("id") is not None:
-                    resolved[content_id] = int(matches[0]["id"])
-            except Exception as exc:
-                logger.warning(
-                    "Failed to resolve Nuvio IMDb ID %s through TMDB: %s",
-                    content_id,
-                    exc,
-                )
+    pairs = {
+        cid: pair
+        for cid, kind in unresolved.items()
+        if (pair := external_ids.make_pair(external_ids.IMDB, cid, kind))
+    }
+    hits = await external_ids.resolve_many(pairs.values(), api_key)
+    for content_id, pair in pairs.items():
+        if (tmdb_id := hits.get(pair)) is not None:
+            resolved[content_id] = tmdb_id
 
-    if unresolved:
-        await asyncio.gather(*(resolve_imdb_id(content_id) for content_id in sorted(unresolved)))
-        logger.info(
-            "Resolved %s/%s new Nuvio IMDb IDs through TMDB",
-            len(unresolved & set(resolved)),
-            len(unresolved),
-        )
+    logger.info(
+        "Resolved %s/%s content ids to TMDB ids",
+        sum(1 for cid in unresolved if cid in resolved),
+        len(unresolved),
+    )
     return resolved
 
 
@@ -3362,7 +3353,7 @@ def _normalize_nuvio_item(
     watched: bool = False,
     tmdb_id: int | None = None,
 ) -> tuple[MediaType, dict] | None:
-    tmdb_id = tmdb_id or _parse_nuvio_tmdb_id(record.get("content_id"))
+    tmdb_id = tmdb_id or _parse_content_id_tmdb_id(record.get("content_id"))
     if tmdb_id is None:
         return None
 
@@ -3694,12 +3685,7 @@ async def _run_nuvio_sync(
             )
 
             all_nuvio_records = [*library_records, *watched_records, *progress_records]
-            tmdb_ids = await _resolve_nuvio_tmdb_ids(
-                all_nuvio_records,
-                db,
-                user_id,
-                tmdb_api_key,
-            )
+            tmdb_ids = await _resolve_content_id_tmdb_ids(all_nuvio_records, tmdb_api_key)
             normalized_library = [
                 normalized
                 for record in library_records
@@ -3930,7 +3916,7 @@ async def _stremio_series_metadata(content_ids: set[str]) -> dict[str, dict]:
 
 def _stremio_valid_content_id(content_id: object) -> bool:
     value = str(content_id or "")
-    return bool(re.fullmatch(r"tt\d+", value, flags=re.IGNORECASE)) or _parse_nuvio_tmdb_id(value) is not None
+    return bool(re.fullmatch(r"tt\d+", value, flags=re.IGNORECASE)) or _parse_content_id_tmdb_id(value) is not None
 
 
 def _stremio_series_imdb_id(item: dict) -> str | None:
@@ -4207,13 +4193,7 @@ async def _run_stremio_sync(
                 progress_records = []
 
             all_records = [*library_records, *watched_records, *progress_records]
-            tmdb_ids = await _resolve_nuvio_tmdb_ids(
-                all_records,
-                db,
-                user_id,
-                tmdb_api_key,
-                source=CollectionSource.stremio,
-            )
+            tmdb_ids = await _resolve_content_id_tmdb_ids(all_records, tmdb_api_key)
             normalized_library = [
                 normalized
                 for record in library_records

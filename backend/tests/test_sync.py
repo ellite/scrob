@@ -487,3 +487,77 @@ class ExpandMultiEpisodeItemsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContentIdResolutionTests(unittest.IsolatedAsyncioTestCase):
+    """_resolve_content_id_tmdb_ids is shared by the Nuvio and Stremio pulls."""
+
+    async def _resolve(self, records, hits=None, api_key="tmdb-token"):
+        """Run the resolver with core.external_ids stubbed; returns
+        (result, the pairs it asked for)."""
+        asked = {}
+
+        async def fake_resolve_many(pairs, key):
+            asked["pairs"] = list(pairs)
+            asked["api_key"] = key
+            return dict(hits or {})
+
+        with patch.object(sync.external_ids, "resolve_many", side_effect=fake_resolve_many):
+            result = await sync._resolve_content_id_tmdb_ids(records, api_key)
+        return result, asked
+
+    async def test_tmdb_prefixed_ids_never_reach_the_resolver(self) -> None:
+        result, asked = await self._resolve(
+            [{"content_id": "tmdb:550", "content_type": "movie"}]
+        )
+        self.assertEqual(result, {"tmdb:550": 550})
+        self.assertNotIn("pairs", asked)  # resolve_many never called
+
+    async def test_movies_and_series_ask_for_the_right_kind(self) -> None:
+        _, asked = await self._resolve([
+            {"content_id": "tt0111161", "content_type": "movie"},
+            {"content_id": "tt0944947", "content_type": "series"},
+        ])
+        self.assertCountEqual(
+            asked["pairs"],
+            [("imdb_id", "tt0111161", "movie"), ("imdb_id", "tt0944947", "tv")],
+        )
+
+    async def test_repeated_content_ids_are_asked_for_once(self) -> None:
+        record = {"content_id": "tt0944947", "content_type": "series"}
+        _, asked = await self._resolve([record, dict(record), dict(record)])
+        self.assertEqual(asked["pairs"], [("imdb_id", "tt0944947", "tv")])
+
+    async def test_unresolved_ids_are_simply_absent(self) -> None:
+        result, _ = await self._resolve(
+            [{"content_id": "tt0000000", "content_type": "movie"}],
+            hits={("imdb_id", "tt0000000", "movie"): None},
+        )
+        self.assertEqual(result, {})
+
+    async def test_episode_records_resolve_the_show_not_the_episode(self) -> None:
+        """Regression: the old CollectionFile read-back keyed on the SHOW's
+        IMDb id but joined the EPISODE's media row, so it returned the
+        episode's TMDB id (62085) where the show's (1396) was required, and
+        fed that to sync_shows_batch."""
+        result, asked = await self._resolve(
+            [{
+                "content_id": "tt0903747",     # Breaking Bad, the SHOW
+                "content_type": "series",
+                "season": 1,
+                "episode": 2,                  # ... but this record is an episode
+            }],
+            hits={("imdb_id", "tt0903747", "tv"): 1396},
+        )
+        self.assertEqual(asked["pairs"], [("imdb_id", "tt0903747", "tv")])
+        self.assertEqual(result, {"tt0903747": 1396})
+        self.assertNotIn(62085, result.values())
+
+    async def test_blank_and_unsupported_ids_are_skipped(self) -> None:
+        result, asked = await self._resolve([
+            {"content_id": "", "content_type": "movie"},
+            {"content_id": None, "content_type": "movie"},
+            {"content_id": "imdb:tt0111161", "content_type": "movie"},
+        ])
+        self.assertEqual(result, {})
+        self.assertNotIn("pairs", asked)
