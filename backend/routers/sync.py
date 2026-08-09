@@ -72,6 +72,10 @@ _stremio_push_locks: dict[int, asyncio.Lock] = {}
 
 BATCH_SIZE = 500
 TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
+# Cinemeta (https://v3-cinemeta.strem.io) is a free, publicly donated Stremio
+# addon — deliberately throttled separately from TMDB so that tuning our TMDB
+# concurrency never silently increases load on somebody else's infrastructure.
+CINEMETA_CONCURRENCY = 5
 # asyncpg hard limit is 32767 parameters per query; stay well under it
 _MAX_IN_PARAMS = 30_000
 _MEDIA_BROWSER_ITEM_SOURCES = (
@@ -3905,7 +3909,8 @@ def _stremio_video_parts(video: dict) -> tuple[int, int] | None:
 
 
 async def _stremio_series_metadata(content_ids: set[str]) -> dict[str, dict]:
-    semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
+    # Cinemeta, not TMDB — see CINEMETA_CONCURRENCY.
+    semaphore = asyncio.Semaphore(CINEMETA_CONCURRENCY)
 
     async def fetch(content_id: str) -> tuple[str, dict | None]:
         try:
