@@ -1,0 +1,42 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      SECRET_KEY: test-secret
+      DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      # --frozen so an unlocked pyproject change fails here in seconds rather
+      # than in the release build, which uses the same flag.
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run tests
+        run: uv run --frozen pytest

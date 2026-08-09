@@ -585,6 +585,15 @@ uv run alembic upgrade head
 uv run uvicorn main:app --reload --port 7331
 ```
 
+### Tests
+
+```bash
+cd backend
+uv run pytest
+```
+
+The suite is mocked end to end and needs no database or network access.
+
 ### Frontend
 
 ```bash

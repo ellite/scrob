@@ -42,3 +42,17 @@ dependencies = [
     "pyotp>=2.9.0",
     "slowapi>=0.1.9",
 ]
+
+# Excluded from the runtime images: both Dockerfiles run `uv sync --frozen --no-dev`.
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# rootdir is backend/ (this file defines it), so "." puts backend/ on sys.path.
+# That is what lets the suite's bare imports (`from routers.sync import ...`)
+# resolve without having to cd into backend/ first.
+pythonpath = ["."]
+addopts = "-q"
