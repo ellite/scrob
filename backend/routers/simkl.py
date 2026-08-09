@@ -20,6 +20,7 @@ from core import simkl as simkl_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode
 from core.rewatch import record_rewatch_progress
 from db import get_db, engine
+from core.config import settings
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
 from models.events import WatchEvent
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-TMDB_CONCURRENCY = 10
+TMDB_CONCURRENCY = settings.tmdb_concurrency  # Max concurrent TMDB requests
 SIMKL_WATCHLIST_SLUG = "__simkl_watchlist__"
 SIMKL_PUSH_BATCH_SIZE = 50
 

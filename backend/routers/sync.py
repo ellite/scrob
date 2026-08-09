@@ -10,6 +10,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.dialects.postgresql import insert, JSONB
 
 from db import get_db, engine
+from core.config import settings
 from models.media import Media
 from models.show import Show
 from models.collection import Collection, CollectionFile
@@ -71,11 +72,11 @@ _sync_semaphore = asyncio.Semaphore(1)
 _stremio_push_locks: dict[int, asyncio.Lock] = {}
 
 BATCH_SIZE = 500
-TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
+TMDB_CONCURRENCY = settings.tmdb_concurrency  # Max concurrent TMDB requests
 # Cinemeta (https://v3-cinemeta.strem.io) is a free, publicly donated Stremio
 # addon — deliberately throttled separately from TMDB so that tuning our TMDB
 # concurrency never silently increases load on somebody else's infrastructure.
-CINEMETA_CONCURRENCY = 5
+CINEMETA_CONCURRENCY = settings.cinemeta_concurrency
 # asyncpg hard limit is 32767 parameters per query; stay well under it
 _MAX_IN_PARAMS = 30_000
 _MEDIA_BROWSER_ITEM_SOURCES = (

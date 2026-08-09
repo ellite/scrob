@@ -476,6 +476,14 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
+    # Release the pooled TMDB connections. A failure here must not turn a
+    # clean shutdown into a traceback.
+    from core import tmdb as _tmdb
+    try:
+        await _tmdb.aclose()
+    except Exception:
+        pass
+
 from core.config import settings
 
 # Rate limiter — keyed by client IP, in-memory storage (suitable for single-instance deploy).

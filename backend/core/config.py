@@ -1,9 +1,22 @@
 from pathlib import Path
 from typing import Optional
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # Max concurrent in-flight requests to TMDB. Their documented soft limit is
+    # around 50 req/s and _get already backs off on 429 + Retry-After. Lower it
+    # if TMDB starts throttling you; raise it if you are far from their servers
+    # and syncs crawl. ge=1 because Semaphore(0) would deadlock every sync
+    # silently rather than failing at startup.
+    tmdb_concurrency: int = Field(default=10, ge=1, le=64)
+
+    # Cinemeta (https://v3-cinemeta.strem.io) is a free, publicly donated
+    # Stremio addon. Kept separate from TMDB on purpose so that tuning our TMDB
+    # throughput can never increase load on somebody else's infrastructure.
+    cinemeta_concurrency: int = Field(default=5, ge=1, le=16)
+
     # Database — accept either a full URL or individual components
     database_url: Optional[str] = None
     postgres_user: Optional[str] = None

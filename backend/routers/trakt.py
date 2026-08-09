@@ -22,6 +22,7 @@ from core.enrichment import enrich_media, is_unmapped_tvdb_episode
 from core.trakt_export import MAX_TOTAL_SIZE, TraktExportData, parse_trakt_export
 from core.rewatch import record_rewatch_progress
 from db import get_db, engine
+from core.config import settings
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
 from models.collection import Collection
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-TMDB_CONCURRENCY = 10
+TMDB_CONCURRENCY = settings.tmdb_concurrency  # Max concurrent TMDB requests
 TRAKT_HISTORY_OVERLAP = timedelta(minutes=5)
 TRAKT_HISTORY_PUSH_BATCH_SIZE = 100
 

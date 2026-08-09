@@ -1,5 +1,7 @@
 import asyncio
 import time
+from collections import OrderedDict
+
 import httpx
 from core.config import settings
 
@@ -7,20 +9,79 @@ TMDB_BASE = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
 
 # Errors that are worth retrying (transient). 404/4xx are permanent — don't retry.
+# PoolTimeout subclasses TimeoutException, so a saturated pool is covered here.
 _RETRYABLE = (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError)
 
 DEFAULT_CACHE_TTL = 1800  # 30 minutes — TMDB metadata/discovery results don't need to be fresher than this
 
+# ── Pooled client ───────────────────────────────────────────────────────────
+# Captured at import, deliberately. Around 35 tests monkeypatch
+# httpx.AsyncClient *globally* — core.nuvio and friends do a plain
+# `import httpx`, so patch.object(nuvio.httpx, "AsyncClient", ...) rebinds the
+# attribute process-wide. Holding the real class here means a TMDB client can
+# never be built from another service's MockTransport and then memoised for
+# the rest of the session.
+_ASYNC_CLIENT_CLS = httpx.AsyncClient
+
+_TIMEOUT = httpx.Timeout(30.0)
+# max_keepalive == max_connections so a released connection is never dropped
+# merely because the keepalive pool is full. The expiry is raised well above
+# httpx's 5s default because sync phases have multi-second gaps, and a 5s
+# expiry would hand every phase back the handshake this pooling removes.
+_LIMITS = httpx.Limits(max_connections=32, max_keepalive_connections=32, keepalive_expiry=60.0)
+
+# Keyed by event loop: httpx binds its connection pool (and the anyio
+# primitives under it) to the loop that created it. A module-level singleton
+# would be adopted by the first IsolatedAsyncioTestCase's loop and then raise
+# "Event loop is closed" on every subsequent test. Production is a single
+# uvicorn process on one loop, so this holds exactly one entry there.
+#
+# A plain dict rather than WeakKeyDictionary: uvloop.Loop is a cdef class and
+# weak-reference support cannot be assumed.
+_clients: dict[asyncio.AbstractEventLoop, httpx.AsyncClient] = {}
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Return the pooled client bound to the running loop, creating if needed."""
+    loop = asyncio.get_running_loop()
+    client = _clients.get(loop)
+    if client is not None and not client.is_closed:
+        return client
+    # Drop entries whose loop is gone — every test method tears its loop down.
+    for stale in [lp for lp in _clients if lp is not loop and lp.is_closed()]:
+        _clients.pop(stale, None)
+    client = _ASYNC_CLIENT_CLS(timeout=_TIMEOUT, limits=_LIMITS)
+    _clients[loop] = client
+    return client
+
+
+async def aclose() -> None:
+    """Close pooled clients. Called from main.lifespan on shutdown."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    client = _clients.pop(loop, None) if loop is not None else None
+    _clients.clear()
+    if client is not None and not client.is_closed:
+        await client.aclose()
+
 
 class _TTLCache:
-    """Minimal bounded in-process cache: TTL expiry checked lazily on read, oldest
-    entry evicted on overflow (dict insertion order). No shared/multi-worker
+    """Minimal bounded in-process cache: TTL expiry checked lazily on read,
+    least-recently-used entry evicted on overflow. No shared/multi-worker
     guarantees — fine here since scrob runs a single uvicorn process; this just
     avoids re-hitting TMDB for identical requests within the TTL window, which is
-    what was actually making every click slow for users far from TMDB's servers."""
+    what was actually making every click slow for users far from TMDB's servers.
+
+    Eviction is LRU rather than insertion-order: a large sync streams thousands
+    of one-shot season/episode keys through this cache, and under FIFO those
+    evicted the repeatedly-read show entries just as fast. maxsize is kept
+    modest on purpose — entries are append_to_response payloads, so a few
+    thousand of them is already hundreds of megabytes on a NAS."""
 
     def __init__(self, maxsize: int = 2000):
-        self._store: dict[tuple, tuple[float, dict]] = {}
+        self._store: OrderedDict[tuple, tuple[float, dict]] = OrderedDict()
         self._maxsize = maxsize
 
     def get(self, key: tuple):
@@ -31,12 +92,14 @@ class _TTLCache:
         if time.monotonic() >= expires_at:
             del self._store[key]
             return None
+        self._store.move_to_end(key)
         return value
 
     def set(self, key: tuple, value: dict, ttl: float) -> None:
         if key not in self._store and len(self._store) >= self._maxsize:
-            self._store.pop(next(iter(self._store)))
+            self._store.popitem(last=False)
         self._store[key] = (time.monotonic() + ttl, value)
+        self._store.move_to_end(key)
 
 
 _cache = _TTLCache()
@@ -78,17 +141,19 @@ async def _get(
     last_exc: Exception = None
     for attempt in range(max_retries + 1):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-                r = await client.get(url, headers=headers or {}, params=params)
-                if r.status_code == 429:
-                    wait = int(r.headers.get("Retry-After", 2 ** (attempt + 1)))
-                    await asyncio.sleep(wait)
-                    continue
-                r.raise_for_status()
-                data = r.json()
-                if cache_key is not None:
-                    _cache.set(cache_key, data, cache_ttl)
-                return data
+            # Looked up inside the loop so a retry after a shutdown-close
+            # transparently rebuilds rather than raising "client is closed".
+            client = _get_client()
+            r = await client.get(url, headers=headers or {}, params=params)
+            if r.status_code == 429:
+                wait = int(r.headers.get("Retry-After", 2 ** (attempt + 1)))
+                await asyncio.sleep(wait)
+                continue
+            r.raise_for_status()
+            data = r.json()
+            if cache_key is not None:
+                _cache.set(cache_key, data, cache_ttl)
+            return data
         except _RETRYABLE as e:
             last_exc = e
             if attempt < max_retries:

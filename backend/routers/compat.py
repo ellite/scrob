@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from db import get_db
+from core.config import settings
+from core import external_ids
 from models.users import User
 from models.lists import List as UserList, ListItem
 from models.media import Media, MediaType
@@ -15,7 +17,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["compat"])
 
-TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
+TMDB_CONCURRENCY = settings.tmdb_concurrency  # Max concurrent TMDB requests
 
 
 async def _user_by_api_key(
@@ -117,8 +119,6 @@ async def sonarr_list(
     if unresolved:
         # Third: the shared external id cache, which any earlier sync or
         # scrobble may already have populated for this show.
-        from core import external_ids
-
         cached_reverse = await external_ids.tmdb_to_external(
             [tmdb_id for _idx, tmdb_id in unresolved],
             external_ids.TVDB,
