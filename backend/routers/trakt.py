@@ -292,6 +292,31 @@ async def _get_or_create_series_media(
     return media
 
 
+async def _get_or_create_person_media(db: AsyncSession, tmdb_id: int, name: str, api_key: str | None) -> Media | None:
+    result = await db.execute(
+        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.person)
+    )
+    media = result.scalars().first()
+    if media:
+        return media
+    from core import tmdb
+    try:
+        data = await tmdb.get_person(tmdb_id, api_key=api_key)
+        media = Media(
+            tmdb_id=tmdb_id,
+            media_type=MediaType.person,
+            title=data.get("name") or name or "Unknown",
+            poster_path=tmdb.poster_url(data.get("profile_path"), size="w185"),
+            overview=data.get("biography"),
+        )
+        db.add(media)
+        await db.flush()
+        return media
+    except Exception as exc:
+        logger.warning("Could not fetch person tmdb=%s: %s", tmdb_id, exc)
+        return None
+
+
 def _trakt_rated_at(value: str | None) -> datetime:
     if not value:
         return datetime.utcnow()
@@ -982,11 +1007,13 @@ async def _apply_trakt_import(
                 await db.flush()
                 stats["lists"] += 1
 
-            # Pre-load existing list item media_ids to avoid duplicates
+            # Pre-load existing list item keys to avoid duplicates. Keyed by
+            # (media_id, season_number) rather than just media_id, since a season
+            # list item shares its media_id with the whole show's entry.
             existing_items_result = await db.execute(
-                select(ListItem.media_id).where(ListItem.list_id == local_list.id)
+                select(ListItem.media_id, ListItem.season_number).where(ListItem.list_id == local_list.id)
             )
-            existing_item_media_ids: set[int] = {row[0] for row in existing_items_result}
+            existing_item_keys: set[tuple[int, int | None]] = {(row[0], row[1]) for row in existing_items_result}
 
             try:
                 items = await source.get_list_items(list_slug)
@@ -997,6 +1024,7 @@ async def _apply_trakt_import(
             for entry in items:
                 item_type = entry.get("type")
                 media: Media | None = None
+                season_number: int | None = None
                 try:
                     if item_type == "movie":
                         movie_data = entry.get("movie", {})
@@ -1011,32 +1039,43 @@ async def _apply_trakt_import(
                         if not tmdb_id:
                             continue
                         async with db.begin_nested():
-                            result2 = await db.execute(
-                                select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.series)
-                            )
-                            media = result2.scalar_one_or_none()
-                            if not media:
-                                from core import tmdb
-                                d = await tmdb.get_show(tmdb_id, api_key=api_key)
-                                media = Media(
-                                    tmdb_id=tmdb_id,
-                                    media_type=MediaType.series,
-                                    title=d.get("name") or show_data.get("title", ""),
-                                    poster_path=tmdb.poster_url(d.get("poster_path")),
-                                    backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-                                    release_date=d.get("first_air_date"),
-                                    tmdb_rating=d.get("vote_average"),
-                                    overview=d.get("overview"),
-                                    adult=d.get("adult", False),
+                            media = await _get_or_create_series_media(db, tmdb_id, show_data.get("title", ""), api_key)
+                    elif item_type == "season":
+                        show_data = entry.get("show", {})
+                        show_tmdb_id = show_data.get("ids", {}).get("tmdb")
+                        season_number = entry.get("season", {}).get("number")
+                        if not show_tmdb_id or season_number is None:
+                            continue
+                        async with db.begin_nested():
+                            media = await _get_or_create_series_media(db, show_tmdb_id, show_data.get("title", ""), api_key)
+                    elif item_type == "episode":
+                        show_data = entry.get("show", {})
+                        show_tmdb_id = show_data.get("ids", {}).get("tmdb")
+                        ep_data = entry.get("episode", {})
+                        ep_season = ep_data.get("season")
+                        ep_number = ep_data.get("number")
+                        if not show_tmdb_id or ep_season is None or ep_number is None:
+                            continue
+                        async with db.begin_nested():
+                            show = await _get_or_create_show(db, show_tmdb_id, show_data.get("title", ""), api_key)
+                            if show:
+                                media = await _get_or_create_episode_media(
+                                    db, show.id, show_tmdb_id, ep_season, ep_number, api_key
                                 )
-                                db.add(media)
-                                await db.flush()
+                    elif item_type == "person":
+                        person_data = entry.get("person", {})
+                        tmdb_id = person_data.get("ids", {}).get("tmdb")
+                        if not tmdb_id:
+                            continue
+                        async with db.begin_nested():
+                            media = await _get_or_create_person_media(db, tmdb_id, person_data.get("name", ""), api_key)
                     else:
                         continue
 
-                    if media and media.id not in existing_item_media_ids:
-                        db.add(ListItem(list_id=local_list.id, media_id=media.id))
-                        existing_item_media_ids.add(media.id)
+                    key = (media.id, season_number) if media else None
+                    if media and key not in existing_item_keys:
+                        db.add(ListItem(list_id=local_list.id, media_id=media.id, season_number=season_number))
+                        existing_item_keys.add(key)
                         stats["list_items"] += 1
                 except Exception as exc:
                     logger.warning("Error processing Trakt list item (%s): %s", item_type, exc)

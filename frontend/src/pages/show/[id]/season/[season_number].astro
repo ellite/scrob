@@ -142,7 +142,7 @@ const show = season?.show;
                 tmdbId={Number(id)}
                 mediaType="series"
                 watched={season.season_watched ?? false}
-                inLists={[]}
+                inLists={season.season_in_lists ?? []}
                 inLibrary={season.season_in_library ?? season.show_in_library ?? false}
                 collectionPct={season.season_collection_pct ?? season.show_collection_pct ?? 0}
                 watchPct={season.season_watch_pct ?? 0}
@@ -150,7 +150,7 @@ const show = season?.show;
                 seasonNumber={Number(season_number)}
                 isMonitored={season.show_is_monitored ?? false}
                 requestEnabled={false}
-                hideLists={true}
+                hideLists={false}
                 userRating={season.season_user_rating ?? null}
               />
             </div>

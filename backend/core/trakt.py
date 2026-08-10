@@ -629,6 +629,28 @@ async def remove_from_list(client_id: str, access_token: str, list_slug: str, me
         )
 
 
+async def add_season_to_list(client_id: str, access_token: str, list_slug: str, season_tmdb_id: int) -> None:
+    """Add a season to a Trakt list, keyed by the season's own TMDB id (distinct
+    from its parent show's TMDB id) - same body shape set_ratings_batch uses."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{TRAKT_BASE}/users/me/lists/{list_slug}/items",
+            json={"seasons": [{"ids": {"tmdb": season_tmdb_id}}]},
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
+
+
+async def remove_season_from_list(client_id: str, access_token: str, list_slug: str, season_tmdb_id: int) -> None:
+    """Remove a season from a Trakt list, keyed by the season's own TMDB id."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{TRAKT_BASE}/users/me/lists/{list_slug}/items/remove",
+            json={"seasons": [{"ids": {"tmdb": season_tmdb_id}}]},
+            headers=_headers(client_id, access_token),
+        )
+
+
 async def set_show_rating(
     client_id: str, access_token: str, tmdb_id: int, rating: float
 ) -> None:

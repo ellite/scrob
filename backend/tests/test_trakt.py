@@ -330,6 +330,29 @@ class TraktClientTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class TraktSeasonListTests(unittest.IsolatedAsyncioTestCase):
+    async def test_add_and_remove_season_from_list_use_season_tmdb_id(self) -> None:
+        requests: list[tuple[str, dict]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(200, json={"added": {}, "deleted": {}})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            trakt.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            await trakt.add_season_to_list("client-id", "access-token", "my-list", 3572)
+            await trakt.remove_season_from_list("client-id", "access-token", "my-list", 3572)
+
+        self.assertEqual(requests[0][0], "/users/me/lists/my-list/items")
+        self.assertEqual(requests[0][1], {"seasons": [{"ids": {"tmdb": 3572}}]})
+        self.assertEqual(requests[1][0], "/users/me/lists/my-list/items/remove")
+        self.assertEqual(requests[1][1], {"seasons": [{"ids": {"tmdb": 3572}}]})
+
+
 class _Result:
     def __init__(self, *, scalar=None, scalars=None, rows=None):
         self._scalar = scalar
@@ -1006,6 +1029,115 @@ class ApplyTraktImportEpisodeRatingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["ratings"], 1)
         self.assertEqual(stats["errors"], 0)
         self.assertEqual(stats["skipped"], 0)
+
+
+class TraktListImportSeasonEpisodePersonTests(unittest.IsolatedAsyncioTestCase):
+    async def test_list_import_no_longer_drops_season_episode_or_person_entries(self) -> None:
+        # Regression: the list-items loop used to have a blanket `else: continue`
+        # that silently dropped every entry that wasn't "movie" or "show" - so a
+        # Trakt list containing seasons (issue #142), episodes, or people imported
+        # incomplete. All four non-movie/show types must now come through.
+        session = _FakeSession(settings=None, watch_rows=[], media=[], shows=[])
+        source = SimpleNamespace(
+            get_watchlist=AsyncMock(return_value=[]),
+            get_user_lists=AsyncMock(return_value=[{"name": "My List", "ids": {"slug": "my-list"}}]),
+            get_list_items=AsyncMock(return_value=[
+                {"type": "movie", "movie": {"title": "Movie One", "ids": {"tmdb": 101}}},
+                {"type": "show", "show": {"title": "Show One", "ids": {"tmdb": 201}}},
+                {"type": "season", "show": {"title": "Show Two", "ids": {"tmdb": 202}}, "season": {"number": 3}},
+                {"type": "episode", "show": {"title": "Show Three", "ids": {"tmdb": 203}}, "episode": {"season": 1, "number": 2}},
+                {"type": "person", "person": {"name": "Person One", "ids": {"tmdb": 301}}},
+            ]),
+        )
+
+        with (
+            patch("core.tmdb.get_movie", AsyncMock(return_value={"title": "Movie One", "vote_average": 7})),
+            patch("core.tmdb.get_show", AsyncMock(return_value={"name": "A Show"})),
+            patch("core.tmdb.get_person", AsyncMock(return_value={"name": "Person One"})),
+            patch("core.tmdb.get_season", AsyncMock(return_value={"episodes": [{"episode_number": 2, "id": 999, "name": "Ep 2"}]})),
+        ):
+            stats, *_ = await trakt_router._apply_trakt_import(
+                db=session,
+                job_id=1,
+                user_id=1,
+                source=source,
+                api_key=None,
+                sync_watched=False,
+                sync_ratings=False,
+                sync_lists=True,
+                split_watchlist=False,
+                history_start=None,
+                history_end=datetime(2026, 8, 10),
+            )
+
+        self.assertEqual(stats["errors"], 0)
+        self.assertEqual(stats["list_items"], 5)
+
+        list_items = [obj for obj in session.added if type(obj).__name__ == "ListItem"]
+        self.assertEqual(len(list_items), 5)
+        # Only the season entry should carry a season_number - movie/show/episode/
+        # person entries must stay None so they aren't mistaken for a season item
+        # by _format_item/enrich_with_state elsewhere.
+        season_numbers = sorted((li.season_number for li in list_items), key=lambda v: (v is None, v))
+        self.assertEqual(season_numbers, [3, None, None, None, None])
+
+    async def test_season_and_show_of_same_series_both_import_without_colliding(self) -> None:
+        # The dedup set must be keyed by (media_id, season_number), not media_id
+        # alone - otherwise a season list item would collide with (and be dropped
+        # in favor of, or drop) the whole-show entry sharing the same media_id.
+        session = _FakeSession(settings=None, watch_rows=[], media=[], shows=[])
+        source = SimpleNamespace(
+            get_watchlist=AsyncMock(return_value=[]),
+            get_user_lists=AsyncMock(return_value=[{"name": "My List", "ids": {"slug": "my-list"}}]),
+            get_list_items=AsyncMock(return_value=[
+                {"type": "show", "show": {"title": "Same Show", "ids": {"tmdb": 500}}},
+                {"type": "season", "show": {"title": "Same Show", "ids": {"tmdb": 500}}, "season": {"number": 1}},
+            ]),
+        )
+
+        with patch("core.tmdb.get_show", AsyncMock(return_value={"name": "Same Show"})):
+            stats, *_ = await trakt_router._apply_trakt_import(
+                db=session,
+                job_id=1,
+                user_id=1,
+                source=source,
+                api_key=None,
+                sync_watched=False,
+                sync_ratings=False,
+                sync_lists=True,
+                split_watchlist=False,
+                history_start=None,
+                history_end=datetime(2026, 8, 10),
+            )
+
+        self.assertEqual(stats["errors"], 0)
+        self.assertEqual(stats["list_items"], 2)
+        list_items = [obj for obj in session.added if type(obj).__name__ == "ListItem"]
+        self.assertEqual(sorted(li.season_number for li in list_items if li.season_number is not None), [1])
+        self.assertEqual(sum(1 for li in list_items if li.season_number is None), 1)
+
+
+class GetOrCreatePersonMediaTests(unittest.IsolatedAsyncioTestCase):
+    async def test_creates_person_media_from_tmdb(self) -> None:
+        session = _FakeSession(settings=None, watch_rows=[], media=[], shows=[])
+        person_data = {"id": 123, "name": "Jane Doe", "profile_path": "/x.jpg", "biography": "bio"}
+
+        with patch("core.tmdb.get_person", AsyncMock(return_value=person_data)):
+            media = await trakt_router._get_or_create_person_media(session, tmdb_id=123, name="Jane Doe", api_key=None)
+
+        self.assertIsNotNone(media)
+        self.assertEqual(media.tmdb_id, 123)
+        self.assertEqual(media.media_type, MediaType.person)
+        self.assertIn(media, session.added)
+
+    async def test_returns_existing_person_media_without_refetching(self) -> None:
+        existing = SimpleNamespace(id=1, tmdb_id=123, media_type=MediaType.person, title="Jane Doe")
+        session = _FakeSession(settings=None, watch_rows=[], media=[existing], shows=[])
+
+        with patch("core.tmdb.get_person", AsyncMock(side_effect=AssertionError("should not be called"))):
+            media = await trakt_router._get_or_create_person_media(session, tmdb_id=123, name="Jane Doe", api_key=None)
+
+        self.assertIs(media, existing)
 
 
 if __name__ == "__main__":

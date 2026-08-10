@@ -73,6 +73,7 @@ class ListUpdate(BaseModel):
 class ListItemAdd(BaseModel):
     tmdb_id: int
     media_type: MediaType
+    season_number: Optional[int] = None
 
 
 def _format_list(lst: ListModel) -> dict:
@@ -117,7 +118,7 @@ def _format_item(item: ListItem) -> dict:
             "backdrop_path": media.backdrop_path,
             "release_date": media.release_date,
             "tmdb_rating": media.tmdb_rating,
-            "season_number": media.season_number,
+            "season_number": item.season_number if item.season_number is not None else media.season_number,
             "episode_number": media.episode_number,
             "adult": media.adult,
             "library": None,
@@ -125,12 +126,31 @@ def _format_item(item: ListItem) -> dict:
             "tvdb_sourced": is_unmapped_tvdb_episode(media),
         },
     }
+    # Note: media.show is only populated for episode rows (via Media.show_id). A
+    # season list item's media is the show's own Media row, so show_title/etc.
+    # can't come from a relationship here - callers attach that separately by
+    # looking up ShowModel from media.tmdb_id (see _attach_season_show_info).
     if media.media_type == MediaType.episode and media.show:
         data["media"]["show_title"] = media.show.title
         data["media"]["show_poster_path"] = media.show.poster_path
         data["media"]["show_tmdb_id"] = media.show.tmdb_id
         data["media"]["show_tvdb_id"] = media.show.tvdb_id
     return data
+
+
+async def _attach_season_show_info(db: AsyncSession, media: dict) -> None:
+    """Fill in show_title/show_poster_path/show_tvdb_id for a single season media
+    dict - mirrors the batched version in get_list() for the single-item response
+    add_list_item() returns."""
+    if media.get("season_number") is None or not media.get("tmdb_id"):
+        return
+    show_result = await db.execute(select(ShowModel).where(ShowModel.tmdb_id == media["tmdb_id"]))
+    show = show_result.scalar_one_or_none()
+    if show:
+        media["show_title"] = show.title
+        media["show_poster_path"] = show.poster_path
+        media["show_tmdb_id"] = show.tmdb_id
+        media["show_tvdb_id"] = show.tvdb_id
 
 
 @router.get("/public")
@@ -223,14 +243,15 @@ async def get_list(
     items_sorted = sorted(lst.items, key=lambda x: (x.sort_order, x.added_at))
     formatted_items = [_format_item(i) for i in items_sorted]
 
-    # Fill in missing poster/release_date for series items from the Show table
-    series_tmdb_ids = [
+    # Fill in missing poster/release_date for series items from the Show table,
+    # and attach show_title/show_poster_path/show_tvdb_id for season items -
+    # their media.show relationship is always empty (see _format_item).
+    series_tmdb_ids = {
         item["media"]["tmdb_id"]
         for item in formatted_items
         if item["media"].get("type") in (MediaType.series, "series")
-        and (not item["media"].get("poster_path") or not item["media"].get("release_date"))
         and item["media"].get("tmdb_id")
-    ]
+    }
     if series_tmdb_ids:
         shows_result = await db.execute(
             select(ShowModel).where(ShowModel.tmdb_id.in_(series_tmdb_ids))
@@ -241,13 +262,19 @@ async def get_list(
             if m.get("type") not in (MediaType.series, "series"):
                 continue
             show = show_map.get(m.get("tmdb_id"))
-            if show:
-                if not m.get("poster_path") and show.poster_path:
-                    m["poster_path"] = show.poster_path
-                if not m.get("release_date") and show.first_air_date:
-                    m["release_date"] = show.first_air_date
-                if not m.get("title") and show.title:
-                    m["title"] = show.title
+            if not show:
+                continue
+            if not m.get("poster_path") and show.poster_path:
+                m["poster_path"] = show.poster_path
+            if not m.get("release_date") and show.first_air_date:
+                m["release_date"] = show.first_air_date
+            if not m.get("title") and show.title:
+                m["title"] = show.title
+            if m.get("season_number") is not None:
+                m["show_title"] = show.title
+                m["show_poster_path"] = show.poster_path
+                m["show_tmdb_id"] = show.tmdb_id
+                m["show_tvdb_id"] = show.tvdb_id
 
     media_dicts = [item["media"] for item in formatted_items]
     if current_user:
@@ -321,9 +348,11 @@ async def _push_list_item_to_plex_watchlist(
     db: AsyncSession,
     user_id: int,
     media: Media,
+    season_number: Optional[int] = None,
     remove: bool = False,
 ) -> None:
-    if not media.tmdb_id or media.media_type not in (MediaType.movie, MediaType.series):
+    # Plex watchlists have no season granularity - only whole movies/shows apply.
+    if season_number is not None or not media.tmdb_id or media.media_type not in (MediaType.movie, MediaType.series):
         return
     from models.connections import MediaServerConnection
     from sqlalchemy import select as _select
@@ -356,13 +385,72 @@ async def _push_list_item_to_plex_watchlist(
             logger.warning("Failed to push list item to Plex watchlist (conn=%s, remove=%s): %s", conn.id, remove, exc)
 
 
+async def _push_season_list_item_to_trakt(
+    db: AsyncSession,
+    user_id: int,
+    list_trakt_slug: str,
+    media: Media,
+    season_number: int,
+    remove: bool = False,
+) -> None:
+    # Trakt watchlists have no season granularity - only genuine lists support it.
+    if list_trakt_slug.startswith("__watchlist") or not media.tmdb_id:
+        return
+
+    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+    settings = settings_result.scalar_one_or_none()
+    if (
+        not settings
+        or not settings.trakt_push_lists
+        or not settings.trakt_access_token
+        or not settings.trakt_client_id
+    ):
+        return
+
+    from routers.media import get_user_tmdb_key
+    from core import tmdb
+
+    try:
+        api_key = await get_user_tmdb_key(db, user_id)
+        season_data = await tmdb.get_season(media.tmdb_id, season_number, api_key=api_key)
+        season_tmdb_id = season_data.get("id")
+    except Exception as exc:
+        logger.warning(
+            "Could not resolve TMDB season id for show=%s season=%s: %s",
+            media.tmdb_id, season_number, exc,
+        )
+        return
+    if not season_tmdb_id:
+        return
+
+    from core import trakt as trakt_client
+    try:
+        if remove:
+            await trakt_client.remove_season_from_list(
+                settings.trakt_client_id, settings.trakt_access_token,
+                list_trakt_slug, season_tmdb_id,
+            )
+        else:
+            await trakt_client.add_season_to_list(
+                settings.trakt_client_id, settings.trakt_access_token,
+                list_trakt_slug, season_tmdb_id,
+            )
+    except Exception as exc:
+        logger.warning("Failed to push season list item to Trakt (slug=%s, remove=%s): %s", list_trakt_slug, remove, exc)
+
+
 async def _push_list_item_to_trakt(
     db: AsyncSession,
     user_id: int,
     list_trakt_slug: str,
     media: Media,
+    season_number: Optional[int] = None,
     remove: bool = False,
 ) -> None:
+    if season_number is not None:
+        await _push_season_list_item_to_trakt(db, user_id, list_trakt_slug, media, season_number, remove=remove)
+        return
+
     trakt_type = _trakt_media_type(media.media_type)
     if not trakt_type or not media.tmdb_id:
         return
@@ -411,10 +499,13 @@ async def _push_list_item_to_mdblist(
     user_id: int,
     list_mdblist_slug: str,
     media: Media,
+    season_number: Optional[int] = None,
     remove: bool = False,
 ) -> None:
+    # MDBList watchlists have no season granularity - only whole movies/shows apply.
     if (
-        list_mdblist_slug != "__watchlist__"
+        season_number is not None
+        or list_mdblist_slug != "__watchlist__"
         or not media.tmdb_id
         or media.media_type not in (MediaType.movie, MediaType.series)
     ):
@@ -454,6 +545,9 @@ async def add_list_item(
     lst = list_result.scalar_one_or_none()
     if not lst:
         raise HTTPException(status_code=404, detail="List not found")
+
+    if body.season_number is not None and body.media_type != MediaType.series:
+        raise HTTPException(status_code=400, detail="season_number is only valid for media_type=series")
 
     media_result = await db.execute(
         select(Media)
@@ -520,32 +614,48 @@ async def add_list_item(
         except Exception:
             pass
 
+    if body.season_number is not None:
+        try:
+            await tmdb.get_season(body.tmdb_id, body.season_number, api_key=api_key)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Season not found")
+
+    season_key = func.coalesce(ListItem.season_number, -1)
     existing = await db.execute(
-        select(ListItem).where(ListItem.list_id == list_id, ListItem.media_id == media.id)
+        select(ListItem).where(
+            ListItem.list_id == list_id,
+            ListItem.media_id == media.id,
+            season_key == (body.season_number if body.season_number is not None else -1),
+        )
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Item already in list")
 
-    item = ListItem(list_id=list_id, media_id=media.id)
+    item = ListItem(list_id=list_id, media_id=media.id, season_number=body.season_number)
     db.add(item)
     await db.commit()
 
     if lst.trakt_slug:
-        await _push_list_item_to_trakt(db, current_user.id, lst.trakt_slug, media, remove=False)
+        await _push_list_item_to_trakt(db, current_user.id, lst.trakt_slug, media, season_number=body.season_number, remove=False)
         if lst.trakt_slug == "__plex_watchlist__":
-            await _push_list_item_to_plex_watchlist(db, current_user.id, media, remove=False)
+            await _push_list_item_to_plex_watchlist(db, current_user.id, media, season_number=body.season_number, remove=False)
 
     if lst.mdblist_slug:
         await _push_list_item_to_mdblist(
-            db, current_user.id, lst.mdblist_slug, media, remove=False
+            db, current_user.id, lst.mdblist_slug, media, season_number=body.season_number, remove=False
         )
 
     item_result = await db.execute(
         select(ListItem)
         .options(selectinload(ListItem.media).selectinload(Media.show))
-        .where(ListItem.list_id == list_id, ListItem.media_id == media.id)
+        .where(
+            ListItem.list_id == list_id,
+            ListItem.media_id == media.id,
+            season_key == (body.season_number if body.season_number is not None else -1),
+        )
     )
     formatted = _format_item(item_result.scalar_one())
+    await _attach_season_show_info(db, formatted["media"])
     await enrich_with_state(db, current_user.id, [formatted["media"]])
     return formatted
 
@@ -576,18 +686,19 @@ async def remove_list_item(
     )
     lst = list_result.scalar_one_or_none()
     media = item.media
+    season_number = item.season_number
 
     await db.delete(item)
     await db.commit()
 
     if lst and lst.trakt_slug and media:
-        await _push_list_item_to_trakt(db, current_user.id, lst.trakt_slug, media, remove=True)
+        await _push_list_item_to_trakt(db, current_user.id, lst.trakt_slug, media, season_number=season_number, remove=True)
         if lst.trakt_slug == "__plex_watchlist__":
-            await _push_list_item_to_plex_watchlist(db, current_user.id, media, remove=True)
+            await _push_list_item_to_plex_watchlist(db, current_user.id, media, season_number=season_number, remove=True)
 
     if lst and lst.mdblist_slug and media:
         await _push_list_item_to_mdblist(
-            db, current_user.id, lst.mdblist_slug, media, remove=True
+            db, current_user.id, lst.mdblist_slug, media, season_number=season_number, remove=True
         )
 
     return {"message": "Item removed"}

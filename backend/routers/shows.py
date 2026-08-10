@@ -729,6 +729,22 @@ async def get_show(
             )
             season_ratings = dict(ratings_q.all())
 
+        # Season list membership (stored against the show's Media row with season_number)
+        season_list_membership: dict[int, list[int]] = {}
+        if show_media:
+            user_lists_q = await db.execute(select(UserList.id).where(UserList.user_id == current_user.id))
+            user_list_ids = [r[0] for r in user_lists_q.all()]
+            if user_list_ids:
+                season_lists_q = await db.execute(
+                    select(ListItem.season_number, ListItem.list_id).where(
+                        ListItem.media_id == show_media.id,
+                        ListItem.season_number.isnot(None),
+                        ListItem.list_id.in_(user_list_ids),
+                    )
+                )
+                for sn_, list_id in season_lists_q.all():
+                    season_list_membership.setdefault(sn_, []).append(list_id)
+
         # Episode counts per season from stored TMDB metadata, capped at the
         # last aired episode for shows still airing.
         season_ep_counts = capped_season_episode_counts(show, tmdb_extra)
@@ -738,7 +754,7 @@ async def get_show(
             collected = coll_per_season.get(sn, 0)
             watched = watched_per_season.get(sn, 0)
             total = season_ep_counts.get(sn, 0)
-            
+
             # Use distinct (season, episode) from user's collection for calculation
             # to be consistent with how total is calculated (unique episodes in season).
             season_states[sn] = {
@@ -748,6 +764,7 @@ async def get_show(
                 "watch_pct": min(100, int((watched / total) * 100)) if total > 0 else 0,
                 "watch_started": watched > 0,
                 "user_rating": season_ratings.get(sn),
+                "in_lists": season_list_membership.get(sn, []),
             }
 
         # Enhance seasons_meta with live TMDB data (id, rating, overview, air_date)
@@ -869,6 +886,41 @@ async def get_show(
             db, current_user.id, series_tmdb_id, MediaType.series, tmdb_key=api_key
         )
 
+        # This branch has no local Show row, so none of the watched/collection
+        # per-season stats above are available - but season list membership only
+        # needs the show's Media row (independent of the local Show table), so it
+        # can still be populated here rather than left as an empty season_states.
+        season_list_membership: dict[int, list[int]] = {}
+        show_media_q = await db.execute(
+            select(Media).where(Media.tmdb_id == series_tmdb_id, Media.media_type == MediaType.series)
+        )
+        show_media = show_media_q.scalar_one_or_none()
+        if show_media:
+            user_lists_q = await db.execute(select(UserList.id).where(UserList.user_id == current_user.id))
+            user_list_ids = [r[0] for r in user_lists_q.all()]
+            if user_list_ids:
+                season_lists_q = await db.execute(
+                    select(ListItem.season_number, ListItem.list_id).where(
+                        ListItem.media_id == show_media.id,
+                        ListItem.season_number.isnot(None),
+                        ListItem.list_id.in_(user_list_ids),
+                    )
+                )
+                for sn_, list_id in season_lists_q.all():
+                    season_list_membership.setdefault(sn_, []).append(list_id)
+        season_states_tmdb = {
+            s["season_number"]: {
+                "in_library": False,
+                "collection_pct": 0,
+                "watched": False,
+                "watch_pct": 0,
+                "watch_started": False,
+                "user_rating": None,
+                "in_lists": season_list_membership.get(s["season_number"], []),
+            }
+            for s in data.get("seasons", [])
+        }
+
         return {
             "id": None,
             "tmdb_id": series_tmdb_id,
@@ -919,7 +971,7 @@ async def get_show(
                 for s in data.get("seasons", [])
             ],
             "seasons": {},
-            "season_states": {},
+            "season_states": season_states_tmdb,
             "where_to_watch": where_to_watch,
         }
     except Exception as e:
@@ -1256,6 +1308,7 @@ async def get_show_season(
 
             # Season user rating (stored against show's Media row with season_number)
             season_user_rating = None
+            season_in_lists: list[int] = []
             show_media_q = await db.execute(
                 select(Media).where(Media.tmdb_id == series_tmdb_id, Media.media_type == MediaType.series)
             )
@@ -1270,6 +1323,17 @@ async def get_show_season(
                     )
                 )
                 season_user_rating = rating_q.scalar_one_or_none()
+
+                season_lists_q = await db.execute(
+                    select(ListItem.list_id)
+                    .join(UserList, UserList.id == ListItem.list_id)
+                    .where(
+                        ListItem.media_id == show_media.id,
+                        ListItem.season_number == season_number,
+                        UserList.user_id == current_user.id,
+                    )
+                )
+                season_in_lists = [r[0] for r in season_lists_q.all()]
 
             return {
                 "id": tmdb_data.get("id"),
@@ -1292,6 +1356,7 @@ async def get_show_season(
                 "season_in_library": season_in_library,
                 "season_collection_pct": season_collection_pct,
                 "season_user_rating": season_user_rating,
+                "season_in_lists": season_in_lists,
                 "show_in_lists": show_state.get("in_lists", []),
                 "show_in_library": show_state.get("collection_pct", 0) > 0,
                 "show_collection_pct": show_state.get("collection_pct", 0),
@@ -1700,6 +1765,7 @@ async def get_tvdb_show(
     collected_positions: dict[int, set[int]] = {}
     watched_positions: dict[int, set[int]] = {}
     season_ratings: dict[int, float] = {}
+    season_list_membership: dict[int, list[int]] = {}
     if show:
         local_eps_result = await db.execute(
             select(Media).where(
@@ -1775,6 +1841,19 @@ async def get_tvdb_show(
                 )
                 season_ratings = dict(rating_result.all())
 
+                user_lists_q = await db.execute(select(UserList.id).where(UserList.user_id == current_user.id))
+                user_list_ids = [r[0] for r in user_lists_q.all()]
+                if user_list_ids:
+                    season_lists_q = await db.execute(
+                        select(ListItem.season_number, ListItem.list_id).where(
+                            ListItem.media_id == show_media.id,
+                            ListItem.season_number.isnot(None),
+                            ListItem.list_id.in_(user_list_ids),
+                        )
+                    )
+                    for sn_, list_id in season_lists_q.all():
+                        season_list_membership.setdefault(sn_, []).append(list_id)
+
     season_states: dict = {}
     season_ep_counts = {
         season["season_number"]: season.get("episode_count", 0)
@@ -1796,6 +1875,7 @@ async def get_tvdb_show(
             "watch_pct": min(100, int((watched / effective_total) * 100)) if effective_total > 0 else 0,
             "watch_started": watched > 0,
             "user_rating": season_ratings.get(season_number_value),
+            "in_lists": season_list_membership.get(season_number_value, []),
         }
 
     in_library = bool(season_states and any(v["in_library"] for v in season_states.values()))
@@ -2120,6 +2200,7 @@ async def get_tvdb_season(
         episode_ratings = dict(episode_ratings_q.all())
 
     season_user_rating = None
+    season_in_lists: list[int] = []
     if series_tmdb_id:
         show_media_result = await db.execute(
             select(Media).where(
@@ -2138,6 +2219,17 @@ async def get_tvdb_season(
                 )
             )
             season_user_rating = season_rating_result.scalar_one_or_none()
+
+            season_lists_result = await db.execute(
+                select(ListItem.list_id)
+                .join(UserList, UserList.id == ListItem.list_id)
+                .where(
+                    ListItem.media_id == show_media.id,
+                    ListItem.season_number == season_number,
+                    UserList.user_id == current_user.id,
+                )
+            )
+            season_in_lists = [r[0] for r in season_lists_result.all()]
 
     enriched_eps = []
     for episode, mapping, local_episode, unmatched_ep in mapped_rows:
@@ -2180,6 +2272,7 @@ async def get_tvdb_season(
         "season_watch_started": season_watch_started,
         "season_collection_pct": season_collection_pct,
         "season_user_rating": season_user_rating,
+        "season_in_lists": season_in_lists,
         "show_in_library": show is not None,
         "show": {
             "id": show.id if show else None,

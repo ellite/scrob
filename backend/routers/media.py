@@ -137,6 +137,16 @@ async def enrich_with_state(
     show_tmdb_ids  = [i["tmdb_id"] for i in items if i.get("type") == "series" and i.get("tmdb_id")]
     ep_tmdb_ids    = [i["tmdb_id"] for i in items if i.get("type") == "episode" and i.get("tmdb_id")]
     all_tmdb_ids   = [i["tmdb_id"] for i in items if i.get("tmdb_id")]
+    # A "series" item with season_number set is a season list item (see routers/lists.py) -
+    # it shares its tmdb_id with the whole show, so its watch/collection state and list
+    # membership need computing separately from the show's own, below.
+    season_items = [
+        (i["tmdb_id"], i["season_number"])
+        for i in items
+        if i.get("type") == "series" and i.get("season_number") is not None and i.get("tmdb_id")
+    ]
+    season_watched_count_map: dict[tuple[int, int], int] = {}
+    season_collected_count_map: dict[tuple[int, int], int] = {}
 
     if not all_tmdb_ids:
         return items
@@ -301,16 +311,22 @@ async def enrich_with_state(
     user_list_ids_q = await db.execute(select(UserList.id).where(UserList.user_id == user_id))
     user_list_ids = [r[0] for r in user_list_ids_q.all()]
 
+    # Split by season_number so a season-only list item doesn't make the whole
+    # show (or vice versa) appear "in that list" elsewhere in the app.
     list_membership: dict[int, list[int]] = {}
+    season_list_membership: dict[tuple[int, int], list[int]] = {}
     if user_list_ids and all_tmdb_ids:
         q = await db.execute(
-            select(Media.tmdb_id, ListItem.list_id)
+            select(Media.tmdb_id, ListItem.season_number, ListItem.list_id)
             .join(ListItem, ListItem.media_id == Media.id)
             .where(ListItem.list_id.in_(user_list_ids), Media.tmdb_id.in_(all_tmdb_ids))
             .distinct()
         )
-        for row_tmdb_id, list_id in q.all():
-            list_membership.setdefault(row_tmdb_id, []).append(list_id)
+        for row_tmdb_id, row_season_number, list_id in q.all():
+            if row_season_number is None:
+                list_membership.setdefault(row_tmdb_id, []).append(list_id)
+            else:
+                season_list_membership.setdefault((row_tmdb_id, row_season_number), []).append(list_id)
 
     # --- Collection pct and watched status for shows ---
     show_pct: dict[int, int] = {}
@@ -398,6 +414,17 @@ async def enrich_with_state(
             )
             show_watched_count_map.update({r[0]: r[1] for r in watched_count_q.all()})
 
+            # Season-scoped watched counts, from the same dedup subquery. Shows
+            # currently mid-rewatch are excluded here too (they're excluded from
+            # non_rewatching_tmdb_ids above), so a season of a show being rewatched
+            # will under-count until the rewatch finishes - a known limitation.
+            if season_items:
+                season_watched_q = await db.execute(
+                    select(watched_eps_sq.c.show_tmdb_id, watched_eps_sq.c.season_number, func.count())
+                    .group_by(watched_eps_sq.c.show_tmdb_id, watched_eps_sq.c.season_number)
+                )
+                season_watched_count_map = {(r[0], r[1]): r[2] for r in season_watched_q.all()}
+
         # Count distinct collected episodes per show
         ep_dedup_sq = (
             select(ShowModel.tmdb_id.label("show_tmdb_id"), Media.season_number, Media.episode_number)
@@ -419,6 +446,13 @@ async def enrich_with_state(
             .group_by(ep_dedup_sq.c.show_tmdb_id)
         )
         collected_map = {r[0]: r[1] for r in collected_q.all()}
+
+        if season_items:
+            season_collected_q = await db.execute(
+                select(ep_dedup_sq.c.show_tmdb_id, ep_dedup_sq.c.season_number, func.count())
+                .group_by(ep_dedup_sq.c.show_tmdb_id, ep_dedup_sq.c.season_number)
+            )
+            season_collected_count_map = {(r[0], r[1]): r[2] for r in season_collected_q.all()}
 
         for tmdb_id in show_tmdb_ids:
             total = total_map.get(tmdb_id, 0)
@@ -549,6 +583,21 @@ async def enrich_with_state(
             in_lib = tid in collected_movie_ids
             item["in_library"] = in_lib
             item["collection_pct"] = 100 if in_lib else 0
+        elif t == "series" and item.get("season_number") is not None:
+            # A season list item - state scoped to just that season's episodes,
+            # not the whole show (see season_items above).
+            sn = item["season_number"]
+            season_total = next(
+                (s.get("episode_count", 0) for s in show_seasons_map.get(tid, []) if s.get("season_number") == sn),
+                0,
+            )
+            collected = season_collected_count_map.get((tid, sn), 0)
+            watched = season_watched_count_map.get((tid, sn), 0)
+            item["collection_pct"] = min(100, int((collected / season_total) * 100)) if season_total > 0 else 0
+            item["in_library"] = collected > 0
+            item["watch_pct"] = min(100, int((watched / season_total) * 100)) if season_total > 0 else 0
+            item["watched"] = season_total > 0 and watched >= season_total
+            item["watch_started"] = watched > 0
         elif t == "series":
             item["watched"] = tid in watched_shows
             pct = show_pct.get(tid, 0)
@@ -571,7 +620,10 @@ async def enrich_with_state(
             item["collection_pct"] = 0
             item["in_library"] = False
 
-        item["in_lists"] = list_membership.get(tid, [])
+        if t == "series" and item.get("season_number") is not None:
+            item["in_lists"] = season_list_membership.get((tid, item["season_number"]), [])
+        else:
+            item["in_lists"] = list_membership.get(tid, [])
         item["is_monitored"] = monitored_status.get(tid, False)
         item["request_enabled"] = request_enabled_map.get(tid, False)
         item["request_status"] = request_status_map.get(tid)
