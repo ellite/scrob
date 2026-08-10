@@ -485,5 +485,199 @@ class ExpandMultiEpisodeItemsTests(unittest.TestCase):
         self.assertEqual(expanded, [item])
 
 
+from sqlalchemy.sql import Select as _SASelect
+from sqlalchemy.dialects import postgresql as _pg
+
+
+class _ReconcileFakeDB:
+    """Serves only what _reconcile_plex_watchlist itself executes: the
+    baseline re-read (SELECT) and the baseline write (UPDATE). Everything
+    heavier sits behind the patched load/apply helpers."""
+
+    def __init__(self, baseline):
+        self._baseline = baseline
+        self.baseline_writes = []
+        self.commit = AsyncMock()
+        self.rollback = AsyncMock()
+
+    async def execute(self, stmt):
+        if isinstance(stmt, _SASelect):
+            return _Result(self._baseline)
+        params = stmt.compile(dialect=_pg.dialect()).params
+        self.baseline_writes.append(params.get("plex_watchlist_synced_keys"))
+        return SimpleNamespace()
+
+
+def _wl_conn(pull=True, push=True):
+    return MediaServerConnection(
+        id=1, user_id=1, type="plex", token="tok",
+        plex_sync_watchlist=pull, plex_push_watchlist=push,
+    )
+
+
+def _remote_item(kind, tmdb_id, rating_key="rk", title="Title"):
+    return {"type": kind, "Guid": [{"id": f"tmdb://{tmdb_id}"}], "ratingKey": rating_key, "title": title}
+
+
+class PlexWatchlistReconcileTests(unittest.IsolatedAsyncioTestCase):
+    """The routine wiring around core.watchlist_reconcile: what plan reaches
+    the apply helpers, and what baseline gets persisted."""
+
+    async def _run(self, db, conn, remote_items, local_state, applied_local, remote_failures=(set(), set())):
+        apply_local = AsyncMock(return_value=applied_local)
+        apply_remote = AsyncMock(return_value=remote_failures)
+        with patch.object(sync.plex, "get_watchlist", AsyncMock(return_value=remote_items)), \
+             patch.object(sync, "_load_local_watchlist_state", AsyncMock(return_value=local_state)), \
+             patch.object(sync, "_apply_local_watchlist_changes", apply_local), \
+             patch.object(sync, "_apply_remote_watchlist_changes", apply_remote):
+            await sync._reconcile_plex_watchlist(db, 1, conn, "tmdb-key")
+        local_plan = apply_local.call_args.args[4] if apply_local.call_args else None
+        remote_plan = apply_remote.call_args.args[1] if apply_remote.call_args else None
+        return local_plan, remote_plan, apply_local, apply_remote
+
+    async def test_remote_removal_is_applied_locally_not_resurrected(self):
+        """Regression: Plex auto-removed a watched item; the old additive push
+        re-added it. Now the baseline turns it into a local removal."""
+        db = _ReconcileFakeDB(["movie:1"])
+        local_plan, remote_plan, _, _ = await self._run(
+            db, _wl_conn(), [], (SimpleNamespace(id=5), {"movie:1": (11, "Inception")}), applied_local=set(),
+        )
+        self.assertEqual(local_plan.remove_local, {"movie:1"})
+        self.assertEqual(remote_plan.push_add, frozenset())
+        self.assertEqual(db.baseline_writes, [[]])
+        db.commit.assert_awaited()
+
+    async def test_deleted_managed_list_resets_baseline_instead_of_wiping_plex(self):
+        """Regression: with the list deleted in the UI, a stale baseline must
+        not turn the entire real Plex watchlist into push_remove calls."""
+        db = _ReconcileFakeDB(["movie:1", "show:2"])
+        remote = [_remote_item("movie", 1), _remote_item("show", 2)]
+        local_plan, remote_plan, _, _ = await self._run(
+            db, _wl_conn(), remote, (None, {}), applied_local={"movie:1", "show:2"},
+        )
+        self.assertEqual(remote_plan.push_remove, frozenset())
+        self.assertEqual(local_plan.add_local, {"movie:1", "show:2"})  # bootstrap re-import
+        self.assertEqual(db.baseline_writes, [["movie:1", "show:2"]])
+
+    async def test_bootstrap_first_contact_is_purely_additive(self):
+        db = _ReconcileFakeDB(None)
+        local_plan, remote_plan, _, _ = await self._run(
+            db, _wl_conn(), [_remote_item("show", 2)],
+            (SimpleNamespace(id=5), {"movie:1": (11, "Inception")}),
+            applied_local={"movie:1", "show:2"},
+        )
+        self.assertEqual(remote_plan.push_add, {"movie:1"})
+        self.assertEqual(local_plan.add_local, {"show:2"})
+        self.assertEqual(local_plan.remove_local, frozenset())
+        self.assertEqual(db.baseline_writes, [["movie:1", "show:2"]])
+
+    async def test_failed_remote_add_stays_out_of_the_baseline(self):
+        db = _ReconcileFakeDB(["movie:1"])
+        _, remote_plan, _, _ = await self._run(
+            db, _wl_conn(), [_remote_item("movie", 1)],
+            (SimpleNamespace(id=5), {"movie:1": (11, "A"), "movie:9": (12, "B")}),
+            applied_local={"movie:1", "movie:9"},
+            remote_failures=({"movie:9"}, set()),
+        )
+        self.assertEqual(remote_plan.push_add, {"movie:9"})
+        self.assertEqual(db.baseline_writes, [["movie:1"]])  # movie:9 retries next run
+
+    async def test_suppressed_run_changes_nothing(self):
+        baseline = [f"movie:{i}" for i in range(12)]
+        db = _ReconcileFakeDB(baseline)
+        local = {key: (i, "T") for i, key in enumerate(baseline)}
+        _, _, apply_local, apply_remote = await self._run(
+            db, _wl_conn(), [], (SimpleNamespace(id=5), local), applied_local=set(),
+        )
+        apply_local.assert_not_called()
+        apply_remote.assert_not_called()
+        self.assertEqual(db.baseline_writes, [])
+        db.commit.assert_not_awaited()
+
+    async def test_fetch_failure_is_swallowed_and_rolled_back(self):
+        db = _ReconcileFakeDB(["movie:1"])
+        with patch.object(sync.plex, "get_watchlist", AsyncMock(side_effect=RuntimeError("plex down"))):
+            await sync._reconcile_plex_watchlist(db, 1, _wl_conn(), "tmdb-key")
+        db.rollback.assert_awaited()
+        self.assertEqual(db.baseline_writes, [])
+
+    async def test_disabled_flags_do_nothing(self):
+        db = _ReconcileFakeDB(["movie:1"])
+        fetch = AsyncMock()
+        with patch.object(sync.plex, "get_watchlist", fetch):
+            await sync._reconcile_plex_watchlist(db, 1, _wl_conn(pull=False, push=False), "tmdb-key")
+        fetch.assert_not_called()
+
+
+class PushEnabledPropertyTests(unittest.TestCase):
+    """The scheduler's auto-push gate and the manual push endpoint share this
+    property, so a watchlist-only connection can't be forgotten by one of
+    them again."""
+
+    def test_watchlist_only_connection_is_push_enabled(self):
+        conn = MediaServerConnection(
+            push_collection=False, push_watched=False, push_ratings=False, push_playback=False,
+            plex_push_watchlist=True,
+        )
+        self.assertTrue(conn.push_enabled)
+
+    def test_no_push_flags_at_all(self):
+        conn = MediaServerConnection(
+            push_collection=False, push_watched=False, push_ratings=False, push_playback=False,
+            plex_push_watchlist=False,
+        )
+        self.assertFalse(conn.push_enabled)
+
+    def test_classic_push_flags_still_count(self):
+        conn = MediaServerConnection(
+            push_collection=False, push_watched=True, push_ratings=False, push_playback=False,
+            plex_push_watchlist=False,
+        )
+        self.assertTrue(conn.push_enabled)
+
+
+class ConnectionUpdateBaselineResetTests(unittest.IsolatedAsyncioTestCase):
+    """Flipping a watchlist direction off→on must restart from a clean
+    bootstrap - a baseline recorded under the old settings must not drive
+    deletions."""
+
+    async def _patch_connection(self, conn, **body_fields):
+        import schemas
+        from routers import auth as auth_router
+
+        db = _FakeSession(conn)
+        body = schemas.MediaServerConnectionUpdate(**body_fields)
+        return await auth_router.update_connection(
+            connection_id=1, body=body, db=db, current_user=SimpleNamespace(id=1),
+        )
+
+    def _conn(self, sync_on=False, push_on=False):
+        return MediaServerConnection(
+            id=1, user_id=1, type="plex", name="Plex", url="http://p", token="t",
+            plex_sync_watchlist=sync_on, plex_push_watchlist=push_on,
+            plex_watchlist_synced_keys=["movie:1"],
+        )
+
+    async def test_enabling_pull_resets_the_baseline(self):
+        conn = self._conn()
+        await self._patch_connection(conn, plex_sync_watchlist=True)
+        self.assertIsNone(conn.plex_watchlist_synced_keys)
+
+    async def test_enabling_push_resets_the_baseline(self):
+        conn = self._conn()
+        await self._patch_connection(conn, plex_push_watchlist=True)
+        self.assertIsNone(conn.plex_watchlist_synced_keys)
+
+    async def test_updating_while_already_enabled_keeps_the_baseline(self):
+        conn = self._conn(sync_on=True)
+        await self._patch_connection(conn, plex_sync_watchlist=True)
+        self.assertEqual(conn.plex_watchlist_synced_keys, ["movie:1"])
+
+    async def test_disabling_keeps_the_baseline(self):
+        conn = self._conn(sync_on=True)
+        await self._patch_connection(conn, plex_sync_watchlist=False)
+        self.assertEqual(conn.plex_watchlist_synced_keys, ["movie:1"])
+
+
 if __name__ == "__main__":
     unittest.main()
