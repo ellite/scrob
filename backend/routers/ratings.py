@@ -27,6 +27,19 @@ class RatingIn(BaseModel):
     episode_order: Optional[str] = None
 
 
+async def _find_media(db: AsyncSession, tmdb_id: int, media_type: MediaType) -> Optional[Media]:
+    """Look up a Media row by (tmdb_id, media_type). Duplicate rows for the same
+    key exist in the wild - most commonly for episodes, from concurrent webhook/
+    sync ingestion racing to create the same one - so this deterministically
+    picks the oldest row instead of crashing with MultipleResultsFound (#157)."""
+    result = await db.execute(
+        select(Media)
+        .where(Media.tmdb_id == tmdb_id, Media.media_type == media_type)
+        .order_by(Media.id)
+    )
+    return result.scalars().first()
+
+
 def format_rating(rating: Rating, media: Media) -> dict:
     return {
         "id": rating.id,
@@ -69,10 +82,7 @@ async def submit_rating(
         raise HTTPException(status_code=400, detail=f"Invalid media_type: {body.media_type}")
 
     # Look up existing Media row, create on-the-fly if missing
-    result = await db.execute(
-        select(Media).where(Media.tmdb_id == body.tmdb_id, Media.media_type == media_type)
-    )
-    media = result.scalar_one_or_none()
+    media = await _find_media(db, body.tmdb_id, media_type)
 
     if not media:
         from routers.media import get_user_tmdb_key
@@ -197,10 +207,7 @@ async def delete_rating(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid media_type: {media_type}")
 
-    media_result = await db.execute(
-        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == mt)
-    )
-    media = media_result.scalar_one_or_none()
+    media = await _find_media(db, tmdb_id, mt)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
 
