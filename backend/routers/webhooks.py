@@ -508,7 +508,15 @@ async def _handle_unwatch_toggle(db: AsyncSession, user_id: int, media: Media) -
 # ── Jellyfin ───────────────────────────────────────────────────────────────────
 
 def parse_jellyfin_payload(payload: dict) -> dict | None:
-    notification_type = payload.get("NotificationType") or payload.get("notificationType", "")
+    # Emby doesn't send NotificationType at all - its webhooks report the event
+    # under "Event" (dotted, lowercase names like "playback.stop"), which the
+    # handlers below already know how to match - it just wasn't being read (#160).
+    notification_type = (
+        payload.get("NotificationType")
+        or payload.get("notificationType")
+        or payload.get("Event")
+        or payload.get("event", "")
+    )
 
     # ── Nested format (raw Jellyfin API / custom HTTP destination) ────────────
     item = payload.get("Item") or payload.get("item") or {}

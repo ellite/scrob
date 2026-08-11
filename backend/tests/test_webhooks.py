@@ -77,6 +77,44 @@ class WriteWatchEventDedupTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(db.added), 0)
 
 
+class ParseJellyfinPayloadEmbyEventFieldTests(unittest.TestCase):
+    """Regression test for #160: Emby doesn't send NotificationType at all -
+    its webhooks report the event under "Event" (dotted, lowercase names like
+    "playback.stop"), which used to be read from the wrong key entirely,
+    silently no-oping every inbound Emby webhook."""
+
+    def test_reads_notification_type_from_emby_event_field(self):
+        payload = {
+            "Event": "playback.stop",
+            "Item": {
+                "Id": "test1",
+                "Name": "Supergirl",
+                "Type": "Movie",
+                "ProductionYear": 2026,
+                "RunTimeTicks": 64800000000,
+                "ProviderIds": {"Tmdb": "1081003"},
+            },
+            "Session": {
+                "Id": "testsession1",
+                "UserName": "arne",
+                "PlayState": {"PositionTicks": 61560000000, "IsPaused": False},
+            },
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertIsNotNone(data)
+        self.assertEqual(data["notification_type"], "playback.stop")
+        self.assertEqual(data["title"], "Supergirl")
+
+    def test_notification_type_still_prefers_pascal_case_field(self):
+        payload = {
+            "NotificationType": "PlaybackStop",
+            "Event": "playback.stop",
+            "Item": {"Id": "test1", "Name": "Supergirl", "Type": "Movie"},
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertEqual(data["notification_type"], "PlaybackStop")
+
+
 class ParseJellyfinFlatPayloadSeasonZeroTests(unittest.TestCase):
     """Regression test for #132: a Season 0 (specials) episode has
     SeasonNumber: 0 in the flat webhook payload, which a falsy check like
