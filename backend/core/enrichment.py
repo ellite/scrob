@@ -1,5 +1,79 @@
+import inspect
+import logging
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from core import tmdb
 from models.media import Media, MediaType
+
+logger = logging.getLogger(__name__)
+
+
+async def create_media_safely(
+    db: AsyncSession, tmdb_id: int | None, media_type: MediaType, **fields
+) -> tuple[Media, bool]:
+    """Add a new Media row, tolerating a concurrent insert of the same
+    (tmdb_id, media_type) racing with this one. Returns (media, created) -
+    created is False when the row returned is an existing one from a lost
+    race, not the one just constructed from **fields.
+
+    Dozens of call sites across the app each do their own "check for an
+    existing row, then create if missing" - that check-then-create isn't
+    atomic, so two concurrent calls for the same episode (e.g. a webhook
+    delivered twice, or two connected media servers reporting the same play
+    close together) could both decide it's missing and both insert, creating
+    a silent duplicate. A unique index on (tmdb_id, media_type) now makes the
+    loser of that race fail with IntegrityError instead - this catches that
+    and returns whichever row actually won the race, so callers never see the
+    difference between "created" and "lost the race, here's the real one"
+    (see #157, whose crash was a downstream symptom of this exact problem).
+    """
+    media = Media(tmdb_id=tmdb_id, media_type=media_type, **fields)
+    if tmdb_id is None:
+        # No unique index applies to a null tmdb_id - nothing to race on.
+        db.add(media)
+        await db.flush()
+        return media, True
+    try:
+        # add() happens *inside* the savepoint, not before it - add()-then-flush
+        # must be a single unit the savepoint fully owns, or rolling back on
+        # conflict leaves the session's flush-error state stuck even though the
+        # SQL-level SAVEPOINT itself rolled back, poisoning every other pending
+        # change in the session (verified against a real Postgres instance,
+        # not just mocks - see this function's tests).
+        async with db.begin_nested():
+            db.add(media)
+            await db.flush()
+    except IntegrityError:
+        result = await db.execute(
+            select(Media)
+            .where(Media.tmdb_id == tmdb_id, Media.media_type == media_type)
+            .order_by(Media.id)
+        )
+        existing = result.scalars().first()
+        if not existing:
+            raise
+        if media_type == MediaType.episode and (
+            fields.get("season_number"), fields.get("episode_number")
+        ) != (existing.season_number, existing.episode_number):
+            # Same tmdb_id but disagreeing season/episode - almost certainly
+            # TMDB having re-numbered this episode between two resolutions
+            # (or, rarely, a genuine id collision between two unrelated
+            # episodes) rather than a same-episode race. There's no safe way
+            # to insert a second row for this tmdb_id, so the existing row is
+            # still returned, but this is worth surfacing rather than masking.
+            logger.warning(
+                "Media tmdb_id=%s media_type=episode: existing row's season/episode "
+                "(%s, %s) disagrees with the one just attempted (%s, %s) - reusing "
+                "the existing row",
+                tmdb_id,
+                existing.season_number, existing.episode_number,
+                fields.get("season_number"), fields.get("episode_number"),
+            )
+        return existing, False
+    return media, True
 
 
 def tmdb_season_covers(show_tmdb_data: dict | None, season_number: int, episode_number: int) -> bool:
@@ -170,3 +244,87 @@ async def enrich_media(media: Media, api_key: str = None, series_tmdb_id: int = 
             import traceback
             print(f"  TMDB enrich FAILED for {media.title!r} (tmdb_id={media.tmdb_id!r}): {e} [{context}]")
             traceback.print_exc()
+
+
+async def apply_media_change_safely(db: AsyncSession, media: Media, mutate) -> Media:
+    """Run `mutate()` against an *already-persisted* Media row and flush the
+    result, tolerating a conflict if it just reassigned media.tmdb_id to a
+    value some other row (of the same media_type) already claims.
+
+    Several flows mutate an existing row's tmdb_id after the fact - most
+    commonly a stub row (created with tmdb_id=None because it couldn't be
+    matched yet) finally getting resolved by a later sync, a manual "match
+    unmatched movie/episode" action, or an orphan-healing pass. Sharing a
+    tmdb_id is possible (TMDB re-numbering, or a genuine coincidence) even
+    though it's rare, and it must not crash the whole request/batch when it
+    happens - this returns the pre-existing row instead.
+
+    `mutate` may be sync or async, and MUST be the thing that actually changes
+    media.tmdb_id - it needs to run *inside* this function's savepoint, not
+    before calling this function, or the recovery below can't work (same
+    lesson as create_media_safely's add()-inside-savepoint requirement: a
+    state change made outside the savepoint's scope leaves the session's
+    flush-error state stuck even after the SQL-level SAVEPOINT rolls back,
+    poisoning every other pending change in the session - verified against a
+    real Postgres instance, not just mocks).
+
+    A media row still being created in the *same* flush cycle (media.id is
+    None) doesn't need any of this - that creation's own savepoint already
+    covers it, so `mutate` just runs directly.
+    """
+    if media.id is None:
+        result = mutate()
+        if inspect.isawaitable(result):
+            await result
+        return media
+
+    # Captured up front: after a savepoint rolls back, SQLAlchemy expires the
+    # touched object's attributes, and reading one back triggers an implicit
+    # (sync) reload that isn't safe under AsyncSession outside an awaited
+    # context (raises MissingGreenlet) - so nothing on `media` gets read again
+    # once the except block below is reached. Everything needed there is
+    # captured into plain local variables first instead.
+    original_tmdb_id = media.tmdb_id
+    original_media_id = media.id
+    original_media_type = media.media_type
+    resolved_tmdb_id: int | None = None
+    try:
+        async with db.begin_nested():
+            result = mutate()
+            if inspect.isawaitable(result):
+                await result
+            resolved_tmdb_id = media.tmdb_id  # read before the flush, never after
+            await db.flush()
+    except IntegrityError:
+        if resolved_tmdb_id is None or resolved_tmdb_id == original_tmdb_id:
+            # Not actually about the id we changed - re-raise rather than mask
+            # an unrelated conflict (e.g. on some other dirty row in this flush).
+            raise
+        result = await db.execute(
+            select(Media)
+            .where(Media.tmdb_id == resolved_tmdb_id, Media.media_type == original_media_type)
+            .order_by(Media.id)
+        )
+        existing = result.scalars().first()
+        if not existing or existing.id == original_media_id:
+            raise
+        logger.warning(
+            "Media.tmdb_id=%s just resolved for media.id=%s but media.id=%s already "
+            "has it - discarding the change and using the existing row instead",
+            resolved_tmdb_id, original_media_id, existing.id,
+        )
+        return existing
+    return media
+
+
+async def enrich_media_safely(
+    db: AsyncSession, media: Media, api_key: str = None, series_tmdb_id: int = None
+) -> Media:
+    """enrich_media(), wrapped so a newly-resolved episode tmdb_id that
+    collides with another row returns the pre-existing row instead of
+    crashing. Use this instead of a plain enrich_media() call anywhere the
+    media passed in already has an id from an earlier create_media_safely()
+    call - see apply_media_change_safely for the full explanation."""
+    return await apply_media_change_safely(
+        db, media, lambda: enrich_media(media, api_key=api_key, series_tmdb_id=series_tmdb_id)
+    )

@@ -23,7 +23,7 @@ from models.base import MediaType, CollectionSource
 from models.playback_session import PlaybackSession
 from models.playback_progress import PlaybackProgress
 from models.library_selections import PlexLibrarySelection, JellyfinLibrarySelection, EmbyLibrarySelection
-from core.enrichment import enrich_media
+from core.enrichment import create_media_safely, enrich_media, enrich_media_safely
 from core.rewatch import record_rewatch_progress, get_active_rewatch
 from models.rewatch import RewatchProgress
 from core import tmdb
@@ -718,18 +718,17 @@ async def find_or_create_media_jellyfin(data: dict, db: AsyncSession, api_key: s
         print(f"  Skipping unidentifiable episode '{data['title']}' (no season/episode/tmdb_id)")
         return None
 
-    media = Media(
-        tmdb_id=int(data["tmdb_id"]) if data["tmdb_id"] else None,
-        media_type=MediaType(data["media_type"]),
+    media, _created = await create_media_safely(
+        db,
+        int(data["tmdb_id"]) if data["tmdb_id"] else None,
+        MediaType(data["media_type"]),
         title=data["title"],
         season_number=data["season_number"],
         episode_number=data["episode_number"],
         show_id=show.id if show else None,
     )
-    db.add(media)
-    await db.flush()
     if show and series_tmdb_id:
-        await enrich_media(media, api_key=api_key, series_tmdb_id=series_tmdb_id)
+        media = await enrich_media_safely(db, media, api_key=api_key, series_tmdb_id=series_tmdb_id)
     else:
         await enrich_media(media, api_key=api_key)
     return media
@@ -1618,23 +1617,22 @@ async def find_or_create_media_plex(data: dict, db: AsyncSession, api_key: str =
             if existing_ep:
                 return existing_ep
 
-    media = Media(
-        tmdb_id=int(data["tmdb_id"]) if data["tmdb_id"] else None,
-        media_type=MediaType(data["media_type"]),
+    media, created = await create_media_safely(
+        db,
+        int(data["tmdb_id"]) if data["tmdb_id"] else None,
+        MediaType(data["media_type"]),
         title=data["title"],
         season_number=data["season_number"],
         episode_number=data["episode_number"],
     )
-    if media.media_type == MediaType.episode and not series_tmdb_id and data.get("grandparent_title"):
+    if created and media.media_type == MediaType.episode and not series_tmdb_id and data.get("grandparent_title"):
         media.tmdb_data = {"show_title": data["grandparent_title"]}
-    db.add(media)
-    await db.flush()
 
     if media.media_type == MediaType.episode and series_tmdb_id:
         try:
             show = await _find_or_create_show(db, series_tmdb_id, api_key)
             media.show_id = show.id
-            await enrich_media(media, api_key=api_key, series_tmdb_id=series_tmdb_id)
+            media = await enrich_media_safely(db, media, api_key=api_key, series_tmdb_id=series_tmdb_id)
         except Exception as e:
             print(f"  Could not enrich episode with show context: {e}")
     else:
@@ -2263,18 +2261,17 @@ async def find_or_create_media_kodi(data: dict, db: AsyncSession, api_key: str =
     if data["media_type"] == "episode" and not data.get("tmdb_id") and data.get("season_number") is None:
         return None
 
-    media = Media(
-        tmdb_id=int(data["tmdb_id"]) if data.get("tmdb_id") else None,
-        media_type=MediaType(data["media_type"]),
+    media, _created = await create_media_safely(
+        db,
+        int(data["tmdb_id"]) if data.get("tmdb_id") else None,
+        MediaType(data["media_type"]),
         title=data["title"],
         season_number=data.get("season_number"),
         episode_number=data.get("episode_number"),
         show_id=show.id if show else None,
     )
-    db.add(media)
-    await db.flush()
     if show and series_tmdb_id:
-        await enrich_media(media, api_key=api_key, series_tmdb_id=series_tmdb_id)
+        media = await enrich_media_safely(db, media, api_key=api_key, series_tmdb_id=series_tmdb_id)
     else:
         await enrich_media(media, api_key=api_key)
     return media

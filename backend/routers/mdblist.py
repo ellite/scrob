@@ -12,7 +12,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import mdblist as mdblist_client
-from core.enrichment import enrich_media, is_unmapped_tvdb_episode
+from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
 from core.rewatch import record_rewatch_progress
 from db import engine, get_db
 from dependencies import get_current_user
@@ -167,13 +167,9 @@ async def _get_or_create_series_media(
 
     try:
         data = await tmdb.get_show(tmdb_id, api_key=api_key)
-        media = Media(
-            tmdb_id=tmdb_id,
-            media_type=MediaType.series,
-            title=data.get("name") or title,
+        media, _created = await create_media_safely(
+            db, tmdb_id, MediaType.series, title=data.get("name") or title
         )
-        db.add(media)
-        await db.flush()
         await enrich_media(media, api_key=api_key)
         return media
     except Exception as exc:

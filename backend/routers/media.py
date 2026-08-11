@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse, Response
 from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, and_, delete, func, cast as sa_cast, Text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from db import get_db, AsyncSessionLocal
@@ -2472,13 +2473,11 @@ async def manually_collect(
         if not check_tmdb_key(tmdb_key):
             raise HTTPException(status_code=404, detail="Media not found and no TMDB key configured")
         try:
-            from core.enrichment import enrich_media
+            from core.enrichment import enrich_media, create_media_safely, enrich_media_safely
             if body.media_type == MediaType.movie:
                 data = await tmdb.get_movie(body.tmdb_id, api_key=tmdb_key)
                 title = data.get("title", "")
-                media = Media(tmdb_id=body.tmdb_id, media_type=body.media_type, title=title)
-                db.add(media)
-                await db.flush()
+                media, _created = await create_media_safely(db, body.tmdb_id, body.media_type, title=title)
                 await enrich_media(media, api_key=tmdb_key)
             elif body.media_type == MediaType.episode:
                 if not body.series_tmdb_id or body.season_number is None or body.episode_number is None:
@@ -2524,17 +2523,16 @@ async def manually_collect(
                 ep_data = await tmdb.get_episode(
                     body.series_tmdb_id, body.season_number, body.episode_number, api_key=tmdb_key
                 )
-                media = Media(
-                    tmdb_id=body.tmdb_id,
-                    media_type=MediaType.episode,
+                media, _created = await create_media_safely(
+                    db,
+                    body.tmdb_id,
+                    MediaType.episode,
                     title=ep_data.get("name", ""),
                     season_number=body.season_number,
                     episode_number=body.episode_number,
                     show_id=show.id,
                 )
-                db.add(media)
-                await db.flush()
-                await enrich_media(media, api_key=tmdb_key, series_tmdb_id=body.series_tmdb_id)
+                media = await enrich_media_safely(db, media, api_key=tmdb_key, series_tmdb_id=body.series_tmdb_id)
             else:
                 raise HTTPException(status_code=400, detail=f"Manual collection not supported for type: {body.media_type}")
         except HTTPException:
@@ -2706,9 +2704,11 @@ async def _resolve_season_episodes(
             if not media.show_id:
                 media.show_id = show.id
         else:
-            media = Media(
-                tmdb_id=tid,
-                media_type=MediaType.episode,
+            from core.enrichment import create_media_safely
+            media, _created = await create_media_safely(
+                db,
+                tid,
+                MediaType.episode,
                 title=ep.get("name", ""),
                 season_number=season_number,
                 episode_number=ep.get("episode_number"),
@@ -2718,7 +2718,6 @@ async def _resolve_season_episodes(
                 tmdb_rating=ep.get("vote_average"),
                 poster_path=tmdb.poster_url(ep.get("still_path"), size="w500"),
             )
-            db.add(media)
         result.append(media)
 
     await db.flush()
@@ -2774,8 +2773,26 @@ async def _resolve_season_episodes_from_tvdb(
                 episode_number=ep_num,
                 show_id=show.id,
             )
+            # tmdb_id isn't known until enrich_episode_from_tvdb resolves it, so
+            # this can't go through create_media_safely up front - flushed
+            # explicitly here instead, inside a savepoint, so a conflict with a
+            # concurrently-created row for this exact episode is caught right
+            # here instead of failing the whole batch's flush at the end.
             await enrich_episode_from_tvdb(media, ep)
-            db.add(media)
+            try:
+                async with db.begin_nested():
+                    db.add(media)
+                    await db.flush()
+            except IntegrityError:
+                existing_result = await db.execute(
+                    select(Media)
+                    .where(Media.tmdb_id == media.tmdb_id, Media.media_type == MediaType.episode)
+                    .order_by(Media.id)
+                )
+                existing = existing_result.scalars().first()
+                if not existing:
+                    raise
+                media = existing
         result.append(media)
 
     await db.flush()

@@ -46,6 +46,14 @@ class _Result:
         return [] if self.item is None else [self.item]
 
 
+class _NestedTxn:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False  # let exceptions propagate, like a real SAVEPOINT rollback
+
+
 class _FakeSession:
     def __init__(self, results):
         self.added = []
@@ -58,6 +66,9 @@ class _FakeSession:
         if isinstance(value, Media) and value.id is None:
             value.id = 101
         self.added.append(value)
+
+    def begin_nested(self):
+        return _NestedTxn()
 
 
 class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
@@ -83,6 +94,12 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
             patch("routers.webhooks._find_or_create_show", find_show),
             patch("routers.history.tmdb.get_episode", get_episode),
             patch("routers.history.enrich_media", enrich),
+            # Some call sites (e.g. the orphan-repair branch) go through
+            # enrich_media_safely, which resolves enrich_media via
+            # core.enrichment's own namespace rather than history.py's
+            # imported alias - patch it there too so every code path is
+            # controlled by this same mock.
+            patch("core.enrichment.enrich_media", enrich),
             patch("routers.history._push_watch_state", push_state),
         )
         return patches, get_key, find_show, get_episode, enrich, push_state
@@ -93,7 +110,7 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeSession([None, None, None, None])
         patches, get_key, find_show, get_episode, enrich, push_state = self._patch_dependencies()
 
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             response = await history.mark_as_watched(self.event, db, self.user)
 
         media = next(value for value in db.added if isinstance(value, Media))
@@ -127,7 +144,7 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeSession([None, orphan, None, None])  # trailing None: record_rewatch_progress's Media lookup
         patches, _, _, get_episode, enrich, _ = self._patch_dependencies()
 
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             await history.mark_as_watched(self.event, db, self.user)
 
         self.assertEqual(orphan.show_id, self.show.id)
@@ -155,7 +172,7 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeSession([mapped_media, None, None])  # trailing None: record_rewatch_progress's Media lookup
         patches, _, _, get_episode, enrich, push_state = self._patch_dependencies()
 
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             response = await history.mark_as_watched(event, db, self.user)
 
         self.assertEqual(response["status"], "ok")

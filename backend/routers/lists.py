@@ -17,7 +17,7 @@ from models.users import User
 from models.follows import Follow
 from models.global_settings import GlobalSettings
 from routers.media import enrich_with_state
-from core.enrichment import is_unmapped_tvdb_episode
+from core.enrichment import is_unmapped_tvdb_episode, create_media_safely
 
 logger = logging.getLogger(__name__)
 
@@ -553,8 +553,9 @@ async def add_list_item(
         select(Media)
         .options(selectinload(Media.show))
         .where(Media.tmdb_id == body.tmdb_id, Media.media_type == body.media_type)
+        .order_by(Media.id)
     )
-    media = media_result.scalar_one_or_none()
+    media = media_result.scalars().first()
 
     from routers.media import get_user_tmdb_key
     from core import tmdb
@@ -565,9 +566,8 @@ async def add_list_item(
         try:
             if body.media_type == MediaType.movie:
                 data = await tmdb.get_movie(body.tmdb_id, api_key=api_key)
-                media = Media(
-                    tmdb_id=body.tmdb_id,
-                    media_type=MediaType.movie,
+                media, _created = await create_media_safely(
+                    db, body.tmdb_id, MediaType.movie,
                     title=data.get("title", "Unknown"),
                     poster_path=tmdb.poster_url(data.get("poster_path")),
                     backdrop_path=tmdb.poster_url(data.get("backdrop_path"), size="w1280"),
@@ -578,18 +578,16 @@ async def add_list_item(
                 )
             elif body.media_type == MediaType.person:
                 data = await tmdb.get_person(body.tmdb_id, api_key=api_key)
-                media = Media(
-                    tmdb_id=body.tmdb_id,
-                    media_type=MediaType.person,
+                media, _created = await create_media_safely(
+                    db, body.tmdb_id, MediaType.person,
                     title=data.get("name", "Unknown"),
                     poster_path=tmdb.poster_url(data.get("profile_path"), size="w185"),
                     overview=data.get("biography"),
                 )
             else:
                 data = await tmdb.get_show(body.tmdb_id, api_key=api_key)
-                media = Media(
-                    tmdb_id=body.tmdb_id,
-                    media_type=MediaType.series,
+                media, _created = await create_media_safely(
+                    db, body.tmdb_id, MediaType.series,
                     title=data.get("name", "Unknown"),
                     poster_path=tmdb.poster_url(data.get("poster_path")),
                     backdrop_path=tmdb.poster_url(data.get("backdrop_path"), size="w1280"),
@@ -598,8 +596,6 @@ async def add_list_item(
                     overview=data.get("overview"),
                     adult=data.get("adult", False),
                 )
-            db.add(media)
-            await db.flush()
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"Media not found: {e}")
     elif not media.adult and body.media_type in (MediaType.movie, MediaType.series):

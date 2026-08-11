@@ -13,7 +13,7 @@ from models.base import MediaType
 from models.users import UserSettings
 from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
-from core.enrichment import enrich_media
+from core.enrichment import enrich_media, create_media_safely
 
 router = APIRouter()
 
@@ -96,9 +96,7 @@ async def submit_rating(
                 title = None  # enrich_media will populate all fields including title
             else:
                 raise HTTPException(status_code=400, detail="Cannot create media row for episodes via rating")
-            media = Media(tmdb_id=body.tmdb_id, media_type=media_type, title=title or "")
-            db.add(media)
-            await db.flush()
+            media, _created = await create_media_safely(db, body.tmdb_id, media_type, title=title or "")
             await enrich_media(media, api_key=api_key)
         except HTTPException:
             raise

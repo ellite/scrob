@@ -18,7 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import trakt as trakt_client
-from core.enrichment import enrich_media, is_unmapped_tvdb_episode
+from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
 from core.trakt_export import MAX_TOTAL_SIZE, TraktExportData, parse_trakt_export
 from core.rewatch import record_rewatch_progress
 from db import get_db, engine
@@ -263,9 +263,7 @@ async def _get_or_create_movie_media(db: AsyncSession, tmdb_id: int, title: str,
     media = result.scalars().first()
     if media:
         return media
-    media = Media(tmdb_id=tmdb_id, media_type=MediaType.movie, title=title)
-    db.add(media)
-    await db.flush()
+    media, _created = await create_media_safely(db, tmdb_id, MediaType.movie, title=title)
     await enrich_media(media, api_key=api_key)
     return media
 
@@ -285,9 +283,7 @@ async def _get_or_create_series_media(
     media = result.scalars().first()
     if media:
         return media
-    media = Media(tmdb_id=tmdb_id, media_type=MediaType.series, title=title)
-    db.add(media)
-    await db.flush()
+    media, _created = await create_media_safely(db, tmdb_id, MediaType.series, title=title)
     await enrich_media(media, api_key=api_key)
     return media
 
@@ -302,15 +298,14 @@ async def _get_or_create_person_media(db: AsyncSession, tmdb_id: int, name: str,
     from core import tmdb
     try:
         data = await tmdb.get_person(tmdb_id, api_key=api_key)
-        media = Media(
-            tmdb_id=tmdb_id,
-            media_type=MediaType.person,
+        media, _created = await create_media_safely(
+            db,
+            tmdb_id,
+            MediaType.person,
             title=data.get("name") or name or "Unknown",
             poster_path=tmdb.poster_url(data.get("profile_path"), size="w185"),
             overview=data.get("biography"),
         )
-        db.add(media)
-        await db.flush()
         return media
     except Exception as exc:
         logger.warning("Could not fetch person tmdb=%s: %s", tmdb_id, exc)
@@ -405,9 +400,10 @@ async def _get_or_create_episode_media(
                 season_number, episode_number, show_tmdb_id,
             )
             return None
-        media = Media(
-            tmdb_id=ep["id"],
-            media_type=MediaType.episode,
+        media, _created = await create_media_safely(
+            db,
+            ep["id"],
+            MediaType.episode,
             title=ep["name"],
             overview=ep.get("overview"),
             poster_path=tmdb.poster_url(ep.get("still_path"), size="w500"),
@@ -418,8 +414,6 @@ async def _get_or_create_episode_media(
             episode_number=episode_number,
             tmdb_data={"runtime": ep.get("runtime"), "cast": []},
         )
-        db.add(media)
-        await db.flush()
         return media
     except Exception as exc:
         logger.warning("Could not fetch episode s%se%s for show tmdb=%s: %s", season_number, episode_number, show_tmdb_id, exc)
@@ -878,26 +872,7 @@ async def _apply_trakt_import(
                         if not tmdb_id_item:
                             continue
                         async with db.begin_nested():
-                            r2 = await db.execute(
-                                select(Media).where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
-                            )
-                            media = r2.scalar_one_or_none()
-                            if not media:
-                                from core import tmdb
-                                d = await tmdb.get_show(tmdb_id_item, api_key=api_key)
-                                media = Media(
-                                    tmdb_id=tmdb_id_item,
-                                    media_type=MediaType.series,
-                                    title=d.get("name") or show_data.get("title", ""),
-                                    poster_path=tmdb.poster_url(d.get("poster_path")),
-                                    backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-                                    release_date=d.get("first_air_date"),
-                                    tmdb_rating=d.get("vote_average"),
-                                    overview=d.get("overview"),
-                                    adult=d.get("adult", False),
-                                )
-                                db.add(media)
-                                await db.flush()
+                            media = await _get_or_create_series_media(db, tmdb_id_item, show_data.get("title", ""), api_key)
                         if media and media.id not in shows_existing:
                             db.add(ListItem(list_id=shows_list.id, media_id=media.id))
                             shows_existing.add(media.id)
@@ -943,26 +918,7 @@ async def _apply_trakt_import(
                         if not tmdb_id_item:
                             continue
                         async with db.begin_nested():
-                            r2 = await db.execute(
-                                select(Media).where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
-                            )
-                            media = r2.scalar_one_or_none()
-                            if not media:
-                                from core import tmdb
-                                d = await tmdb.get_show(tmdb_id_item, api_key=api_key)
-                                media = Media(
-                                    tmdb_id=tmdb_id_item,
-                                    media_type=MediaType.series,
-                                    title=d.get("name") or show_data.get("title", ""),
-                                    poster_path=tmdb.poster_url(d.get("poster_path")),
-                                    backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-                                    release_date=d.get("first_air_date"),
-                                    tmdb_rating=d.get("vote_average"),
-                                    overview=d.get("overview"),
-                                    adult=d.get("adult", False),
-                                )
-                                db.add(media)
-                                await db.flush()
+                            media = await _get_or_create_series_media(db, tmdb_id_item, show_data.get("title", ""), api_key)
                     else:
                         continue
 

@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, update, func, case, cast as sa_cast, Text, or_, and_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
 from models.events import WatchEvent
@@ -26,7 +27,12 @@ from dependencies import get_current_user, get_current_user_or_api_key
 from core import tmdb
 from core import tvdb as tvdb_client
 from core.episode_order import ensure_episode_order_mapping, get_episode_order, validate_episode_order
-from core.enrichment import tmdb_season_covers, enrich_episode_from_tvdb
+from core.enrichment import (
+    tmdb_season_covers,
+    enrich_episode_from_tvdb,
+    create_media_safely,
+    apply_media_change_safely,
+)
 from core.rewatch import (
     capped_season_episode_counts,
     total_aired_episodes,
@@ -1637,22 +1643,28 @@ async def refresh_show_metadata(
         media.tmdb_rating = ep.get("vote_average")
         media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
 
+    episode_ids: list[int] = []
     for media in episodes:
-        if media.season_number is None:
-            continue
-        ep = season_data.get(media.season_number, {}).get(media.episode_number)
-        if ep:
-            apply_episode_data(media, ep)
+        if media.season_number is not None:
+            ep = season_data.get(media.season_number, {}).get(media.episode_number)
+            if ep:
+                media = await apply_media_change_safely(
+                    db, media, lambda media=media, ep=ep: apply_episode_data(media, ep)
+                )
+        episode_ids.append(media.id)
 
     # Adopt orphans whose (season, episode) has exactly one candidate in this show's TMDB data
+    orphan_ids: list[int] = []
     for media in orphans:
-        if media.season_number is None or media.episode_number is None:
-            continue
-        ep = season_data.get(media.season_number, {}).get(media.episode_number)
-        if ep:
-            apply_episode_data(media, ep)
+        if media.season_number is not None and media.episode_number is not None:
+            ep = season_data.get(media.season_number, {}).get(media.episode_number)
+            if ep:
+                media = await apply_media_change_safely(
+                    db, media, lambda media=media, ep=ep: apply_episode_data(media, ep)
+                )
+        orphan_ids.append(media.id)
 
-    all_media_ids = [ep.id for ep in episodes] + [ep.id for ep in orphans]
+    all_media_ids = episode_ids + orphan_ids
     await refresh_technical_data(db, all_media_ids, current_user.id)
 
     await db.commit()
@@ -2142,9 +2154,27 @@ async def get_tvdb_season(
                         season_number=season_number,
                         episode_number=ep_num,
                     )
+                    # tmdb_id isn't known until enrich_episode_from_tvdb resolves
+                    # it, so this can't go through create_media_safely up front -
+                    # flushed explicitly here instead, inside a savepoint, so a
+                    # conflict with a concurrently-created row for this exact
+                    # episode is caught right here rather than at the batched
+                    # commit below.
                     await enrich_episode_from_tvdb(local_episode, episode)
-                    db.add(local_episode)
-                    await db.flush()
+                    try:
+                        async with db.begin_nested():
+                            db.add(local_episode)
+                            await db.flush()
+                    except IntegrityError:
+                        existing_result = await db.execute(
+                            select(Media)
+                            .where(Media.tmdb_id == local_episode.tmdb_id, Media.media_type == MediaType.episode)
+                            .order_by(Media.id)
+                        )
+                        existing = existing_result.scalars().first()
+                        if not existing:
+                            raise
+                        local_episode = existing
                     local_ep_map[(season_number, ep_num)] = local_episode
                     created_any = True
         mapped_rows.append((episode, mapping, local_episode, unmatched_ep))
@@ -2426,9 +2456,26 @@ async def get_tvdb_episode(
                     season_number=season_number,
                     episode_number=episode_number,
                 )
+                # tmdb_id isn't known until enrich_episode_from_tvdb resolves
+                # it, so this can't go through create_media_safely up front -
+                # flushed explicitly here instead, inside a savepoint, so a
+                # conflict with a concurrently-created row for this exact
+                # episode is caught right here instead of crashing db.commit().
                 await enrich_episode_from_tvdb(new_ep, ep_data)
-                db.add(new_ep)
-                await db.flush()
+                try:
+                    async with db.begin_nested():
+                        db.add(new_ep)
+                        await db.flush()
+                except IntegrityError:
+                    existing_result = await db.execute(
+                        select(Media)
+                        .where(Media.tmdb_id == new_ep.tmdb_id, Media.media_type == MediaType.episode)
+                        .order_by(Media.id)
+                    )
+                    existing = existing_result.scalars().first()
+                    if not existing:
+                        raise
+                    new_ep = existing
                 await db.commit()
             canonical_season = season_number
             canonical_episode = episode_number
