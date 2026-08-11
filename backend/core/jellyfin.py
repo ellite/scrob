@@ -262,15 +262,29 @@ async def mark_unwatched(url: str, token: str, user_id: str, item_id: str, clien
         return False
 
 async def set_rating(url: str, token: str, user_id: str, item_id: str, rating: float, client: httpx.AsyncClient | None = None) -> bool:
-    """Set a star rating on a Jellyfin item (0–10 scale)."""
-    headers = {**_auth_headers(token), "Content-Type": "application/json"}
-    body = {"PlayedPercentage": None, "UnplayedItemCount": None, "Rating": rating}
+    """Set a star rating on a Jellyfin item (0–10 scale).
+
+    POST .../UserData replaces the *entire* UserData object rather than patching
+    it, so Played/PlayCount/PlaybackPositionTicks/IsFavorite/LastPlayedDate must
+    be fetched first and merged in - otherwise a concurrent rating push silently
+    resets watched status back to unwatched (#168).
+    """
+    get_headers = _auth_headers(token)
+    post_headers = {**get_headers, "Content-Type": "application/json"}
+    item_url = f"{url.rstrip('/')}/Users/{user_id}/Items/{item_id}"
+    userdata_url = f"{item_url}/UserData"
+
+    async def _do(c: httpx.AsyncClient) -> bool:
+        item_r = await c.get(item_url, headers=get_headers, params={"Fields": "UserData"})
+        item_r.raise_for_status()
+        body = {**item_r.json().get("UserData", {}), "Rating": rating}
+        r = await c.post(userdata_url, headers=post_headers, json=body)
+        return r.status_code < 400
+
     try:
         if client:
-            r = await client.post(f"{url.rstrip('/')}/Users/{user_id}/Items/{item_id}/UserData", headers=headers, json=body)
-            return r.status_code < 400
+            return await _do(client)
         async with httpx.AsyncClient(timeout=PUSH_TIMEOUT, follow_redirects=False) as c:
-            r = await c.post(f"{url.rstrip('/')}/Users/{user_id}/Items/{item_id}/UserData", headers=headers, json=body)
-            return r.status_code < 400
+            return await _do(c)
     except Exception:
         return False
