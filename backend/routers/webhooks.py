@@ -917,25 +917,30 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
 
     elif notification_type in ("PlaybackStop", "playback.stop"):
+        # sync_watched and sync_playback are independent toggles - watched status
+        # must sync even when continue-watching tracking is off, and _close_session's
+        # pending delete needs committing either way (was only ever reached when
+        # sync_playback was on, leaving the closed session uncommitted otherwise).
         session = await _close_session(db, session_key)
         progress_percent = data["progress_percent"] or (session.progress_percent if session else 0.0)
-        if not conn or conn.sync_playback:
-            progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
-            if (not conn or conn.sync_watched) and progress_percent > 0.05:
-                for m in media_list:
-                    await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
-            await db.commit()
+        progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
+        if (not conn or conn.sync_watched) and progress_percent > 0.05:
+            for m in media_list:
+                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
+        await db.commit()
         for m in media_list:
             await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
             await _maybe_mdblist_scrobble(settings, m, "stop", progress_percent, db=db)
             await _maybe_simkl_scrobble(settings, m, "stop", progress_percent, db=db)
 
     elif notification_type in ("MarkPlayed", "item.markplayed"):
+        # Same reasoning as PlaybackStop above: _close_session's pending delete
+        # needs committing regardless of sync_watched, not only when it fires.
         await _close_session(db, session_key)
         if not conn or conn.sync_watched:
             for m in media_list:
                 await _write_watch_event(db, user.id, m.id, 1.0, data["progress_seconds"], True)
-            await db.commit()
+        await db.commit()
         for m in media_list:
             await _maybe_trakt_scrobble(settings, m, "stop", 1.0, db=db)
             await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
@@ -1101,25 +1106,30 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
 
     elif notification_type in ("PlaybackStop", "playback.stop"):
+        # sync_watched and sync_playback are independent toggles - watched status
+        # must sync even when continue-watching tracking is off, and _close_session's
+        # pending delete needs committing either way (was only ever reached when
+        # sync_playback was on, leaving the closed session uncommitted otherwise).
         session = await _close_session(db, session_key)
         progress_percent = data["progress_percent"] or (session.progress_percent if session else 0.0)
-        if not conn or conn.sync_playback:
-            progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
-            if (not conn or conn.sync_watched) and progress_percent > 0.05:
-                for m in media_list:
-                    await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
-            await db.commit()
+        progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
+        if (not conn or conn.sync_watched) and progress_percent > 0.05:
+            for m in media_list:
+                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
+        await db.commit()
         for m in media_list:
             await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
             await _maybe_mdblist_scrobble(settings, m, "stop", progress_percent, db=db)
             await _maybe_simkl_scrobble(settings, m, "stop", progress_percent, db=db)
 
     elif notification_type in ("MarkPlayed", "item.markplayed"):
+        # Same reasoning as PlaybackStop above: _close_session's pending delete
+        # needs committing regardless of sync_watched, not only when it fires.
         await _close_session(db, session_key)
         if not conn or conn.sync_watched:
             for m in media_list:
                 await _write_watch_event(db, user.id, m.id, 1.0, data["progress_seconds"], True)
-            await db.commit()
+        await db.commit()
         for m in media_list:
             await _maybe_trakt_scrobble(settings, m, "stop", 1.0, db=db)
             await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
@@ -1204,21 +1214,47 @@ async def _handle_jellyfin_scrobble_webhook(
             await _commit_playback_session_update(db)
 
     elif notification_type in ("PlaybackStop", "playback.stop"):
+        # sync_watched and sync_playback are independent toggles - watched status
+        # must sync even when continue-watching tracking is off, and _close_session's
+        # pending delete needs committing either way (was only ever reached when
+        # sync_playback was on, leaving the closed session uncommitted otherwise).
         session = await _close_session(db, session_key)
-        if conn.sync_playback:
-            progress_percent = data["progress_percent"] or (session.progress_percent if session else 0.0)
-            progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
-            if conn.sync_watched and progress_percent > 0.05:
-                for m in media_list:
-                    await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
-            await db.commit()
+        progress_percent = data["progress_percent"] or (session.progress_percent if session else 0.0)
+        progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
+        if conn.sync_watched and progress_percent > 0.05:
+            for m in media_list:
+                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
+        await db.commit()
 
     elif notification_type in ("MarkPlayed", "item.markplayed"):
+        # Same reasoning as PlaybackStop above: _close_session's pending delete
+        # needs committing regardless of sync_watched, not only when it fires.
         await _close_session(db, session_key)
         if conn.sync_watched:
             for m in media_list:
                 await _write_watch_event(db, user.id, m.id, 1.0, data["progress_seconds"], True)
-            await db.commit()
+        await db.commit()
+
+    elif notification_type == "UserDataSaved":
+        # Jellyfin's official Webhook plugin has no dedicated "mark played"
+        # event - manually toggling watched/unwatched raises this same
+        # UserDataSaved notification (see the matching comment in
+        # _handle_jellyfin_webhook, #129). Scrobble-only connections never
+        # handled this at all, so a manual toggle in Jellyfin/Emby's own UI
+        # never propagated for them.
+        if data.get("save_reason") == "TogglePlayed" and conn.sync_watched:
+            played = data.get("played")
+            if played:
+                await _close_session(db, session_key)
+                for m in media_list:
+                    await _write_watch_event(db, user.id, m.id, 1.0, data["progress_seconds"], True)
+                await db.commit()
+            elif played is False:
+                for m in media_list:
+                    await _handle_unwatch_toggle(db, user.id, m)
+                await db.commit()
+                from routers.history import _push_watch_state
+                await _push_watch_state(db, user.id, [m.id for m in media_list], watched=False)
 
     return {"status": "ok", "event": notification_type, "title": data["title"]}
 
