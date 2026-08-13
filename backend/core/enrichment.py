@@ -119,7 +119,15 @@ async def enrich_episode_from_tvdb(media: Media, tvdb_episode_data: dict) -> Non
     tvdb_episode_id = tvdb_episode_data.get("tvdb_id")
     if tvdb_episode_id:
         media.tmdb_id = tvdb_episode_id
-    media.title = tvdb_episode_data.get("name") or media.title
+    # TVDB sometimes has an episode with no name at all (see #173) - media.title
+    # is NOT NULL, so a brand-new row (media.title still unset) needs a fallback
+    # rather than crashing the insert. Episode 0 is a real episode number (not
+    # "missing"), so this checks None explicitly rather than truthiness.
+    episode_number = tvdb_episode_data.get("episode_number")
+    if episode_number is None:
+        episode_number = media.episode_number
+    fallback_title = f"Episode {episode_number}" if episode_number is not None else "Untitled Episode"
+    media.title = tvdb_episode_data.get("name") or media.title or fallback_title
     media.overview = tvdb_episode_data.get("overview")
     if tvdb_episode_data.get("image_url"):
         media.poster_path = tvdb_episode_data["image_url"]

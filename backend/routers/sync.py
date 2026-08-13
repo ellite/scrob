@@ -6428,7 +6428,15 @@ async def match_unmatched_show(
                 # Store TVDB episode ID in tmdb_id column for ActionBar compatibility
                 if tvdb_ep_id:
                     media.tmdb_id = tvdb_ep_id
-                media.title = ep.get("name") or media.title
+                # TVDB sometimes has an episode with no name at all (see #173) -
+                # media.title is NOT NULL, so a brand-new row needs a fallback.
+                # Episode 0 is a real episode number, not "missing", hence the
+                # explicit None checks rather than truthiness.
+                ep_number = ep.get("number")
+                if ep_number is None:
+                    ep_number = media.episode_number
+                fallback_title = f"Episode {ep_number}" if ep_number is not None else "Untitled Episode"
+                media.title = ep.get("name") or media.title or fallback_title
                 media.overview = ep.get("overview")
                 if ep.get("image"):
                     media.poster_path = tvdb_client._image_url(ep["image"])

@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.exc import IntegrityError
 
-from core.enrichment import create_media_safely, apply_media_change_safely, enrich_media
+from core.enrichment import create_media_safely, apply_media_change_safely, enrich_media, enrich_episode_from_tvdb
 from models.base import MediaType
 from models.media import Media
 
@@ -333,6 +333,51 @@ class EnrichMediaEpisodeTvdbFallbackTests(unittest.IsolatedAsyncioTestCase):
         get_ep.assert_not_awaited()
         self.assertEqual(media.tmdb_id, 100)
         self.assertEqual(media.tmdb_data.get("source"), "tvdb")
+
+
+class EnrichEpisodeFromTvdbTitleFallbackTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for #173: TVDB sometimes has an episode with no name
+    at all. Media.title is NOT NULL, so a brand-new row (title still unset)
+    needs a fallback instead of crashing the insert."""
+
+    async def test_missing_name_on_new_row_falls_back_to_episode_number(self) -> None:
+        media = Media(media_type=MediaType.episode, season_number=3, episode_number=8)
+        tvdb_data = {
+            "tvdb_id": 11916722, "episode_number": 8, "name": None,
+            "overview": None, "air_date": "2026-08-23", "runtime": 24,
+        }
+        await enrich_episode_from_tvdb(media, tvdb_data)
+        self.assertEqual(media.title, "Episode 8")
+        self.assertIsNotNone(media.title)
+
+    async def test_missing_name_on_existing_row_keeps_old_title(self) -> None:
+        media = Media(media_type=MediaType.episode, season_number=3, episode_number=8, title="Old Title")
+        tvdb_data = {"tvdb_id": 11916722, "episode_number": 8, "name": None}
+        await enrich_episode_from_tvdb(media, tvdb_data)
+        self.assertEqual(media.title, "Old Title")
+
+    async def test_present_name_is_used_normally(self) -> None:
+        media = Media(media_type=MediaType.episode, season_number=3, episode_number=8)
+        tvdb_data = {"tvdb_id": 11916722, "episode_number": 8, "name": "Real Title"}
+        await enrich_episode_from_tvdb(media, tvdb_data)
+        self.assertEqual(media.title, "Real Title")
+
+    async def test_missing_name_and_episode_number_falls_back_to_generic_title(self) -> None:
+        # Degenerate case: no name from TVDB, and no episode number anywhere
+        # (neither the payload nor the media row) to build "Episode N" from.
+        media = Media(media_type=MediaType.episode, season_number=None, episode_number=None)
+        tvdb_data = {"tvdb_id": 11916722, "episode_number": None, "name": None}
+        await enrich_episode_from_tvdb(media, tvdb_data)
+        self.assertEqual(media.title, "Untitled Episode")
+
+    async def test_missing_name_with_episode_number_zero_uses_episode_zero(self) -> None:
+        # Episode 0 is a real, valid episode number (not "missing") - a naive
+        # `episode_number or ...` fallback would treat 0 as falsy and produce
+        # "Untitled Episode" instead of "Episode 0".
+        media = Media(media_type=MediaType.episode, season_number=1, episode_number=0)
+        tvdb_data = {"tvdb_id": 11916722, "episode_number": 0, "name": None}
+        await enrich_episode_from_tvdb(media, tvdb_data)
+        self.assertEqual(media.title, "Episode 0")
 
 
 if __name__ == "__main__":
