@@ -16,11 +16,27 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("list_items", sa.Column("season_number", sa.Integer(), nullable=True))
-    op.drop_constraint("uq_list_item", "list_items", type_="unique")
+    # Idempotent/resumable: CREATE INDEX CONCURRENTLY below can't run inside a
+    # transaction, so entering autocommit_block() commits add_column/drop_constraint
+    # first. If the concurrent index build is then interrupted (container restart,
+    # OOM, etc.) before alembic_version advances, a retry replays this whole
+    # function from the top - IF [NOT] EXISTS on every step makes that safe
+    # instead of crashing with "column already exists" (see #183).
+    op.execute("ALTER TABLE list_items ADD COLUMN IF NOT EXISTS season_number INTEGER")
+    op.execute("ALTER TABLE list_items DROP CONSTRAINT IF EXISTS uq_list_item")
     with op.get_context().autocommit_block():
+        # A prior interrupted build leaves an INVALID index behind under the same
+        # name - IF NOT EXISTS alone would then skip recreating it, silently
+        # leaving the uniqueness constraint unenforced.
+        conn = op.get_bind()
+        invalid = conn.execute(sa.text(
+            "SELECT 1 FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid "
+            "WHERE c.relname = 'uq_list_item_season' AND NOT i.indisvalid"
+        )).scalar()
+        if invalid:
+            op.execute("DROP INDEX CONCURRENTLY uq_list_item_season")
         op.execute(
-            "CREATE UNIQUE INDEX CONCURRENTLY uq_list_item_season "
+            "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_list_item_season "
             "ON list_items (list_id, media_id, COALESCE(season_number, -1))"
         )
 
@@ -29,5 +45,5 @@ def downgrade() -> None:
     with op.get_context().autocommit_block():
         op.execute("DROP INDEX CONCURRENTLY IF EXISTS uq_list_item_season")
     op.execute("DELETE FROM list_items WHERE season_number IS NOT NULL")
-    op.create_unique_constraint("uq_list_item", "list_items", ["list_id", "media_id"])
-    op.drop_column("list_items", "season_number")
+    op.execute("ALTER TABLE list_items ADD CONSTRAINT uq_list_item UNIQUE (list_id, media_id)")
+    op.execute("ALTER TABLE list_items DROP COLUMN IF EXISTS season_number")
