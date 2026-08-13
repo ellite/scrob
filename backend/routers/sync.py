@@ -5783,13 +5783,16 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
                         continue
                     seen.add(orphan_media.id)
                     try:
-                        item_data = await jellyfin.get_item(conn.url, conn.token, coll_file.source_id)
+                        # user_id is required here - Jellyfin's admin-only Items/{id}
+                        # endpoint (no Users/ prefix) throws server-side for a
+                        # non-admin token (see #179).
+                        item_data = await jellyfin.get_item(conn.url, conn.token, coll_file.source_id, user_id=conn.server_user_id)
                         if not item_data:
                             continue
                         series_id = item_data.get("SeriesId")
                         if not series_id:
                             continue
-                        series_data = await jellyfin.get_item(conn.url, conn.token, series_id)
+                        series_data = await jellyfin.get_item(conn.url, conn.token, series_id, user_id=conn.server_user_id)
                         if not series_data:
                             continue
                         series_tmdb_raw = series_data.get("ProviderIds", {}).get("Tmdb")

@@ -852,13 +852,16 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                 selected_ids = {row.library_id for row in sel_result.scalars().all()}
                 if selected_ids:
                     import core.jellyfin as jellyfin_client
-                    item_data = await jellyfin_client.get_item(conn.url, conn.token, jellyfin_id)
+                    # user_id is required here - Jellyfin's admin-only Items/{id}
+                    # endpoint (no Users/ prefix) throws server-side for a
+                    # non-admin token (see #179).
+                    item_data = await jellyfin_client.get_item(conn.url, conn.token, jellyfin_id, user_id=conn.server_user_id)
                     library_id: str | None = None
                     if item_data:
                         if item_data.get("Type") == "Episode":
                             series_id = item_data.get("SeriesId")
                             if series_id:
-                                series_data = await jellyfin_client.get_item(conn.url, conn.token, series_id)
+                                series_data = await jellyfin_client.get_item(conn.url, conn.token, series_id, user_id=conn.server_user_id)
                                 library_id = (series_data or {}).get("ParentId")
                         else:
                             library_id = item_data.get("ParentId")
@@ -1054,13 +1057,15 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
                 selected_ids = {row.library_id for row in sel_result.scalars().all()}
                 if selected_ids:
                     import core.emby as emby_client
-                    item_data = await emby_client.get_item(conn.url, conn.token, emby_item_id)
+                    # user_id is required here - same reasoning as the Jellyfin
+                    # branch above (see #179).
+                    item_data = await emby_client.get_item(conn.url, conn.token, emby_item_id, user_id=conn.server_user_id)
                     library_id: str | None = None
                     if item_data:
                         if item_data.get("Type") == "Episode":
                             series_id = item_data.get("SeriesId")
                             if series_id:
-                                series_data = await emby_client.get_item(conn.url, conn.token, series_id)
+                                series_data = await emby_client.get_item(conn.url, conn.token, series_id, user_id=conn.server_user_id)
                                 library_id = (series_data or {}).get("ParentId")
                         else:
                             library_id = item_data.get("ParentId")
