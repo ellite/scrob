@@ -5405,9 +5405,9 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     if conn.type == "plex":
                         found = await plex.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id)
                     elif conn.type == "jellyfin":
-                        found = await jellyfin.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id)
+                        found = await jellyfin.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id, user_id=conn.server_user_id)
                     else:
-                        found = await emby.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id)
+                        found = await emby.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id, user_id=conn.server_user_id)
                 elif m.media_type == MediaType.episode:
                     show_tmdb = show_tmdb_map.get(m.show_id) if m.show_id else None
                     if not show_tmdb or m.season_number is None or m.episode_number is None:
@@ -5415,9 +5415,9 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     if conn.type == "plex":
                         found = await plex.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number)
                     elif conn.type == "jellyfin":
-                        found = await jellyfin.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number)
+                        found = await jellyfin.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number, user_id=conn.server_user_id)
                     else:
-                        found = await emby.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number)
+                        found = await emby.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number, user_id=conn.server_user_id)
                 else:
                     return None
                 return _extract_source_id(found)

@@ -166,7 +166,7 @@ def extract_quality(media_streams: list) -> dict:
 
     return quality
 
-async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int) -> Optional[Dict]:
+async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int, user_id: Optional[str] = None) -> Optional[Dict]:
     """Search all Jellyfin libraries for a movie by TMDB ID. Returns the item with MediaStreams or None."""
     try:
         data = await _get(url, token, "Items", params={
@@ -179,13 +179,15 @@ async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int) -> Optional[
         items = data.get("Items", [])
         if not items:
             return None
-        # Fetch full detail with MediaStreams
-        return await get_item(url, token, items[0]["Id"])
+        # Fetch full detail with MediaStreams - user_id is required here, the
+        # admin-only Items/{id} endpoint (no Users/ prefix) throws server-side
+        # for a non-admin token (see #153).
+        return await get_item(url, token, items[0]["Id"], user_id=user_id)
     except Exception:
         return None
 
 
-async def find_episode_by_ids(url: str, token: str, series_tmdb_id: int, season: int, episode: int) -> Optional[Dict]:
+async def find_episode_by_ids(url: str, token: str, series_tmdb_id: int, season: int, episode: int, user_id: Optional[str] = None) -> Optional[Dict]:
     """Search all Jellyfin libraries for an episode by series TMDB ID + season + episode number."""
     try:
         # First find the series by TMDB ID
@@ -214,7 +216,8 @@ async def find_episode_by_ids(url: str, token: str, series_tmdb_id: int, season:
         ep_items = ep_data.get("Items", [])
         if not ep_items:
             return None
-        return await get_item(url, token, ep_items[0]["Id"])
+        # user_id required - see #153.
+        return await get_item(url, token, ep_items[0]["Id"], user_id=user_id)
     except Exception:
         return None
 

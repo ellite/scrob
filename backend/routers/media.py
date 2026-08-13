@@ -3386,7 +3386,7 @@ async def refresh_technical_data(db: AsyncSession, media_ids: list[int], user_id
                         break
                 if not item:
                     for c in jellyfin_conns:
-                        item = await jellyfin_client.find_movie_by_tmdb_id(c.url, c.token, media.tmdb_id)
+                        item = await jellyfin_client.find_movie_by_tmdb_id(c.url, c.token, media.tmdb_id, user_id=c.server_user_id)
                         if item:
                             new_source = CollectionSource.jellyfin
                             new_source_id = item.get("Id", "")
@@ -3397,7 +3397,7 @@ async def refresh_technical_data(db: AsyncSession, media_ids: list[int], user_id
                             break
                 if not item:
                     for c in emby_conns:
-                        item = await emby_client.find_movie_by_tmdb_id(c.url, c.token, media.tmdb_id)
+                        item = await emby_client.find_movie_by_tmdb_id(c.url, c.token, media.tmdb_id, user_id=c.server_user_id)
                         if item:
                             new_source = CollectionSource.emby
                             new_source_id = item.get("Id", "")
@@ -3424,6 +3424,7 @@ async def refresh_technical_data(db: AsyncSession, media_ids: list[int], user_id
                         for c in jellyfin_conns:
                             item = await jellyfin_client.find_episode_by_ids(
                                 c.url, c.token, series_tmdb_id, media.season_number, media.episode_number,
+                                user_id=c.server_user_id,
                             )
                             if item:
                                 new_source = CollectionSource.jellyfin
@@ -3437,6 +3438,7 @@ async def refresh_technical_data(db: AsyncSession, media_ids: list[int], user_id
                         for c in emby_conns:
                             item = await emby_client.find_episode_by_ids(
                                 c.url, c.token, series_tmdb_id, media.season_number, media.episode_number,
+                                user_id=c.server_user_id,
                             )
                             if item:
                                 new_source = CollectionSource.emby
