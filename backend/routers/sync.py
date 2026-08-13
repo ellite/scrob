@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, update, delete, func, cast
 from sqlalchemy.orm import selectinload
@@ -5928,8 +5928,17 @@ async def _stamp_matched_show_warnings(db: AsyncSession, user_id: int, warnings:
 class SeasonOverrideBody(BaseModel):
     source_show_tmdb_id: int
     source_season_number: int
-    target_show_tmdb_id: int
+    # Exactly one of these two must be set - the target is either a TMDB show
+    # or a TVDB show (#178).
+    target_show_tmdb_id: int | None = None
+    target_show_tvdb_id: int | None = None
     target_season_number: int
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> "SeasonOverrideBody":
+        if bool(self.target_show_tmdb_id) == bool(self.target_show_tvdb_id):
+            raise ValueError("Exactly one of target_show_tmdb_id or target_show_tvdb_id must be set")
+        return self
 
 
 @router.get("/season-overrides")
@@ -5942,24 +5951,36 @@ async def list_season_overrides(
     )
     overrides = result.scalars().all()
 
-    # Resolve show titles for all distinct TMDB IDs referenced by overrides
-    all_tmdb_ids = {o.source_show_tmdb_id for o in overrides} | {o.target_show_tmdb_id for o in overrides}
-    show_title_map: dict[int, str] = {}
+    # Resolve show titles for all distinct TMDB/TVDB IDs referenced by overrides
+    all_tmdb_ids = {o.source_show_tmdb_id for o in overrides} | {o.target_show_tmdb_id for o in overrides if o.target_show_tmdb_id}
+    all_tvdb_ids = {o.target_show_tvdb_id for o in overrides if o.target_show_tvdb_id}
+    tmdb_title_map: dict[int, str] = {}
+    tvdb_title_map: dict[int, str] = {}
     if all_tmdb_ids:
         shows_res = await db.execute(select(Show.tmdb_id, Show.title).where(Show.tmdb_id.in_(list(all_tmdb_ids))))
         for tmdb_id, title in shows_res.all():
             if tmdb_id is not None:
-                show_title_map[tmdb_id] = title
+                tmdb_title_map[tmdb_id] = title
+    if all_tvdb_ids:
+        shows_res = await db.execute(select(Show.tvdb_id, Show.title).where(Show.tvdb_id.in_(list(all_tvdb_ids))))
+        for tvdb_id, title in shows_res.all():
+            if tvdb_id is not None:
+                tvdb_title_map[tvdb_id] = title
 
     return [
         {
             "id": o.id,
             "source_show_tmdb_id": o.source_show_tmdb_id,
             "source_season_number": o.source_season_number,
-            "source_show_title": show_title_map.get(o.source_show_tmdb_id),
+            "source_show_title": tmdb_title_map.get(o.source_show_tmdb_id),
             "target_show_tmdb_id": o.target_show_tmdb_id,
+            "target_show_tvdb_id": o.target_show_tvdb_id,
+            "target_source": "tvdb" if o.target_show_tvdb_id else "tmdb",
             "target_season_number": o.target_season_number,
-            "target_show_title": show_title_map.get(o.target_show_tmdb_id),
+            "target_show_title": (
+                tvdb_title_map.get(o.target_show_tvdb_id) if o.target_show_tvdb_id
+                else tmdb_title_map.get(o.target_show_tmdb_id)
+            ),
         }
         for o in overrides
     ]
@@ -5980,7 +6001,11 @@ async def create_season_override(
     )
     override = existing.scalar_one_or_none()
     if override:
+        # Clear whichever target field isn't set - editing a TMDB-targeted
+        # remap into a TVDB one (or vice versa) must not leave a stale id
+        # from the previous target behind.
         override.target_show_tmdb_id = body.target_show_tmdb_id
+        override.target_show_tvdb_id = body.target_show_tvdb_id
         override.target_season_number = body.target_season_number
     else:
         override = ShowSeasonOverride(
@@ -5988,6 +6013,7 @@ async def create_season_override(
             source_show_tmdb_id=body.source_show_tmdb_id,
             source_season_number=body.source_season_number,
             target_show_tmdb_id=body.target_show_tmdb_id,
+            target_show_tvdb_id=body.target_show_tvdb_id,
             target_season_number=body.target_season_number,
         )
         db.add(override)
@@ -5998,6 +6024,7 @@ async def create_season_override(
         "source_show_tmdb_id": override.source_show_tmdb_id,
         "source_season_number": override.source_season_number,
         "target_show_tmdb_id": override.target_show_tmdb_id,
+        "target_show_tvdb_id": override.target_show_tvdb_id,
         "target_season_number": override.target_season_number,
     }
 
@@ -6069,6 +6096,65 @@ async def apply_season_override(
     episodes = ep_result.scalars().all()
     if not episodes:
         return {"status": "ok", "remapped": 0}
+
+    if override.target_show_tvdb_id:
+        # ── TVDB target (#178) - some shows have season/episode structures
+        # that only line up under TVDB's numbering, not TMDB's, so the remap
+        # target needs to be able to point at a TVDB show too. ──────────────
+        from core import tvdb as tvdb_client
+        from routers.shows import get_user_tvdb_key
+
+        tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
+        if not tvdb_api_key:
+            raise HTTPException(status_code=400, detail="TVDB API key required")
+        tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
+
+        target_show_result = await db.execute(select(Show).where(Show.tvdb_id == override.target_show_tvdb_id))
+        target_show = target_show_result.scalar_one_or_none()
+        if not target_show:
+            try:
+                raw_series = await tvdb_client.get_series(override.target_show_tvdb_id, tvdb_api_key)
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Could not fetch target show from TVDB: {e}")
+            show_fmt = tvdb_client.format_series(raw_series, language=tvdb_lang)
+            target_show = Show(
+                tvdb_id=override.target_show_tvdb_id,
+                tmdb_id=None,
+                title=show_fmt.get("title") or f"TVDB #{override.target_show_tvdb_id}",
+                original_title=show_fmt.get("original_title"),
+                overview=show_fmt.get("overview"),
+                poster_path=show_fmt.get("poster_path"),
+                backdrop_path=show_fmt.get("backdrop_path"),
+                status=show_fmt.get("status"),
+                first_air_date=show_fmt.get("first_air_date"),
+                last_air_date=show_fmt.get("last_air_date"),
+                tmdb_data={"seasons": show_fmt.get("seasons", []), "genres": show_fmt.get("genres", []), "source": "tvdb"},
+            )
+            db.add(target_show)
+            await db.flush()
+
+        try:
+            raw_eps = await tvdb_client.get_series_episodes(
+                override.target_show_tvdb_id, override.target_season_number, tvdb_api_key, language=tvdb_lang
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Could not fetch target season from TVDB: {e}")
+        tvdb_ep_map = {e.get("number"): e for e in raw_eps}
+
+        async def remap_episode_tvdb(media: Media, raw_ep: dict | None) -> None:
+            media.show_id = target_show.id
+            media.season_number = override.target_season_number
+            if raw_ep:
+                await enrich_episode_from_tvdb(media, tvdb_client.format_episode(raw_ep))
+
+        for media in episodes:
+            raw_ep = tvdb_ep_map.get(media.episode_number)
+            await apply_media_change_safely(
+                db, media, lambda media=media, raw_ep=raw_ep: remap_episode_tvdb(media, raw_ep)
+            )
+
+        await db.commit()
+        return {"status": "ok", "remapped": len(episodes)}
 
     # Find or create the target Show
     target_show_result = await db.execute(

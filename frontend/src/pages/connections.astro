@@ -458,8 +458,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         <span class="text-zinc-200 font-medium">{o.source_show_title ?? `TMDB #${o.source_show_tmdb_id}`}</span>
                         <span class="ml-1.5 text-zinc-500">Season {o.source_season_number}</span>
                         <span class="mx-1.5 text-zinc-600">→</span>
-                        <span class="text-zinc-300">{o.target_show_title ?? `TMDB #${o.target_show_tmdb_id}`}</span>
+                        <span class="text-zinc-300">{o.target_show_title ?? (o.target_source === 'tvdb' ? `TVDB #${o.target_show_tvdb_id}` : `TMDB #${o.target_show_tmdb_id}`)}</span>
                         <span class="ml-1.5 text-zinc-500">Season {o.target_season_number}</span>
+                        <span class={`ml-1.5 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${o.target_source === 'tvdb' ? 'bg-blue-500/15 text-blue-400' : 'bg-emerald-500/15 text-emerald-400'}`}>
+                          {o.target_source}
+                        </span>
                       </div>
                       <button
                         type="button"
@@ -4828,7 +4831,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         seasonsList.innerHTML = '';
         seasonsLoading.classList.remove('hidden');
         try {
-          const showRes = await fetch(`/api/proxy/shows/${tmdbId}`, {
+          const showUrl = tvdbId ? `/api/proxy/shows/tvdb/${tvdbId}` : `/api/proxy/shows/${tmdbId}`;
+          const showRes = await fetch(showUrl, {
             headers: { 'Authorization': `Bearer ${token}` },
           });
           const showData = showRes.ok ? await showRes.json() : null;
@@ -5001,18 +5005,20 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       }
 
       // Remap mode
-      if (!targetTmdbId || !targetSeasonNumber) return;
+      if ((!targetTmdbId && !targetTvdbId) || !targetSeasonNumber) return;
       saveBtn.textContent = 'Saving…';
       try {
+        const remapBody: any = {
+          source_show_tmdb_id: srcTmdbId,
+          source_season_number: srcSeason,
+          target_season_number: targetSeasonNumber,
+        };
+        if (targetTvdbId) remapBody.target_show_tvdb_id = targetTvdbId;
+        else remapBody.target_show_tmdb_id = targetTmdbId;
         const createRes = await fetch('/api/proxy/sync/season-overrides', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            source_show_tmdb_id: srcTmdbId,
-            source_season_number: srcSeason,
-            target_show_tmdb_id: targetTmdbId,
-            target_season_number: targetSeasonNumber,
-          }),
+          body: JSON.stringify(remapBody),
         });
         if (!createRes.ok) throw new Error(await createRes.text());
         const override = await createRes.json();
@@ -5041,13 +5047,15 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       (document.getElementById('remap-modal-title') as HTMLElement).textContent = 'Remap Season';
       (document.getElementById('remap-source-label') as HTMLElement).textContent = `"${title}" — Season ${season}`;
       (document.getElementById('remap-tmdb-label') as HTMLElement).textContent = 'Search for the correct TMDB show';
-      (document.getElementById('remap-tmdb-section') as HTMLElement).classList.remove('hidden');
-      (document.getElementById('remap-tvdb-section') as HTMLElement).classList.add('hidden');
       (document.getElementById('remap-seasons-area') as HTMLElement).classList.remove('hidden');
       (document.getElementById('remap-save') as HTMLButtonElement).textContent = 'Save & Apply';
+      // TMDB/TVDB toggle (#178) - some shows' season structure only exists on
+      // TVDB, so the remap target needs the same TMDB/TVDB choice the "Match"
+      // flow already has, not just TMDB search.
+      (document.getElementById('match-tab-bar') as HTMLElement).classList.remove('hidden');
       modal.classList.remove('hidden');
       modal.classList.add('flex');
-      searchInput.focus();
+      setMatchTab('tmdb');
     };
 
     (window as any).openMatchModal = (seriesName: string) => {
