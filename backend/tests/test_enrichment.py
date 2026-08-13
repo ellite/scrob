@@ -7,10 +7,13 @@ os.environ.setdefault(
     "postgresql+asyncpg://test:test@localhost/test",
 )
 
+from unittest.mock import AsyncMock, patch
+
 from sqlalchemy.exc import IntegrityError
 
-from core.enrichment import create_media_safely, apply_media_change_safely
+from core.enrichment import create_media_safely, apply_media_change_safely, enrich_media
 from models.base import MediaType
+from models.media import Media
 
 
 class _FakeScalars:
@@ -253,6 +256,83 @@ class ApplyMediaChangeSafelyTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(IntegrityError):
             await apply_media_change_safely(session, media, mutate)
+
+
+class EnrichMediaEpisodeTvdbFallbackTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for #162/#186: some shows have season/episode
+    structures that only line up under TVDB's numbering, not TMDB's -
+    enrich_media must fall back to TVDB instead of leaving the episode
+    permanently unenriched (and pointing the frontend at a TMDB URL that
+    404s - see HistoryCard.astro's tvdb_sourced routing)."""
+
+    async def test_tmdb_success_never_touches_tvdb(self) -> None:
+        media = Media(media_type=MediaType.episode, season_number=1, episode_number=1)
+        tmdb_data = {"id": 555, "name": "Pilot", "overview": "ok", "vote_average": 8.1}
+        with patch("core.enrichment.tmdb.get_episode", AsyncMock(return_value=tmdb_data)) as get_ep, \
+             patch("core.enrichment.tvdb_client.get_series_episodes", AsyncMock()) as get_tvdb_eps:
+            await enrich_media(
+                media, api_key="tmdb-key", series_tmdb_id=999,
+                tvdb_id=42, tvdb_api_key="tvdb-key",
+            )
+
+        get_ep.assert_awaited_once()
+        get_tvdb_eps.assert_not_awaited()
+        self.assertEqual(media.tmdb_id, 555)
+        self.assertEqual(media.title, "Pilot")
+
+    async def test_tmdb_404_falls_back_to_tvdb_when_available(self) -> None:
+        # Regression test for #186's exact repro: TMDB's own /tv/65942/season/4/episode/12
+        # 404s, but the show's TVDB match has it under the same season/episode numbers.
+        media = Media(media_type=MediaType.episode, season_number=4, episode_number=12, title="Old Title")
+        tvdb_raw = [{
+            "id": 9001, "seasonNumber": 4, "number": 12, "name": "TVDB Episode",
+            "overview": "tvdb overview", "aired": "2020-01-01", "runtime": 42,
+        }]
+        with patch("core.enrichment.tmdb.get_episode", AsyncMock(side_effect=Exception("404 Not Found"))), \
+             patch("core.enrichment.tvdb_client.get_series_episodes", AsyncMock(return_value=tvdb_raw)) as get_tvdb_eps:
+            await enrich_media(
+                media, api_key="tmdb-key", series_tmdb_id=65942,
+                tvdb_id=411, tvdb_api_key="tvdb-key", tvdb_lang="eng",
+            )
+
+        get_tvdb_eps.assert_awaited_once_with(411, 4, "tvdb-key", language="eng")
+        # TVDB episode id stored in tmdb_id - existing convention (enrich_episode_from_tvdb).
+        self.assertEqual(media.tmdb_id, 9001)
+        self.assertEqual(media.title, "TVDB Episode")
+        self.assertEqual(media.tmdb_data.get("source"), "tvdb")
+
+    async def test_tmdb_404_without_tvdb_credentials_marks_attempted_not_crash(self) -> None:
+        media = Media(media_type=MediaType.episode, season_number=4, episode_number=12)
+        with patch("core.enrichment.tmdb.get_episode", AsyncMock(side_effect=Exception("404 Not Found"))):
+            await enrich_media(media, api_key="tmdb-key", series_tmdb_id=65942)
+
+        self.assertEqual(media.tmdb_data, {})
+
+    async def test_tmdb_404_and_tvdb_also_missing_marks_attempted_not_crash(self) -> None:
+        media = Media(media_type=MediaType.episode, season_number=4, episode_number=12)
+        with patch("core.enrichment.tmdb.get_episode", AsyncMock(side_effect=Exception("404 Not Found"))), \
+             patch("core.enrichment.tvdb_client.get_series_episodes", AsyncMock(return_value=[])):
+            await enrich_media(
+                media, api_key="tmdb-key", series_tmdb_id=65942,
+                tvdb_id=411, tvdb_api_key="tvdb-key",
+            )
+
+        self.assertEqual(media.tmdb_data, {})
+
+    async def test_no_series_tmdb_id_goes_straight_to_tvdb(self) -> None:
+        # A show with no TMDB match at all (tvdb_id only) must still enrich.
+        media = Media(media_type=MediaType.episode, season_number=1, episode_number=1)
+        tvdb_raw = [{
+            "id": 100, "seasonNumber": 1, "number": 1, "name": "TVDB Only",
+            "overview": "x", "aired": "2020-01-01", "runtime": 30,
+        }]
+        with patch("core.enrichment.tmdb.get_episode", AsyncMock()) as get_ep, \
+             patch("core.enrichment.tvdb_client.get_series_episodes", AsyncMock(return_value=tvdb_raw)):
+            await enrich_media(media, api_key="tmdb-key", tvdb_id=999, tvdb_api_key="tvdb-key")
+
+        get_ep.assert_not_awaited()
+        self.assertEqual(media.tmdb_id, 100)
+        self.assertEqual(media.tmdb_data.get("source"), "tvdb")
 
 
 if __name__ == "__main__":

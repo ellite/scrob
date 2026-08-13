@@ -1407,9 +1407,17 @@ async def get_episode_detail(
         show = show_result.scalar_one_or_none()
 
         if show:
-            ep_data = await tmdb.get_episode(
-                series_tmdb_id, season_number, episode_number, api_key=api_key, language=metadata_lang
-            )
+            try:
+                ep_data = await tmdb.get_episode(
+                    series_tmdb_id, season_number, episode_number, api_key=api_key, language=metadata_lang
+                )
+            except Exception:
+                if show.tvdb_id:
+                    # TMDB doesn't have this season/episode under the numbering
+                    # TVDB uses for this show (#162, #186) - the show's own TVDB
+                    # match has the authoritative structure for it.
+                    return await get_tvdb_episode(show.tvdb_id, season_number, episode_number, db, current_user)
+                raise
             show_info = format_show(show)
         else:
             ep_data, show_tmdb = await asyncio.gather(
@@ -1630,8 +1638,31 @@ async def refresh_show_metadata(
             except Exception:
                 season_data[sn] = {}
 
+    # Some shows have season/episode numbering that only lines up under TVDB,
+    # not TMDB (#162, #186) - episodes this refresh can't find in season_data
+    # fall back to the show's TVDB match, when it has one, instead of being
+    # silently left with stale/incomplete metadata.
+    tvdb_api_key = None
+    tvdb_lang = None
+    tvdb_season_data: dict[int, dict[int, dict]] = {}
+    if show.tvdb_id:
+        tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
+        if tvdb_api_key:
+            tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
+
+    async def fetch_tvdb_season(sn: int) -> None:
+        async with semaphore:
+            try:
+                raw_eps = await tvdb_client.get_series_episodes(show.tvdb_id, sn, tvdb_api_key, language=tvdb_lang)
+                tvdb_season_data[sn] = {e.get("number"): e for e in raw_eps}
+            except Exception:
+                tvdb_season_data[sn] = {}
+
     if needed_seasons:
-        await asyncio.gather(*[fetch_season(sn) for sn in needed_seasons])
+        fetches = [fetch_season(sn) for sn in needed_seasons]
+        if tvdb_api_key:
+            fetches += [fetch_tvdb_season(sn) for sn in needed_seasons]
+        await asyncio.gather(*fetches)
 
     def apply_episode_data(media: Media, ep: dict) -> None:
         media.show_id = show.id
@@ -1643,25 +1674,35 @@ async def refresh_show_metadata(
         media.tmdb_rating = ep.get("vote_average")
         media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
 
+    async def apply_tvdb_episode_data(media: Media, raw_ep: dict) -> None:
+        media.show_id = show.id
+        await enrich_episode_from_tvdb(media, tvdb_client.format_episode(raw_ep))
+
+    async def apply_best_available(media: Media) -> Media:
+        if media.season_number is None:
+            return media
+        ep = season_data.get(media.season_number, {}).get(media.episode_number)
+        if ep:
+            return await apply_media_change_safely(
+                db, media, lambda media=media, ep=ep: apply_episode_data(media, ep)
+            )
+        tvdb_ep = tvdb_season_data.get(media.season_number, {}).get(media.episode_number)
+        if tvdb_ep:
+            return await apply_media_change_safely(
+                db, media, lambda media=media, tvdb_ep=tvdb_ep: apply_tvdb_episode_data(media, tvdb_ep)
+            )
+        return media
+
     episode_ids: list[int] = []
     for media in episodes:
-        if media.season_number is not None:
-            ep = season_data.get(media.season_number, {}).get(media.episode_number)
-            if ep:
-                media = await apply_media_change_safely(
-                    db, media, lambda media=media, ep=ep: apply_episode_data(media, ep)
-                )
+        media = await apply_best_available(media)
         episode_ids.append(media.id)
 
-    # Adopt orphans whose (season, episode) has exactly one candidate in this show's TMDB data
+    # Adopt orphans whose (season, episode) has exactly one candidate in this show's TMDB/TVDB data
     orphan_ids: list[int] = []
     for media in orphans:
-        if media.season_number is not None and media.episode_number is not None:
-            ep = season_data.get(media.season_number, {}).get(media.episode_number)
-            if ep:
-                media = await apply_media_change_safely(
-                    db, media, lambda media=media, ep=ep: apply_episode_data(media, ep)
-                )
+        if media.episode_number is not None:
+            media = await apply_best_available(media)
         orphan_ids.append(media.id)
 
     all_media_ids = episode_ids + orphan_ids

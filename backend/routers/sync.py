@@ -27,7 +27,7 @@ from models.base import MediaType, CollectionSource
 from models.global_settings import GlobalSettings
 from core import jellyfin, emby, plex, nuvio, stremio, tmdb
 import core.trakt as trakt_client
-from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely, enrich_media_safely, apply_media_change_safely
+from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely, enrich_media_safely, apply_media_change_safely, enrich_episode_from_tvdb
 from core.image_cache import pre_cache_all_collected_bg
 from core.translations import get_user_metadata_language
 from core.rewatch import record_rewatch_progress, get_active_rewatches_for_shows
@@ -374,6 +374,7 @@ async def batch_enrich_items(
     items: list[tuple],  # (Media, series_tmdb_id | None)
     api_key: str = None,
     show_title_map: dict[int, str] | None = None,
+    user_id: int | None = None,
 ) -> list[dict]:
     """
     Parallel enrichment for newly created media.
@@ -395,6 +396,8 @@ async def batch_enrich_items(
 
     if movies:
         await asyncio.gather(*[enrich_movie(m) for m in movies], return_exceptions=True)
+
+    from core import tvdb as tvdb_client
 
     # ── Episodes: one TMDB call per unique (series, season) ──────────────────
     season_to_eps: dict[tuple, list[Media]] = {}
@@ -422,6 +425,46 @@ async def batch_enrich_items(
             return_exceptions=True,
         )
 
+    # Some shows have season/episode numbering that only lines up under TVDB,
+    # not TMDB (#162, #186) - resolve TVDB data for any (show, season) with at
+    # least one episode TMDB didn't have, for shows that have a TVDB match.
+    tvdb_season_data: dict[tuple, dict[int, dict]] = {}
+    seasons_missing_episodes = {
+        (stid, sn) for (stid, sn), ep_list in season_to_eps.items()
+        if any(m.episode_number not in season_data.get((stid, sn), {}) for m in ep_list)
+    }
+    if user_id and seasons_missing_episodes:
+        needing_tvdb_stids = {stid for (stid, sn) in seasons_missing_episodes}
+        shows_result = await db.execute(
+            select(Show.tmdb_id, Show.tvdb_id).where(
+                Show.tmdb_id.in_(needing_tvdb_stids), Show.tvdb_id.isnot(None)
+            )
+        )
+        tvdb_id_by_stid = {row[0]: row[1] for row in shows_result.all()}
+        if tvdb_id_by_stid:
+            from routers.shows import get_user_tvdb_key
+
+            tvdb_api_key = await get_user_tvdb_key(db, user_id)
+            if tvdb_api_key:
+                tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, user_id))
+
+                async def fetch_tvdb_season(stid: int, sn: int, tvdb_id: int):
+                    async with semaphore:
+                        try:
+                            raw_eps = await tvdb_client.get_series_episodes(tvdb_id, sn, tvdb_api_key, language=tvdb_lang)
+                            tvdb_season_data[(stid, sn)] = {e.get("number"): e for e in raw_eps}
+                        except Exception:
+                            tvdb_season_data[(stid, sn)] = {}
+
+                await asyncio.gather(
+                    *[
+                        fetch_tvdb_season(stid, sn, tvdb_id_by_stid[stid])
+                        for (stid, sn) in seasons_missing_episodes
+                        if stid in tvdb_id_by_stid
+                    ],
+                    return_exceptions=True,
+                )
+
     def apply_ep_data(media: Media, ep: dict) -> None:
         media.tmdb_id = ep.get("id") or media.tmdb_id
         media.title = ep.get("name") or media.title
@@ -431,17 +474,29 @@ async def batch_enrich_items(
         media.tmdb_rating = ep.get("vote_average")
         media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
 
+    async def apply_tvdb_ep_data(media: Media, raw_ep: dict) -> None:
+        await enrich_episode_from_tvdb(media, tvdb_client.format_episode(raw_ep))
+
+    tvdb_resolved_season_keys: set[tuple] = set()
     for (stid, sn), ep_list in season_to_eps.items():
         ep_map = season_data.get((stid, sn), {})
+        tvdb_ep_map = tvdb_season_data.get((stid, sn), {})
         for media in ep_list:
             ep = ep_map.get(media.episode_number)
-            if not ep:
+            if ep:
+                await apply_media_change_safely(db, media, lambda media=media, ep=ep: apply_ep_data(media, ep))
                 continue
-            await apply_media_change_safely(db, media, lambda media=media, ep=ep: apply_ep_data(media, ep))
+            tvdb_ep = tvdb_ep_map.get(media.episode_number)
+            if tvdb_ep:
+                await apply_media_change_safely(
+                    db, media, lambda media=media, tvdb_ep=tvdb_ep: apply_tvdb_ep_data(media, tvdb_ep)
+                )
+                tvdb_resolved_season_keys.add((stid, sn))
 
-    # Build per-season warning entries (one entry per failed season)
+    # Build per-season warning entries (one entry per still-failed season) -
+    # a season fully recovered via TVDB doesn't need to warn the user.
     warnings: list[dict] = []
-    for (stid, sn) in sorted(failed_season_keys):
+    for (stid, sn) in sorted(failed_season_keys - tvdb_resolved_season_keys):
         warnings.append({
             "show": show_title_map.get(stid, f"TMDB show #{stid}"),
             "tmdb_id": stid,
@@ -2165,7 +2220,9 @@ async def sync_items(
                         if series_tmdb_id:
                             series_title_map[series_tmdb_id] = title
 
-        warnings = await batch_enrich_items(db, new_media_for_enrichment, api_key=api_key, show_title_map=series_title_map)
+        warnings = await batch_enrich_items(
+            db, new_media_for_enrichment, api_key=api_key, show_title_map=series_title_map, user_id=user_id
+        )
         await db.commit()
 
     all_warnings = skipped_warnings + warnings
@@ -5688,7 +5745,7 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
                     (m, show_tmdb_map[m.show_id]) for m in episodes if m.show_id in show_tmdb_map
                 ]
                 await _update_job(total_items=len(to_enrich), processed_items=0)
-                await batch_enrich_items(db, to_enrich, api_key=api_key)
+                await batch_enrich_items(db, to_enrich, api_key=api_key, user_id=user_id)
                 await db.commit()
                 await _update_job(processed_items=len(to_enrich))
                 print(f"Heal: re-enriched {len(to_enrich)} items for user {user_id}")

@@ -758,7 +758,13 @@ async def get_next_up(
                     async with db.begin_nested():
                         db.add(media)
                         await db.flush()
-                        await enrich_media(media, api_key=api_key, series_tmdb_id=show.tmdb_id)
+                        from routers.webhooks import _resolve_tvdb_fallback
+
+                        tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, current_user.id)
+                        await enrich_media(
+                            media, api_key=api_key, series_tmdb_id=show.tmdb_id,
+                            tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
+                        )
                         if not media.tmdb_id:
                             raise _NextUpEpisodeNotOnTmdb()
                         resolved_tmdb_id = media.tmdb_id
@@ -970,7 +976,13 @@ async def mark_as_watched(
         media.season_number = event_in.season_number
         media.episode_number = event_in.episode_number
         if not media.poster_path or media.tmdb_data is None:
-            media = await enrich_media_safely(db, media, api_key=api_key, series_tmdb_id=event_in.series_tmdb_id)
+            from routers.webhooks import _resolve_tvdb_fallback
+
+            tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, current_user.id)
+            media = await enrich_media_safely(
+                db, media, api_key=api_key, series_tmdb_id=event_in.series_tmdb_id,
+                tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
+            )
 
     # 2. If not, create Media record from TMDB
     if not media:

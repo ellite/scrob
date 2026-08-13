@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import tmdb
+from core import tvdb as tvdb_client
 from models.media import Media, MediaType
 
 logger = logging.getLogger(__name__)
@@ -144,11 +145,25 @@ def _extract_release_dates(results: list) -> dict:
     return {"digital": digital, "physical": physical}
 
 
-async def enrich_media(media: Media, api_key: str = None, series_tmdb_id: int = None) -> None:
-    """Fetch TMDB metadata and update the media record in place."""
+async def enrich_media(
+    media: Media,
+    api_key: str = None,
+    series_tmdb_id: int = None,
+    tvdb_id: int | None = None,
+    tvdb_api_key: str | None = None,
+    tvdb_lang: str | None = None,
+) -> None:
+    """Fetch TMDB metadata and update the media record in place.
+
+    For an episode, falls back to TVDB (tvdb_id + tvdb_api_key) when TMDB
+    doesn't have this season/episode - some shows have season structures
+    that only line up under TVDB's numbering, not TMDB's (#162, #186).
+    Callers that don't pass tvdb_id/tvdb_api_key get the old TMDB-only
+    behavior unchanged.
+    """
     if media.media_type == MediaType.movie and not media.tmdb_id:
         return
-    if media.media_type == MediaType.episode and not series_tmdb_id:
+    if media.media_type == MediaType.episode and not series_tmdb_id and not (tvdb_id and tvdb_api_key):
         return
 
     try:
@@ -202,24 +217,48 @@ async def enrich_media(media: Media, api_key: str = None, series_tmdb_id: int = 
         elif media.media_type == MediaType.episode:
             if media.season_number is None or media.episode_number is None:
                 return
-            data = await tmdb.get_episode(series_tmdb_id, media.season_number, media.episode_number, api_key=api_key)
-            media.tmdb_id = data.get("id") or media.tmdb_id
-            media.title = data.get("name") or media.title
-            media.overview = data.get("overview")
-            media.poster_path = tmdb.poster_url(data.get("still_path"), size="w500")
-            media.release_date = data.get("air_date")
-            media.tmdb_rating = data.get("vote_average")
-            media.tmdb_data = {
-                "runtime": data.get("runtime"),
-                "cast": [
-                    {
-                        "name": c["name"],
-                        "character": c.get("character", ""),
-                        "profile_path": tmdb.poster_url(c.get("profile_path"), size="w185")
-                    }
-                    for c in data.get("credits", {}).get("cast", [])[:10]
-                ],
-            }
+            data = None
+            tmdb_error: Exception | None = None
+            if series_tmdb_id:
+                try:
+                    data = await tmdb.get_episode(series_tmdb_id, media.season_number, media.episode_number, api_key=api_key)
+                except Exception as e:
+                    tmdb_error = e
+
+            if data:
+                media.tmdb_id = data.get("id") or media.tmdb_id
+                media.title = data.get("name") or media.title
+                media.overview = data.get("overview")
+                media.poster_path = tmdb.poster_url(data.get("still_path"), size="w500")
+                media.release_date = data.get("air_date")
+                media.tmdb_rating = data.get("vote_average")
+                media.tmdb_data = {
+                    "runtime": data.get("runtime"),
+                    "cast": [
+                        {
+                            "name": c["name"],
+                            "character": c.get("character", ""),
+                            "profile_path": tmdb.poster_url(c.get("profile_path"), size="w185")
+                        }
+                        for c in data.get("credits", {}).get("cast", [])[:10]
+                    ],
+                }
+            elif tvdb_id and tvdb_api_key:
+                # TMDB either doesn't have this show at all, or doesn't have
+                # this season/episode under the same numbering TVDB uses for
+                # it (#162, #186) - fall back to the show's TVDB match.
+                raw_eps = await tvdb_client.get_series_episodes(tvdb_id, media.season_number, tvdb_api_key, language=tvdb_lang)
+                tvdb_ep = next(
+                    (tvdb_client.format_episode(e) for e in raw_eps if e.get("number") == media.episode_number),
+                    None,
+                )
+                if not tvdb_ep:
+                    raise tmdb_error or Exception(
+                        f"Episode S{media.season_number}E{media.episode_number} not found on TMDB or TVDB"
+                    )
+                await enrich_episode_from_tvdb(media, tvdb_ep)
+            elif tmdb_error:
+                raise tmdb_error
 
     except Exception as e:
         # Don't let TMDB failures break webhook processing.
@@ -318,7 +357,13 @@ async def apply_media_change_safely(db: AsyncSession, media: Media, mutate) -> M
 
 
 async def enrich_media_safely(
-    db: AsyncSession, media: Media, api_key: str = None, series_tmdb_id: int = None
+    db: AsyncSession,
+    media: Media,
+    api_key: str = None,
+    series_tmdb_id: int = None,
+    tvdb_id: int | None = None,
+    tvdb_api_key: str | None = None,
+    tvdb_lang: str | None = None,
 ) -> Media:
     """enrich_media(), wrapped so a newly-resolved episode tmdb_id that
     collides with another row returns the pre-existing row instead of
@@ -326,5 +371,14 @@ async def enrich_media_safely(
     media passed in already has an id from an earlier create_media_safely()
     call - see apply_media_change_safely for the full explanation."""
     return await apply_media_change_safely(
-        db, media, lambda: enrich_media(media, api_key=api_key, series_tmdb_id=series_tmdb_id)
+        db,
+        media,
+        lambda: enrich_media(
+            media,
+            api_key=api_key,
+            series_tmdb_id=series_tmdb_id,
+            tvdb_id=tvdb_id,
+            tvdb_api_key=tvdb_api_key,
+            tvdb_lang=tvdb_lang,
+        ),
     )

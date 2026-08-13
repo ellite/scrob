@@ -74,7 +74,7 @@ class _FakeSession:
 class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.user = SimpleNamespace(id=7)
-        self.show = SimpleNamespace(id=55)
+        self.show = SimpleNamespace(id=55, tvdb_id=None)
         self.event = WatchEventCreate(
             tmdb_id=5767197,
             media_type=MediaType.episode,
@@ -150,7 +150,10 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(orphan.show_id, self.show.id)
         self.assertEqual((orphan.season_number, orphan.episode_number), (1, 1))
         get_episode.assert_not_awaited()
-        enrich.assert_awaited_once_with(orphan, api_key="tmdb-key", series_tmdb_id=277439)
+        enrich.assert_awaited_once_with(
+            orphan, api_key="tmdb-key", series_tmdb_id=277439,
+            tvdb_id=None, tvdb_api_key=None, tvdb_lang=None,
+        )
 
     async def test_tvdb_mapping_uses_canonical_show_position(self):
         mapped_media = Media(

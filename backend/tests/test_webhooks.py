@@ -285,7 +285,7 @@ class FindOrCreateMediaJellyfinMultiTests(IsolatedAsyncioTestCase):
     async def test_combined_span_resolves_one_call_per_episode(self):
         seen_episode_numbers = []
 
-        async def fake_resolver(data, db, api_key=None):
+        async def fake_resolver(data, db, api_key=None, user_id=None):
             seen_episode_numbers.append(data["episode_number"])
             return object()
 
@@ -318,7 +318,7 @@ class FindOrCreateMediaJellyfinMultiTests(IsolatedAsyncioTestCase):
     async def test_unresolvable_sub_episode_is_skipped_not_fatal(self):
         # One episode in the span can't be identified (e.g. TMDB lookup
         # failed for just that one) — the rest of the span must still land.
-        async def fake_resolver(data, db, api_key=None):
+        async def fake_resolver(data, db, api_key=None, user_id=None):
             return None if data["episode_number"] == 2 else object()
 
         mock_resolver = AsyncMock(side_effect=fake_resolver)
