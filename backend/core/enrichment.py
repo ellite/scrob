@@ -132,6 +132,9 @@ async def enrich_episode_from_tvdb(media: Media, tvdb_episode_data: dict) -> Non
     if tvdb_episode_data.get("image_url"):
         media.poster_path = tvdb_episode_data["image_url"]
     media.release_date = tvdb_episode_data.get("air_date")
+    # See the matching comment in enrich_media (#169) - the top-level column,
+    # not just tmdb_data.runtime, is what Now Playing/Continue Watching need.
+    media.runtime = tvdb_episode_data.get("runtime") or media.runtime
     media.tmdb_data = {
         "runtime": tvdb_episode_data.get("runtime"),
         "tvdb_episode_id": tvdb_episode_id,
@@ -184,6 +187,12 @@ async def enrich_media(
             media.backdrop_path = tmdb.poster_url(data.get("backdrop_path"), size="w1280")
             media.release_date = data.get("release_date")
             media.tmdb_rating = data.get("vote_average")
+            # Also set the top-level column (not just tmdb_data.runtime) - the
+            # Now Playing bar and Continue Watching need this to compute a live
+            # progress percentage, and previously only a playback webhook's own
+            # duration_ms ever set it, leaving it null until the first watch
+            # actually reported one (see #169).
+            media.runtime = data.get("runtime") or media.runtime
             media.tmdb_data = {
                 "runtime": data.get("runtime"),
                 "genres": [g["name"] for g in data.get("genres", [])],
@@ -240,6 +249,8 @@ async def enrich_media(
                 media.poster_path = tmdb.poster_url(data.get("still_path"), size="w500")
                 media.release_date = data.get("air_date")
                 media.tmdb_rating = data.get("vote_average")
+                # See the matching comment in the movie branch above (#169).
+                media.runtime = data.get("runtime") or media.runtime
                 media.tmdb_data = {
                     "runtime": data.get("runtime"),
                     "cast": [

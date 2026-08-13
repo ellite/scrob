@@ -379,6 +379,42 @@ class EnrichEpisodeFromTvdbTitleFallbackTests(unittest.IsolatedAsyncioTestCase):
         await enrich_episode_from_tvdb(media, tvdb_data)
         self.assertEqual(media.title, "Episode 0")
 
+    async def test_sets_top_level_runtime_not_just_tmdb_data(self) -> None:
+        media = Media(media_type=MediaType.episode, season_number=1, episode_number=1)
+        tvdb_data = {"tvdb_id": 1, "episode_number": 1, "name": "Ep", "runtime": 42}
+        await enrich_episode_from_tvdb(media, tvdb_data)
+        self.assertEqual(media.runtime, 42)
+
+
+class EnrichMediaRuntimeColumnTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for #169: the Now Playing bar and Continue Watching
+    compute a live progress percentage from Media.runtime (the top-level
+    column) - previously only a playback webhook's own duration_ms ever set
+    it, so first-time-watched content had no runtime until partway through
+    that first session, leaving the progress bar stuck."""
+
+    async def test_movie_enrichment_sets_top_level_runtime(self) -> None:
+        media = Media(media_type=MediaType.movie, tmdb_id=550)
+        tmdb_data = {"title": "Fight Club", "runtime": 139}
+        with patch("core.enrichment.tmdb.get_movie", AsyncMock(return_value=tmdb_data)):
+            await enrich_media(media, api_key="tmdb-key")
+        self.assertEqual(media.runtime, 139)
+        self.assertEqual(media.tmdb_data["runtime"], 139)
+
+    async def test_episode_enrichment_sets_top_level_runtime(self) -> None:
+        media = Media(media_type=MediaType.episode, season_number=1, episode_number=1)
+        tmdb_data = {"id": 1, "name": "Pilot", "runtime": 45}
+        with patch("core.enrichment.tmdb.get_episode", AsyncMock(return_value=tmdb_data)):
+            await enrich_media(media, api_key="tmdb-key", series_tmdb_id=999)
+        self.assertEqual(media.runtime, 45)
+
+    async def test_missing_runtime_does_not_clobber_existing_value(self) -> None:
+        media = Media(media_type=MediaType.movie, tmdb_id=550, runtime=120)
+        tmdb_data = {"title": "Fight Club", "runtime": None}
+        with patch("core.enrichment.tmdb.get_movie", AsyncMock(return_value=tmdb_data)):
+            await enrich_media(media, api_key="tmdb-key")
+        self.assertEqual(media.runtime, 120)
+
 
 if __name__ == "__main__":
     unittest.main()

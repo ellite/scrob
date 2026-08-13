@@ -409,6 +409,7 @@ async def _get_or_create_episode_media(
             poster_path=tmdb.poster_url(ep.get("still_path"), size="w500"),
             release_date=ep.get("air_date"),
             tmdb_rating=ep.get("vote_average"),
+            runtime=ep.get("runtime"),  # see #169
             show_id=show_id,
             season_number=season_number,
             episode_number=episode_number,

@@ -472,6 +472,7 @@ async def batch_enrich_items(
         media.poster_path = tmdb.poster_url(ep.get("still_path"), size="w500")
         media.release_date = ep.get("air_date")
         media.tmdb_rating = ep.get("vote_average")
+        media.runtime = ep.get("runtime") or media.runtime  # see #169
         media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
 
     async def apply_tvdb_ep_data(media: Media, raw_ep: dict) -> None:
@@ -6212,6 +6213,7 @@ async def apply_season_override(
             media.poster_path = tmdb.poster_url(ep.get("still_path"), size="w500")
             media.release_date = ep.get("air_date")
             media.tmdb_rating = ep.get("vote_average")
+            media.runtime = ep.get("runtime") or media.runtime  # see #169
             media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
 
     # Remap and re-enrich episodes
@@ -6441,6 +6443,9 @@ async def match_unmatched_show(
                 if ep.get("image"):
                     media.poster_path = tvdb_client._image_url(ep["image"])
                 media.release_date = ep.get("aired")
+                # See enrich_media's matching comment (#169) - top-level runtime,
+                # not just tmdb_data.runtime, is what Now Playing needs.
+                media.runtime = ep.get("runtime") or media.runtime
                 media.tmdb_data = {**(media.tmdb_data or {}), "runtime": ep.get("runtime"), "tvdb_episode_id": tvdb_ep_id, "source": "tvdb"}
 
         season_numbers = list(seasons_map.keys())
@@ -6560,6 +6565,7 @@ async def match_unmatched_show(
                 media.poster_path = tmdb.poster_url(ep.get("still_path"), size="w500")
                 media.release_date = ep.get("air_date")
                 media.tmdb_rating = ep.get("vote_average")
+                media.runtime = ep.get("runtime") or media.runtime  # see #169
                 media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
 
         season_numbers = list(seasons_map.keys())

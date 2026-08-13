@@ -1672,6 +1672,7 @@ async def refresh_show_metadata(
         media.poster_path = tmdb.poster_url(ep.get("still_path"), size="w500")
         media.release_date = ep.get("air_date")
         media.tmdb_rating = ep.get("vote_average")
+        media.runtime = ep.get("runtime") or media.runtime  # see #169
         media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
 
     async def apply_tvdb_episode_data(media: Media, raw_ep: dict) -> None:
