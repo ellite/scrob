@@ -431,6 +431,113 @@ class _WatchedFakeSession:
         pass
 
 
+class _WatchedFakeSessionWithHistory(_WatchedFakeSession):
+    """Like _WatchedFakeSession, but the first execute() (the existing-watch-
+    events query) returns pre-seeded (media_id, watched_at) rows instead of
+    an empty result, so the dedup-window logic has something to compare
+    against. Every later execute() (record_rewatch_progress's own lookups)
+    still no-ops."""
+
+    def __init__(self, existing_rows: list) -> None:
+        super().__init__()
+        self._existing_rows = existing_rows
+        self._call_count = 0
+
+    async def execute(self, statement):
+        self._call_count += 1
+        if self._call_count == 1:
+            return SimpleNamespace(all=lambda: self._existing_rows, scalar_one_or_none=lambda: None)
+        return SimpleNamespace(all=lambda: [], scalar_one_or_none=lambda: None)
+
+
+class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_watch_within_window_of_existing_is_skipped(self) -> None:
+        """Regression test for #148: MDBList (and a source it round-tripped
+        through, e.g. a push to a media server) doesn't always agree on the
+        exact watched_at for what's really the same play. A new watch
+        reported within WATCH_DEDUP_WINDOW of one we already have for the
+        title must not create a second WatchEvent."""
+        from routers.mdblist import _import_watched
+
+        async def fake_resolve_media(db, kind, entry, api_key, external_cache):
+            return SimpleNamespace(id=1)
+
+        payload = {
+            "movies": [{"ids": {"tmdb": 100}, "watched_at": "2026-08-01T12:00:00Z"}],
+            "episodes": [],
+        }
+        stats = {"watched": 0, "skipped": 0, "errors": 0}
+        # Existing completed watch for media 1 four minutes before the incoming one.
+        db = _WatchedFakeSessionWithHistory([(1, datetime(2026, 8, 1, 11, 56, 0))])
+
+        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media):
+            changed = await _import_watched(
+                db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
+            )
+
+        self.assertEqual(db.added, [])
+        self.assertEqual(stats["watched"], 0)
+        self.assertEqual(stats["skipped"], 1)
+        self.assertEqual(changed, set())
+
+    async def test_watch_outside_window_of_existing_is_recorded(self) -> None:
+        """A watch reported more than WATCH_DEDUP_WINDOW away from the last
+        known one for the title is a genuine rewatch and must still be
+        recorded - including a same-day rewatch a couple hours later (e.g.
+        watching a movie twice in a row to make sense of it)."""
+        from routers.mdblist import _import_watched
+
+        async def fake_resolve_media(db, kind, entry, api_key, external_cache):
+            return SimpleNamespace(id=1)
+
+        payload = {
+            "movies": [{"ids": {"tmdb": 100}, "watched_at": "2026-08-01T14:00:00Z"}],
+            "episodes": [],
+        }
+        stats = {"watched": 0, "skipped": 0, "errors": 0}
+        # Existing completed watch for media 1 two hours before the incoming one.
+        db = _WatchedFakeSessionWithHistory([(1, datetime(2026, 8, 1, 12, 0, 0))])
+
+        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media):
+            changed = await _import_watched(
+                db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
+            )
+
+        self.assertEqual({obj.media_id for obj in db.added}, {1})
+        self.assertEqual(stats["watched"], 1)
+        self.assertEqual(stats["skipped"], 0)
+        self.assertEqual(changed, {1})
+
+    async def test_null_dated_existing_watch_does_not_crash_the_window_check(self) -> None:
+        """A title can already have a completed WatchEvent with no date at
+        all (explicit "mark watched without a date" - see
+        UnknownWatchDateTests in test_history.py). The window comparison
+        must not blow up comparing a real timestamp against that None, and
+        a null-dated existing watch can't be used to dedup against (there's
+        no timestamp to compare), so the new watch is still recorded."""
+        from routers.mdblist import _import_watched
+
+        async def fake_resolve_media(db, kind, entry, api_key, external_cache):
+            return SimpleNamespace(id=1)
+
+        payload = {
+            "movies": [{"ids": {"tmdb": 100}, "watched_at": "2026-08-01T14:00:00Z"}],
+            "episodes": [],
+        }
+        stats = {"watched": 0, "skipped": 0, "errors": 0}
+        db = _WatchedFakeSessionWithHistory([(1, None)])
+
+        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media):
+            changed = await _import_watched(
+                db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
+            )
+
+        self.assertEqual(stats["errors"], 0)
+        self.assertEqual({obj.media_id for obj in db.added}, {1})
+        self.assertEqual(stats["watched"], 1)
+        self.assertEqual(changed, {1})
+
+
 class ImportWatchedSkipsShowRollupTests(unittest.IsolatedAsyncioTestCase):
     async def test_shows_entries_are_not_imported_as_watch_events(self) -> None:
         """Regression test: MDBList's /sync/watched "shows" entries are rollup

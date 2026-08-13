@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from dateutil import parser as dt_parser
@@ -34,6 +35,15 @@ from routers.trakt import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 WATCHLIST_SLUG = "__watchlist__"
+
+# MDBList's own watched_at for the same play can differ slightly between pulls
+# (and doesn't always agree with a timestamp for the same watch reported by
+# another source, e.g. after a push round-trips through a media server). A
+# watch reported within this window of one we already have for the title is
+# treated as the same watch rather than a rewatch. Mirrors
+# routers.sync.PLEX_WEBHOOK_RECONCILE_WINDOW, which reconciles the exact same
+# kind of same-play-different-timestamp drift. See #148.
+WATCH_DEDUP_WINDOW = timedelta(minutes=10)
 
 
 def _utc_naive(value: Any) -> datetime:
@@ -390,12 +400,14 @@ async def _import_watched(
     stats: dict[str, int],
 ) -> set[int]:
     existing_result = await db.execute(
-        select(WatchEvent.media_id).where(
+        select(WatchEvent.media_id, WatchEvent.watched_at).where(
             WatchEvent.user_id == user_id,
             WatchEvent.completed.is_(True),
         )
     )
-    existing = {row[0] for row in existing_result.all()}
+    existing: dict[int, list[datetime]] = defaultdict(list)
+    for media_id, watched_at in existing_result.all():
+        existing[media_id].append(watched_at)
     changed: set[int] = set()
 
     # MDBList's /sync/watched "shows" entries are rollup wrappers (a show's
@@ -411,21 +423,24 @@ async def _import_watched(
                     if not media:
                         stats["skipped"] += 1
                         continue
-                    if media.id in existing:
+                    watched_at = _utc_naive(entry.get("watched_at") or entry.get("last_watched_at"))
+                    if any(
+                        existing_at is not None and abs(watched_at - existing_at) <= WATCH_DEDUP_WINDOW
+                        for existing_at in existing.get(media.id, [])
+                    ):
                         stats["skipped"] += 1
                         continue
-                    watched_at = entry.get("watched_at") or entry.get("last_watched_at")
                     event = WatchEvent(
                         user_id=user_id,
                         media_id=media.id,
-                        watched_at=_utc_naive(watched_at),
+                        watched_at=watched_at,
                         completed=True,
                         play_count=max(_integer(entry.get("plays")) or 1, 1),
                     )
                     db.add(event)
                     await db.flush()
                     await record_rewatch_progress(db, user_id, media.id, event.id)
-                    existing.add(media.id)
+                    existing[media.id].append(watched_at)
                     changed.add(media.id)
                     stats["watched"] += 1
             except Exception as exc:
