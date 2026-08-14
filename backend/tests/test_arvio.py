@@ -44,6 +44,10 @@ class _Result:
 
 
 class ArvioClientTests(unittest.IsolatedAsyncioTestCase):
+    def test_default_app_anon_key_is_set(self) -> None:
+        self.assertTrue(bool(arvio.DEFAULT_APP_ANON_KEY))
+        self.assertTrue(arvio.DEFAULT_APP_ANON_KEY.startswith("eyJ"))
+
     async def test_sign_in_and_parse_session(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertTrue(request.url.path.endswith("/auth-login"))

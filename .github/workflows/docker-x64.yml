@@ -18,6 +18,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Verify ARVIO public APP_ANON_KEY validity
+        run: |
+          KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpyZHd2b3J0Y2Zub3lrbHR6dXFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3NDU4NzMsImV4cCI6MjA4MjMyMTg3M30.YfKZbSwxGs6_xMd6jkDtn1PKkfuyOHo9qVhUvFRddGU"
+          resp=$(curl -s -X POST "https://auth.arvio.tv/.netlify/functions/auth-login" \
+            -H "Content-Type: application/json" \
+            -H "apikey: $KEY" \
+            -d '{"email":"ci-test@example.com","password":"test"}')
+          if echo "$resp" | grep -q '"error":"Unauthorized"'; then
+            echo "::error::ARVIO public APP_ANON_KEY has been rotated or invalidated on auth.arvio.tv!"
+            exit 1
+          fi
+          echo "ARVIO APP_ANON_KEY verified successfully against auth.arvio.tv"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
