@@ -11,6 +11,9 @@ const category = Astro.url.searchParams.get("category") ?? "popular";
 const genre = Astro.url.searchParams.get("genre") ?? "";
 const year = Astro.url.searchParams.get("year") ? Number(Astro.url.searchParams.get("year")) : undefined;
 const minRating = Astro.url.searchParams.get("min_rating") ? Number(Astro.url.searchParams.get("min_rating")) : undefined;
+const collection = Astro.url.searchParams.get("collection") ?? "";
+const watch = Astro.url.searchParams.get("watch") ?? "";
+const arr = Astro.url.searchParams.get("arr") ?? "";
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -28,6 +31,9 @@ if (hasTmdbKey) {
       ...(genre ? { genre } : {}),
       ...(year ? { year } : {}),
       ...(minRating ? { min_rating: minRating } : {}),
+      ...(collection ? { collection } : {}),
+      ...(watch ? { watch } : {}),
+      ...(arr ? { arr } : {}),
     }, token);
   } catch (e) {
     console.error("Failed to fetch TMDB movie list:", e);
@@ -49,6 +55,9 @@ baseParams.set("category", category);
 if (genre) baseParams.set("genre", genre);
 if (year) baseParams.set("year", String(year));
 if (minRating) baseParams.set("min_rating", String(minRating));
+if (collection) baseParams.set("collection", collection);
+if (watch) baseParams.set("watch", watch);
+if (arr) baseParams.set("arr", arr);
 const baseUrl = `/movies?${baseParams.toString()}`;
 ---
 
@@ -85,6 +94,9 @@ const baseUrl = `/movies?${baseParams.toString()}`;
             { key: "genre", label: "Genre", options: MOVIE_GENRES.map((g) => ({ value: g, label: g })), selected: genre ? [genre] : [], multi: false },
             { key: "year", label: "Year", options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year ? [String(year)] : [], multi: false },
             { key: "min_rating", label: "Rating", options: [9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: `${r}+ Stars` })), selected: minRating ? [String(minRating)] : [], multi: false },
+            { key: "collection", label: "Collection", options: [{ value: "in", label: "In My Collection" }, { value: "out", label: "Not In My Collection" }], selected: collection ? [collection] : [], multi: false },
+            { key: "watch", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }], selected: watch ? [watch] : [], multi: false },
+            { key: "arr", label: "Radarr", options: [{ value: "added", label: "In Radarr" }, { value: "notadded", label: "Not In Radarr" }], selected: arr ? [arr] : [], multi: false },
           ]}
         />
       </div>

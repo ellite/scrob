@@ -1119,7 +1119,7 @@ export const api = {
     getCollection: (collectionId: number, token?: string) =>
       get<CollectionDetail>(`/media/collection/${collectionId}`, undefined, token),
 
-    tmdbList: (params: { type: string; category?: string; page?: number; genre?: string; year?: number; min_rating?: number; status?: string }, token?: string) =>
+    tmdbList: (params: { type: string; category?: string; page?: number; genre?: string; year?: number; min_rating?: number; status?: string; collection?: string; watch?: string; arr?: string }, token?: string) =>
       get<{ results: MediaItem[]; page: number; total_pages: number; total_results: number }>("/media/tmdb/list", params, token),
 
     search: (q: string, type?: string, page: number = 1, year?: number, token?: string, inLibrary?: boolean) =>

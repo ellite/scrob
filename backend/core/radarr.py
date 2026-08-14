@@ -1,8 +1,40 @@
 import httpx
 import logging
-from typing import Optional, List, Dict, Any
+import time
+from typing import Optional, List, Dict, Any, Set
 
 logger = logging.getLogger(__name__)
+
+# Brief per-server cache; failures are cached shorter so a down server
+# doesn't stall every list request.
+_LIBRARY_CACHE: Dict[str, tuple] = {}
+_LIBRARY_TTL = 300.0
+_LIBRARY_FAILURE_TTL = 60.0
+
+
+async def get_all_movie_tmdb_ids(url: str, token: str) -> Optional[Set[int]]:
+    """TMDB ids of every movie in Radarr, cached per server; None on failure."""
+    key = f"{url.rstrip('/')}|{token}"
+    cached = _LIBRARY_CACHE.get(key)
+    if cached:
+        ts, ids = cached
+        ttl = _LIBRARY_TTL if ids is not None else _LIBRARY_FAILURE_TTL
+        if time.monotonic() - ts < ttl:
+            return ids
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            response = await client.get(
+                f"{url.rstrip('/')}/api/v3/movie",
+                headers={"X-Api-Key": token}
+            )
+            response.raise_for_status()
+            ids = {m["tmdbId"] for m in response.json() if m.get("tmdbId")}
+        _LIBRARY_CACHE[key] = (time.monotonic(), ids)
+        return ids
+    except Exception as e:
+        logger.error(f"Failed to fetch Radarr movie list: {e}")
+        _LIBRARY_CACHE[key] = (time.monotonic(), None)
+        return None
 
 async def validate_connection(url: str, token: str) -> bool:
     """Check if we can connect to Radarr and if the API key is valid."""

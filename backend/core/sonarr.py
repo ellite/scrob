@@ -1,8 +1,44 @@
 import httpx
 import logging
-from typing import Optional, List, Dict, Any
+import time
+from typing import Optional, List, Dict, Any, Set, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Same brief library cache as core/radarr.py.
+_LIBRARY_CACHE: Dict[str, tuple] = {}
+_LIBRARY_TTL = 300.0
+_LIBRARY_FAILURE_TTL = 60.0
+
+
+async def get_all_series_ids(url: str, token: str) -> Optional[Tuple[Set[int], Set[int]]]:
+    """(tmdb ids, tvdb ids) of every series in Sonarr, cached per server;
+    None on failure. tmdbId only exists on Sonarr v4+."""
+    key = f"{url.rstrip('/')}|{token}"
+    cached = _LIBRARY_CACHE.get(key)
+    if cached:
+        ts, ids = cached
+        ttl = _LIBRARY_TTL if ids is not None else _LIBRARY_FAILURE_TTL
+        if time.monotonic() - ts < ttl:
+            return ids
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            response = await client.get(
+                f"{url.rstrip('/')}/api/v3/series",
+                headers={"X-Api-Key": token}
+            )
+            response.raise_for_status()
+            series = response.json()
+            ids = (
+                {s["tmdbId"] for s in series if s.get("tmdbId")},
+                {s["tvdbId"] for s in series if s.get("tvdbId")},
+            )
+        _LIBRARY_CACHE[key] = (time.monotonic(), ids)
+        return ids
+    except Exception as e:
+        logger.error(f"Failed to fetch Sonarr series list: {e}")
+        _LIBRARY_CACHE[key] = (time.monotonic(), None)
+        return None
 
 async def validate_connection(url: str, token: str) -> bool:
     """Check if we can connect to Sonarr and if the API key is valid."""
