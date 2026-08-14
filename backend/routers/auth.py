@@ -1130,11 +1130,14 @@ async def get_connection_status(
                 conn.server_username = _nuvio_profile_name(profiles, profile_id)
                 connected = True
             elif conn.type == "arvio":
-                profile_id = conn.server_user_id
+                profile_id = conn.server_user_id if (conn.server_user_id and conn.server_user_id != "undefined") else None
                 async with arvio.connection_lock(conn.id):
                     session, profiles = await arvio.validate_connection(conn.url, conn.token, profile_id)
                     conn.token = session.refresh_token
-                conn.server_username = arvio.get_profile_name(profiles, profile_id)
+                if profile_id is None and profiles:
+                    conn.server_user_id = profiles[0]["id"]
+                    await db.commit()
+                conn.server_username = arvio.get_profile_name(profiles, conn.server_user_id)
                 connected = True
             elif conn.type == "stremio":
                 account = await stremio.validate_auth_key(conn.token)

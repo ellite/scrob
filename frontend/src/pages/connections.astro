@@ -129,15 +129,15 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           </div>
                         </div>
                       )}
-                      {conn.type === "nuvio" && (
-                        <div class="nuvio-reauth hidden space-y-2" data-conn-id={conn.id}>
+                      {(conn.type === "nuvio" || conn.type === "arvio") && (
+                        <div class="nuvio-reauth hidden space-y-2" data-conn-id={conn.id} data-conn-type={conn.type}>
                           <button type="button" class="nuvio-reauth-toggle text-sm text-blue-400 hover:text-blue-300 cursor-pointer transition-colors">
                             Refresh token stopped working? Sign in again
                           </button>
                           <div class="nuvio-reauth-form hidden space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
                             <p class="text-xs text-zinc-500">Signing in replaces the refresh token above with a fresh one and reconnects immediately.</p>
-                            <input type="email" class="nuvio-reauth-email w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder="Nuvio email" autocomplete="username" />
-                            <input type="password" class="nuvio-reauth-password w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder="Nuvio password" autocomplete="current-password" />
+                            <input type="email" class="nuvio-reauth-email w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder={conn.type === "arvio" ? "ARVIO email" : "Nuvio email"} autocomplete="username" />
+                            <input type="password" class="nuvio-reauth-password w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder={conn.type === "arvio" ? "ARVIO password" : "Nuvio password"} autocomplete="current-password" />
                             <div class="flex items-center gap-2">
                               <button type="button" class="nuvio-reauth-submit text-sm bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Sign in</button>
                               <span class="nuvio-reauth-status text-xs text-zinc-500"></span>
@@ -149,7 +149,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         <div class="space-y-2">
                           <label class="block text-sm font-medium text-zinc-400">{conn.type === "arvio" ? "ARVIO Profile" : "Nuvio Profile"}</label>
                           <select aria-label={conn.type === "arvio" ? "ARVIO profile" : "Nuvio profile"} class="conn-user-id-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
-                            <option value={conn.server_user_id || ""}>{conn.server_username || `Profile ${conn.server_user_id}`}</option>
+                            <option value={conn.server_user_id || ""}>{conn.server_username || (conn.server_user_id && conn.server_user_id !== 'undefined' ? `Profile ${conn.server_user_id}` : 'Select Profile')}</option>
                           </select>
                         </div>
                       ) : conn.type !== "plex" && conn.type !== "stremio" && (
@@ -2430,9 +2430,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           const profileSelect = card?.querySelector('.conn-user-id-input') as HTMLSelectElement | null;
           if (profileSelect) {
             const selectedProfile = profileSelect.value;
-            profileSelect.innerHTML = cs.profiles.map((profile: any) =>
-              `<option value="${esc(String(profile.profile_index))}">${esc(profile.name || `Profile ${profile.profile_index}`)} (#${esc(String(profile.profile_index))})</option>`
-            ).join('');
+            profileSelect.innerHTML = cs.profiles.map((profile: any) => {
+              const pid = String(profile.id !== undefined ? profile.id : (profile.profile_index !== undefined ? profile.profile_index : '0'));
+              const pname = profile.name || `Profile ${pid}`;
+              return `<option value="${esc(pid)}">${esc(pname)}</option>`;
+            }).join('');
             if ([...profileSelect.options].some(option => option.value === selectedProfile)) {
               profileSelect.value = selectedProfile;
             }
@@ -3648,6 +3650,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     // saves immediately, rather than requiring delete-and-re-add.
     document.querySelectorAll('.nuvio-reauth').forEach(block => {
       const connId = block.getAttribute('data-conn-id');
+      const connType = block.getAttribute('data-conn-type');
+      const isArvio = connType === 'arvio';
       const card = block.closest('[data-connection-id]');
       const toggleBtn = block.querySelector('.nuvio-reauth-toggle');
       const form = block.querySelector('.nuvio-reauth-form');
@@ -3667,30 +3671,34 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         const password = passwordInput?.value || '';
         if (statusEl) statusEl.textContent = '';
         if (!email || !password) {
-          if (statusEl) statusEl.textContent = 'Enter your Nuvio email and password.';
+          if (statusEl) statusEl.textContent = `Enter your ${isArvio ? 'ARVIO' : 'Nuvio'} email and password.`;
           return;
         }
         if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Signing in…'; }
         try {
-          const loginRes = await fetch('/api/proxy/auth/nuvio-login', {
+          const loginEndpoint = isArvio ? '/api/proxy/auth/arvio-login' : '/api/proxy/auth/nuvio-login';
+          const defaultUrl = isArvio ? 'https://auth.arvio.tv/.netlify/functions' : 'https://api.nuvio.tv';
+          const loginRes = await fetch(loginEndpoint, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password, url: 'https://api.nuvio.tv' }),
+            body: JSON.stringify({ email, password, url: defaultUrl }),
           });
           const loginData = await loginRes.json();
-          if (!loginRes.ok) throw new Error(loginData.detail || 'Nuvio sign-in failed');
+          if (!loginRes.ok) throw new Error(loginData.detail || `${isArvio ? 'ARVIO' : 'Nuvio'} sign-in failed`);
 
           const profiles = loginData.profiles || [];
           const previousProfileId = profileSelect?.value || '';
           if (profileSelect) {
-            profileSelect.innerHTML = profiles.map((profile: any) =>
-              `<option value="${esc(String(profile.profile_index))}">${esc(profile.name || `Profile ${profile.profile_index}`)} (#${esc(String(profile.profile_index))})</option>`
-            ).join('');
+            profileSelect.innerHTML = profiles.map((profile: any) => {
+              const pid = String(profile.id !== undefined ? profile.id : (profile.profile_index !== undefined ? profile.profile_index : '0'));
+              const pname = profile.name || `Profile ${pid}`;
+              return `<option value="${esc(pid)}">${esc(pname)}</option>`;
+            }).join('');
             if (previousProfileId && [...profileSelect.options].some(option => option.value === previousProfileId)) {
               profileSelect.value = previousProfileId;
             }
           }
-          if (!profileSelect?.value) throw new Error('No Nuvio profile is available for this account.');
+          if (!profileSelect?.value) throw new Error(`No ${isArvio ? 'ARVIO' : 'Nuvio'} profile is available for this account.`);
 
           const saveRes = await fetch(`/api/proxy/auth/connections/${connId}`, {
             method: 'PATCH',
@@ -3705,7 +3713,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           if (passwordInput) passwordInput.value = '';
           form?.classList.add('hidden');
           block.classList.add('hidden');
-          showMessage('Nuvio reconnected.');
+          showMessage(`${isArvio ? 'ARVIO' : 'Nuvio'} reconnected.`);
         } catch (err: any) {
           if (statusEl) statusEl.textContent = err.message || 'Sign-in failed';
         } finally {
