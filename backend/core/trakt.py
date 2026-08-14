@@ -552,14 +552,15 @@ async def get_list_items(client_id: str, access_token: str, list_slug: str) -> l
     """Fetch items in a user's personal list.
 
     Returns list of: {type, movie: {title, ids: {tmdb}}, show: {title, ids: {tmdb}}}
+
+    Paginated explicitly - large lists come back capped at one page otherwise.
     """
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.get(
-            f"{TRAKT_BASE}/users/me/lists/{list_slug}/items",
-            headers=_headers(client_id, access_token),
+        return await _get_all_pages(
+            client,
+            f"/users/me/lists/{list_slug}/items",
+            _headers(client_id, access_token),
         )
-        resp.raise_for_status()
-        return resp.json()
 
 
 async def get_watchlist(client_id: str, access_token: str) -> list[dict]:
@@ -568,13 +569,13 @@ async def get_watchlist(client_id: str, access_token: str) -> list[dict]:
     Returns list of: {type, movie: {title, ids: {tmdb}}, show: {title, ids: {tmdb}}}
     """
     async def _fetch(kind: str) -> list:
+        # Paginated explicitly - same reason as get_list_items.
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(
-                f"{TRAKT_BASE}/sync/watchlist/{kind}",
-                headers=_headers(client_id, access_token),
+            return await _get_all_pages(
+                client,
+                f"/sync/watchlist/{kind}",
+                _headers(client_id, access_token),
             )
-            resp.raise_for_status()
-            return resp.json()
 
     movies, shows = await asyncio.gather(_fetch("movies"), _fetch("shows"))
     return movies + shows
