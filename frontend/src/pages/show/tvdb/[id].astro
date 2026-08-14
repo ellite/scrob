@@ -275,7 +275,7 @@ const originalLanguage = show?.original_language
                     tmdbId={show!.tmdb_id_cross ?? show!.tvdb_id}
                     mediaType="series"
                     watched={seasonState.watched}
-                    inLists={[]}
+                    inLists={seasonState.in_lists ?? []}
                     inLibrary={seasonState.in_library}
                     collectionPct={seasonState.collection_pct}
                     watchPct={seasonState.watch_pct ?? 0}
@@ -285,7 +285,7 @@ const originalLanguage = show?.original_language
                     episodeOrder="tvdb"
                     tvdbId={show!.tvdb_id}
                     hideRequest={true}
-                    hideLists={true}
+                    hideLists={false}
                     userRating={seasonState.user_rating ?? null}
                   />
                 </div>

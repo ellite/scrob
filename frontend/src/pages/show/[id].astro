@@ -302,14 +302,14 @@ const originalLanguage = show?.original_language
                       tmdbId={Number(id)}
                       mediaType="series"
                       watched={seasonState.watched}
-                      inLists={[]}
+                      inLists={seasonState.in_lists ?? []}
                       inLibrary={seasonState.in_library}
                       collectionPct={seasonState.collection_pct}
                       watchPct={seasonState.watch_pct ?? 0}
                       watchStarted={seasonState.watch_started ?? false}
                       seasonNumber={seasonNum}
                       hideRequest={true}
-                      hideLists={true}
+                      hideLists={false}
                       userRating={seasonState.user_rating ?? null}
                     />
                   </div>

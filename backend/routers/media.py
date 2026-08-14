@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse, Response
 from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, and_, delete, func, cast as sa_cast, Text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from db import get_db, AsyncSessionLocal
@@ -137,6 +138,16 @@ async def enrich_with_state(
     show_tmdb_ids  = [i["tmdb_id"] for i in items if i.get("type") == "series" and i.get("tmdb_id")]
     ep_tmdb_ids    = [i["tmdb_id"] for i in items if i.get("type") == "episode" and i.get("tmdb_id")]
     all_tmdb_ids   = [i["tmdb_id"] for i in items if i.get("tmdb_id")]
+    # A "series" item with season_number set is a season list item (see routers/lists.py) -
+    # it shares its tmdb_id with the whole show, so its watch/collection state and list
+    # membership need computing separately from the show's own, below.
+    season_items = [
+        (i["tmdb_id"], i["season_number"])
+        for i in items
+        if i.get("type") == "series" and i.get("season_number") is not None and i.get("tmdb_id")
+    ]
+    season_watched_count_map: dict[tuple[int, int], int] = {}
+    season_collected_count_map: dict[tuple[int, int], int] = {}
 
     if not all_tmdb_ids:
         return items
@@ -301,16 +312,22 @@ async def enrich_with_state(
     user_list_ids_q = await db.execute(select(UserList.id).where(UserList.user_id == user_id))
     user_list_ids = [r[0] for r in user_list_ids_q.all()]
 
+    # Split by season_number so a season-only list item doesn't make the whole
+    # show (or vice versa) appear "in that list" elsewhere in the app.
     list_membership: dict[int, list[int]] = {}
+    season_list_membership: dict[tuple[int, int], list[int]] = {}
     if user_list_ids and all_tmdb_ids:
         q = await db.execute(
-            select(Media.tmdb_id, ListItem.list_id)
+            select(Media.tmdb_id, ListItem.season_number, ListItem.list_id)
             .join(ListItem, ListItem.media_id == Media.id)
             .where(ListItem.list_id.in_(user_list_ids), Media.tmdb_id.in_(all_tmdb_ids))
             .distinct()
         )
-        for row_tmdb_id, list_id in q.all():
-            list_membership.setdefault(row_tmdb_id, []).append(list_id)
+        for row_tmdb_id, row_season_number, list_id in q.all():
+            if row_season_number is None:
+                list_membership.setdefault(row_tmdb_id, []).append(list_id)
+            else:
+                season_list_membership.setdefault((row_tmdb_id, row_season_number), []).append(list_id)
 
     # --- Collection pct and watched status for shows ---
     show_pct: dict[int, int] = {}
@@ -398,6 +415,17 @@ async def enrich_with_state(
             )
             show_watched_count_map.update({r[0]: r[1] for r in watched_count_q.all()})
 
+            # Season-scoped watched counts, from the same dedup subquery. Shows
+            # currently mid-rewatch are excluded here too (they're excluded from
+            # non_rewatching_tmdb_ids above), so a season of a show being rewatched
+            # will under-count until the rewatch finishes - a known limitation.
+            if season_items:
+                season_watched_q = await db.execute(
+                    select(watched_eps_sq.c.show_tmdb_id, watched_eps_sq.c.season_number, func.count())
+                    .group_by(watched_eps_sq.c.show_tmdb_id, watched_eps_sq.c.season_number)
+                )
+                season_watched_count_map = {(r[0], r[1]): r[2] for r in season_watched_q.all()}
+
         # Count distinct collected episodes per show
         ep_dedup_sq = (
             select(ShowModel.tmdb_id.label("show_tmdb_id"), Media.season_number, Media.episode_number)
@@ -419,6 +447,13 @@ async def enrich_with_state(
             .group_by(ep_dedup_sq.c.show_tmdb_id)
         )
         collected_map = {r[0]: r[1] for r in collected_q.all()}
+
+        if season_items:
+            season_collected_q = await db.execute(
+                select(ep_dedup_sq.c.show_tmdb_id, ep_dedup_sq.c.season_number, func.count())
+                .group_by(ep_dedup_sq.c.show_tmdb_id, ep_dedup_sq.c.season_number)
+            )
+            season_collected_count_map = {(r[0], r[1]): r[2] for r in season_collected_q.all()}
 
         for tmdb_id in show_tmdb_ids:
             total = total_map.get(tmdb_id, 0)
@@ -549,6 +584,21 @@ async def enrich_with_state(
             in_lib = tid in collected_movie_ids
             item["in_library"] = in_lib
             item["collection_pct"] = 100 if in_lib else 0
+        elif t == "series" and item.get("season_number") is not None:
+            # A season list item - state scoped to just that season's episodes,
+            # not the whole show (see season_items above).
+            sn = item["season_number"]
+            season_total = next(
+                (s.get("episode_count", 0) for s in show_seasons_map.get(tid, []) if s.get("season_number") == sn),
+                0,
+            )
+            collected = season_collected_count_map.get((tid, sn), 0)
+            watched = season_watched_count_map.get((tid, sn), 0)
+            item["collection_pct"] = min(100, int((collected / season_total) * 100)) if season_total > 0 else 0
+            item["in_library"] = collected > 0
+            item["watch_pct"] = min(100, int((watched / season_total) * 100)) if season_total > 0 else 0
+            item["watched"] = season_total > 0 and watched >= season_total
+            item["watch_started"] = watched > 0
         elif t == "series":
             item["watched"] = tid in watched_shows
             pct = show_pct.get(tid, 0)
@@ -571,7 +621,10 @@ async def enrich_with_state(
             item["collection_pct"] = 0
             item["in_library"] = False
 
-        item["in_lists"] = list_membership.get(tid, [])
+        if t == "series" and item.get("season_number") is not None:
+            item["in_lists"] = season_list_membership.get((tid, item["season_number"]), [])
+        else:
+            item["in_lists"] = list_membership.get(tid, [])
         item["is_monitored"] = monitored_status.get(tid, False)
         item["request_enabled"] = request_enabled_map.get(tid, False)
         item["request_status"] = request_status_map.get(tid)
@@ -2420,13 +2473,11 @@ async def manually_collect(
         if not check_tmdb_key(tmdb_key):
             raise HTTPException(status_code=404, detail="Media not found and no TMDB key configured")
         try:
-            from core.enrichment import enrich_media
+            from core.enrichment import enrich_media, create_media_safely, enrich_media_safely
             if body.media_type == MediaType.movie:
                 data = await tmdb.get_movie(body.tmdb_id, api_key=tmdb_key)
                 title = data.get("title", "")
-                media = Media(tmdb_id=body.tmdb_id, media_type=body.media_type, title=title)
-                db.add(media)
-                await db.flush()
+                media, _created = await create_media_safely(db, body.tmdb_id, body.media_type, title=title)
                 await enrich_media(media, api_key=tmdb_key)
             elif body.media_type == MediaType.episode:
                 if not body.series_tmdb_id or body.season_number is None or body.episode_number is None:
@@ -2472,17 +2523,16 @@ async def manually_collect(
                 ep_data = await tmdb.get_episode(
                     body.series_tmdb_id, body.season_number, body.episode_number, api_key=tmdb_key
                 )
-                media = Media(
-                    tmdb_id=body.tmdb_id,
-                    media_type=MediaType.episode,
+                media, _created = await create_media_safely(
+                    db,
+                    body.tmdb_id,
+                    MediaType.episode,
                     title=ep_data.get("name", ""),
                     season_number=body.season_number,
                     episode_number=body.episode_number,
                     show_id=show.id,
                 )
-                db.add(media)
-                await db.flush()
-                await enrich_media(media, api_key=tmdb_key, series_tmdb_id=body.series_tmdb_id)
+                media = await enrich_media_safely(db, media, api_key=tmdb_key, series_tmdb_id=body.series_tmdb_id)
             else:
                 raise HTTPException(status_code=400, detail=f"Manual collection not supported for type: {body.media_type}")
         except HTTPException:
@@ -2654,9 +2704,11 @@ async def _resolve_season_episodes(
             if not media.show_id:
                 media.show_id = show.id
         else:
-            media = Media(
-                tmdb_id=tid,
-                media_type=MediaType.episode,
+            from core.enrichment import create_media_safely
+            media, _created = await create_media_safely(
+                db,
+                tid,
+                MediaType.episode,
                 title=ep.get("name", ""),
                 season_number=season_number,
                 episode_number=ep.get("episode_number"),
@@ -2666,7 +2718,6 @@ async def _resolve_season_episodes(
                 tmdb_rating=ep.get("vote_average"),
                 poster_path=tmdb.poster_url(ep.get("still_path"), size="w500"),
             )
-            db.add(media)
         result.append(media)
 
     await db.flush()
@@ -2722,8 +2773,26 @@ async def _resolve_season_episodes_from_tvdb(
                 episode_number=ep_num,
                 show_id=show.id,
             )
+            # tmdb_id isn't known until enrich_episode_from_tvdb resolves it, so
+            # this can't go through create_media_safely up front - flushed
+            # explicitly here instead, inside a savepoint, so a conflict with a
+            # concurrently-created row for this exact episode is caught right
+            # here instead of failing the whole batch's flush at the end.
             await enrich_episode_from_tvdb(media, ep)
-            db.add(media)
+            try:
+                async with db.begin_nested():
+                    db.add(media)
+                    await db.flush()
+            except IntegrityError:
+                existing_result = await db.execute(
+                    select(Media)
+                    .where(Media.tmdb_id == media.tmdb_id, Media.media_type == MediaType.episode)
+                    .order_by(Media.id)
+                )
+                existing = existing_result.scalars().first()
+                if not existing:
+                    raise
+                media = existing
         result.append(media)
 
     await db.flush()
@@ -3317,7 +3386,7 @@ async def refresh_technical_data(db: AsyncSession, media_ids: list[int], user_id
                         break
                 if not item:
                     for c in jellyfin_conns:
-                        item = await jellyfin_client.find_movie_by_tmdb_id(c.url, c.token, media.tmdb_id)
+                        item = await jellyfin_client.find_movie_by_tmdb_id(c.url, c.token, media.tmdb_id, user_id=c.server_user_id)
                         if item:
                             new_source = CollectionSource.jellyfin
                             new_source_id = item.get("Id", "")
@@ -3328,7 +3397,7 @@ async def refresh_technical_data(db: AsyncSession, media_ids: list[int], user_id
                             break
                 if not item:
                     for c in emby_conns:
-                        item = await emby_client.find_movie_by_tmdb_id(c.url, c.token, media.tmdb_id)
+                        item = await emby_client.find_movie_by_tmdb_id(c.url, c.token, media.tmdb_id, user_id=c.server_user_id)
                         if item:
                             new_source = CollectionSource.emby
                             new_source_id = item.get("Id", "")
@@ -3355,6 +3424,7 @@ async def refresh_technical_data(db: AsyncSession, media_ids: list[int], user_id
                         for c in jellyfin_conns:
                             item = await jellyfin_client.find_episode_by_ids(
                                 c.url, c.token, series_tmdb_id, media.season_number, media.episode_number,
+                                user_id=c.server_user_id,
                             )
                             if item:
                                 new_source = CollectionSource.jellyfin
@@ -3368,6 +3438,7 @@ async def refresh_technical_data(db: AsyncSession, media_ids: list[int], user_id
                         for c in emby_conns:
                             item = await emby_client.find_episode_by_ids(
                                 c.url, c.token, series_tmdb_id, media.season_number, media.episode_number,
+                                user_id=c.server_user_id,
                             )
                             if item:
                                 new_source = CollectionSource.emby

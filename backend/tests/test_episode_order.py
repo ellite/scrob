@@ -35,6 +35,12 @@ class _ScalarOneResult:
     def scalar_one_or_none(self):
         return self.item
 
+    def scalars(self):
+        return self
+
+    def first(self):
+        return self.item
+
 
 class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
     async def test_builds_bidirectional_positions_from_external_ids_and_safe_fallback(self) -> None:

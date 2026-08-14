@@ -166,7 +166,7 @@ def extract_quality(media_streams: list) -> dict:
 
     return quality
 
-async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int) -> Optional[Dict]:
+async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int, user_id: Optional[str] = None) -> Optional[Dict]:
     """Search all Jellyfin libraries for a movie by TMDB ID. Returns the item with MediaStreams or None."""
     try:
         data = await _get(url, token, "Items", params={
@@ -179,13 +179,15 @@ async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int) -> Optional[
         items = data.get("Items", [])
         if not items:
             return None
-        # Fetch full detail with MediaStreams
-        return await get_item(url, token, items[0]["Id"])
+        # Fetch full detail with MediaStreams - user_id is required here, the
+        # admin-only Items/{id} endpoint (no Users/ prefix) throws server-side
+        # for a non-admin token (see #153).
+        return await get_item(url, token, items[0]["Id"], user_id=user_id)
     except Exception:
         return None
 
 
-async def find_episode_by_ids(url: str, token: str, series_tmdb_id: int, season: int, episode: int) -> Optional[Dict]:
+async def find_episode_by_ids(url: str, token: str, series_tmdb_id: int, season: int, episode: int, user_id: Optional[str] = None) -> Optional[Dict]:
     """Search all Jellyfin libraries for an episode by series TMDB ID + season + episode number."""
     try:
         # First find the series by TMDB ID
@@ -214,7 +216,8 @@ async def find_episode_by_ids(url: str, token: str, series_tmdb_id: int, season:
         ep_items = ep_data.get("Items", [])
         if not ep_items:
             return None
-        return await get_item(url, token, ep_items[0]["Id"])
+        # user_id required - see #153.
+        return await get_item(url, token, ep_items[0]["Id"], user_id=user_id)
     except Exception:
         return None
 
@@ -262,15 +265,29 @@ async def mark_unwatched(url: str, token: str, user_id: str, item_id: str, clien
         return False
 
 async def set_rating(url: str, token: str, user_id: str, item_id: str, rating: float, client: httpx.AsyncClient | None = None) -> bool:
-    """Set a star rating on a Jellyfin item (0–10 scale)."""
-    headers = {**_auth_headers(token), "Content-Type": "application/json"}
-    body = {"PlayedPercentage": None, "UnplayedItemCount": None, "Rating": rating}
+    """Set a star rating on a Jellyfin item (0–10 scale).
+
+    POST .../UserData replaces the *entire* UserData object rather than patching
+    it, so Played/PlayCount/PlaybackPositionTicks/IsFavorite/LastPlayedDate must
+    be fetched first and merged in - otherwise a concurrent rating push silently
+    resets watched status back to unwatched (#168).
+    """
+    get_headers = _auth_headers(token)
+    post_headers = {**get_headers, "Content-Type": "application/json"}
+    item_url = f"{url.rstrip('/')}/Users/{user_id}/Items/{item_id}"
+    userdata_url = f"{item_url}/UserData"
+
+    async def _do(c: httpx.AsyncClient) -> bool:
+        item_r = await c.get(item_url, headers=get_headers, params={"Fields": "UserData"})
+        item_r.raise_for_status()
+        body = {**item_r.json().get("UserData", {}), "Rating": rating}
+        r = await c.post(userdata_url, headers=post_headers, json=body)
+        return r.status_code < 400
+
     try:
         if client:
-            r = await client.post(f"{url.rstrip('/')}/Users/{user_id}/Items/{item_id}/UserData", headers=headers, json=body)
-            return r.status_code < 400
+            return await _do(client)
         async with httpx.AsyncClient(timeout=PUSH_TIMEOUT, follow_redirects=False) as c:
-            r = await c.post(f"{url.rstrip('/')}/Users/{user_id}/Items/{item_id}/UserData", headers=headers, json=body)
-            return r.status_code < 400
+            return await _do(c)
     except Exception:
         return False
