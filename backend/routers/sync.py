@@ -4678,9 +4678,14 @@ def _parse_arvio_timestamp(ts: Any) -> datetime | None:
 async def _apply_arvio_watched_movie(
     db: AsyncSession,
     user_id: int,
-    item: dict[str, Any],
+    item: dict[str, Any] | int | str,
     tmdb_api_key: str | None,
 ) -> bool:
+    if isinstance(item, (int, str)):
+        item = {"tmdbId": item}
+    elif not isinstance(item, dict):
+        return False
+
     tmdb_id_raw = item.get("tmdbId") or item.get("tmdb_id") or item.get("id")
     if not tmdb_id_raw:
         return False
@@ -4731,9 +4736,12 @@ async def _apply_arvio_watched_movie(
 async def _apply_arvio_watched_episode(
     db: AsyncSession,
     user_id: int,
-    item: dict[str, Any],
+    item: dict[str, Any] | int | str,
     tmdb_api_key: str | None,
 ) -> bool:
+    if not isinstance(item, dict):
+        return False
+
     show_tmdb_id_raw = item.get("showTmdbId") or item.get("show_tmdb_id") or item.get("showId") or item.get("id")
     season_raw = item.get("season") or item.get("seasonNumber")
     episode_raw = item.get("episode") or item.get("episodeNumber")
@@ -4805,9 +4813,12 @@ async def _apply_arvio_watched_episode(
 async def _apply_arvio_playback_progress(
     db: AsyncSession,
     user_id: int,
-    item: dict[str, Any],
+    item: dict[str, Any] | int | str,
     tmdb_api_key: str | None,
 ) -> bool:
+    if not isinstance(item, dict):
+        return False
+
     media_type_str = str(item.get("mediaType") or "").upper()
     progress_val = item.get("progress", 0)
     try:
@@ -5070,7 +5081,6 @@ async def _run_arvio_sync(
                 .values(
                     status=SyncStatus.completed,
                     processed_items=processed,
-                    completed_at=datetime.now(timezone.utc),
                     updated_at=func.now(),
                 )
             )
@@ -5086,8 +5096,7 @@ async def _run_arvio_sync(
                 .where(SyncJob.id == job_id)
                 .values(
                     status=SyncStatus.failed,
-                    error_message=str(exc),
-                    completed_at=datetime.now(timezone.utc),
+                    error_message=str(exc)[:900],
                     updated_at=func.now(),
                 )
             )

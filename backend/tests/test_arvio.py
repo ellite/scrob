@@ -241,6 +241,20 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
             },
             tmdb_api_key=None,
         )
+    async def test_apply_arvio_watched_movie_int_item(self) -> None:
+        db = AsyncMock()
+        db.add = MagicMock()
+        db.execute = AsyncMock(side_effect=[
+            _Result(scalars=[]),  # Media search
+            _Result(scalars=[]),  # WatchEvent search
+        ])
+
+        added = await _apply_arvio_watched_movie(
+            db,
+            user_id=1,
+            item=550,
+            tmdb_api_key=None,
+        )
         self.assertTrue(added)
 
 
