@@ -544,6 +544,7 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
             "media_type": "movie" if item.get("Type") == "Movie" else "episode",
             "tmdb_id": item.get("ProviderIds", {}).get("Tmdb"),
             "series_tmdb_id": item.get("SeriesProviderIds", {}).get("Tmdb"),
+            "series_name": item.get("SeriesName"),
             "season_number": item.get("ParentIndexNumber"),
             "episode_number": item.get("IndexNumber"),
             # Jellyfin/Emby can mux several episodes into one file and fire a single
@@ -629,6 +630,39 @@ async def _resolve_tvdb_fallback(
         return None, None, None
 
 
+async def _resolve_show_for_episode(
+    data: dict, db: AsyncSession, api_key: str = None
+) -> tuple[Show | None, int | None]:
+    """(show, series_tmdb_id) for a parsed Jellyfin/Emby webhook payload.
+    Falls back to a series_name lookup (local Show table, then TMDB search)
+    when the payload carries no SeriesProviderIds — the flat plugin format
+    never has them, and Emby's nested webhooks omit them too (#192)."""
+    show = None
+    series_tmdb_id = int(data["series_tmdb_id"]) if data.get("series_tmdb_id") else None
+
+    if data["media_type"] == "episode" and not series_tmdb_id and data.get("series_name"):
+        local_result = await db.execute(
+            select(Show).where(Show.title.ilike(data["series_name"]))
+        )
+        local_show = local_result.scalars().first()
+        if local_show:
+            series_tmdb_id = local_show.tmdb_id
+        else:
+            try:
+                res = await tmdb.search_shows(data["series_name"], api_key=api_key)
+                if res.get("results"):
+                    series_tmdb_id = res["results"][0]["id"]
+            except Exception:
+                pass
+
+    if data["media_type"] == "episode" and series_tmdb_id:
+        try:
+            show = await _find_or_create_show(db, series_tmdb_id, api_key)
+        except Exception:
+            pass
+    return show, series_tmdb_id
+
+
 async def find_or_create_media_jellyfin(
     data: dict, db: AsyncSession, api_key: str = None, user_id: int | None = None
 ) -> Media | None:
@@ -650,33 +684,19 @@ async def find_or_create_media_jellyfin(
         result = await db.execute(query)
         media = result.scalars().first()
         if media:
+            if media.media_type == MediaType.episode and media.show_id is None:
+                show, series_tmdb_id = await _resolve_show_for_episode(data, db, api_key)
+                if show:
+                    media.show_id = show.id
+                    tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, user_id)
+                    await enrich_media(
+                        media, api_key=api_key, series_tmdb_id=series_tmdb_id,
+                        tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
+                    )
             return media
 
     # Resolve show for episode dedup and enrichment
-    show = None
-    series_tmdb_id = int(data["series_tmdb_id"]) if data.get("series_tmdb_id") else None
-
-    if data["media_type"] == "episode" and not series_tmdb_id and data.get("series_name"):
-        # Flat format: no series_tmdb_id — try local Show table first, then TMDB search
-        local_result = await db.execute(
-            select(Show).where(Show.title.ilike(data["series_name"]))
-        )
-        local_show = local_result.scalars().first()
-        if local_show:
-            series_tmdb_id = local_show.tmdb_id
-        else:
-            try:
-                res = await tmdb.search_shows(data["series_name"], api_key=api_key)
-                if res.get("results"):
-                    series_tmdb_id = res["results"][0]["id"]
-            except Exception:
-                pass
-
-    if data["media_type"] == "episode" and series_tmdb_id:
-        try:
-            show = await _find_or_create_show(db, series_tmdb_id, api_key)
-        except Exception:
-            pass
+    show, series_tmdb_id = await _resolve_show_for_episode(data, db, api_key)
 
     # 2. Match by TMDB ID (handles rapid webhook events before first sync, or items
     #    already added via another source / manually — prevents duplicate media rows)
