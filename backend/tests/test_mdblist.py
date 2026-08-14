@@ -135,6 +135,40 @@ class MDBListClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, [("movies", 2), ("movies", 1), ("episodes", 1)])
         self.assertEqual(result, {"submitted": 4, "batches": 3, "not_found": 0})
 
+    def test_push_batch_size_does_not_exceed_mdblist_limit(self) -> None:
+        # Regression test for #176: MDBList rejects any request with more
+        # than 200 top-level entries ("Too many shows in one request (max
+        # 200)") - PUSH_BATCH_SIZE was set to 500, so a push job for a
+        # watched-list over 200 items failed outright instead of being
+        # chunked, even though the batching mechanism itself was correct.
+        self.assertLessEqual(mdblist.PUSH_BATCH_SIZE, 200)
+
+    async def test_push_watched_chunks_large_show_list_within_mdblist_limit(self) -> None:
+        # End-to-end with the real (unpatched) PUSH_BATCH_SIZE: a watched-list
+        # of 450 shows must be split into batches MDBList would actually accept.
+        batch_sizes: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content)
+            batch_sizes.append(len(payload["shows"]))
+            return httpx.Response(200, json={"added": {}, "not_found": {}})
+
+        payload = {
+            "movies": [], "seasons": [], "episodes": [],
+            "shows": [{"ids": {"tmdb": i}} for i in range(450)],
+        }
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            mdblist.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            result = await mdblist.push_watched("secret-key", payload)
+
+        self.assertTrue(all(size <= 200 for size in batch_sizes), batch_sizes)
+        self.assertEqual(sum(batch_sizes), 450)
+        self.assertEqual(result["submitted"], 450)
+
 
 
 class MDBListListFanoutTests(unittest.IsolatedAsyncioTestCase):

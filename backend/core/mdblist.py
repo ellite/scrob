@@ -9,7 +9,12 @@ import httpx
 
 MDBLIST_BASE = "https://api.mdblist.com"
 PAGE_SIZE = 1000
-PUSH_BATCH_SIZE = 500
+# MDBList rejects a push with more than 200 top-level entries in any of
+# movies/shows/seasons/episodes with a 400 ("Too many shows in one request
+# (max 200)") - this was set above that limit, so the whole push job aborted
+# outright instead of being chunked as _batched_payloads/_push already
+# intend it to be (see #176).
+PUSH_BATCH_SIZE = 200
 
 
 class MDBListAPIError(RuntimeError):
