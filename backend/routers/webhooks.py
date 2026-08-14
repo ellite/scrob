@@ -971,7 +971,14 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                     await _handle_unwatch_toggle(db, user.id, m)
                 await db.commit()
                 from routers.history import _push_watch_state
-                await _push_watch_state(db, user.id, [m.id for m in media_list], watched=False)
+                # exclude_connection_id: this unwatch was itself reported BY this
+                # connection - pushing it right back to the same server is what
+                # causes the infinite webhook loop in #190. Still propagates to
+                # any OTHER connection with push_watched enabled.
+                await _push_watch_state(
+                    db, user.id, [m.id for m in media_list], watched=False,
+                    exclude_connection_id=conn.id if conn else None,
+                )
 
     return {"status": "ok", "event": notification_type, "title": data["title"]}
 
@@ -1259,6 +1266,12 @@ async def _handle_jellyfin_scrobble_webhook(
                     await _handle_unwatch_toggle(db, user.id, m)
                 await db.commit()
                 from routers.history import _push_watch_state
+                # Unlike _handle_jellyfin_webhook, there's no exclude_connection_id
+                # here - a ScrobbleConnection has no url of its own, so it can't be
+                # matched against push-enabled MediaServerConnections to identify
+                # "the server this came from" (see #190). This only becomes a loop
+                # if the user also has a separate full MediaServerConnection with
+                # push_watched enabled pointing at that same physical server.
                 await _push_watch_state(db, user.id, [m.id for m in media_list], watched=False)
 
     return {"status": "ok", "event": notification_type, "title": data["title"]}

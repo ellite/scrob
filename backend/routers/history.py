@@ -42,8 +42,19 @@ async def _push_watch_state(
     media_ids: list[int],
     watched: bool,
     watched_at_by_media: dict[int, datetime | None] | None = None,
+    exclude_connection_id: int | None = None,
 ) -> None:
-    """Fan-out watched/unwatched state to all connections with push_watched enabled."""
+    """Fan-out watched/unwatched state to all connections with push_watched enabled.
+
+    exclude_connection_id skips one connection - used when this call was itself
+    triggered by an inbound webhook from a media server, so that state isn't
+    pushed straight back to the same server. Without it, a two-way-sync
+    connection (webhook in + push_watched out) can self-trigger forever: the
+    push causes another UserData change on that same server, which re-fires
+    its own webhook back into Scrob, which pushes again (see #190) - each
+    round trip is a real, unbounded loop of outbound HTTP calls and inbound
+    webhook deliveries, not just a redundant write.
+    """
     if not media_ids:
         return
 
@@ -53,7 +64,7 @@ async def _push_watch_state(
             MediaServerConnection.push_watched == True,
         )
     )
-    connections = conns_result.scalars().all()
+    connections = [c for c in conns_result.scalars().all() if c.id != exclude_connection_id]
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
     settings = settings_result.scalar_one_or_none()

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from models.base import MediaType
+from models.base import MediaType, CollectionSource
 from models.events import WatchEvent
 from models.media import Media
 from models.show import Show
@@ -315,6 +315,72 @@ class MarkShowWatchedDateTests(unittest.IsolatedAsyncioTestCase):
         response, event = await self._mark_show(watched_at=custom)
         self.assertEqual(response["count"], 1)
         self.assertEqual(event.watched_at, custom)
+
+
+class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for #190: a two-way-sync connection (webhook in +
+    push_watched out) can self-trigger an unbounded loop - Scrob pushes
+    "unwatched" to Jellyfin, Jellyfin's own UserData change re-fires its
+    webhook back into Scrob, which pushes "unwatched" again, forever. The
+    fix is exclude_connection_id: the connection whose webhook triggered
+    this push must be skipped, while other connections still get it."""
+
+    def _connections(self):
+        conn_origin = SimpleNamespace(
+            id=1, type="jellyfin", url="http://origin.local", token="tok1", server_user_id="u1",
+        )
+        conn_other = SimpleNamespace(
+            id=2, type="jellyfin", url="http://other.local", token="tok2", server_user_id="u2",
+        )
+        return conn_origin, conn_other
+
+    def _coll_files(self):
+        cf1 = SimpleNamespace(source=CollectionSource.jellyfin, source_id="item-1")
+        cf2 = SimpleNamespace(source=CollectionSource.jellyfin, source_id="item-2")
+        return cf1, cf2
+
+    async def test_excludes_only_the_originating_connection(self) -> None:
+        conn_origin, conn_other = self._connections()
+        cf1, cf2 = self._coll_files()
+        # Query order in _push_watch_state (settings=None short-circuits every
+        # later trakt/mdblist/simkl query, keeping this fixture minimal):
+        # 1. connections, 2. settings, 3. collection files.
+        db = _FakeSession([[conn_origin, conn_other], None, [cf1, cf2]])
+
+        calls: list[str] = []
+
+        async def fake_mark_unwatched(url, token, user_id, source_id):
+            calls.append(url)
+            return True
+
+        with patch("routers.history.jellyfin_client.mark_unwatched", fake_mark_unwatched):
+            await history._push_watch_state(
+                db, user_id=7, media_ids=[10], watched=False,
+                exclude_connection_id=conn_origin.id,
+            )
+
+        self.assertNotIn("http://origin.local", calls)
+        self.assertIn("http://other.local", calls)
+
+    async def test_no_exclusion_pushes_to_every_connection(self) -> None:
+        # Baseline: without exclude_connection_id (e.g. a manual UI mark, not
+        # webhook-triggered), behavior is unchanged - every push_watched
+        # connection still gets it, including what would be conn_origin above.
+        conn_origin, conn_other = self._connections()
+        cf1, cf2 = self._coll_files()
+        db = _FakeSession([[conn_origin, conn_other], None, [cf1, cf2]])
+
+        calls: list[str] = []
+
+        async def fake_mark_unwatched(url, token, user_id, source_id):
+            calls.append(url)
+            return True
+
+        with patch("routers.history.jellyfin_client.mark_unwatched", fake_mark_unwatched):
+            await history._push_watch_state(db, user_id=7, media_ids=[10], watched=False)
+
+        self.assertIn("http://origin.local", calls)
+        self.assertIn("http://other.local", calls)
 
 
 if __name__ == "__main__":
