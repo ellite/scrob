@@ -12,6 +12,18 @@ Astro.response.headers.set("Cache-Control", "no-store");
       <h1 class="page-title mb-2">Next Up</h1>
       <p class="text-zinc-500">Continue where you left off</p>
     </div>
+    <div class="flex items-center gap-3 shrink-0">
+    <select
+      id="sort-select"
+      title="Sort"
+      class="px-3 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer"
+    >
+      <option value="recent">Recently watched</option>
+      <option value="episodes_asc">Episodes left ↑</option>
+      <option value="episodes_desc">Episodes left ↓</option>
+      <option value="time_asc">Time left ↑</option>
+      <option value="time_desc">Time left ↓</option>
+    </select>
     <button
       id="toggle-hidden-btn"
       class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer shrink-0"
@@ -22,6 +34,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
       </svg>
       <span id="toggle-label">Show hidden</span>
     </button>
+    </div>
   </div>
 
   <div id="loading-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
@@ -65,6 +78,24 @@ Astro.response.headers.set("Cache-Control", "no-store");
   const SPIN   = `<svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>`;
 
   let showingHidden = false;
+  let allItems = [];
+  let sortMode = localStorage.getItem('nextUpSort') || 'recent';
+
+  // 'recent' keeps the server's order (most recently watched first). The
+  // other modes sort on the #170 stats; items without stats always sink to
+  // the bottom, whatever the direction.
+  function sortedItems() {
+    if (sortMode === 'recent') return allItems;
+    const key = sortMode.startsWith('episodes') ? 'episodes_left' : 'remaining_runtime';
+    const dir = sortMode.endsWith('_desc') ? -1 : 1;
+    return [...allItems].sort((a, b) => {
+      const av = a[key], bv = b[key];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return (av - bv) * dir;
+    });
+  }
 
   // Local copy of lib/media-format's formatEpisodesLeft — this define:vars
   // script can't import from lib/ (same reason tmdbImageUrl is re-implemented
@@ -106,8 +137,9 @@ Astro.response.headers.set("Cache-Control", "no-store");
       >${isHidden ? EYE : EYE_SLASH}</button>
     ` : '';
 
-    // Hidden cards: rendered as opacity-50 + hidden (show/hide toggled by JS)
-    const wrapperClass = isHidden ? 'opacity-50 hidden' : '';
+    // Hidden cards: rendered as opacity-50 + hidden (show/hide toggled by JS).
+    // A re-render while "Show hidden" is active must keep them visible.
+    const wrapperClass = isHidden ? (showingHidden ? 'opacity-50' : 'opacity-50 hidden') : '';
 
     return `
       <div class="${wrapperClass}" data-next-up-hidden="${isHidden ? 'true' : 'false'}">
@@ -134,6 +166,14 @@ Astro.response.headers.set("Cache-Control", "no-store");
     `;
   }
 
+  function renderGrid() {
+    const grid = document.getElementById('next-up-grid');
+    grid.innerHTML = sortedItems().map(buildCard).join('');
+    grid.classList.remove('hidden');
+    updateEmptyState();
+    bindHideButtons();
+  }
+
   function updateEmptyState() {
     const grid = document.getElementById('next-up-grid');
     const empty = document.getElementById('empty-state');
@@ -156,19 +196,16 @@ Astro.response.headers.set("Cache-Control", "no-store");
       });
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
-      const items = data.next_up ?? [];
+      allItems = data.next_up ?? [];
 
       loading.classList.add('hidden');
 
-      if (items.length === 0) {
+      if (allItems.length === 0) {
         empty.classList.remove('hidden');
         return;
       }
 
-      grid.innerHTML = items.map(buildCard).join('');
-      grid.classList.remove('hidden');
-      updateEmptyState();
-      bindHideButtons();
+      renderGrid();
     } catch {
       loading.classList.add('hidden');
       empty.classList.remove('hidden');
@@ -197,7 +234,10 @@ Astro.response.headers.set("Cache-Control", "no-store");
               method: 'DELETE',
               headers: { 'Authorization': `Bearer ${token}` },
             });
-            // Restore
+            // Restore — also sync allItems so a later re-sort re-render
+            // doesn't resurrect the stale hidden state.
+            const restored = allItems.find(i => i.show_id === showId);
+            if (restored) restored.next_up_hidden = false;
             wrapper.dataset.nextUpHidden = 'false';
             wrapper.classList.remove('opacity-50', 'hidden');
             btn.classList.remove('bg-amber-900/60', 'border-amber-600', 'text-amber-300', 'hover:bg-amber-700', 'hover:border-amber-500', 'hover:text-white');
@@ -210,7 +250,9 @@ Astro.response.headers.set("Cache-Control", "no-store");
               headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ show_id: showId }),
             });
-            // Hide
+            // Hide — same allItems sync as the restore branch above.
+            const hidden = allItems.find(i => i.show_id === showId);
+            if (hidden) hidden.next_up_hidden = true;
             wrapper.dataset.nextUpHidden = 'true';
             wrapper.classList.add('opacity-50');
             if (!showingHidden) {
@@ -247,6 +289,19 @@ Astro.response.headers.set("Cache-Control", "no-store");
     });
 
     updateEmptyState();
+  });
+
+  const sortSelect = document.getElementById('sort-select');
+  sortSelect.value = sortMode;
+  if (sortSelect.value !== sortMode) {
+    // Unknown value lingering in localStorage — fall back to the default.
+    sortMode = 'recent';
+    sortSelect.value = 'recent';
+  }
+  sortSelect.addEventListener('change', () => {
+    sortMode = sortSelect.value;
+    localStorage.setItem('nextUpSort', sortMode);
+    if (allItems.length) renderGrid();
   });
 
   loadNextUp();
