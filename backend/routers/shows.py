@@ -1680,7 +1680,10 @@ async def refresh_show_metadata(
     async def fetch_tvdb_season(sn: int) -> None:
         async with semaphore:
             try:
-                raw_eps = await tvdb_client.get_series_episodes(show.tvdb_id, sn, tvdb_api_key, language=tvdb_lang)
+                # See the matching comment on the tmdb.get_show call above.
+                raw_eps = await tvdb_client.get_series_episodes(
+                    show.tvdb_id, sn, tvdb_api_key, language=tvdb_lang, cache_ttl=None,
+                )
                 tvdb_season_data[sn] = {e.get("number"): e for e in raw_eps}
             except Exception:
                 tvdb_season_data[sn] = {}
@@ -2687,7 +2690,9 @@ async def refresh_tvdb_show_metadata(
         raise HTTPException(status_code=404, detail="Show not found in local library")
 
     try:
-        raw = await tvdb_client.get_series(tvdb_id, api_key)
+        # cache_ttl=None: this is the user explicitly asking for fresh data -
+        # see the matching comment on refresh_show_metadata's tmdb.get_show call.
+        raw = await tvdb_client.get_series(tvdb_id, api_key, cache_ttl=None)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"TVDB fetch failed: {e}")
 

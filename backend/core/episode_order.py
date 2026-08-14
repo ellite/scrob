@@ -90,8 +90,10 @@ async def ensure_episode_order_mapping(
     )
     existing = list(existing_result.scalars().all())
     # force=True means the caller explicitly asked to recompute (a "Refresh
-    # Metadata" action) - bypass the shared TMDB response cache so that isn't
-    # a silent no-op if this show was fetched moments earlier.
+    # Metadata" action) - bypass the shared TMDB/TVDB response caches so that
+    # isn't a silent no-op if this show was fetched moments earlier. Both
+    # caches use the same TTL/None-bypass convention, so this one cache_ttl
+    # value is reused for every tmdb.* and tvdb.* call below.
     cache_ttl = None if force else tmdb.DEFAULT_CACHE_TTL
     show_data = await tmdb.get_show(series_tmdb_id, api_key=tmdb_api_key, cache_ttl=cache_ttl)
     tvdb_id = (show_data.get("external_ids") or {}).get("tvdb_id")
@@ -114,7 +116,7 @@ async def ensure_episode_order_mapping(
             if season.get("season_number") is not None
         }
     )
-    tvdb_series = await tvdb.get_series(tvdb_id, tvdb_api_key)
+    tvdb_series = await tvdb.get_series(tvdb_id, tvdb_api_key, cache_ttl=cache_ttl)
     tvdb_season_numbers = sorted(
         {
             int(season.get("number"))
@@ -140,7 +142,10 @@ async def ensure_episode_order_mapping(
             )
         ),
         asyncio.gather(
-            *(tvdb.get_series_episodes(tvdb_id, number, tvdb_api_key) for number in tvdb_season_numbers)
+            *(
+                tvdb.get_series_episodes(tvdb_id, number, tvdb_api_key, cache_ttl=cache_ttl)
+                for number in tvdb_season_numbers
+            )
         ),
     )
 
