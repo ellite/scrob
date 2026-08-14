@@ -49,6 +49,7 @@ def _auth_headers(access_token: str, api_key: str | None = None) -> dict[str, st
 async def _raise_api_error(response: httpx.Response, operation: str) -> None:
     if response.is_success:
         return
+    detail = None
     try:
         payload = response.json()
         detail = (
@@ -60,7 +61,11 @@ async def _raise_api_error(response: httpx.Response, operation: str) -> None:
         )
     except (ValueError, AttributeError):
         detail = None
+    if not detail:
+        detail = response.text
     suffix = f": {detail}" if detail else ""
+    if response.status_code == 401 and ("unauthorized" in str(detail).lower() or not detail):
+        suffix += " (ARVIO requires a valid APP_ANON_KEY. Set the ARVIO_APP_ANON_KEY environment variable or supply the App Key.)"
     raise ArvioAPIError(f"ARVIO {operation} failed ({response.status_code}){suffix}")
 
 def _parse_session(payload: dict[str, Any]) -> ArvioSession:
