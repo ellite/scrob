@@ -9,7 +9,8 @@ import httpx
 
 MDBLIST_BASE = "https://api.mdblist.com"
 PAGE_SIZE = 1000
-PUSH_BATCH_SIZE = 500
+# MDBList rejects more than 200 shows per sync request.
+PUSH_BATCH_SIZE = 200
 
 
 class MDBListAPIError(RuntimeError):
