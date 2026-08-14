@@ -554,12 +554,14 @@ async def get_list_items(client_id: str, access_token: str, list_slug: str) -> l
     Returns list of: {type, movie: {title, ids: {tmdb}}, show: {title, ids: {tmdb}}}
     """
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.get(
-            f"{TRAKT_BASE}/users/me/lists/{list_slug}/items",
-            headers=_headers(client_id, access_token),
+        # Trakt marks this endpoint "pagination optional", but large lists come
+        # back capped at one page (~100 items) unless page/limit are requested
+        # explicitly - a single unpaginated GET silently truncates (see #193).
+        return await _get_all_pages(
+            client,
+            f"/users/me/lists/{list_slug}/items",
+            _headers(client_id, access_token),
         )
-        resp.raise_for_status()
-        return resp.json()
 
 
 async def get_watchlist(client_id: str, access_token: str) -> list[dict]:
@@ -569,12 +571,13 @@ async def get_watchlist(client_id: str, access_token: str) -> list[dict]:
     """
     async def _fetch(kind: str) -> list:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(
-                f"{TRAKT_BASE}/sync/watchlist/{kind}",
-                headers=_headers(client_id, access_token),
+            # See the matching comment in get_list_items (#193) - same silent
+            # truncation risk for a watchlist over ~100 items.
+            return await _get_all_pages(
+                client,
+                f"/sync/watchlist/{kind}",
+                _headers(client_id, access_token),
             )
-            resp.raise_for_status()
-            return resp.json()
 
     movies, shows = await asyncio.gather(_fetch("movies"), _fetch("shows"))
     return movies + shows
@@ -625,6 +628,28 @@ async def remove_from_list(client_id: str, access_token: str, list_slug: str, me
         resp = await client.post(
             f"{TRAKT_BASE}/users/me/lists/{list_slug}/items/remove",
             json={media_type: [{"ids": {"tmdb": tmdb_id}}]},
+            headers=_headers(client_id, access_token),
+        )
+
+
+async def add_season_to_list(client_id: str, access_token: str, list_slug: str, season_tmdb_id: int) -> None:
+    """Add a season to a Trakt list, keyed by the season's own TMDB id (distinct
+    from its parent show's TMDB id) - same body shape set_ratings_batch uses."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{TRAKT_BASE}/users/me/lists/{list_slug}/items",
+            json={"seasons": [{"ids": {"tmdb": season_tmdb_id}}]},
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
+
+
+async def remove_season_from_list(client_id: str, access_token: str, list_slug: str, season_tmdb_id: int) -> None:
+    """Remove a season from a Trakt list, keyed by the season's own TMDB id."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{TRAKT_BASE}/users/me/lists/{list_slug}/items/remove",
+            json={"seasons": [{"ids": {"tmdb": season_tmdb_id}}]},
             headers=_headers(client_id, access_token),
         )
 

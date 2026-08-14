@@ -15,7 +15,10 @@ const isCollection = item.type === "collection";
 const year = item.release_date?.slice(0, 4) ?? null;
 const rating = item.tmdb_rating ? item.tmdb_rating.toFixed(1) : null;
 const isEpisode = item.type === "episode";
-const isSeries = item.type === "series" || (item.type === "episode" && !item.season_number && !item.id);
+// A "series" item with season_number set is a season list item (see routers/lists.py) -
+// it shares media with the whole show, so it's split out from the plain whole-show case.
+const isSeason = item.type === "series" && item.season_number != null;
+const isSeries = (item.type === "series" && item.season_number == null) || (item.type === "episode" && !item.season_number && !item.id);
 const sxe = isEpisode && item.season_number != null && item.episode_number != null
   ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`
   : null;
@@ -24,7 +27,11 @@ const href = isPerson
   ? `/person/${item.tmdb_id}`
   : isCollection
     ? `/collection/${item.tmdb_id}`
-    : isSeries && item.tvdb_id && !item.tmdb_id
+    : isSeason && (item.show_tmdb_id || item.tmdb_id)
+      ? `/show/${item.show_tmdb_id || item.tmdb_id}/season/${item.season_number}`
+      : isSeason && item.show_tvdb_id
+        ? `/show/tvdb/${item.show_tvdb_id}/season/${item.season_number}`
+        : isSeries && item.tvdb_id && !item.tmdb_id
     ? `/show/tvdb/${item.tvdb_id}`
     : isSeries && item.tmdb_id
     ? `/show/${item.tmdb_id}`
@@ -40,12 +47,16 @@ const href = isPerson
               ? `/media/${item.type}/${item.tmdb_id}`
               : null;
 
+const cardTitle = isSeason ? `Season ${item.season_number}` : item.title;
 const posterPath = tmdbImageUrl(
-  isEpisode && item.show_poster_path ? item.show_poster_path : item.poster_path,
+  (isEpisode || isSeason) && item.show_poster_path ? item.show_poster_path : item.poster_path,
   "w500"
 );
 
 const showActionBar = !isPerson && !isCollection && !!user;
+// Seasons get the same percentage-style Watched/Collected labels as a whole show
+// (state is already scoped to just that season by enrich_with_state).
+const isPercentageStyle = isSeries || isSeason;
 const watched = item.watched ?? false;
 const inLists = item.in_lists ?? [];
 const collectionPct = item.collection_pct ?? (item.in_library ? 100 : 0);
@@ -71,7 +82,7 @@ const inLibrary = item.in_library ?? false;
         {posterPath ? (
           <img
             src={posterPath}
-            alt={item.title}
+            alt={cardTitle}
             class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
             loading="lazy"
             decoding="async"
@@ -79,7 +90,7 @@ const inLibrary = item.in_library ?? false;
         ) : (
           <div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center">
             <span class="text-3xl mb-2 opacity-30">🎬</span>
-            <span class="text-xs font-bold uppercase tracking-widest">{item.title}</span>
+            <span class="text-xs font-bold uppercase tracking-widest">{cardTitle}</span>
           </div>
         )}
 
@@ -104,7 +115,7 @@ const inLibrary = item.in_library ?? false;
         {posterPath ? (
           <img
             src={posterPath}
-            alt={item.title}
+            alt={cardTitle}
             class="w-full h-full object-cover"
             loading="lazy"
             decoding="async"
@@ -112,7 +123,7 @@ const inLibrary = item.in_library ?? false;
         ) : (
           <div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center">
             <span class="text-3xl mb-2 opacity-30">🎬</span>
-            <span class="text-xs font-bold uppercase tracking-widest">{item.title}</span>
+            <span class="text-xs font-bold uppercase tracking-widest">{cardTitle}</span>
           </div>
         )}
         {rating && (
@@ -132,7 +143,7 @@ const inLibrary = item.in_library ?? false;
       inLibrary={inLibrary}
       collectionPct={collectionPct}
       watchPct={watchPct}
-      isSeries={isSeries}
+      isSeries={isPercentageStyle}
     />
   )}
 
@@ -141,10 +152,10 @@ const inLibrary = item.in_library ?? false;
   <!-- Info -->
   {href ? (
     <a href={href} class="block p-3 bg-gradient-to-b from-zinc-900 to-zinc-950 flex-1">
-      {isEpisode && item.show_title ? (
+      {(isEpisode || isSeason) && item.show_title ? (
         <h3 class="text-xs font-medium text-zinc-400 truncate mb-0.5">{item.show_title}</h3>
       ) : null}
-      <h3 class="text-sm font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors leading-tight mb-1">{item.title}</h3>
+      <h3 class="text-sm font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors leading-tight mb-1">{cardTitle}</h3>
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           {sxe && <span class="text-[11px] font-bold text-blue-400 tracking-wide">{sxe}</span>}
@@ -154,23 +165,23 @@ const inLibrary = item.in_library ?? false;
           {year && !sxe && !isPerson && <span class="text-[11px] font-medium text-zinc-500 tracking-wide">{year}</span>}
         </div>
         <span class="text-[9px] font-bold text-zinc-400 uppercase tracking-widest px-1.5 py-0.5 bg-zinc-800/50 rounded border border-zinc-800">
-          {isPerson ? 'Person' : isCollection ? 'Collection' : isSeries ? 'Show' : (item.type === 'episode' ? 'Episode' : item.type)}
+          {isPerson ? 'Person' : isCollection ? 'Collection' : isSeason ? `Season ${item.season_number}` : isSeries ? 'Show' : (item.type === 'episode' ? 'Episode' : item.type)}
         </span>
       </div>
     </a>
   ) : (
     <div class="block p-3 bg-gradient-to-b from-zinc-900 to-zinc-950 flex-1">
-      {isEpisode && item.show_title ? (
+      {(isEpisode || isSeason) && item.show_title ? (
         <h3 class="text-xs font-medium text-zinc-400 truncate mb-0.5">{item.show_title}</h3>
       ) : null}
-      <h3 class="text-sm font-bold text-zinc-500 truncate leading-tight mb-1">{item.title}</h3>
+      <h3 class="text-sm font-bold text-zinc-500 truncate leading-tight mb-1">{cardTitle}</h3>
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           {sxe && <span class="text-[11px] font-bold text-zinc-400 tracking-wide">{sxe}</span>}
           {year && !sxe && !isPerson && <span class="text-[11px] font-medium text-zinc-400 tracking-wide">{year}</span>}
         </div>
         <span class="text-[9px] font-bold text-zinc-400 uppercase tracking-widest px-1.5 py-0.5 bg-zinc-800/50 rounded border border-zinc-800">
-          {item.type === 'episode' ? 'Episode' : item.type}
+          {isSeason ? `Season ${item.season_number}` : (item.type === 'episode' ? 'Episode' : item.type)}
         </span>
       </div>
     </div>

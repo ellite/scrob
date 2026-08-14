@@ -245,7 +245,9 @@ export interface ShowSeasonOverride {
   source_show_tmdb_id: number;
   source_season_number: number;
   source_show_title: string | null;
-  target_show_tmdb_id: number;
+  target_show_tmdb_id: number | null;
+  target_show_tvdb_id: number | null;
+  target_source: "tmdb" | "tvdb";
   target_season_number: number;
   target_show_title: string | null;
 }

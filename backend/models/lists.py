@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, Enum as SQLEnum
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, PrivacyLevel
@@ -27,16 +27,15 @@ class List(Base):
 class ListItem(Base):
     __tablename__ = "list_items"
 
-    id         : Mapped[int]           = mapped_column(Integer, primary_key=True)
-    list_id    : Mapped[int]           = mapped_column(ForeignKey("lists.id", ondelete="CASCADE"), nullable=False)
-    media_id   : Mapped[int]           = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
-    added_at   : Mapped[datetime]      = mapped_column(DateTime, server_default=func.now(), nullable=False)
-    sort_order : Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
-    notes      : Mapped[Optional[str]] = mapped_column(Text)
+    id            : Mapped[int]           = mapped_column(Integer, primary_key=True)
+    list_id       : Mapped[int]           = mapped_column(ForeignKey("lists.id", ondelete="CASCADE"), nullable=False)
+    media_id      : Mapped[int]           = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
+    season_number : Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    added_at      : Mapped[datetime]      = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    sort_order    : Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
+    notes         : Mapped[Optional[str]] = mapped_column(Text)
 
-    __table_args__ = (
-        UniqueConstraint("list_id", "media_id", name="uq_list_item"),
-    )
+    # Unique constraint is a COALESCE expression index (see migration); no SQLAlchemy UniqueConstraint here.
 
     list  : Mapped["List"]  = relationship(back_populates="items")
     media : Mapped["Media"] = relationship(back_populates="list_items")

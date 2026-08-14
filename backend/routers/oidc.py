@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -126,11 +127,18 @@ async def oidc_exchange(
             username = f"{base}{counter}"
             counter += 1
 
+        # First user (local or OIDC) becomes admin - same rule as local
+        # registration in routers/auth.py, which this path had never mirrored
+        # (see #159).
+        count_result = await db.execute(select(func.count()).select_from(User))
+        is_first_user = count_result.scalar_one() == 0
+
         user = User(
             email=str(identifier),
             username=username,
             password_hash=None,
             api_key=secrets.token_urlsafe(32),
+            is_admin=is_first_user,
         )
         db.add(user)
         await db.commit()

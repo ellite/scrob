@@ -605,16 +605,22 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
 
   function buildCard(media, removeItemId = null) {
     const isPerson = media.type === 'person';
-    const isSeries = media.type === 'series';
+    // A "series" item with season_number set is a season list item (see routers/lists.py) -
+    // it shares media with the whole show, so it's split out from the plain whole-show case.
+    const isSeason = media.type === 'series' && media.season_number != null;
+    const isSeries = media.type === 'series' && media.season_number == null;
     const showActionBar = !isPerson && media.type !== 'collection';
+    const cardTitle = isSeason ? `Season ${media.season_number}` : media.title;
 
-    const href = isSeries
+    const href = isSeason
+      ? `/show/${media.show_tmdb_id || media.tmdb_id}/season/${media.season_number}`
+      : isSeries
       ? `/show/${media.tmdb_id}`
       : isPerson
       ? `/person/${media.tmdb_id}`
       : `/media/${media.type}/${media.tmdb_id}`;
 
-    const poster = tmdbImageUrl(media.poster_path, 'w500');
+    const poster = tmdbImageUrl(isSeason && media.show_poster_path ? media.show_poster_path : media.poster_path, 'w500');
 
     const rating = media.tmdb_rating ? Number(media.tmdb_rating).toFixed(1) : null;
     const year = media.release_date?.slice(0, 4) ?? '';
@@ -623,8 +629,9 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
     const inLibrary = media.in_library ?? false;
     const collectionPct = media.collection_pct ?? (inLibrary ? 100 : 0);
     const watchPct = media.watch_pct ?? (watched ? 100 : 0);
-    const watchActive = isSeries ? watchPct > 0 : watched;
-    const collectStyle = isSeries
+    const isPercentageStyle = isSeries || isSeason;
+    const watchActive = isPercentageStyle ? watchPct > 0 : watched;
+    const collectStyle = isPercentageStyle
       ? `background: linear-gradient(to right, rgba(168,85,247,0.2) ${collectionPct}%, transparent ${collectionPct}%)`
       : '';
 
@@ -635,14 +642,14 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
           data-watched="${watched}"
           data-watch-pct="${watchPct}"
           data-state="${watchActive ? 'active' : 'inactive'}"
-          title="${isSeries ? `${watchPct}% watched` : (watched ? 'Mark as unwatched' : 'Mark as watched')}"
+          title="${isPercentageStyle ? `${watchPct}% watched` : (watched ? 'Mark as unwatched' : 'Mark as watched')}"
           class="flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer border-r border-zinc-800/60 hover:brightness-125 ${watchActive ? 'bg-green-500/20 text-green-400' : 'bg-zinc-900 text-zinc-400 hover:bg-green-500/10 hover:text-green-500'}"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
             <circle cx="12" cy="12" r="3" fill="${watchActive ? 'currentColor' : 'none'}"/>
           </svg>
-          <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isSeries ? `${watchPct}%` : 'Watched'}</span>
+          <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isPercentageStyle ? `${watchPct}%` : 'Watched'}</span>
         </button>
         <button
           data-action="list"
@@ -663,7 +670,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
           data-in-library="${inLibrary}"
           data-collection-pct="${collectionPct}"
           data-state="${(inLibrary || collectionPct > 0) ? 'active' : 'inactive'}"
-          title="${isSeries ? `${collectionPct}% in library` : (inLibrary ? 'In collection' : 'Add to collection')}"
+          title="${isPercentageStyle ? `${collectionPct}% in library` : (inLibrary ? 'In collection' : 'Add to collection')}"
           style="${esc(collectStyle)}"
           class="relative flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer overflow-hidden hover:brightness-125 ${(inLibrary || collectionPct > 0) ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-900 text-zinc-400 hover:bg-purple-500/10 hover:text-purple-400'}"
         >
@@ -672,7 +679,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
             <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a3 3 0 0 0-6 0v4"/>
             <path d="M2 7h20"/>
           </svg>
-          <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isSeries ? `${collectionPct}%` : 'Collected'}</span>
+          <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isPercentageStyle ? `${collectionPct}%` : 'Collected'}</span>
         </button>
       </div>` : '';
 
@@ -694,8 +701,8 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
         <a href="${esc(href)}" class="block">
           <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300"${media.adult ? ' data-adult="true"' : ''}>
             ${poster
-              ? `<img src="${esc(poster)}" alt="${esc(media.title)}" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" loading="lazy" decoding="async" />`
-              : `<div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center"><span class="text-3xl mb-2 opacity-30">🎬</span><span class="text-xs font-bold uppercase tracking-widest">${esc(media.title)}</span></div>`
+              ? `<img src="${esc(poster)}" alt="${esc(cardTitle)}" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" loading="lazy" decoding="async" />`
+              : `<div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center"><span class="text-3xl mb-2 opacity-30">🎬</span><span class="text-xs font-bold uppercase tracking-widest">${esc(cardTitle)}</span></div>`
             }
             <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             ${rating ? `<div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1"><span class="text-xs leading-none">★</span> ${esc(rating)}</div>` : ''}
@@ -704,10 +711,11 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
         ${actionBar}
         ${removeBtn}
         <a href="${esc(href)}" class="block p-3 bg-gradient-to-b from-zinc-900 to-zinc-950 flex-1">
-          <h3 class="text-sm font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors leading-tight mb-1">${esc(media.title)}</h3>
+          ${isSeason && media.show_title ? `<h3 class="text-xs font-medium text-zinc-400 truncate mb-0.5">${esc(media.show_title)}</h3>` : ''}
+          <h3 class="text-sm font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors leading-tight mb-1">${esc(cardTitle)}</h3>
           <div class="flex items-center justify-between">
             ${year ? `<span class="text-[11px] font-medium text-zinc-500 tracking-wide">${esc(year)}</span>` : '<span></span>'}
-            <span class="text-[9px] font-black text-zinc-400 uppercase tracking-widest px-1.5 py-0.5 bg-zinc-800/50 rounded border border-zinc-800">${isSeries ? 'Show' : esc(media.type)}</span>
+            <span class="text-[9px] font-black text-zinc-400 uppercase tracking-widest px-1.5 py-0.5 bg-zinc-800/50 rounded border border-zinc-800">${isSeason ? `Season ${media.season_number}` : isSeries ? 'Show' : esc(media.type)}</span>
           </div>
         </a>
       </div>`;

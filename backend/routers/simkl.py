@@ -17,7 +17,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import simkl as simkl_client
-from core.enrichment import enrich_media, is_unmapped_tvdb_episode
+from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
 from core.rewatch import record_rewatch_progress
 from db import get_db, engine
 from dependencies import get_current_user
@@ -180,9 +180,19 @@ async def _get_or_create_movie_media(db: AsyncSession, tmdb_id: int, title: str,
     media = result.scalars().first()
     if media:
         return media
-    media = Media(tmdb_id=tmdb_id, media_type=MediaType.movie, title=title)
-    db.add(media)
-    await db.flush()
+    media, _created = await create_media_safely(db, tmdb_id, MediaType.movie, title=title)
+    await enrich_media(media, api_key=api_key)
+    return media
+
+
+async def _get_or_create_series_media(db: AsyncSession, tmdb_id: int, title: str, api_key: str | None) -> Media | None:
+    result = await db.execute(
+        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.series)
+    )
+    media = result.scalars().first()
+    if media:
+        return media
+    media, _created = await create_media_safely(db, tmdb_id, MediaType.series, title=title)
     await enrich_media(media, api_key=api_key)
     return media
 
@@ -221,21 +231,21 @@ async def _get_or_create_episode_media(
                 season_number, episode_number, show_tmdb_id,
             )
             return None
-        media = Media(
-            tmdb_id=ep["id"],
-            media_type=MediaType.episode,
+        media, _created = await create_media_safely(
+            db,
+            ep["id"],
+            MediaType.episode,
             title=ep["name"],
             overview=ep.get("overview"),
             poster_path=tmdb.poster_url(ep.get("still_path"), size="w500"),
             release_date=ep.get("air_date"),
             tmdb_rating=ep.get("vote_average"),
+            runtime=ep.get("runtime"),  # see #169
             show_id=show_id,
             season_number=season_number,
             episode_number=episode_number,
             tmdb_data={"runtime": ep.get("runtime"), "cast": []},
         )
-        db.add(media)
-        await db.flush()
         return media
     except Exception as exc:
         logger.warning("Could not fetch episode s%se%s for show tmdb=%s: %s", season_number, episode_number, show_tmdb_id, exc)
@@ -472,17 +482,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                     tmdb_id = int(tmdb_id)
                     try:
                         async with db.begin_nested():
-                            media_res = await db.execute(
-                                select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.series)
-                            )
-                            media = media_res.scalar_one_or_none()
-                            if not media:
-                                from core import tmdb
-                                d = await tmdb.get_show(tmdb_id, api_key=api_key)
-                                media = Media(tmdb_id=tmdb_id, media_type=MediaType.series, title=d.get("name") or show_data.get("title", ""))
-                                db.add(media)
-                                await db.flush()
-                                await enrich_media(media, api_key=api_key)
+                            media = await _get_or_create_series_media(db, tmdb_id, show_data.get("title", ""), api_key)
                             if media.id not in existing_rated:
                                 db.add(Rating(user_id=user_id, media_id=media.id, rating=float(rating_val)))
                                 existing_rated.add(media.id)
@@ -542,26 +542,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                     tmdb_id = int(tmdb_id)
                     try:
                         async with db.begin_nested():
-                            media_res = await db.execute(
-                                select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.series)
-                            )
-                            media = media_res.scalar_one_or_none()
-                            if not media:
-                                from core import tmdb
-                                d = await tmdb.get_show(tmdb_id, api_key=api_key)
-                                media = Media(
-                                    tmdb_id=tmdb_id,
-                                    media_type=MediaType.series,
-                                    title=d.get("name") or show_data.get("title", ""),
-                                    poster_path=tmdb.poster_url(d.get("poster_path")),
-                                    backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-                                    release_date=d.get("first_air_date"),
-                                    tmdb_rating=d.get("vote_average"),
-                                    overview=d.get("overview"),
-                                    adult=d.get("adult", False),
-                                )
-                                db.add(media)
-                                await db.flush()
+                            media = await _get_or_create_series_media(db, tmdb_id, show_data.get("title", ""), api_key)
                         if media and media.id not in wl_existing:
                             db.add(ListItem(list_id=watchlist.id, media_id=media.id))
                             wl_existing.add(media.id)

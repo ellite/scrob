@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, update, delete, func, cast
 from sqlalchemy.orm import selectinload
@@ -27,7 +27,7 @@ from models.base import MediaType, CollectionSource
 from models.global_settings import GlobalSettings
 from core import jellyfin, emby, plex, nuvio, stremio, tmdb
 import core.trakt as trakt_client
-from core.enrichment import enrich_media, is_unmapped_tvdb_episode
+from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely, enrich_media_safely, apply_media_change_safely, enrich_episode_from_tvdb
 from core.image_cache import pre_cache_all_collected_bg
 from core.translations import get_user_metadata_language
 from core.rewatch import record_rewatch_progress, get_active_rewatches_for_shows
@@ -181,9 +181,7 @@ async def _get_or_create_series_rating_media(
     media = result.scalars().first()
     if media:
         return media
-    media = Media(tmdb_id=tmdb_id, media_type=MediaType.series, title=title)
-    db.add(media)
-    await db.flush()
+    media, _created = await create_media_safely(db, tmdb_id, MediaType.series, title=title)
     await enrich_media(media, api_key=api_key)
     return media
 
@@ -378,9 +376,11 @@ async def sync_shows_batch(
 
 
 async def batch_enrich_items(
+    db: AsyncSession,
     items: list[tuple],  # (Media, series_tmdb_id | None)
     api_key: str = None,
     show_title_map: dict[int, str] | None = None,
+    user_id: int | None = None,
 ) -> list[dict]:
     """
     Parallel enrichment for newly created media.
@@ -402,6 +402,8 @@ async def batch_enrich_items(
 
     if movies:
         await asyncio.gather(*[enrich_movie(m) for m in movies], return_exceptions=True)
+
+    from core import tvdb as tvdb_client
 
     # ── Episodes: one TMDB call per unique (series, season) ──────────────────
     season_to_eps: dict[tuple, list[Media]] = {}
@@ -429,23 +431,79 @@ async def batch_enrich_items(
             return_exceptions=True,
         )
 
+    # Some shows have season/episode numbering that only lines up under TVDB,
+    # not TMDB (#162, #186) - resolve TVDB data for any (show, season) with at
+    # least one episode TMDB didn't have, for shows that have a TVDB match.
+    tvdb_season_data: dict[tuple, dict[int, dict]] = {}
+    seasons_missing_episodes = {
+        (stid, sn) for (stid, sn), ep_list in season_to_eps.items()
+        if any(m.episode_number not in season_data.get((stid, sn), {}) for m in ep_list)
+    }
+    if user_id and seasons_missing_episodes:
+        needing_tvdb_stids = {stid for (stid, sn) in seasons_missing_episodes}
+        shows_result = await db.execute(
+            select(Show.tmdb_id, Show.tvdb_id).where(
+                Show.tmdb_id.in_(needing_tvdb_stids), Show.tvdb_id.isnot(None)
+            )
+        )
+        tvdb_id_by_stid = {row[0]: row[1] for row in shows_result.all()}
+        if tvdb_id_by_stid:
+            from routers.shows import get_user_tvdb_key
+
+            tvdb_api_key = await get_user_tvdb_key(db, user_id)
+            if tvdb_api_key:
+                tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, user_id))
+
+                async def fetch_tvdb_season(stid: int, sn: int, tvdb_id: int):
+                    async with semaphore:
+                        try:
+                            raw_eps = await tvdb_client.get_series_episodes(tvdb_id, sn, tvdb_api_key, language=tvdb_lang)
+                            tvdb_season_data[(stid, sn)] = {e.get("number"): e for e in raw_eps}
+                        except Exception:
+                            tvdb_season_data[(stid, sn)] = {}
+
+                await asyncio.gather(
+                    *[
+                        fetch_tvdb_season(stid, sn, tvdb_id_by_stid[stid])
+                        for (stid, sn) in seasons_missing_episodes
+                        if stid in tvdb_id_by_stid
+                    ],
+                    return_exceptions=True,
+                )
+
+    def apply_ep_data(media: Media, ep: dict) -> None:
+        media.tmdb_id = ep.get("id") or media.tmdb_id
+        media.title = ep.get("name") or media.title
+        media.overview = ep.get("overview")
+        media.poster_path = tmdb.poster_url(ep.get("still_path"), size="w500")
+        media.release_date = ep.get("air_date")
+        media.tmdb_rating = ep.get("vote_average")
+        media.runtime = ep.get("runtime") or media.runtime  # see #169
+        media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
+
+    async def apply_tvdb_ep_data(media: Media, raw_ep: dict) -> None:
+        await enrich_episode_from_tvdb(media, tvdb_client.format_episode(raw_ep))
+
+    tvdb_resolved_season_keys: set[tuple] = set()
     for (stid, sn), ep_list in season_to_eps.items():
         ep_map = season_data.get((stid, sn), {})
+        tvdb_ep_map = tvdb_season_data.get((stid, sn), {})
         for media in ep_list:
             ep = ep_map.get(media.episode_number)
-            if not ep:
+            if ep:
+                await apply_media_change_safely(db, media, lambda media=media, ep=ep: apply_ep_data(media, ep))
                 continue
-            media.tmdb_id = ep.get("id") or media.tmdb_id
-            media.title = ep.get("name") or media.title
-            media.overview = ep.get("overview")
-            media.poster_path = tmdb.poster_url(ep.get("still_path"), size="w500")
-            media.release_date = ep.get("air_date")
-            media.tmdb_rating = ep.get("vote_average")
-            media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
+            tvdb_ep = tvdb_ep_map.get(media.episode_number)
+            if tvdb_ep:
+                await apply_media_change_safely(
+                    db, media, lambda media=media, tvdb_ep=tvdb_ep: apply_tvdb_ep_data(media, tvdb_ep)
+                )
+                tvdb_resolved_season_keys.add((stid, sn))
 
-    # Build per-season warning entries (one entry per failed season)
+    # Build per-season warning entries (one entry per still-failed season) -
+    # a season fully recovered via TVDB doesn't need to warn the user.
     warnings: list[dict] = []
-    for (stid, sn) in sorted(failed_season_keys):
+    for (stid, sn) in sorted(failed_season_keys - tvdb_resolved_season_keys):
         warnings.append({
             "show": show_title_map.get(stid, f"TMDB show #{stid}"),
             "tmdb_id": stid,
@@ -1843,7 +1901,9 @@ async def sync_items(
 
                     # Heal missing TMDB ID for movies
                     if media_type == MediaType.movie and existing_media_obj.tmdb_id is None and tmdb_id is not None:
-                        existing_media_obj.tmdb_id = tmdb_id
+                        existing_media_obj = await apply_media_change_safely(
+                            db, existing_media_obj, lambda m=existing_media_obj: setattr(m, "tmdb_id", tmdb_id)
+                        )
                         if not any(m is existing_media_obj for m, _ in new_media_for_enrichment):
                             new_media_for_enrichment.append((existing_media_obj, None))
 
@@ -1998,16 +2058,15 @@ async def sync_items(
                                         "reason": "Unmatched on source — no TMDB ID available",
                                     })
 
-                            media = Media(
-                                tmdb_id=tmdb_id,
-                                media_type=media_type,
+                            media, _created = await create_media_safely(
+                                db,
+                                tmdb_id,
+                                media_type,
                                 title=name,
                                 show_id=show_id,
                                 season_number=season_num,
                                 episode_number=episode_num,
                             )
-                            db.add(media)
-                            await db.flush()  # Get generated ID
                             new_media = media  # Cache updated after savepoint commits below
 
                             # Tag stub episodes so the match-unmatched-show endpoint can find them
@@ -2168,7 +2227,9 @@ async def sync_items(
                         if series_tmdb_id:
                             series_title_map[series_tmdb_id] = title
 
-        warnings = await batch_enrich_items(new_media_for_enrichment, api_key=api_key, show_title_map=series_title_map)
+        warnings = await batch_enrich_items(
+            db, new_media_for_enrichment, api_key=api_key, show_title_map=series_title_map, user_id=user_id
+        )
         await db.commit()
 
     all_warnings = skipped_warnings + warnings
@@ -2911,14 +2972,15 @@ async def _apply_local_watchlist_changes(
             try:
                 if kind == "movie":
                     media_result = await db.execute(
-                        select(Media).where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.movie)
+                        select(Media)
+                        .where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.movie)
+                        .order_by(Media.id)
                     )
-                    media = media_result.scalar_one_or_none()
+                    media = media_result.scalars().first()
                     if not media:
                         d = await tmdb.get_movie(tmdb_id_item, api_key=tmdb_api_key)
-                        media = Media(
-                            tmdb_id=tmdb_id_item,
-                            media_type=MediaType.movie,
+                        media, _created = await create_media_safely(
+                            db, tmdb_id_item, MediaType.movie,
                             title=d.get("title") or item.get("title", ""),
                             poster_path=tmdb.poster_url(d.get("poster_path")),
                             backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
@@ -2927,18 +2989,17 @@ async def _apply_local_watchlist_changes(
                             overview=d.get("overview"),
                             adult=d.get("adult", False),
                         )
-                        db.add(media)
-                        await db.flush()
                 else:
                     media_result = await db.execute(
-                        select(Media).where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
+                        select(Media)
+                        .where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
+                        .order_by(Media.id)
                     )
-                    media = media_result.scalar_one_or_none()
+                    media = media_result.scalars().first()
                     if not media:
                         d = await tmdb.get_show(tmdb_id_item, api_key=tmdb_api_key)
-                        media = Media(
-                            tmdb_id=tmdb_id_item,
-                            media_type=MediaType.series,
+                        media, _created = await create_media_safely(
+                            db, tmdb_id_item, MediaType.series,
                             title=d.get("name") or item.get("title", ""),
                             poster_path=tmdb.poster_url(d.get("poster_path")),
                             backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
@@ -2947,15 +3008,19 @@ async def _apply_local_watchlist_changes(
                             overview=d.get("overview"),
                             adult=d.get("adult", False),
                         )
-                        db.add(media)
-                        await db.flush()
 
                 # Idempotent against a concurrent add from the lists UI, which
-                # doesn't hold this connection's reconcile lock.
+                # doesn't hold this connection's reconcile lock. uq_list_item was
+                # replaced by the uq_list_item_season expression index (#142) -
+                # ON CONFLICT ON CONSTRAINT needs a real constraint, not a bare
+                # index, so the conflict target is given as the matching
+                # expression list instead (verified against the actual index).
                 await db.execute(
                     insert(ListItem)
                     .values(list_id=watchlist.id, media_id=media.id)
-                    .on_conflict_do_nothing(constraint="uq_list_item")
+                    .on_conflict_do_nothing(
+                        index_elements=[ListItem.list_id, ListItem.media_id, func.coalesce(ListItem.season_number, -1)]
+                    )
                 )
                 applied.add(key)
             except Exception as exc:
@@ -5465,9 +5530,9 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     if conn.type == "plex":
                         found = await plex.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id)
                     elif conn.type == "jellyfin":
-                        found = await jellyfin.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id)
+                        found = await jellyfin.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id, user_id=conn.server_user_id)
                     else:
-                        found = await emby.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id)
+                        found = await emby.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id, user_id=conn.server_user_id)
                 elif m.media_type == MediaType.episode:
                     show_tmdb = show_tmdb_map.get(m.show_id) if m.show_id else None
                     if not show_tmdb or m.season_number is None or m.episode_number is None:
@@ -5475,9 +5540,9 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     if conn.type == "plex":
                         found = await plex.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number)
                     elif conn.type == "jellyfin":
-                        found = await jellyfin.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number)
+                        found = await jellyfin.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number, user_id=conn.server_user_id)
                     else:
-                        found = await emby.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number)
+                        found = await emby.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number, user_id=conn.server_user_id)
                 else:
                     return None
                 return _extract_source_id(found)
@@ -5799,7 +5864,7 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
                     (m, show_tmdb_map[m.show_id]) for m in episodes if m.show_id in show_tmdb_map
                 ]
                 await _update_job(total_items=len(to_enrich), processed_items=0)
-                await batch_enrich_items(to_enrich, api_key=api_key)
+                await batch_enrich_items(db, to_enrich, api_key=api_key, user_id=user_id)
                 await db.commit()
                 await _update_job(processed_items=len(to_enrich))
                 print(f"Heal: re-enriched {len(to_enrich)} items for user {user_id}")
@@ -5837,13 +5902,16 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
                         continue
                     seen.add(orphan_media.id)
                     try:
-                        item_data = await jellyfin.get_item(conn.url, conn.token, coll_file.source_id)
+                        # user_id is required here - Jellyfin's admin-only Items/{id}
+                        # endpoint (no Users/ prefix) throws server-side for a
+                        # non-admin token (see #179).
+                        item_data = await jellyfin.get_item(conn.url, conn.token, coll_file.source_id, user_id=conn.server_user_id)
                         if not item_data:
                             continue
                         series_id = item_data.get("SeriesId")
                         if not series_id:
                             continue
-                        series_data = await jellyfin.get_item(conn.url, conn.token, series_id)
+                        series_data = await jellyfin.get_item(conn.url, conn.token, series_id, user_id=conn.server_user_id)
                         if not series_data:
                             continue
                         series_tmdb_raw = series_data.get("ProviderIds", {}).get("Tmdb")
@@ -5852,7 +5920,7 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
                         series_tmdb_id = int(series_tmdb_raw)
                         show = await _find_or_create_show(db, series_tmdb_id, api_key)
                         orphan_media.show_id = show.id
-                        await enrich_media(orphan_media, api_key=api_key, series_tmdb_id=series_tmdb_id)
+                        orphan_media = await enrich_media_safely(db, orphan_media, api_key=api_key, series_tmdb_id=series_tmdb_id)
                         recovered += 1
                     except Exception as e:
                         print(f"Heal: failed to recover orphan '{orphan_media.title}' (id={orphan_media.id}): {e}")
@@ -5979,8 +6047,17 @@ async def _stamp_matched_show_warnings(db: AsyncSession, user_id: int, warnings:
 class SeasonOverrideBody(BaseModel):
     source_show_tmdb_id: int
     source_season_number: int
-    target_show_tmdb_id: int
+    # Exactly one of these two must be set - the target is either a TMDB show
+    # or a TVDB show (#178).
+    target_show_tmdb_id: int | None = None
+    target_show_tvdb_id: int | None = None
     target_season_number: int
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> "SeasonOverrideBody":
+        if bool(self.target_show_tmdb_id) == bool(self.target_show_tvdb_id):
+            raise ValueError("Exactly one of target_show_tmdb_id or target_show_tvdb_id must be set")
+        return self
 
 
 @router.get("/season-overrides")
@@ -5993,24 +6070,36 @@ async def list_season_overrides(
     )
     overrides = result.scalars().all()
 
-    # Resolve show titles for all distinct TMDB IDs referenced by overrides
-    all_tmdb_ids = {o.source_show_tmdb_id for o in overrides} | {o.target_show_tmdb_id for o in overrides}
-    show_title_map: dict[int, str] = {}
+    # Resolve show titles for all distinct TMDB/TVDB IDs referenced by overrides
+    all_tmdb_ids = {o.source_show_tmdb_id for o in overrides} | {o.target_show_tmdb_id for o in overrides if o.target_show_tmdb_id}
+    all_tvdb_ids = {o.target_show_tvdb_id for o in overrides if o.target_show_tvdb_id}
+    tmdb_title_map: dict[int, str] = {}
+    tvdb_title_map: dict[int, str] = {}
     if all_tmdb_ids:
         shows_res = await db.execute(select(Show.tmdb_id, Show.title).where(Show.tmdb_id.in_(list(all_tmdb_ids))))
         for tmdb_id, title in shows_res.all():
             if tmdb_id is not None:
-                show_title_map[tmdb_id] = title
+                tmdb_title_map[tmdb_id] = title
+    if all_tvdb_ids:
+        shows_res = await db.execute(select(Show.tvdb_id, Show.title).where(Show.tvdb_id.in_(list(all_tvdb_ids))))
+        for tvdb_id, title in shows_res.all():
+            if tvdb_id is not None:
+                tvdb_title_map[tvdb_id] = title
 
     return [
         {
             "id": o.id,
             "source_show_tmdb_id": o.source_show_tmdb_id,
             "source_season_number": o.source_season_number,
-            "source_show_title": show_title_map.get(o.source_show_tmdb_id),
+            "source_show_title": tmdb_title_map.get(o.source_show_tmdb_id),
             "target_show_tmdb_id": o.target_show_tmdb_id,
+            "target_show_tvdb_id": o.target_show_tvdb_id,
+            "target_source": "tvdb" if o.target_show_tvdb_id else "tmdb",
             "target_season_number": o.target_season_number,
-            "target_show_title": show_title_map.get(o.target_show_tmdb_id),
+            "target_show_title": (
+                tvdb_title_map.get(o.target_show_tvdb_id) if o.target_show_tvdb_id
+                else tmdb_title_map.get(o.target_show_tmdb_id)
+            ),
         }
         for o in overrides
     ]
@@ -6031,7 +6120,11 @@ async def create_season_override(
     )
     override = existing.scalar_one_or_none()
     if override:
+        # Clear whichever target field isn't set - editing a TMDB-targeted
+        # remap into a TVDB one (or vice versa) must not leave a stale id
+        # from the previous target behind.
         override.target_show_tmdb_id = body.target_show_tmdb_id
+        override.target_show_tvdb_id = body.target_show_tvdb_id
         override.target_season_number = body.target_season_number
     else:
         override = ShowSeasonOverride(
@@ -6039,6 +6132,7 @@ async def create_season_override(
             source_show_tmdb_id=body.source_show_tmdb_id,
             source_season_number=body.source_season_number,
             target_show_tmdb_id=body.target_show_tmdb_id,
+            target_show_tvdb_id=body.target_show_tvdb_id,
             target_season_number=body.target_season_number,
         )
         db.add(override)
@@ -6049,6 +6143,7 @@ async def create_season_override(
         "source_show_tmdb_id": override.source_show_tmdb_id,
         "source_season_number": override.source_season_number,
         "target_show_tmdb_id": override.target_show_tmdb_id,
+        "target_show_tvdb_id": override.target_show_tvdb_id,
         "target_season_number": override.target_season_number,
     }
 
@@ -6121,6 +6216,65 @@ async def apply_season_override(
     if not episodes:
         return {"status": "ok", "remapped": 0}
 
+    if override.target_show_tvdb_id:
+        # ── TVDB target (#178) - some shows have season/episode structures
+        # that only line up under TVDB's numbering, not TMDB's, so the remap
+        # target needs to be able to point at a TVDB show too. ──────────────
+        from core import tvdb as tvdb_client
+        from routers.shows import get_user_tvdb_key
+
+        tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
+        if not tvdb_api_key:
+            raise HTTPException(status_code=400, detail="TVDB API key required")
+        tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
+
+        target_show_result = await db.execute(select(Show).where(Show.tvdb_id == override.target_show_tvdb_id))
+        target_show = target_show_result.scalar_one_or_none()
+        if not target_show:
+            try:
+                raw_series = await tvdb_client.get_series(override.target_show_tvdb_id, tvdb_api_key)
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Could not fetch target show from TVDB: {e}")
+            show_fmt = tvdb_client.format_series(raw_series, language=tvdb_lang)
+            target_show = Show(
+                tvdb_id=override.target_show_tvdb_id,
+                tmdb_id=None,
+                title=show_fmt.get("title") or f"TVDB #{override.target_show_tvdb_id}",
+                original_title=show_fmt.get("original_title"),
+                overview=show_fmt.get("overview"),
+                poster_path=show_fmt.get("poster_path"),
+                backdrop_path=show_fmt.get("backdrop_path"),
+                status=show_fmt.get("status"),
+                first_air_date=show_fmt.get("first_air_date"),
+                last_air_date=show_fmt.get("last_air_date"),
+                tmdb_data={"seasons": show_fmt.get("seasons", []), "genres": show_fmt.get("genres", []), "source": "tvdb"},
+            )
+            db.add(target_show)
+            await db.flush()
+
+        try:
+            raw_eps = await tvdb_client.get_series_episodes(
+                override.target_show_tvdb_id, override.target_season_number, tvdb_api_key, language=tvdb_lang
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Could not fetch target season from TVDB: {e}")
+        tvdb_ep_map = {e.get("number"): e for e in raw_eps}
+
+        async def remap_episode_tvdb(media: Media, raw_ep: dict | None) -> None:
+            media.show_id = target_show.id
+            media.season_number = override.target_season_number
+            if raw_ep:
+                await enrich_episode_from_tvdb(media, tvdb_client.format_episode(raw_ep))
+
+        for media in episodes:
+            raw_ep = tvdb_ep_map.get(media.episode_number)
+            await apply_media_change_safely(
+                db, media, lambda media=media, raw_ep=raw_ep: remap_episode_tvdb(media, raw_ep)
+            )
+
+        await db.commit()
+        return {"status": "ok", "remapped": len(episodes)}
+
     # Find or create the target Show
     target_show_result = await db.execute(
         select(Show).where(Show.tmdb_id == override.target_show_tmdb_id)
@@ -6167,11 +6321,9 @@ async def apply_season_override(
 
     ep_map = {ep["episode_number"]: ep for ep in season_data.get("episodes", [])}
 
-    # Remap and re-enrich episodes
-    for media in episodes:
+    def remap_episode(media: Media, ep: dict | None) -> None:
         media.show_id = target_show.id
         media.season_number = override.target_season_number
-        ep = ep_map.get(media.episode_number)
         if ep:
             media.tmdb_id = ep.get("id") or media.tmdb_id
             media.title = ep.get("name") or media.title
@@ -6179,7 +6331,13 @@ async def apply_season_override(
             media.poster_path = tmdb.poster_url(ep.get("still_path"), size="w500")
             media.release_date = ep.get("air_date")
             media.tmdb_rating = ep.get("vote_average")
+            media.runtime = ep.get("runtime") or media.runtime  # see #169
             media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
+
+    # Remap and re-enrich episodes
+    for media in episodes:
+        ep = ep_map.get(media.episode_number)
+        await apply_media_change_safely(db, media, lambda media=media, ep=ep: remap_episode(media, ep))
 
     await db.commit()
     return {"status": "ok", "remapped": len(episodes)}
@@ -6375,36 +6533,57 @@ async def match_unmatched_show(
             target_show.last_air_date = show_fmt.get("last_air_date") or target_show.last_air_date
             target_show.tmdb_data = {"seasons": show_fmt.get("seasons", []), "genres": show_fmt.get("genres", []), "source": "tvdb"}
 
-        async def _enrich_season_tvdb(season_number: int, season_episodes: list) -> None:
-            nonlocal matched, skipped
+        async def _fetch_season_tvdb(season_number: int) -> dict | None:
             async with sem:
                 try:
                     raw_eps = await tvdb_client.get_series_episodes(body.tvdb_id, season_number, tvdb_api_key, language=tvdb_lang)
                 except Exception:
-                    for media in season_episodes:
-                        media.show_id = target_show.id
-                    skipped += len(season_episodes)
-                    return
-                ep_map = {e.get("number"): e for e in raw_eps}
-                for media in season_episodes:
-                    media.show_id = target_show.id
-                    ep = ep_map.get(media.episode_number)
-                    if ep:
-                        tvdb_ep_id = ep.get("id")
-                        # Store TVDB episode ID in tmdb_id column for ActionBar compatibility
-                        if tvdb_ep_id:
-                            media.tmdb_id = tvdb_ep_id
-                        media.title = ep.get("name") or media.title
-                        media.overview = ep.get("overview")
-                        if ep.get("image"):
-                            media.poster_path = tvdb_client._image_url(ep["image"])
-                        media.release_date = ep.get("aired")
-                        media.tmdb_data = {**(media.tmdb_data or {}), "runtime": ep.get("runtime"), "tvdb_episode_id": tvdb_ep_id, "source": "tvdb"}
-                        matched += 1
-                    else:
-                        skipped += 1
+                    return None
+                return {e.get("number"): e for e in raw_eps}
 
-        await asyncio.gather(*[_enrich_season_tvdb(sn, eps) for sn, eps in seasons_map.items()])
+        def apply_tvdb_episode(media: Media, ep: dict | None) -> None:
+            media.show_id = target_show.id
+            if ep:
+                tvdb_ep_id = ep.get("id")
+                # Store TVDB episode ID in tmdb_id column for ActionBar compatibility
+                if tvdb_ep_id:
+                    media.tmdb_id = tvdb_ep_id
+                # TVDB sometimes has an episode with no name at all (see #173) -
+                # media.title is NOT NULL, so a brand-new row needs a fallback.
+                # Episode 0 is a real episode number, not "missing", hence the
+                # explicit None checks rather than truthiness.
+                ep_number = ep.get("number")
+                if ep_number is None:
+                    ep_number = media.episode_number
+                fallback_title = f"Episode {ep_number}" if ep_number is not None else "Untitled Episode"
+                media.title = ep.get("name") or media.title or fallback_title
+                media.overview = ep.get("overview")
+                if ep.get("image"):
+                    media.poster_path = tvdb_client._image_url(ep["image"])
+                media.release_date = ep.get("aired")
+                # See enrich_media's matching comment (#169) - top-level runtime,
+                # not just tmdb_data.runtime, is what Now Playing needs.
+                media.runtime = ep.get("runtime") or media.runtime
+                media.tmdb_data = {**(media.tmdb_data or {}), "runtime": ep.get("runtime"), "tvdb_episode_id": tvdb_ep_id, "source": "tvdb"}
+
+        season_numbers = list(seasons_map.keys())
+        # Fetches run concurrently (bounded by sem); mutations are applied sequentially
+        # afterward since a single AsyncSession can't safely flush from concurrent tasks.
+        ep_maps = await asyncio.gather(*[_fetch_season_tvdb(sn) for sn in season_numbers])
+        for season_number, ep_map in zip(season_numbers, ep_maps):
+            season_episodes = seasons_map[season_number]
+            if ep_map is None:
+                for media in season_episodes:
+                    await apply_media_change_safely(db, media, lambda media=media: apply_tvdb_episode(media, None))
+                skipped += len(season_episodes)
+                continue
+            for media in season_episodes:
+                ep = ep_map.get(media.episode_number)
+                await apply_media_change_safely(db, media, lambda media=media, ep=ep: apply_tvdb_episode(media, ep))
+                if ep:
+                    matched += 1
+                else:
+                    skipped += 1
 
     else:
         # ── TMDB path (original behaviour) ────────────────────────────────
@@ -6487,32 +6666,42 @@ async def match_unmatched_show(
             target_show.last_air_date = show_data.get("last_air_date") or target_show.last_air_date
             target_show.tmdb_data = {**show_data, "seasons": seasons_meta}
 
-        async def _enrich_season(season_number: int, season_episodes: list) -> None:
-            nonlocal matched, skipped
+        async def _fetch_season(season_number: int) -> dict | None:
             async with sem:
                 try:
                     season_data = await tmdb.get_season(body.tmdb_id, season_number, api_key=tmdb_api_key)
                 except Exception:
-                    skipped += len(season_episodes)
-                    return
-                ep_map = {ep["episode_number"]: ep for ep in season_data.get("episodes", [])}
-                for media in season_episodes:
-                    media.show_id = target_show.id
-                    ep = ep_map.get(media.episode_number)
-                    if ep:
-                        media.tmdb_id = ep.get("id") or media.tmdb_id
-                        media.title = ep.get("name") or media.title
-                        media.overview = ep.get("overview")
-                        media.poster_path = tmdb.poster_url(ep.get("still_path"), size="w500")
-                        media.release_date = ep.get("air_date")
-                        media.tmdb_rating = ep.get("vote_average")
-                        media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
-                        matched += 1
-                    else:
-                        media.show_id = target_show.id
-                        skipped += 1
+                    return None
+                return {ep["episode_number"]: ep for ep in season_data.get("episodes", [])}
 
-        await asyncio.gather(*[_enrich_season(sn, eps) for sn, eps in seasons_map.items()])
+        def apply_tmdb_episode(media: Media, ep: dict | None) -> None:
+            media.show_id = target_show.id
+            if ep:
+                media.tmdb_id = ep.get("id") or media.tmdb_id
+                media.title = ep.get("name") or media.title
+                media.overview = ep.get("overview")
+                media.poster_path = tmdb.poster_url(ep.get("still_path"), size="w500")
+                media.release_date = ep.get("air_date")
+                media.tmdb_rating = ep.get("vote_average")
+                media.runtime = ep.get("runtime") or media.runtime  # see #169
+                media.tmdb_data = {"runtime": ep.get("runtime"), "cast": []}
+
+        season_numbers = list(seasons_map.keys())
+        # Fetches run concurrently (bounded by sem); mutations are applied sequentially
+        # afterward since a single AsyncSession can't safely flush from concurrent tasks.
+        ep_maps = await asyncio.gather(*[_fetch_season(sn) for sn in season_numbers])
+        for season_number, ep_map in zip(season_numbers, ep_maps):
+            season_episodes = seasons_map[season_number]
+            if ep_map is None:
+                skipped += len(season_episodes)
+                continue
+            for media in season_episodes:
+                ep = ep_map.get(media.episode_number)
+                await apply_media_change_safely(db, media, lambda media=media, ep=ep: apply_tmdb_episode(media, ep))
+                if ep:
+                    matched += 1
+                else:
+                    skipped += 1
 
     # Stamp the matched state into all relevant SyncJob warnings so the panel
     # reflects the match immediately without a re-sync.
@@ -6769,8 +6958,14 @@ async def match_unmatched_movie(
 
     matched_title = movie_data.get("title") or body.movie_title
     for media in movies:
-        media.tmdb_id = body.tmdb_id
-        await enrich_media(media, api_key=tmdb_api_key)
+        # Multiple unmatched stubs can share this title; if an earlier one in
+        # this loop already claimed body.tmdb_id, this one stays unmatched
+        # rather than colliding with it.
+        result = await apply_media_change_safely(
+            db, media, lambda media=media: setattr(media, "tmdb_id", body.tmdb_id)
+        )
+        if result.id == media.id:
+            await enrich_media(media, api_key=tmdb_api_key)
 
     # Stamp the matched state into all relevant SyncJob warnings
     title_lower = body.movie_title.lower()

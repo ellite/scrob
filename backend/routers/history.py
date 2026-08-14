@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, or_, select, desc, func, delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from db import get_db
 from models.media import Media
@@ -21,6 +22,7 @@ from models.rewatch import ShowRewatch, RewatchProgress
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark
+from core.enrichment import create_media_safely
 
 from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
@@ -40,8 +42,19 @@ async def _push_watch_state(
     media_ids: list[int],
     watched: bool,
     watched_at_by_media: dict[int, datetime | None] | None = None,
+    exclude_connection_id: int | None = None,
 ) -> None:
-    """Fan-out watched/unwatched state to all connections with push_watched enabled."""
+    """Fan-out watched/unwatched state to all connections with push_watched enabled.
+
+    exclude_connection_id skips one connection - used when this call was itself
+    triggered by an inbound webhook from a media server, so that state isn't
+    pushed straight back to the same server. Without it, a two-way-sync
+    connection (webhook in + push_watched out) can self-trigger forever: the
+    push causes another UserData change on that same server, which re-fires
+    its own webhook back into Scrob, which pushes again (see #190) - each
+    round trip is a real, unbounded loop of outbound HTTP calls and inbound
+    webhook deliveries, not just a redundant write.
+    """
     if not media_ids:
         return
 
@@ -51,7 +64,7 @@ async def _push_watch_state(
             MediaServerConnection.push_watched == True,
         )
     )
-    connections = conns_result.scalars().all()
+    connections = [c for c in conns_result.scalars().all() if c.id != exclude_connection_id]
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
     settings = settings_result.scalar_one_or_none()
@@ -745,15 +758,39 @@ async def get_next_up(
                 # below turns out to fail (e.g. unreleased episode, or a
                 # provider numbering mismatch): the savepoint rolls the insert
                 # back on that path instead of ever committing it.
+                #
+                # The episode's real tmdb_id isn't known until enrich_media
+                # resolves it, so it can't go through create_media_safely up
+                # front — flushed explicitly here instead, inside the same
+                # savepoint, so a conflict with a concurrently-created row for
+                # this exact episode is caught right here instead of surfacing
+                # at the batched db.commit() below and crashing the endpoint.
                 try:
                     async with db.begin_nested():
                         db.add(media)
                         await db.flush()
-                        await enrich_media(media, api_key=api_key, series_tmdb_id=show.tmdb_id)
+                        from routers.webhooks import _resolve_tvdb_fallback
+
+                        tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, current_user.id)
+                        await enrich_media(
+                            media, api_key=api_key, series_tmdb_id=show.tmdb_id,
+                            tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
+                        )
                         if not media.tmdb_id:
                             raise _NextUpEpisodeNotOnTmdb()
+                        resolved_tmdb_id = media.tmdb_id
+                        await db.flush()
                 except _NextUpEpisodeNotOnTmdb:
                     continue
+                except IntegrityError:
+                    existing_result = await db.execute(
+                        select(Media)
+                        .where(Media.tmdb_id == resolved_tmdb_id, Media.media_type == MediaType.episode)
+                        .order_by(Media.id)
+                    )
+                    media = existing_result.scalars().first()
+                    if not media:
+                        continue
                 media.show = show
                 next_per_show[show_id] = media
             await db.commit()
@@ -826,7 +863,7 @@ async def get_next_up(
 
 import schemas
 from core import tmdb
-from core.enrichment import enrich_media, enrich_episode_from_tvdb, tmdb_season_covers, is_unmapped_tvdb_episode
+from core.enrichment import enrich_media, enrich_episode_from_tvdb, tmdb_season_covers, is_unmapped_tvdb_episode, enrich_media_safely
 from datetime import datetime
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -950,7 +987,13 @@ async def mark_as_watched(
         media.season_number = event_in.season_number
         media.episode_number = event_in.episode_number
         if not media.poster_path or media.tmdb_data is None:
-            await enrich_media(media, api_key=api_key, series_tmdb_id=event_in.series_tmdb_id)
+            from routers.webhooks import _resolve_tvdb_fallback
+
+            tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, current_user.id)
+            media = await enrich_media_safely(
+                db, media, api_key=api_key, series_tmdb_id=event_in.series_tmdb_id,
+                tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
+            )
 
     # 2. If not, create Media record from TMDB
     if not media:
@@ -962,11 +1005,9 @@ async def mark_as_watched(
         try:
             if event_in.media_type == MediaType.movie:
                 data = await tmdb.get_movie(event_in.tmdb_id, api_key=api_key)
-                media = Media(
-                    tmdb_id=event_in.tmdb_id, media_type=event_in.media_type, title=data.get("title")
+                media, _created = await create_media_safely(
+                    db, event_in.tmdb_id, event_in.media_type, title=data.get("title")
                 )
-                db.add(media)
-                await db.flush()
                 await enrich_media(media, api_key=api_key)
             elif episode_has_context:
                 ep_data = None
@@ -978,16 +1019,15 @@ async def mark_as_watched(
                     ep_data = None
 
                 if ep_data:
-                    media = Media(
-                        tmdb_id=ep_data.get("id"),
-                        media_type=MediaType.episode,
+                    media, _created = await create_media_safely(
+                        db,
+                        ep_data.get("id"),
+                        MediaType.episode,
                         title=ep_data.get("name"),
                         season_number=event_in.season_number,
                         episode_number=event_in.episode_number,
                         show_id=show.id,
                     )
-                    db.add(media)
-                    await db.flush()
                     await enrich_media(media, api_key=api_key, series_tmdb_id=event_in.series_tmdb_id)
                 elif show.tvdb_id:
                     # Not on TMDB (e.g. TMDB is sparse for this show, see #101)
@@ -1015,9 +1055,29 @@ async def mark_as_watched(
                         episode_number=event_in.episode_number,
                         show_id=show.id,
                     )
-                    db.add(media)
-                    await db.flush()
-                    await enrich_episode_from_tvdb(media, tvdb_ep)
+                    # tmdb_id isn't known until enrich_episode_from_tvdb resolves it
+                    # (it stores the TVDB episode id there), so this can't go
+                    # through create_media_safely up front - flushed explicitly
+                    # here instead, inside a savepoint, so a conflict with a
+                    # concurrently-created row for this exact episode is caught
+                    # right here instead of poisoning the whole transaction.
+                    try:
+                        async with db.begin_nested():
+                            db.add(media)
+                            await db.flush()
+                            await enrich_episode_from_tvdb(media, tvdb_ep)
+                            resolved_tmdb_id = media.tmdb_id
+                            await db.flush()
+                    except IntegrityError:
+                        existing_result = await db.execute(
+                            select(Media)
+                            .where(Media.tmdb_id == resolved_tmdb_id, Media.media_type == MediaType.episode)
+                            .order_by(Media.id)
+                        )
+                        existing = existing_result.scalars().first()
+                        if not existing:
+                            raise
+                        media = existing
                 else:
                     raise HTTPException(status_code=404, detail="Episode not found on TMDB")
             else:
@@ -1105,9 +1165,11 @@ async def get_item_events(
             if active_rewatch:
                 if media_id is None:
                     media_q = await db.execute(
-                        select(Media.id).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.episode)
+                        select(Media.id)
+                        .where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.episode)
+                        .order_by(Media.id)
                     )
-                    media_id = media_q.scalar_one_or_none()
+                    media_id = media_q.scalars().first()
                 watched = False
                 if media_id is not None:
                     progress_q = await db.execute(
@@ -1196,14 +1258,16 @@ async def unwatch_item(
 
     if tmdb_id:
         media_q = await db.execute(
-            select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == media_type)
+            select(Media)
+            .where(Media.tmdb_id == tmdb_id, Media.media_type == media_type)
+            .order_by(Media.id)
         )
+        media = media_q.scalars().first()
     else:
         media_q = await db.execute(
             select(Media).where(Media.id == media_id, Media.media_type == media_type)
         )
-    
-    media = media_q.scalar_one_or_none()
+        media = media_q.scalar_one_or_none()
     if not media:
         return {"status": "ok", "count": 0}
     await db.execute(
@@ -1339,8 +1403,26 @@ async def mark_season_watched(
                 season_number=body.season_number,
                 episode_number=tvdb_ep["episode_number"],
             )
+            # tmdb_id isn't known until enrich_episode_from_tvdb resolves it, so
+            # this can't go through create_media_safely up front - flushed
+            # explicitly here instead, inside a savepoint, so a conflict with a
+            # concurrently-created row for this exact episode is caught right
+            # here instead of failing the whole batch's flush later.
             await enrich_episode_from_tvdb(new_ep, tvdb_ep)
-            db.add(new_ep)
+            try:
+                async with db.begin_nested():
+                    db.add(new_ep)
+                    await db.flush()
+            except IntegrityError:
+                existing_result = await db.execute(
+                    select(Media)
+                    .where(Media.tmdb_id == new_ep.tmdb_id, Media.media_type == MediaType.episode)
+                    .order_by(Media.id)
+                )
+                existing = existing_result.scalars().first()
+                if not existing:
+                    raise
+                new_ep = existing
             all_season_episodes.append(new_ep)
     else:
         try:
@@ -1388,10 +1470,11 @@ async def mark_season_watched(
                 if existing:
                     all_season_episodes.append(existing)
                     continue
-                new_ep = Media(
+                new_ep, _created = await create_media_safely(
+                    db,
+                    ep["id"],
+                    MediaType.episode,
                     show_id=show.id,
-                    tmdb_id=ep["id"],
-                    media_type=MediaType.episode,
                     title=ep.get("name") or f"Episode {ep['episode_number']}",
                     season_number=canonical_season,
                     episode_number=ep["episode_number"],
@@ -1399,7 +1482,6 @@ async def mark_season_watched(
                     release_date=air_date_str,
                     tmdb_rating=ep.get("vote_average"),
                 )
-                db.add(new_ep)
                 all_season_episodes.append(new_ep)
 
     await db.flush() # Get IDs for new episodes
@@ -1609,10 +1691,11 @@ async def mark_show_watched(
             if ep_num in existing_map:
                 season_eps_to_watch.append(existing_map[ep_num])
             else:
-                new_ep = Media(
+                new_ep, _created = await create_media_safely(
+                    db,
+                    ep["id"],
+                    MediaType.episode,
                     show_id=show.id,
-                    tmdb_id=ep["id"],
-                    media_type=MediaType.episode,
                     title=ep.get("name") or f"Episode {ep_num}",
                     season_number=sn,
                     episode_number=ep_num,
@@ -1620,7 +1703,6 @@ async def mark_show_watched(
                     release_date=air_date_str,
                     tmdb_rating=ep.get("vote_average"),
                 )
-                db.add(new_ep)
                 season_eps_to_watch.append(new_ep)
         
         await db.flush()
@@ -1695,8 +1777,28 @@ async def mark_show_watched(
                                 season_number=sn,
                                 episode_number=ep_num,
                             )
+                            # tmdb_id isn't known until enrich_episode_from_tvdb
+                            # resolves it, so this can't go through
+                            # create_media_safely up front - flushed explicitly
+                            # here instead, inside a savepoint, so a conflict
+                            # with a concurrently-created row for this exact
+                            # episode is caught right here instead of failing
+                            # the whole batch's flush later.
                             await enrich_episode_from_tvdb(new_ep, ep)
-                            db.add(new_ep)
+                            try:
+                                async with db.begin_nested():
+                                    db.add(new_ep)
+                                    await db.flush()
+                            except IntegrityError:
+                                existing_result = await db.execute(
+                                    select(Media)
+                                    .where(Media.tmdb_id == new_ep.tmdb_id, Media.media_type == MediaType.episode)
+                                    .order_by(Media.id)
+                                )
+                                existing = existing_result.scalars().first()
+                                if not existing:
+                                    raise
+                                new_ep = existing
                             season_eps_to_watch.append(new_ep)
 
                     await db.flush()
@@ -1844,9 +1946,11 @@ async def _get_or_create_media_for_session(
 
     if body.tmdb_id:
         result = await db.execute(
-            select(Media).where(Media.tmdb_id == body.tmdb_id, Media.media_type == body.media_type)
+            select(Media)
+            .where(Media.tmdb_id == body.tmdb_id, Media.media_type == body.media_type)
+            .order_by(Media.id)
         )
-        media = result.scalar_one_or_none()
+        media = result.scalars().first()
         if media:
             return media
 
@@ -1862,30 +1966,31 @@ async def _get_or_create_media_for_session(
             title = data.get("title") or body.title or "Unknown"
         except Exception:
             title = body.title or "Unknown"
-        media = Media(tmdb_id=body.tmdb_id, media_type=body.media_type, title=title)
-        db.add(media)
-        await db.flush()
+        media, _created = await create_media_safely(db, body.tmdb_id, body.media_type, title=title)
         try:
             await enrich_media(media, api_key=api_key)
         except Exception:
             pass
     else:
         # Episode: create a minimal row from request data
-        media = Media(
-            tmdb_id=body.tmdb_id,
-            media_type=body.media_type,
-            title=body.title or "Unknown",
-            runtime=body.runtime,
-            season_number=body.season_number,
-            episode_number=body.episode_number,
-        )
+        show_id = None
         if body.show_tmdb_id:
             show_q = await db.execute(select(Show).where(Show.tmdb_id == body.show_tmdb_id))
             show = show_q.scalar_one_or_none()
             if show:
-                media.show_id = show.id
-        db.add(media)
-        await db.flush()
+                show_id = show.id
+        media, _created = await create_media_safely(
+            db,
+            body.tmdb_id,
+            body.media_type,
+            title=body.title or "Unknown",
+            runtime=body.runtime,
+            season_number=body.season_number,
+            episode_number=body.episode_number,
+            show_id=show_id,
+        )
+        if show_id is not None and media.show_id is None:
+            media.show_id = show_id
 
     return media
 

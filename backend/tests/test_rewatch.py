@@ -346,14 +346,17 @@ class GetItemEventsTests(unittest.IsolatedAsyncioTestCase):
 
 
 class _UnwatchFakeSession:
-    def __init__(self, results):
+    def __init__(self, results, rowcount=1):
         self._results = list(results)
         self.executed_statements = []
+        self._rowcount = rowcount
 
     async def execute(self, stmt):
         self.executed_statements.append(stmt)
         if isinstance(stmt, Delete):
-            return None
+            # Mimic a real Result: _handle_unwatch_toggle reads rowcount to
+            # report whether state actually changed (#190 follow-up).
+            return SimpleNamespace(rowcount=self._rowcount)
         item = self._results.pop(0) if self._results else None
         return _ScalarResult(item)
 
@@ -385,6 +388,24 @@ class HandleUnwatchToggleTests(unittest.IsolatedAsyncioTestCase):
         db = _UnwatchFakeSession([rewatch])
         await _handle_unwatch_toggle(db, user_id=1, media=episode)
         self.assertEqual(db._deleted_tables(), ["rewatch_progress"])
+
+    async def test_returns_true_when_a_row_was_deleted(self):
+        # Regression for #190 follow-up: callers gate the outbound
+        # _push_watch_state re-push on this return value to avoid re-pushing
+        # (and potentially ping-ponging between two two-way-sync connections)
+        # on a no-op delivery.
+        movie = Media(id=13, media_type=MediaType.movie, title="A Movie")
+        db = _UnwatchFakeSession([], rowcount=1)
+        changed = await _handle_unwatch_toggle(db, user_id=1, media=movie)
+        self.assertTrue(changed)
+
+    async def test_returns_false_when_already_unwatched(self):
+        # Item was already unwatched (e.g. a duplicate/echoed webhook delivery)
+        # - nothing to delete, so no row is actually affected.
+        movie = Media(id=14, media_type=MediaType.movie, title="A Movie")
+        db = _UnwatchFakeSession([], rowcount=0)
+        changed = await _handle_unwatch_toggle(db, user_id=1, media=movie)
+        self.assertFalse(changed)
 
 
 class IsFreshRewatchPlayTests(unittest.TestCase):
