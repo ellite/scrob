@@ -115,6 +115,47 @@ class ParseJellyfinPayloadEmbyEventFieldTests(unittest.TestCase):
         self.assertEqual(data["notification_type"], "PlaybackStop")
 
 
+class ParseJellyfinPayloadNestedEpisodeSeriesNameTests(unittest.TestCase):
+    """Regression test for #192: Emby's native webhook notifications use this
+    nested Item/Session shape and don't reliably populate SeriesProviderIds
+    for an episode the way Jellyfin's "send all properties" plugin does.
+    Without a series_name fallback here (mirroring the flat-format branch,
+    which already has one), find_or_create_media_jellyfin can never resolve
+    show linkage - Now Playing then shows the bare episode title with no
+    poster instead of the series."""
+
+    def test_nested_episode_payload_includes_series_name_fallback(self):
+        payload = {
+            "Event": "playback.start",
+            "Item": {
+                "Id": "ep1",
+                "Name": "Aquamom",
+                "Type": "Episode",
+                "SeriesName": "Entourage",
+                "ParentIndexNumber": 3,
+                "IndexNumber": 1,
+                "ProviderIds": {"Tmdb": "1081099"},
+                # SeriesProviderIds deliberately absent - this is the exact gap.
+            },
+            "Session": {"Id": "sess1", "UserName": "arne", "PlayState": {}},
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertIsNotNone(data)
+        self.assertIsNone(data["series_tmdb_id"])
+        self.assertEqual(data["series_name"], "Entourage")
+
+    def test_nested_movie_payload_has_no_series_name(self):
+        # A movie item has no SeriesName field at all - must not crash or
+        # fabricate a value.
+        payload = {
+            "Event": "playback.start",
+            "Item": {"Id": "m1", "Name": "Inception", "Type": "Movie"},
+            "Session": {"Id": "sess1", "PlayState": {}},
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertIsNone(data["series_name"])
+
+
 class ParseJellyfinFlatPayloadSeasonZeroTests(unittest.TestCase):
     """Regression test for #132: a Season 0 (specials) episode has
     SeasonNumber: 0 in the flat webhook payload, which a falsy check like

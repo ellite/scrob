@@ -544,6 +544,13 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
             "media_type": "movie" if item.get("Type") == "Movie" else "episode",
             "tmdb_id": item.get("ProviderIds", {}).get("Tmdb"),
             "series_tmdb_id": item.get("SeriesProviderIds", {}).get("Tmdb"),
+            # Emby's native webhook notifications use this nested shape and don't
+            # reliably populate SeriesProviderIds the way Jellyfin's "send all
+            # properties" plugin does - without a series_name fallback here,
+            # find_or_create_media_jellyfin can never resolve show linkage for
+            # an Emby episode, leaving Now Playing showing the episode title
+            # with no poster instead of the series (see #192).
+            "series_name": item.get("SeriesName"),
             "season_number": item.get("ParentIndexNumber"),
             "episode_number": item.get("IndexNumber"),
             # Jellyfin/Emby can mux several episodes into one file and fire a single
@@ -632,7 +639,12 @@ async def _resolve_tvdb_fallback(
 async def find_or_create_media_jellyfin(
     data: dict, db: AsyncSession, api_key: str = None, user_id: int | None = None
 ) -> Media | None:
-    # 1. Match by Jellyfin source ID via CollectionFile (fastest path post-sync).
+    # 1. Match by source item ID via CollectionFile (fastest path post-sync).
+    # This function is shared by both Jellyfin and Emby webhooks (they're the
+    # same REST API) - matching only CollectionSource.jellyfin meant every
+    # Emby-sourced item always missed this fast path and fell through to the
+    # slower show/tmdb_id resolution below, even for episodes already synced
+    # and correctly linked (contributing to #192).
     # A multi-episode file (see #138) has several CollectionFiles sharing this
     # source_id, one per episode - disambiguate by episode_number whenever the
     # caller knows which one it wants (find_or_create_media_jellyfin_multi sets
@@ -642,7 +654,7 @@ async def find_or_create_media_jellyfin(
             select(Media)
             .join(Collection, Collection.media_id == Media.id)
             .join(CollectionFile, CollectionFile.collection_id == Collection.id)
-            .where(CollectionFile.source == CollectionSource.jellyfin)
+            .where(CollectionFile.source.in_((CollectionSource.jellyfin, CollectionSource.emby)))
             .where(CollectionFile.source_id == data["jellyfin_id"])
         )
         if data["media_type"] == "episode" and data.get("episode_number") is not None:
