@@ -43,8 +43,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             <!-- Connections list (server-side rendered, managed client-side) -->
             <div id="connections-list" class="space-y-3">
             {connections.map((conn) => {
-              const typeColor = conn.type === "jellyfin" ? "bg-purple-500" : conn.type === "emby" ? "bg-green-500" : conn.type === "plex" ? "bg-yellow-500" : conn.type === "stremio" ? "bg-blue-500" : "bg-cyan-500";
-              const typeLabel = conn.type === "jellyfin" ? "Jellyfin" : conn.type === "emby" ? "Emby" : conn.type === "plex" ? "Plex" : conn.type === "stremio" ? "Stremio" : "Nuvio";
+              const typeColor = conn.type === "jellyfin" ? "bg-purple-500" : conn.type === "emby" ? "bg-green-500" : conn.type === "plex" ? "bg-yellow-500" : conn.type === "stremio" ? "bg-blue-500" : conn.type === "arvio" ? "bg-teal-500" : "bg-cyan-500";
+              const typeLabel = conn.type === "jellyfin" ? "Jellyfin" : conn.type === "emby" ? "Emby" : conn.type === "plex" ? "Plex" : conn.type === "stremio" ? "Stremio" : conn.type === "arvio" ? "ARVIO" : "Nuvio";
               return (
               <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden" data-connection-id={conn.id}>
                 <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target={`conn-body-${conn.id}`}>
@@ -92,11 +92,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     <!-- Left: Connection details -->
                     <div class="space-y-4">
                       <div class={`space-y-2 ${conn.type === "stremio" ? "hidden" : ""}`}>
-                        <label class="block text-sm font-medium text-zinc-400">{conn.type === "nuvio" ? "Cloud API URL" : "Server URL"}</label>
-                        <input type="url" class="conn-url-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all disabled:opacity-70" value={conn.url} data-conn-id={conn.id} disabled={conn.type === "nuvio"} />
+                        <label class="block text-sm font-medium text-zinc-400">{conn.type === "nuvio" || conn.type === "arvio" ? "Cloud API URL" : "Server URL"}</label>
+                        <input type="url" class="conn-url-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all disabled:opacity-70" value={conn.url} data-conn-id={conn.id} disabled={conn.type === "nuvio" || conn.type === "arvio"} />
                       </div>
                       <div class={`space-y-2 ${conn.type === "stremio" ? "hidden" : ""}`}>
-                        <label class="block text-sm font-medium text-zinc-400">{conn.type === "plex" ? "X-Plex-Token" : conn.type === "nuvio" ? "Refresh Token" : "API Token"}</label>
+                        <label class="block text-sm font-medium text-zinc-400">{conn.type === "plex" ? "X-Plex-Token" : conn.type === "nuvio" || conn.type === "arvio" ? "Refresh Token" : "API Token"}</label>
                         <div class="relative">
                           <input type="password" class="conn-token-input w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={conn.token} data-conn-id={conn.id} />
                           <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle token visibility">
@@ -145,11 +145,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           </div>
                         </div>
                       )}
-                      {conn.type === "nuvio" ? (
+                      {conn.type === "nuvio" || conn.type === "arvio" ? (
                         <div class="space-y-2">
-                          <label class="block text-sm font-medium text-zinc-400">Nuvio Profile</label>
-                          <select aria-label="Nuvio profile" class="conn-user-id-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
-                            <option value={conn.server_user_id || ""}>{conn.server_username || `Profile ${conn.server_user_id}`} (#{conn.server_user_id})</option>
+                          <label class="block text-sm font-medium text-zinc-400">{conn.type === "arvio" ? "ARVIO Profile" : "Nuvio Profile"}</label>
+                          <select aria-label={conn.type === "arvio" ? "ARVIO profile" : "Nuvio profile"} class="conn-user-id-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
+                            <option value={conn.server_user_id || ""}>{conn.server_username || `Profile ${conn.server_user_id}`}</option>
                           </select>
                         </div>
                       ) : conn.type !== "plex" && conn.type !== "stremio" && (
@@ -165,7 +165,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           <input type="text" class="conn-username-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={conn.server_username || ""} data-conn-id={conn.id} />
                         </div>
                       )}
-                      {conn.type !== "nuvio" && conn.type !== "stremio" && (
+                      {conn.type !== "nuvio" && conn.type !== "arvio" && conn.type !== "stremio" && (
                         <>
                           <div class="space-y-2">
                             <label class="block text-sm font-medium text-zinc-400">Libraries to sync</label>
@@ -196,8 +196,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         {[
                           { key: "sync_collection", label: "Collection status" },
                           { key: "sync_watched", label: "Watched status" },
-                          ...(conn.type === "nuvio" || conn.type === "stremio" ? [] : [{ key: "sync_ratings", label: "Ratings" }]),
-                          { key: "sync_playback", label: conn.type === "nuvio" || conn.type === "stremio" ? "Playback progress" : "Playback events" },
+                          ...(conn.type === "nuvio" || conn.type === "stremio" || conn.type === "arvio" ? [] : [{ key: "sync_ratings", label: "Ratings" }]),
+                          { key: "sync_playback", label: conn.type === "nuvio" || conn.type === "stremio" || conn.type === "arvio" ? "Playback progress" : "Playback events" },
                           ...(conn.type === "plex" ? [{ key: "plex_sync_watchlist", label: "Watchlist" }] : []),
                         ].map(({ key, label }) => (
                           <label class="flex items-center gap-3 cursor-pointer group">
@@ -208,9 +208,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         <div class="flex items-center gap-3">
                           <button type="button" data-action="sync_connection" data-conn-id={conn.id} data-conn-type={conn.type} data-conn-name={conn.name}
                             disabled={!hasTmdbKey}
-                            title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : conn.type === "nuvio" || conn.type === "stremio" ? `Sync ${typeLabel} library, watched status, and playback progress` : `Pull from ${conn.name}`}
+                            title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : conn.type === "nuvio" || conn.type === "stremio" || conn.type === "arvio" ? `Sync ${typeLabel} library, watched status, and playback progress` : `Pull from ${conn.name}`}
                             class={`js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${hasTmdbKey ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700" : "bg-zinc-800 text-zinc-400 border border-zinc-700 opacity-50"}`}
-                          >{conn.type === "nuvio" || conn.type === "stremio" ? "Sync now" : "Pull"}</button>
+                          >{conn.type === "nuvio" || conn.type === "stremio" || conn.type === "arvio" ? "Sync now" : "Pull"}</button>
                           {conn.type === "stremio" && (
                             <button type="button" data-action="full_resync_connection" data-conn-id={conn.id} data-conn-name={conn.name}
                               disabled={!hasTmdbKey}
@@ -220,6 +220,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           <span id={`${conn.type}-last-sync`} class="hidden text-xs text-zinc-500"></span>
                         </div>
                       </div>
+                      {conn.type !== "arvio" && (
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
                         <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → {typeLabel}</p>
                         {[
@@ -239,6 +240,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
                         >Push</button>
                       </div>
+                      )}
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
                         <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
                         <div class="flex items-center justify-between gap-4">
@@ -328,6 +330,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         <option value="emby">Emby</option>
                         <option value="plex">Plex</option>
                         <option value="nuvio">Nuvio</option>
+                        <option value="arvio">ARVIO</option>
                         <option value="stremio">Stremio</option>
                       </select>
                     </div>
@@ -3830,12 +3833,13 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const type = typeSelect?.value ?? 'jellyfin';
       const isPlex = type === 'plex';
       const isNuvio = type === 'nuvio';
+      const isArvio = type === 'arvio';
       const isStremio = type === 'stremio';
-      const isCloud = isNuvio || isStremio;
+      const isCloud = isNuvio || isStremio || isArvio;
       userIdRow?.classList.toggle('hidden', isPlex || isCloud);
       usernameRow?.classList.toggle('hidden', !isPlex);
-      nuvioEmailRow?.classList.toggle('hidden', !isNuvio);
-      nuvioProfileRow?.classList.toggle('hidden', !isNuvio);
+      nuvioEmailRow?.classList.toggle('hidden', !(isNuvio || isArvio));
+      nuvioProfileRow?.classList.toggle('hidden', !(isNuvio || isArvio));
       stremioLinkRow?.classList.toggle('hidden', !isStremio);
       urlRow?.classList.toggle('hidden', isStremio);
       tokenRow?.classList.toggle('hidden', isStremio);
@@ -3845,17 +3849,25 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         if (isNuvio) {
           urlInput.value = 'https://api.nuvio.tv';
           urlInput.disabled = true;
+        } else if (isArvio) {
+          urlInput.value = 'https://auth.arvio.tv/.netlify/functions';
+          urlInput.disabled = true;
         } else if (isStremio) {
           urlInput.value = 'https://api.strem.io';
           urlInput.disabled = true;
         } else {
-          if (previousType === 'nuvio' || previousType === 'stremio') urlInput.value = '';
+          if (previousType === 'nuvio' || previousType === 'arvio' || previousType === 'stremio') urlInput.value = '';
           urlInput.disabled = false;
         }
       }
-      if (urlLabel) urlLabel.textContent = isNuvio ? 'Cloud API URL' : 'Server URL';
-      if (tokenLabel) tokenLabel.textContent = isNuvio ? 'Nuvio Password' : 'Token';
-      if (tokenInput) tokenInput.autocomplete = isNuvio ? 'current-password' : 'off';
+      const nuvioEmailLabel = nuvioEmailRow?.querySelector('label');
+      if (nuvioEmailLabel) nuvioEmailLabel.textContent = isArvio ? 'ARVIO Email' : 'Nuvio Email';
+      const nuvioProfileLabel = nuvioProfileRow?.querySelector('label');
+      if (nuvioProfileLabel) nuvioProfileLabel.textContent = isArvio ? 'ARVIO Profile' : 'Nuvio Profile';
+
+      if (urlLabel) urlLabel.textContent = (isNuvio || isArvio) ? 'Cloud API URL' : 'Server URL';
+      if (tokenLabel) tokenLabel.textContent = isArvio ? 'ARVIO Password' : isNuvio ? 'Nuvio Password' : 'Token';
+      if (tokenInput) tokenInput.autocomplete = (isNuvio || isArvio) ? 'current-password' : 'off';
       const syncRatings = document.getElementById('new-sync-ratings') as HTMLInputElement | null;
       const pushRatings = document.getElementById('new-push-ratings') as HTMLInputElement | null;
       const pushPlayback = document.getElementById('new-push-playback') as HTMLInputElement | null;
@@ -3872,7 +3884,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (playbackLabel) playbackLabel.textContent = isCloud ? 'Playback progress' : 'Playback events';
       const pullHeading = document.getElementById('new-pull-heading');
       const pushHeading = document.getElementById('new-push-heading');
-      const providerName = isNuvio ? 'Nuvio' : isStremio ? 'Stremio' : 'Server';
+      const providerName = isArvio ? 'ARVIO' : isNuvio ? 'Nuvio' : isStremio ? 'Stremio' : 'Server';
       if (pullHeading) pullHeading.textContent = `${providerName} → Scrob`;
       if (pushHeading) pushHeading.textContent = `Scrob → ${providerName}`;
       if (type !== previousType) {
@@ -3889,28 +3901,33 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     updateTypeFields();
 
     const authenticateNuvio = async () => {
+      const type = typeSelect?.value ?? 'nuvio';
+      const isArvio = type === 'arvio';
       const email = (document.getElementById('new-nuvio-email') as HTMLInputElement | null)?.value.trim() || '';
       const password = tokenInput?.value || '';
-      const url = urlInput?.value || 'https://api.nuvio.tv';
-      if (!email || !password) throw new Error('Nuvio email and password are required.');
+      const url = urlInput?.value || (isArvio ? 'https://auth.arvio.tv/.netlify/functions' : 'https://api.nuvio.tv');
+      if (!email || !password) throw new Error(`${isArvio ? 'ARVIO' : 'Nuvio'} email and password are required.`);
       const selectedProfile = nuvioProfileSelect?.value || '';
-      const response = await fetch('/api/proxy/auth/nuvio-login', {
+      const endpoint = isArvio ? '/api/proxy/auth/arvio-login' : '/api/proxy/auth/nuvio-login';
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, url }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Nuvio sign-in failed');
+      if (!response.ok) throw new Error(data.detail || `${isArvio ? 'ARVIO' : 'Nuvio'} sign-in failed`);
       pendingNuvioRefreshToken = data.refresh_token;
       if (nuvioProfileSelect) {
-        nuvioProfileSelect.innerHTML = (data.profiles || []).map((profile: any) =>
-          `<option value="${esc(String(profile.profile_index))}">${esc(profile.name || `Profile ${profile.profile_index}`)} (#${esc(String(profile.profile_index))})</option>`
-        ).join('');
+        nuvioProfileSelect.innerHTML = (data.profiles || []).map((profile: any) => {
+          const pid = String(profile.id !== undefined ? profile.id : profile.profile_index);
+          const pname = profile.name || `Profile ${pid}`;
+          return `<option value="${esc(pid)}">${esc(pname)}</option>`;
+        }).join('');
         if (selectedProfile && [...nuvioProfileSelect.options].some(option => option.value === selectedProfile)) {
           nuvioProfileSelect.value = selectedProfile;
         }
       }
-      if (!nuvioProfileSelect?.value) throw new Error('No Nuvio profile is available for this account.');
+      if (!nuvioProfileSelect?.value) throw new Error(`No ${isArvio ? 'ARVIO' : 'Nuvio'} profile is available for this account.`);
       return data;
     };
 
@@ -4014,9 +4031,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         const orig = testNewBtn.textContent;
         testNewBtn.textContent = '...';
         try {
-          if (type === 'nuvio') {
+          if (type === 'nuvio' || type === 'arvio') {
             await authenticateNuvio();
-            showMessage('Nuvio connection successful. Select the profile to sync.');
+            showMessage(`${type === 'arvio' ? 'ARVIO' : 'Nuvio'} connection successful. Select the profile to sync.`);
           } else {
             const endpoint = `/api/proxy/auth/test-${type === 'plex' ? 'plex' : type === 'emby' ? 'emby' : 'jellyfin'}`;
             const credentials = type === 'plex'
@@ -4047,7 +4064,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         let userId = (document.getElementById('new-conn-user-id') as HTMLInputElement)?.value.trim() || null;
         const username = (document.getElementById('new-conn-username') as HTMLInputElement)?.value.trim() || null;
         if (!name || !u || !connectionToken) {
-          showMessage(type === 'nuvio' ? 'Name, Nuvio email and password are required.' : 'Name, URL and Token are required.', 'error');
+          showMessage(type === 'nuvio' || type === 'arvio' ? `Name, ${type === 'arvio' ? 'ARVIO' : 'Nuvio'} email and password are required.` : 'Name, URL and Token are required.', 'error');
           return;
         }
 
@@ -4056,7 +4073,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         createBtn.textContent = 'Adding…';
 
         try {
-          if (type === 'nuvio') {
+          if (type === 'nuvio' || type === 'arvio') {
             await authenticateNuvio();
             connectionToken = pendingNuvioRefreshToken;
             userId = nuvioProfileSelect?.value || null;

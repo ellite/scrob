@@ -450,10 +450,10 @@ async def create_connection(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if body.type not in ("plex", "jellyfin", "emby", "nuvio", "stremio"):
+    if body.type not in ("plex", "jellyfin", "emby", "nuvio", "stremio", "arvio"):
         raise HTTPException(
             status_code=400,
-            detail="type must be plex, jellyfin, emby, nuvio, or stremio",
+            detail="type must be plex, jellyfin, emby, nuvio, stremio, or arvio",
         )
     validated_url = body.url
     connection_token = body.token
@@ -493,8 +493,21 @@ async def create_connection(
         connection_token = session.refresh_token
         server_user_id = str(profile_id)
         server_username = _nuvio_profile_name(profiles, profile_id)
+    elif body.type == "arvio":
+        from core import arvio
 
-    cloud_media_provider = body.type in ("nuvio", "stremio")
+        profile_id = str(server_user_id or "")
+        if not profile_id:
+            raise HTTPException(status_code=400, detail="ARVIO profile ID is required")
+        try:
+            session, profiles = await arvio.validate_connection(validated_url, connection_token, profile_id)
+        except arvio.ArvioAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        connection_token = session.refresh_token
+        server_user_id = profile_id
+        server_username = arvio.get_profile_name(profiles, profile_id)
+
+    cloud_media_provider = body.type in ("nuvio", "stremio", "arvio")
     conn = MediaServerConnection(
         user_id=current_user.id,
         type=body.type,
@@ -950,6 +963,45 @@ async def test_nuvio(
         "profiles": profiles,
     }
 
+
+@router.post("/arvio-login")
+async def login_arvio(
+    body: schemas.ArvioLoginRequest,
+    current_user: User = Depends(get_current_user),
+):
+    from core import arvio
+
+    url = await validate_service_url(body.url, "ARVIO URL")
+    try:
+        session, profiles = await arvio.authenticate(url, body.email, body.password)
+    except arvio.ArvioAPIError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "url": url,
+        "refresh_token": session.refresh_token,
+        "profiles": profiles,
+    }
+
+
+@router.post("/test-arvio")
+async def test_arvio(
+    body: schemas.ArvioConnectionTestRequest,
+    current_user: User = Depends(get_current_user),
+):
+    from core import arvio
+
+    url = await validate_service_url(body.url, "ARVIO URL")
+    try:
+        session, profiles = await arvio.validate_connection(url, body.token, body.profile_id)
+    except arvio.ArvioAPIError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "status": "ok",
+        "message": "ARVIO connection is valid.",
+        "refresh_token": session.refresh_token,
+        "profiles": profiles,
+    }
+
 @router.post("/test-radarr")
 async def test_radarr(
     body: schemas.ServiceConnectionTestRequest,
@@ -1062,7 +1114,7 @@ async def get_connection_status(
         return {"configured": True, "connected": connected}
 
     async def check_media_server(conn):
-        from core import jellyfin, nuvio, plex, stremio
+        from core import arvio, jellyfin, nuvio, plex, stremio
 
         try:
             if conn.type == "plex":
@@ -1076,6 +1128,13 @@ async def get_connection_status(
                     session, profiles = await nuvio.validate_connection(conn.url, conn.token, profile_id)
                     conn.token = session.refresh_token
                 conn.server_username = _nuvio_profile_name(profiles, profile_id)
+                connected = True
+            elif conn.type == "arvio":
+                profile_id = conn.server_user_id
+                async with arvio.connection_lock(conn.id):
+                    session, profiles = await arvio.validate_connection(conn.url, conn.token, profile_id)
+                    conn.token = session.refresh_token
+                conn.server_username = arvio.get_profile_name(profiles, profile_id)
                 connected = True
             elif conn.type == "stremio":
                 account = await stremio.validate_auth_key(conn.token)
@@ -1098,6 +1157,10 @@ async def get_connection_status(
                 }
                 for profile in profiles
             ]
+        elif conn.type == "arvio" and connected:
+            result["token"] = conn.token
+            result["profile_name"] = conn.server_username
+            result["profiles"] = profiles
         return result
 
     async def check_simkl():

@@ -160,6 +160,18 @@ class NuvioConnectionTestRequest(BaseModel):
     profile_id: int
 
 
+class ArvioLoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+    url: str = "https://auth.arvio.tv/.netlify/functions"
+
+
+class ArvioConnectionTestRequest(BaseModel):
+    url: str
+    token: str
+    profile_id: str
+
+
 class ApiKeyTestRequest(BaseModel):
     key: SecretStr
 
@@ -243,8 +255,8 @@ class MediaServerConnectionResponse(MediaServerConnectionBase):
     created_at: datetime
 
     @model_validator(mode="after")
-    def redact_stremio_auth_key(self):
-        if self.type == "stremio":
+    def redact_cloud_credentials(self):
+        if self.type in ("stremio", "arvio"):
             self.token = ""
         return self
 
