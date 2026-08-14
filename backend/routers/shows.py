@@ -32,6 +32,7 @@ from core.enrichment import (
     enrich_episode_from_tvdb,
     create_media_safely,
     apply_media_change_safely,
+    is_unmapped_tvdb_episode,
 )
 from core.rewatch import (
     capped_season_episode_counts,
@@ -1415,8 +1416,29 @@ async def get_episode_detail(
                 if show.tvdb_id:
                     # TMDB doesn't have this season/episode under the numbering
                     # TVDB uses for this show (#162, #186) - the show's own TVDB
-                    # match has the authoritative structure for it.
-                    return await get_tvdb_episode(show.tvdb_id, season_number, episode_number, db, current_user)
+                    # match has the authoritative structure for it. But
+                    # season_number/episode_number here are TMDB-style (the URL
+                    # this endpoint was reached with) - they are NOT valid TVDB
+                    # positions in general, so they can't be reused as-is
+                    # (see #186 follow-up: doing that returned a DIFFERENT,
+                    # wrong episode's metadata instead of a clear error).
+                    # Translate via the same EpisodeOrderMapping table
+                    # get_tvdb_show already uses for this exact purpose.
+                    mapping_result = await db.execute(
+                        select(EpisodeOrderMapping).where(
+                            EpisodeOrderMapping.series_tmdb_id == series_tmdb_id,
+                            EpisodeOrderMapping.tmdb_season_number == season_number,
+                            EpisodeOrderMapping.tmdb_episode_number == episode_number,
+                        )
+                    )
+                    mapping = mapping_result.scalar_one_or_none()
+                    if mapping:
+                        return await get_tvdb_episode(
+                            show.tvdb_id, mapping.tvdb_season_number, mapping.tvdb_episode_number, db, current_user,
+                        )
+                    # No mapping computed for this episode - don't guess by
+                    # reusing the TMDB numbers as TVDB ones; that's how this
+                    # regressed from "404" to "wrong episode's data" before.
                 raise
             show_info = format_show(show)
         else:
@@ -1565,7 +1587,11 @@ async def refresh_show_metadata(
         raise HTTPException(status_code=404, detail="Show not found in local library")
 
     try:
-        data = await tmdb.get_show(series_tmdb_id, api_key=api_key)
+        # cache_ttl=None: this is the user explicitly asking for fresh data -
+        # the shared 30-minute TMDB response cache would otherwise silently
+        # hand back whatever was last fetched (e.g. from just browsing the
+        # show page moments earlier), making "Refresh Metadata" a no-op.
+        data = await tmdb.get_show(series_tmdb_id, api_key=api_key, cache_ttl=None)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"TMDB fetch failed: {e}")
 
@@ -1633,7 +1659,8 @@ async def refresh_show_metadata(
     async def fetch_season(sn: int) -> None:
         async with semaphore:
             try:
-                d = await tmdb.get_season(series_tmdb_id, sn, api_key=api_key)
+                # See the matching comment on the tmdb.get_show call above.
+                d = await tmdb.get_season(series_tmdb_id, sn, api_key=api_key, cache_ttl=None)
                 season_data[sn] = {ep["episode_number"]: ep for ep in d.get("episodes", [])}
             except Exception:
                 season_data[sn] = {}
@@ -1653,7 +1680,10 @@ async def refresh_show_metadata(
     async def fetch_tvdb_season(sn: int) -> None:
         async with semaphore:
             try:
-                raw_eps = await tvdb_client.get_series_episodes(show.tvdb_id, sn, tvdb_api_key, language=tvdb_lang)
+                # See the matching comment on the tmdb.get_show call above.
+                raw_eps = await tvdb_client.get_series_episodes(
+                    show.tvdb_id, sn, tvdb_api_key, language=tvdb_lang, cache_ttl=None,
+                )
                 tvdb_season_data[sn] = {e.get("number"): e for e in raw_eps}
             except Exception:
                 tvdb_season_data[sn] = {}
@@ -1687,11 +1717,21 @@ async def refresh_show_metadata(
             return await apply_media_change_safely(
                 db, media, lambda media=media, ep=ep: apply_episode_data(media, ep)
             )
-        tvdb_ep = tvdb_season_data.get(media.season_number, {}).get(media.episode_number)
-        if tvdb_ep:
-            return await apply_media_change_safely(
-                db, media, lambda media=media, tvdb_ep=tvdb_ep: apply_tvdb_episode_data(media, tvdb_ep)
-            )
+        # media.season_number/episode_number are only safe to reuse as TVDB
+        # query keys when they're already confirmed TVDB-native (this row was
+        # created via the TVDB fallback before). For an episode that was
+        # successfully enriched from TMDB, these numbers are TMDB-canonical -
+        # a TEMPORARY TMDB failure for its season this run (unrelated to real
+        # TVDB/TMDB divergence) would otherwise silently overwrite it with a
+        # DIFFERENT, wrong TVDB episode's data instead of just leaving it
+        # untouched (see #186 follow-up - this is the same mistake as
+        # get_episode_detail's, but persisted instead of just displayed).
+        if is_unmapped_tvdb_episode(media):
+            tvdb_ep = tvdb_season_data.get(media.season_number, {}).get(media.episode_number)
+            if tvdb_ep:
+                return await apply_media_change_safely(
+                    db, media, lambda media=media, tvdb_ep=tvdb_ep: apply_tvdb_episode_data(media, tvdb_ep)
+                )
         return media
 
     episode_ids: list[int] = []
@@ -2650,7 +2690,9 @@ async def refresh_tvdb_show_metadata(
         raise HTTPException(status_code=404, detail="Show not found in local library")
 
     try:
-        raw = await tvdb_client.get_series(tvdb_id, api_key)
+        # cache_ttl=None: this is the user explicitly asking for fresh data -
+        # see the matching comment on refresh_show_metadata's tmdb.get_show call.
+        raw = await tvdb_client.get_series(tvdb_id, api_key, cache_ttl=None)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"TVDB fetch failed: {e}")
 

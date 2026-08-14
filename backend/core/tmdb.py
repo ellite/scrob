@@ -108,7 +108,7 @@ async def validate_api_key(api_key: str) -> bool:
         return False
 
 
-async def get_movie(tmdb_id: int, api_key: str = None, language: str | None = None) -> dict:
+async def get_movie(tmdb_id: int, api_key: str = None, language: str | None = None, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
     params: dict = {"append_to_response": "credits,release_dates,recommendations,external_ids"}
     if language:
         params["language"] = language
@@ -116,10 +116,11 @@ async def get_movie(tmdb_id: int, api_key: str = None, language: str | None = No
         f"{TMDB_BASE}/movie/{tmdb_id}",
         headers=get_headers(api_key),
         params=params,
+        cache_ttl=cache_ttl,
     )
 
 
-async def get_show(tmdb_id: int, api_key: str = None, language: str | None = None) -> dict:
+async def get_show(tmdb_id: int, api_key: str = None, language: str | None = None, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
     params: dict = {"append_to_response": "credits,content_ratings,recommendations,external_ids"}
     if language:
         params["language"] = language
@@ -127,10 +128,11 @@ async def get_show(tmdb_id: int, api_key: str = None, language: str | None = Non
         f"{TMDB_BASE}/tv/{tmdb_id}",
         headers=get_headers(api_key),
         params=params,
+        cache_ttl=cache_ttl,
     )
 
 
-async def get_season(tmdb_id: int, season_number: int, api_key: str = None, language: str | None = None) -> dict:
+async def get_season(tmdb_id: int, season_number: int, api_key: str = None, language: str | None = None, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
     params: dict = {}
     if language:
         params["language"] = language
@@ -138,10 +140,11 @@ async def get_season(tmdb_id: int, season_number: int, api_key: str = None, lang
         f"{TMDB_BASE}/tv/{tmdb_id}/season/{season_number}",
         headers=get_headers(api_key),
         params=params or None,
+        cache_ttl=cache_ttl,
     )
 
 
-async def get_episode(tmdb_id: int, season_number: int, episode_number: int, api_key: str = None, language: str | None = None) -> dict:
+async def get_episode(tmdb_id: int, season_number: int, episode_number: int, api_key: str = None, language: str | None = None, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
     params: dict = {"append_to_response": "credits"}
     if language:
         params["language"] = language
@@ -149,6 +152,7 @@ async def get_episode(tmdb_id: int, season_number: int, episode_number: int, api
         f"{TMDB_BASE}/tv/{tmdb_id}/season/{season_number}/episode/{episode_number}",
         headers=get_headers(api_key),
         params=params,
+        cache_ttl=cache_ttl,
     )
 
 

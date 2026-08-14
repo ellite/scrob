@@ -609,6 +609,13 @@ async def update_connection(
             update_data["push_playback"] = False
             update_data["push_collection"] = False
 
+    # Re-enabling a watchlist sync direction starts from a clean bootstrap: a
+    # baseline recorded under the old settings must not drive deletions.
+    for flag in ("plex_sync_watchlist", "plex_push_watchlist"):
+        if update_data.get(flag) and not getattr(conn, flag):
+            update_data["plex_watchlist_synced_keys"] = None
+            break
+
     for field, value in update_data.items():
         setattr(conn, field, value)
 

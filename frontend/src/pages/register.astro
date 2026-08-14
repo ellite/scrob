@@ -105,6 +105,7 @@ if (Astro.request.method === "POST") {
           type="email"
           name="email"
           id="email"
+          autocomplete="email"
           required
           class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
         />
@@ -115,6 +116,7 @@ if (Astro.request.method === "POST") {
           type="text"
           name="username"
           id="username"
+          autocomplete="username"
           required
           class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
         />
@@ -126,6 +128,7 @@ if (Astro.request.method === "POST") {
             type="password"
             name="password"
             id="password"
+            autocomplete="new-password"
             required
             class="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           />
@@ -151,6 +154,7 @@ if (Astro.request.method === "POST") {
             type="password"
             name="confirm_password"
             id="confirm_password"
+            autocomplete="new-password"
             required
             class="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           />

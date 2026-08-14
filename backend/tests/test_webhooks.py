@@ -9,6 +9,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 
 from sqlalchemy.orm.exc import StaleDataError
 
+from models.base import MediaType
 from routers import webhooks
 from routers.webhooks import (
     _commit_playback_session_update,
@@ -16,6 +17,7 @@ from routers.webhooks import (
     _is_duplicate_webhook_delivery,
     _maybe_bingebase_scrobble,
     _write_watch_event,
+    find_or_create_media_jellyfin,
     find_or_create_media_jellyfin_multi,
     parse_jellyfin_payload,
 )
@@ -114,6 +116,104 @@ class ParseJellyfinPayloadEmbyEventFieldTests(unittest.TestCase):
         }
         data = parse_jellyfin_payload(payload)
         self.assertEqual(data["notification_type"], "PlaybackStop")
+
+
+class ParseJellyfinPayloadNestedEpisodeSeriesNameTests(unittest.TestCase):
+    """Regression test for #192: Emby's native webhook notifications use this
+    nested Item/Session shape and don't reliably populate SeriesProviderIds
+    for an episode the way Jellyfin's "send all properties" plugin does.
+    Without a series_name fallback here (mirroring the flat-format branch,
+    which already has one), find_or_create_media_jellyfin can never resolve
+    show linkage - Now Playing then shows the bare episode title with no
+    poster instead of the series."""
+
+    def test_nested_episode_payload_includes_series_name_fallback(self):
+        payload = {
+            "Event": "playback.start",
+            "Item": {
+                "Id": "ep1",
+                "Name": "Aquamom",
+                "Type": "Episode",
+                "SeriesName": "Entourage",
+                "ParentIndexNumber": 3,
+                "IndexNumber": 1,
+                "ProviderIds": {"Tmdb": "1081099"},
+                # SeriesProviderIds deliberately absent - this is the exact gap.
+            },
+            "Session": {"Id": "sess1", "UserName": "arne", "PlayState": {}},
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertIsNotNone(data)
+        self.assertIsNone(data["series_tmdb_id"])
+        self.assertEqual(data["series_name"], "Entourage")
+
+    def test_nested_movie_payload_has_no_series_name(self):
+        # A movie item has no SeriesName field at all - must not crash or
+        # fabricate a value.
+        payload = {
+            "Event": "playback.start",
+            "Item": {"Id": "m1", "Name": "Inception", "Type": "Movie"},
+            "Session": {"Id": "sess1", "PlayState": {}},
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertIsNone(data["series_name"])
+
+
+class ParseJellyfinPayloadPlayedToCompletionTests(unittest.TestCase):
+    """Regression tests for #206: on auto-play, Emby resets Session.PlayState
+    to the next episode before firing the "playback.stop" event for the one
+    that just finished, so PositionTicks/RunTimeTicks there read 0 - a
+    genuinely completed episode looked like a <5% no-op stop and was silently
+    dropped. PlaybackInfo carries this event's own authoritative position and
+    PlayedToCompletion flag; the flat plugin format exposes the same flag as
+    its own top-level property."""
+
+    def test_nested_format_falls_back_to_playback_info_position(self):
+        payload = {
+            "Event": "playback.stop",
+            "Item": {"Id": "ep1", "Name": "Finale", "Type": "Episode", "RunTimeTicks": 10_000_000},
+            # Session.PlayState already reset for the auto-playing next episode.
+            "Session": {"Id": "sess1", "PlayState": {"PositionTicks": 0}},
+            "PlaybackInfo": {"PositionTicks": 10_000_000, "PlayedToCompletion": True},
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertEqual(data["progress_percent"], 1.0)
+        self.assertTrue(data["played_to_completion"])
+
+    def test_nested_format_prefers_session_position_when_present(self):
+        # A normal (non-auto-play) stop still has a real Session position -
+        # PlaybackInfo must not override a legitimate in-progress stop.
+        payload = {
+            "Event": "playback.stop",
+            "Item": {"Id": "ep1", "Name": "Ep", "Type": "Episode", "RunTimeTicks": 10_000_000},
+            "Session": {"Id": "sess1", "PlayState": {"PositionTicks": 3_000_000}},
+            "PlaybackInfo": {"PositionTicks": 10_000_000, "PlayedToCompletion": True},
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertEqual(data["progress_percent"], 0.3)
+
+    def test_nested_format_defaults_played_to_completion_false(self):
+        payload = {
+            "Event": "playback.stop",
+            "Item": {"Id": "ep1", "Name": "Ep", "Type": "Episode"},
+            "Session": {"Id": "sess1", "PlayState": {}},
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertFalse(data["played_to_completion"])
+
+    def test_flat_format_reads_played_to_completion(self):
+        payload = {
+            "NotificationType": "PlaybackStop",
+            "ItemType": "Episode",
+            "PlayedToCompletion": True,
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertTrue(data["played_to_completion"])
+
+    def test_flat_format_defaults_played_to_completion_false(self):
+        payload = {"NotificationType": "PlaybackStop", "ItemType": "Episode"}
+        data = parse_jellyfin_payload(payload)
+        self.assertFalse(data["played_to_completion"])
 
 
 class ParseJellyfinFlatPayloadSeasonZeroTests(unittest.TestCase):
@@ -328,6 +428,100 @@ class FindOrCreateMediaJellyfinMultiTests(IsolatedAsyncioTestCase):
             result = await find_or_create_media_jellyfin_multi(data, db=None)
 
         self.assertEqual(len(result), 2)
+
+
+class _FastPathScalars:
+    def __init__(self, item):
+        self._item = item
+
+    def first(self):
+        return self._item
+
+
+class _FastPathResult:
+    def __init__(self, item):
+        self._item = item
+
+    def scalars(self):
+        return _FastPathScalars(self._item)
+
+
+class _FastPathDB:
+    """Fakes just enough of AsyncSession for find_or_create_media_jellyfin's
+    CollectionFile fast-path query: a single execute() returning the queued
+    Media match (or None)."""
+
+    def __init__(self, media):
+        self._media = media
+
+    async def execute(self, stmt):
+        return _FastPathResult(self._media)
+
+
+class FindOrCreateMediaJellyfinBackfillShowLinkageTests(IsolatedAsyncioTestCase):
+    """Regression tests for #192 follow-up: the CollectionFile fast-path match
+    in find_or_create_media_jellyfin returned an existing episode Media row
+    as-is even when it was missing show_id (e.g. synced/created before the
+    series_name/CollectionSource.emby fixes existed, or because show
+    resolution simply failed the first time). Since this fast path is hit on
+    every subsequent webhook for an already-synced item, an unlinked episode
+    stayed unlinked forever - Now Playing kept showing the bare episode title
+    instead of the series - unless something backfills show_id here too, the
+    same way the slower TMDB-ID match path a few lines down already did."""
+
+    def _episode_data(self, **overrides):
+        data = {
+            "media_type": "episode",
+            "jellyfin_id": "file-1",
+            "title": "Ep 1",
+            "series_name": "Entourage",
+            "season_number": 1,
+            "episode_number": 1,
+            "tmdb_id": None,
+            "series_tmdb_id": None,
+        }
+        data.update(overrides)
+        return data
+
+    async def test_fast_path_backfills_missing_show_id(self):
+        episode = SimpleNamespace(id=99, media_type=MediaType.episode, show_id=None)
+        show = SimpleNamespace(id=42, tvdb_id=None)
+        db = _FastPathDB(episode)
+
+        with patch("routers.webhooks._resolve_show_for_episode", AsyncMock(return_value=(show, 555))), \
+             patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(None, None, None))), \
+             patch("routers.webhooks.enrich_media", AsyncMock()) as enrich_mock:
+            result = await find_or_create_media_jellyfin(self._episode_data(), db, api_key="key")
+
+        self.assertIs(result, episode)
+        self.assertEqual(episode.show_id, 42)
+        enrich_mock.assert_awaited_once()
+
+    async def test_fast_path_leaves_already_linked_episode_untouched(self):
+        episode = SimpleNamespace(id=100, media_type=MediaType.episode, show_id=7)
+        db = _FastPathDB(episode)
+
+        with patch("routers.webhooks._resolve_show_for_episode", AsyncMock()) as resolve_mock, \
+             patch("routers.webhooks.enrich_media", AsyncMock()) as enrich_mock:
+            result = await find_or_create_media_jellyfin(self._episode_data(), db, api_key="key")
+
+        self.assertIs(result, episode)
+        resolve_mock.assert_not_awaited()
+        enrich_mock.assert_not_awaited()
+
+    async def test_fast_path_show_resolution_failure_still_returns_media(self):
+        # Show couldn't be resolved this time either (e.g. TMDB down) - must
+        # still return the existing media match rather than losing it.
+        episode = SimpleNamespace(id=101, media_type=MediaType.episode, show_id=None)
+        db = _FastPathDB(episode)
+
+        with patch("routers.webhooks._resolve_show_for_episode", AsyncMock(return_value=(None, None))), \
+             patch("routers.webhooks.enrich_media", AsyncMock()) as enrich_mock:
+            result = await find_or_create_media_jellyfin(self._episode_data(), db, api_key="key")
+
+        self.assertIs(result, episode)
+        self.assertIsNone(episode.show_id)
+        enrich_mock.assert_not_awaited()
 
 
 class _FakeSessionCommitDB:

@@ -132,15 +132,7 @@ async def _auto_sync_scheduler():
                     schedules: list[tuple[str, float, object]] = []
                     if conn.auto_sync_interval is not None:
                         schedules.append(("pull", conn.auto_sync_interval, pull_runner))
-                    if (
-                        conn.auto_push_interval is not None
-                        and (
-                            conn.push_collection
-                            or conn.push_watched
-                            or conn.push_playback
-                            or conn.push_ratings
-                        )
-                    ):
+                    if conn.auto_push_interval is not None and conn.push_enabled:
                         schedules.append(("push", conn.auto_push_interval, _run_full_push))
 
                     due: list[tuple[datetime, str, object]] = []

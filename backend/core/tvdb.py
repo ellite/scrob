@@ -15,6 +15,37 @@ _token_lock = asyncio.Lock()
 
 TVDB_IMAGE_BASE = "https://artworks.thetvdb.com"
 
+DEFAULT_CACHE_TTL = 1800  # 30 minutes - same rationale as core/tmdb.py's response cache
+
+
+class _TTLCache:
+    """Minimal bounded in-process cache: TTL expiry checked lazily on read, oldest
+    entry evicted on overflow (dict insertion order). No shared/multi-worker
+    guarantees - fine here since scrob runs a single uvicorn process. Mirrors
+    core/tmdb.py's _TTLCache exactly."""
+
+    def __init__(self, maxsize: int = 2000):
+        self._store: dict[tuple, tuple[float, dict]] = {}
+        self._maxsize = maxsize
+
+    def get(self, key: tuple):
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        expires_at, value = entry
+        if time.monotonic() >= expires_at:
+            del self._store[key]
+            return None
+        return value
+
+    def set(self, key: tuple, value: dict, ttl: float) -> None:
+        if key not in self._store and len(self._store) >= self._maxsize:
+            self._store.pop(next(iter(self._store)))
+        self._store[key] = (time.monotonic() + ttl, value)
+
+
+_cache = _TTLCache()
+
 # BCP 47 (metadata_language) → ISO 639-3 used by TVDB
 _TVDB_LANG: dict[str, str] = {
     "en":    "eng",
@@ -90,7 +121,24 @@ async def _get_token(api_key: str) -> str:
         return token
 
 
-async def _get(path: str, api_key: str, params: dict | None = None) -> dict:
+async def _get(
+    path: str,
+    api_key: str,
+    params: dict | None = None,
+    cache_ttl: float | None = DEFAULT_CACHE_TTL,
+) -> dict:
+    """cache_ttl: seconds to cache the response for, keyed by (path, params) -
+    api_key is auth-only and doesn't change TVDB's response content, so it's
+    deliberately excluded from the cache key (same reasoning as core/tmdb.py's
+    _get). Pass cache_ttl=None to bypass caching (e.g. a "Refresh Metadata"
+    action, where returning a stale cached response would make it a no-op)."""
+    cache_key = None
+    if cache_ttl is not None:
+        cache_key = (path, tuple(sorted((params or {}).items())))
+        cached = _cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     token = await _get_token(api_key)
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
         r = await client.get(
@@ -99,7 +147,10 @@ async def _get(path: str, api_key: str, params: dict | None = None) -> dict:
             params=params or {},
         )
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        if cache_key is not None:
+            _cache.set(cache_key, data, cache_ttl)
+        return data
 
 
 async def validate_api_key(api_key: str) -> bool:
@@ -112,9 +163,9 @@ async def validate_api_key(api_key: str) -> bool:
         return False
 
 
-async def search_series(query: str, api_key: str) -> list[dict]:
+async def search_series(query: str, api_key: str, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> list[dict]:
     """Search for TV series by title. Returns list of simplified series dicts."""
-    data = await _get("/search", api_key, params={"query": query, "type": "series"})
+    data = await _get("/search", api_key, params={"query": query, "type": "series"}, cache_ttl=cache_ttl)
     results = []
     for item in data.get("data") or []:
         tvdb_id_str = item.get("tvdb_id") or item.get("id") or ""
@@ -134,18 +185,21 @@ async def search_series(query: str, api_key: str) -> list[dict]:
     return results
 
 
-async def get_series(tvdb_id: int, api_key: str) -> dict:
+async def get_series(tvdb_id: int, api_key: str, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
     """Fetch series extended info including episodes for accurate per-season counts."""
-    data = await _get(f"/series/{tvdb_id}/extended", api_key, params={"meta": "translations,episodes"})
+    data = await _get(
+        f"/series/{tvdb_id}/extended", api_key, params={"meta": "translations,episodes"}, cache_ttl=cache_ttl,
+    )
     return data.get("data") or {}
 
 
-async def get_season(season_id: int, api_key: str) -> dict:
+async def get_season(season_id: int, api_key: str, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
     """Fetch extended season metadata, including translated names and overviews."""
     data = await _get(
         f"/seasons/{season_id}/extended",
         api_key,
         params={"meta": "translations"},
+        cache_ttl=cache_ttl,
     )
     return data.get("data") or {}
 
@@ -176,7 +230,13 @@ def format_season(raw: dict, language: str | None = None) -> dict:
     }
 
 
-async def get_series_episodes(tvdb_id: int, season_number: int | None, api_key: str, language: str | None = None) -> list[dict]:
+async def get_series_episodes(
+    tvdb_id: int,
+    season_number: int | None,
+    api_key: str,
+    language: str | None = None,
+    cache_ttl: float | None = DEFAULT_CACHE_TTL,
+) -> list[dict]:
     """Fetch episodes for a specific season (season_type=official), or every
     episode in the series if season_number is None.
 
@@ -199,6 +259,7 @@ async def get_series_episodes(tvdb_id: int, season_number: int | None, api_key: 
             path,
             api_key,
             params=params,
+            cache_ttl=cache_ttl,
         )
         batch = (data.get("data") or {}).get("episodes") or []
         if not batch:

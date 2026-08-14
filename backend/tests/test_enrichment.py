@@ -416,5 +416,42 @@ class EnrichMediaRuntimeColumnTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media.runtime, 120)
 
 
+class EnrichMediaBypassCacheTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for: "Refresh Metadata" going through enrich_media
+    (the movie path) silently returned whatever TMDB response was already
+    sitting in the shared 30-minute cache, making the button a no-op if the
+    title had been fetched (e.g. just by browsing to it) moments earlier.
+    bypass_cache=True must reach the underlying tmdb.get_*(cache_ttl=None)
+    call for every branch enrich_media has."""
+
+    async def test_movie_bypass_cache_passes_cache_ttl_none(self) -> None:
+        media = Media(media_type=MediaType.movie, tmdb_id=550)
+        get_movie = AsyncMock(return_value={"title": "Fight Club"})
+        with patch("core.enrichment.tmdb.get_movie", get_movie):
+            await enrich_media(media, api_key="tmdb-key", bypass_cache=True)
+        self.assertIsNone(get_movie.call_args.kwargs["cache_ttl"])
+
+    async def test_movie_default_does_not_bypass_cache(self) -> None:
+        media = Media(media_type=MediaType.movie, tmdb_id=550)
+        get_movie = AsyncMock(return_value={"title": "Fight Club"})
+        with patch("core.enrichment.tmdb.get_movie", get_movie):
+            await enrich_media(media, api_key="tmdb-key")
+        self.assertIsNotNone(get_movie.call_args.kwargs["cache_ttl"])
+
+    async def test_series_bypass_cache_passes_cache_ttl_none(self) -> None:
+        media = Media(media_type=MediaType.series, tmdb_id=1399)
+        get_show = AsyncMock(return_value={"name": "Show"})
+        with patch("core.enrichment.tmdb.get_show", get_show):
+            await enrich_media(media, api_key="tmdb-key", bypass_cache=True)
+        self.assertIsNone(get_show.call_args.kwargs["cache_ttl"])
+
+    async def test_episode_bypass_cache_passes_cache_ttl_none(self) -> None:
+        media = Media(media_type=MediaType.episode, season_number=1, episode_number=1)
+        get_episode = AsyncMock(return_value={"id": 1, "name": "Pilot"})
+        with patch("core.enrichment.tmdb.get_episode", get_episode):
+            await enrich_media(media, api_key="tmdb-key", series_tmdb_id=999, bypass_cache=True)
+        self.assertIsNone(get_episode.call_args.kwargs["cache_ttl"])
+
+
 if __name__ == "__main__":
     unittest.main()

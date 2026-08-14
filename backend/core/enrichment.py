@@ -163,6 +163,7 @@ async def enrich_media(
     tvdb_id: int | None = None,
     tvdb_api_key: str | None = None,
     tvdb_lang: str | None = None,
+    bypass_cache: bool = False,
 ) -> None:
     """Fetch TMDB metadata and update the media record in place.
 
@@ -171,15 +172,22 @@ async def enrich_media(
     that only line up under TVDB's numbering, not TMDB's (#162, #186).
     Callers that don't pass tvdb_id/tvdb_api_key get the old TMDB-only
     behavior unchanged.
+
+    bypass_cache: skip the shared TMDB response cache - set this for a
+    user-initiated "Refresh Metadata" action, where returning whatever was
+    last fetched (possibly moments ago, from just browsing) would make the
+    refresh silently do nothing.
     """
     if media.media_type == MediaType.movie and not media.tmdb_id:
         return
     if media.media_type == MediaType.episode and not series_tmdb_id and not (tvdb_id and tvdb_api_key):
         return
 
+    cache_ttl = None if bypass_cache else tmdb.DEFAULT_CACHE_TTL
+
     try:
         if media.media_type == MediaType.movie:
-            data = await tmdb.get_movie(media.tmdb_id, api_key=api_key)
+            data = await tmdb.get_movie(media.tmdb_id, api_key=api_key, cache_ttl=cache_ttl)
             media.title = data.get("title") or media.title
             media.original_title = data.get("original_title")
             media.overview = data.get("overview")
@@ -211,7 +219,7 @@ async def enrich_media(
         elif media.media_type == MediaType.series:
             if not media.tmdb_id:
                 return
-            data = await tmdb.get_show(media.tmdb_id, api_key=api_key)
+            data = await tmdb.get_show(media.tmdb_id, api_key=api_key, cache_ttl=cache_ttl)
             media.title = data.get("name") or media.title
             media.original_title = data.get("original_name")
             media.overview = data.get("overview")
@@ -238,7 +246,9 @@ async def enrich_media(
             tmdb_error: Exception | None = None
             if series_tmdb_id:
                 try:
-                    data = await tmdb.get_episode(series_tmdb_id, media.season_number, media.episode_number, api_key=api_key)
+                    data = await tmdb.get_episode(
+                        series_tmdb_id, media.season_number, media.episode_number, api_key=api_key, cache_ttl=cache_ttl,
+                    )
                 except Exception as e:
                     tmdb_error = e
 
