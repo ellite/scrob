@@ -14,6 +14,7 @@ const minRating = Astro.url.searchParams.get("min_rating") ? Number(Astro.url.se
 const collection = Astro.url.searchParams.getAll("collection");
 const watch = Astro.url.searchParams.getAll("watch");
 const arr = Astro.url.searchParams.getAll("arr");
+const langs = Astro.url.searchParams.getAll("lang");
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -35,6 +36,7 @@ if (hasTmdbKey) {
       ...(collection.length ? { collection } : {}),
       ...(watch.length ? { watch } : {}),
       ...(hasRadarr && arr.length ? { arr } : {}),
+      ...(langs.length ? { original_language: langs.join("|") } : {}),
     }, token);
   } catch (e) {
     console.error("Failed to fetch TMDB movie list:", e);
@@ -45,6 +47,17 @@ const MOVIE_GENRES = [
   "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary",
   "Drama", "Family", "Fantasy", "History", "Horror", "Music", "Mystery",
   "Romance", "Science Fiction", "Thriller", "War", "Western",
+];
+
+const LANGUAGES = [
+  { value: "en", label: "English" }, { value: "nl", label: "Dutch" },
+  { value: "fr", label: "French" }, { value: "de", label: "German" },
+  { value: "es", label: "Spanish" }, { value: "it", label: "Italian" },
+  { value: "pt", label: "Portuguese" }, { value: "ja", label: "Japanese" },
+  { value: "ko", label: "Korean" }, { value: "zh", label: "Chinese" },
+  { value: "sv", label: "Swedish" }, { value: "da", label: "Danish" },
+  { value: "no", label: "Norwegian" }, { value: "tr", label: "Turkish" },
+  { value: "hi", label: "Hindi" },
 ];
 
 const currentYear = new Date().getFullYear();
@@ -59,6 +72,7 @@ if (minRating) baseParams.set("min_rating", String(minRating));
 collection.forEach((v) => baseParams.append("collection", v));
 watch.forEach((v) => baseParams.append("watch", v));
 if (hasRadarr) arr.forEach((v) => baseParams.append("arr", v));
+langs.forEach((l) => baseParams.append("lang", l));
 const baseUrl = `/movies?${baseParams.toString()}`;
 ---
 
@@ -98,6 +112,7 @@ const baseUrl = `/movies?${baseParams.toString()}`;
             { key: "collection", label: "Collection", options: [{ value: "in", label: "In My Collection" }, { value: "out", label: "Not In My Collection" }], selected: collection },
             { key: "watch", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }], selected: watch },
             ...(hasRadarr ? [{ key: "arr", label: "Radarr", options: [{ value: "added", label: "In Radarr" }, { value: "notadded", label: "Not In Radarr" }], selected: arr }] : []),
+            { key: "lang", label: "Language", options: LANGUAGES, selected: langs },
           ]}
         />
       </div>
