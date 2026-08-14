@@ -10,6 +10,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_URL = "https://auth.arvio.tv/.netlify/functions"
+DEFAULT_APP_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpyZHd2b3J0Y2Zub3lrbHR6dXFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3NDU4NzMsImV4cCI6MjA4MjMyMTg3M30.YfKZbSwxGs6_xMd6jkDtn1PKkfuyOHo9qVhUvFRddGU"
 
 class ArvioAPIError(RuntimeError):
     pass
@@ -35,7 +36,7 @@ def _base_url(url: str) -> str:
 
 def _public_headers(api_key: str | None = None) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
-    key = api_key or os.getenv("ARVIO_APP_ANON_KEY") or ""
+    key = api_key or os.getenv("ARVIO_APP_ANON_KEY") or DEFAULT_APP_ANON_KEY
     if key:
         headers["apikey"] = key
         headers["Authorization"] = f"Bearer {key}"
