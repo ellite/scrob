@@ -136,6 +136,14 @@ class UserSettings(BaseModel):
     mdblist_auto_sync_interval: Optional[float] = None
     mdblist_auto_push_interval: Optional[float] = None
 
+    # Bingebase integration
+    bingebase_webhook_url: Optional[str] = None
+    bingebase_api_key: Optional[str] = None
+    bingebase_connected: Optional[bool] = None  # read-only, derived from webhook_url presence
+    bingebase_scrobble: Optional[bool] = None
+    bingebase_push_watched: Optional[bool] = None
+    bingebase_push_ratings: Optional[bool] = None
+
     preferences: Optional[dict] = None
     blur_explicit: Optional[bool] = None
     time_format_24h: Optional[bool] = None

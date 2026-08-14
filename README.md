@@ -59,6 +59,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **A
 - **Trakt integration**: Sync your watched history, ratings, and lists from Trakt, and push Scrob activity back to Trakt automatically. Connecting live requires a Trakt VIP subscription (a recent Trakt-side restriction) - everyone else can still import via a Trakt data export, no VIP needed. See [Trakt Synchronization](#trakt-synchronization).
 - **Simkl integration**: Sync your watched history and ratings from Simkl, and push Scrob activity back to Simkl automatically.
 - **MDBList integration**: Pull watched history, ratings, and watchlist items from MDBList, and optionally push Scrob changes back using an MDBList API key.
+- **Bingebase integration**: Push watch history and live scrobbles to your Bingebase account via personal Webhook URL.
 - **Watch history & ratings**: Track every movie and episode you've watched, including multiple plays with individual timestamps. Log plays manually with a custom date, or remove individual entries - all from the watched button on any movie or episode page. Rate them on a 10-point scale with optional reviews.
 - **Season ratings**: Rate individual seasons separately from the overall show.
 - **Personal lists**: Create and curate lists of movies and shows. Mark them public to share with other users on the same instance.

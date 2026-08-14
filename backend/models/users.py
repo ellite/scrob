@@ -143,6 +143,13 @@ class UserSettings(Base):
     mdblist_auto_sync_interval: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     mdblist_auto_push_interval: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
+    # Bingebase integration
+    bingebase_webhook_url: Mapped[Optional[str]] = mapped_column(String(500))
+    bingebase_api_key: Mapped[Optional[str]] = mapped_column(String(255))
+    bingebase_scrobble: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    bingebase_push_watched: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    bingebase_push_ratings: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
     user : Mapped["User"] = relationship(back_populates="settings")
 
 

@@ -14,6 +14,7 @@ from routers.webhooks import (
     _commit_playback_session_update,
     _episode_for_progress,
     _is_duplicate_webhook_delivery,
+    _maybe_bingebase_scrobble,
     _write_watch_event,
     find_or_create_media_jellyfin_multi,
     parse_jellyfin_payload,
@@ -439,6 +440,31 @@ class EpisodeForProgressTests(unittest.TestCase):
         self.assertIs(episode, media[0])
         self.assertEqual(pct, 0.0)
         self.assertEqual(secs, 0)
+
+
+class TestBingebaseScrobble(unittest.IsolatedAsyncioTestCase):
+    async def test_maybe_bingebase_scrobble_disabled(self):
+        settings = SimpleNamespace(bingebase_scrobble=False, bingebase_webhook_url="https://bingebase.com/api/webhook")
+        media = SimpleNamespace(media_type="movie", title="Test", tmdb_id=550, imdb_id=None)
+        with patch("httpx.AsyncClient.post") as mock_post:
+            await _maybe_bingebase_scrobble(settings, media, "start", 0.5)
+            mock_post.assert_not_called()
+
+    async def test_maybe_bingebase_scrobble_enabled(self):
+        settings = SimpleNamespace(
+            bingebase_scrobble=True,
+            bingebase_webhook_url="https://bingebase.com/api/webhook",
+            bingebase_api_key="secret-token"
+        )
+        media = SimpleNamespace(media_type="movie", title="Fight Club", tmdb_id=550, imdb_id="tt0137523")
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            await _maybe_bingebase_scrobble(settings, media, "stop", 0.95)
+            mock_post.assert_called_once()
+            args, kwargs = mock_post.call_args
+            self.assertEqual(args[0], "https://bingebase.com/api/webhook")
+            self.assertEqual(kwargs["json"]["Event"], "playback.stop")
+            self.assertEqual(kwargs["json"]["Item"]["ProviderIds"]["Tmdb"], "550")
+            self.assertEqual(kwargs["headers"]["Authorization"], "Bearer secret-token")
 
 
 if __name__ == "__main__":
