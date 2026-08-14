@@ -1658,10 +1658,14 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
       // Most-recent job for this connection
       const job = jobs.find(j => String(j.connection_id) === connId);
+      const parseUtc = (ts: string | undefined) => {
+        if (!ts) return 0;
+        return new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z').getTime();
+      };
 
       const isActive = job && (job.status === 'pending' || job.status === 'running');
       const isRecentDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
-        && new Date(job.updated_at).getTime() > Date.now() - 8000;
+        && parseUtc(job.updated_at) > Date.now() - 30000;
 
       renderConnProgress(connId, (isActive || isRecentDone) ? job : null);
 

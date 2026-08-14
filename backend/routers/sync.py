@@ -4507,7 +4507,7 @@ async def get_connection_libraries(
             ]
             return {"libraries": libraries, "all_selected": len(selected_keys) == 0}
 
-        elif conn.type in ("nuvio", "stremio"):
+        elif conn.type in ("nuvio", "stremio", "arvio"):
             return {"libraries": [], "all_selected": True}
 
         else:
@@ -4528,7 +4528,7 @@ async def trigger_library_scan(
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
 
     try:
-        if conn.type in ("nuvio", "stremio"):
+        if conn.type in ("nuvio", "stremio", "arvio"):
             settings_result = await db.execute(
                 select(UserSettings).where(UserSettings.user_id == current_user.id)
             )
@@ -4561,8 +4561,9 @@ async def trigger_library_scan(
             db.add(job)
             await db.commit()
             await db.refresh(job)
+            runner_fn = run_arvio_sync if conn.type == "arvio" else (run_nuvio_sync if conn.type == "nuvio" else run_stremio_sync)
             background_tasks.add_task(
-                run_nuvio_sync if conn.type == "nuvio" else run_stremio_sync,
+                runner_fn,
                 current_user.id,
                 job.id,
                 0,
@@ -4638,7 +4639,7 @@ async def save_connection_libraries(
             await db.commit()
             return {"saved": len(library_keys)}
 
-        elif conn.type in ("nuvio", "stremio"):
+        elif conn.type in ("nuvio", "stremio", "arvio"):
             return {"saved": 0}
 
         else:
@@ -4963,7 +4964,7 @@ async def _run_arvio_sync(
             await db.execute(
                 update(SyncJob)
                 .where(SyncJob.id == job_id)
-                .values(status=SyncStatus.running, processed_items=0, total_items=0)
+                .values(status=SyncStatus.running, processed_items=0, total_items=0, updated_at=func.now())
             )
             await db.commit()
 
@@ -4984,9 +4985,18 @@ async def _run_arvio_sync(
             if not conn:
                 raise RuntimeError("Missing ARVIO connection")
 
-            profile_id = str(conn.server_user_id or "")
+            profile_id = str(conn.server_user_id) if conn.server_user_id is not None else ""
             if not profile_id:
-                raise RuntimeError("Missing ARVIO profile ID")
+                try:
+                    _, profiles = await arvio.validate_connection(conn.url, conn.token)
+                    if profiles:
+                        profile_id = profiles[0]["id"]
+                        conn.server_user_id = profile_id
+                        await db.commit()
+                    else:
+                        profile_id = "0"
+                except Exception:
+                    profile_id = "0"
 
             async def _persist_refresh(refreshed: arvio.ArvioSession) -> None:
                 conn.token = refreshed.refresh_token
@@ -5010,7 +5020,7 @@ async def _run_arvio_sync(
             await db.execute(
                 update(SyncJob)
                 .where(SyncJob.id == job_id)
-                .values(total_items=total_items)
+                .values(total_items=total_items, updated_at=func.now())
             )
             await db.commit()
 
@@ -5025,7 +5035,7 @@ async def _run_arvio_sync(
                         await db.execute(
                             update(SyncJob)
                             .where(SyncJob.id == job_id)
-                            .values(processed_items=processed)
+                            .values(processed_items=processed, updated_at=func.now())
                         )
                         await db.commit()
 
@@ -5037,7 +5047,7 @@ async def _run_arvio_sync(
                         await db.execute(
                             update(SyncJob)
                             .where(SyncJob.id == job_id)
-                            .values(processed_items=processed)
+                            .values(processed_items=processed, updated_at=func.now())
                         )
                         await db.commit()
 
@@ -5050,7 +5060,7 @@ async def _run_arvio_sync(
                         await db.execute(
                             update(SyncJob)
                             .where(SyncJob.id == job_id)
-                            .values(processed_items=processed)
+                            .values(processed_items=processed, updated_at=func.now())
                         )
                         await db.commit()
 
@@ -5061,6 +5071,7 @@ async def _run_arvio_sync(
                     status=SyncStatus.completed,
                     processed_items=processed,
                     completed_at=datetime.now(timezone.utc),
+                    updated_at=func.now(),
                 )
             )
             await db.commit()
@@ -5077,6 +5088,7 @@ async def _run_arvio_sync(
                     status=SyncStatus.failed,
                     error_message=str(exc),
                     completed_at=datetime.now(timezone.utc),
+                    updated_at=func.now(),
                 )
             )
             await db.commit()
