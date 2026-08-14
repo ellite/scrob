@@ -25,6 +25,7 @@ class CollectionSource(str, enum.Enum):
     trakt    = "trakt"
     simkl    = "simkl"
     mdblist  = "mdblist"
+    bingebase = "bingebase"
     manual   = "manual"
     tmdb     = "tmdb"
 

@@ -352,6 +352,7 @@ async def _settings_response(settings: UserSettings, db: AsyncSession) -> schema
     data.trakt_connected = bool(settings.trakt_access_token)
     data.simkl_connected = bool(settings.simkl_access_token)
     data.mdblist_connected = bool(settings.mdblist_api_key)
+    data.bingebase_connected = bool(settings.bingebase_webhook_url or settings.bingebase_api_key)
     gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
     gs = gs_result.scalar_one_or_none()
     data.has_global_tmdb_key = bool(gs and gs.tmdb_api_key)
@@ -396,7 +397,7 @@ async def update_user_settings(
         db.add(settings)
 
     # Computed read-only fields; never write them back
-    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected", "mdblist_connected", "has_global_tmdb_key", "has_effective_tmdb_key", "has_global_tvdb_key", "has_effective_tvdb_key"}
+    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected", "mdblist_connected", "bingebase_connected", "has_global_tmdb_key", "has_effective_tmdb_key", "has_global_tvdb_key", "has_effective_tvdb_key"}
     update_data = {k: v for k, v in settings_in.model_dump(exclude_unset=True).items() if k not in READ_ONLY_FIELDS}
 
     if "tmdb_api_key" in update_data and update_data["tmdb_api_key"]:
