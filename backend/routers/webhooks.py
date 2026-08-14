@@ -525,7 +525,10 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
     session = payload.get("Session") or payload.get("session") or {}
     if item and item.get("Type") in ("Movie", "Episode"):
         play_state = session.get("PlayState", {})
-        position_ticks = play_state.get("PositionTicks", 0)
+        # Emby reports playback.stop position in PlaybackInfo; Session.PlayState
+        # may already be reset when the next episode auto-plays.
+        playback_info = payload.get("PlaybackInfo") or {}
+        position_ticks = play_state.get("PositionTicks") or playback_info.get("PositionTicks") or 0
         runtime_ticks = item.get("RunTimeTicks", 0)
 
         media_sources = item.get("MediaSources", [])
@@ -555,6 +558,7 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
             "session_id": session.get("Id") or session.get("PlaySessionId"),
             "username": session.get("UserName") or payload.get("NotificationUsername", ""),
             "quality": quality,
+            "played_to_completion": bool(playback_info.get("PlayedToCompletion")),
         }
 
     # ── Flat format (Jellyfin Webhook plugin — Generic Destination) ───────────
@@ -600,6 +604,7 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
         # rating change, favorite, etc. all raise this same notification type).
         "save_reason": payload.get("SaveReason"),
         "played": payload.get("Played"),
+        "played_to_completion": bool(payload.get("PlayedToCompletion")),
     }
 
 
@@ -927,6 +932,10 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
         session = await _close_session(db, session_key)
         progress_percent = data["progress_percent"] or (session.progress_percent if session else 0.0)
         progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
+        if data.get("played_to_completion"):
+            # A played-to-completion stop can arrive with the position already
+            # reset (e.g. when the next episode auto-plays) - trust the flag.
+            progress_percent = 1.0
         if (not conn or conn.sync_watched) and progress_percent > 0.05:
             for m in media_list:
                 await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
@@ -1118,6 +1127,10 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
         session = await _close_session(db, session_key)
         progress_percent = data["progress_percent"] or (session.progress_percent if session else 0.0)
         progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
+        if data.get("played_to_completion"):
+            # A played-to-completion stop can arrive with the position already
+            # reset (e.g. when the next episode auto-plays) - trust the flag.
+            progress_percent = 1.0
         if (not conn or conn.sync_watched) and progress_percent > 0.05:
             for m in media_list:
                 await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
@@ -1226,6 +1239,10 @@ async def _handle_jellyfin_scrobble_webhook(
         session = await _close_session(db, session_key)
         progress_percent = data["progress_percent"] or (session.progress_percent if session else 0.0)
         progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
+        if data.get("played_to_completion"):
+            # A played-to-completion stop can arrive with the position already
+            # reset (e.g. when the next episode auto-plays) - trust the flag.
+            progress_percent = 1.0
         if conn.sync_watched and progress_percent > 0.05:
             for m in media_list:
                 await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
