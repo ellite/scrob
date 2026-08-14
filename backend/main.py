@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from db import engine, Base
 import models # noqa: F401
-from routers import webhooks, media, history, ratings, sync, shows, auth, lists, oidc, profile, trakt, simkl, mdblist, comments, admin, compat, export
+from routers import webhooks, media, history, ratings, sync, shows, auth, lists, oidc, profile, trakt, simkl, mdblist, bingebase, comments, admin, compat, export
 
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -526,6 +526,7 @@ app.include_router(profile.router, prefix="/profile", tags=["profile"])
 app.include_router(trakt.router, prefix="/trakt", tags=["trakt"])
 app.include_router(simkl.router, prefix="/simkl", tags=["simkl"])
 app.include_router(mdblist.router, prefix="/mdblist", tags=["mdblist"])
+app.include_router(bingebase.router, prefix="/bingebase", tags=["bingebase"])
 app.include_router(comments.router, prefix="/comments", tags=["comments"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(export.router, prefix="/export", tags=["export"])
