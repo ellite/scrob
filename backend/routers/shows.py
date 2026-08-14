@@ -32,6 +32,7 @@ from core.enrichment import (
     enrich_episode_from_tvdb,
     create_media_safely,
     apply_media_change_safely,
+    is_unmapped_tvdb_episode,
 )
 from core.rewatch import (
     capped_season_episode_counts,
@@ -1415,8 +1416,29 @@ async def get_episode_detail(
                 if show.tvdb_id:
                     # TMDB doesn't have this season/episode under the numbering
                     # TVDB uses for this show (#162, #186) - the show's own TVDB
-                    # match has the authoritative structure for it.
-                    return await get_tvdb_episode(show.tvdb_id, season_number, episode_number, db, current_user)
+                    # match has the authoritative structure for it. But
+                    # season_number/episode_number here are TMDB-style (the URL
+                    # this endpoint was reached with) - they are NOT valid TVDB
+                    # positions in general, so they can't be reused as-is
+                    # (see #186 follow-up: doing that returned a DIFFERENT,
+                    # wrong episode's metadata instead of a clear error).
+                    # Translate via the same EpisodeOrderMapping table
+                    # get_tvdb_show already uses for this exact purpose.
+                    mapping_result = await db.execute(
+                        select(EpisodeOrderMapping).where(
+                            EpisodeOrderMapping.series_tmdb_id == series_tmdb_id,
+                            EpisodeOrderMapping.tmdb_season_number == season_number,
+                            EpisodeOrderMapping.tmdb_episode_number == episode_number,
+                        )
+                    )
+                    mapping = mapping_result.scalar_one_or_none()
+                    if mapping:
+                        return await get_tvdb_episode(
+                            show.tvdb_id, mapping.tvdb_season_number, mapping.tvdb_episode_number, db, current_user,
+                        )
+                    # No mapping computed for this episode - don't guess by
+                    # reusing the TMDB numbers as TVDB ones; that's how this
+                    # regressed from "404" to "wrong episode's data" before.
                 raise
             show_info = format_show(show)
         else:
@@ -1687,11 +1709,21 @@ async def refresh_show_metadata(
             return await apply_media_change_safely(
                 db, media, lambda media=media, ep=ep: apply_episode_data(media, ep)
             )
-        tvdb_ep = tvdb_season_data.get(media.season_number, {}).get(media.episode_number)
-        if tvdb_ep:
-            return await apply_media_change_safely(
-                db, media, lambda media=media, tvdb_ep=tvdb_ep: apply_tvdb_episode_data(media, tvdb_ep)
-            )
+        # media.season_number/episode_number are only safe to reuse as TVDB
+        # query keys when they're already confirmed TVDB-native (this row was
+        # created via the TVDB fallback before). For an episode that was
+        # successfully enriched from TMDB, these numbers are TMDB-canonical -
+        # a TEMPORARY TMDB failure for its season this run (unrelated to real
+        # TVDB/TMDB divergence) would otherwise silently overwrite it with a
+        # DIFFERENT, wrong TVDB episode's data instead of just leaving it
+        # untouched (see #186 follow-up - this is the same mistake as
+        # get_episode_detail's, but persisted instead of just displayed).
+        if is_unmapped_tvdb_episode(media):
+            tvdb_ep = tvdb_season_data.get(media.season_number, {}).get(media.episode_number)
+            if tvdb_ep:
+                return await apply_media_change_safely(
+                    db, media, lambda media=media, tvdb_ep=tvdb_ep: apply_tvdb_episode_data(media, tvdb_ep)
+                )
         return media
 
     episode_ids: list[int] = []
