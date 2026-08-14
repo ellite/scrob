@@ -659,7 +659,9 @@ async def _next_up_remaining_stats(
     if not shows_by_id:
         return {}
 
-    watched_per: dict[tuple[int, int], int] = {}
+    # Grouped by show_id up front so the per-show lookup below is a single dict
+    # access instead of a full-dict filter repeated once per show.
+    watched_per_by_show: dict[int, dict[int, int]] = {}
     non_rewatch_ids = [sid for sid in shows_by_id if sid not in active_rewatch_by_show]
     if non_rewatch_ids:
         watch_a = aliased(WatchEvent)
@@ -681,7 +683,7 @@ async def _next_up_remaining_stats(
             .group_by(Media.show_id, Media.season_number)
         )
         for sid, sn, cnt in rows.all():
-            watched_per[(sid, sn)] = cnt
+            watched_per_by_show.setdefault(sid, {})[sn] = cnt
 
     rewatch_show_ids = [sid for sid in shows_by_id if sid in active_rewatch_by_show]
     if rewatch_show_ids:
@@ -699,7 +701,7 @@ async def _next_up_remaining_stats(
             .group_by(Media.show_id, Media.season_number)
         )
         for sid, sn, cnt in rows.all():
-            watched_per[(sid, sn)] = cnt
+            watched_per_by_show.setdefault(sid, {})[sn] = cnt
 
     # Average effective runtime per show — same coalesce as profile.py's watch
     # time stats: episodes often only carry runtime in tmdb_data['runtime'].
@@ -727,7 +729,7 @@ async def _next_up_remaining_stats(
         if not avg_runtime:
             run_times = (show.tmdb_data or {}).get("episode_run_time") or []
             avg_runtime = run_times[0] if run_times else None
-        per_season = {sn: cnt for (s, sn), cnt in watched_per.items() if s == sid}
+        per_season = watched_per_by_show.get(sid, {})
         show_stats = _remaining_episode_stats(season_counts, per_season, avg_runtime)
         if show_stats:
             stats[sid] = show_stats
