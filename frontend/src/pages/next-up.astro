@@ -66,6 +66,21 @@ Astro.response.headers.set("Cache-Control", "no-store");
 
   let showingHidden = false;
 
+  // Local copy of lib/media-format's formatEpisodesLeft — this define:vars
+  // script can't import from lib/ (same reason tmdbImageUrl is re-implemented
+  // above).
+  function episodesLeftLabel(item) {
+    const n = item.episodes_left;
+    if (n == null || n <= 0) return null;
+    let label = `${n} episode${n === 1 ? '' : 's'} left`;
+    const mins = item.remaining_runtime;
+    if (mins && mins > 0) {
+      const h = Math.floor(mins / 60), m = mins % 60;
+      label += ` · ~${h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`}`;
+    }
+    return label;
+  }
+
   function buildCard(item) {
     const isHidden = item.next_up_hidden === true;
     const href = !item.tvdb_sourced && item.show_tmdb_id && item.season_number != null && item.episode_number != null
@@ -112,6 +127,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
             ${item.show_title ? `<h3 class="text-xs font-medium text-zinc-400 truncate mb-0.5">${esc(item.show_title)}</h3>` : ''}
             <h3 class="text-sm font-bold text-zinc-100 group-hover:text-blue-400 truncate transition-colors leading-tight mb-1">${esc(item.title)}</h3>
             ${sxe ? `<p class="text-[11px] font-bold text-blue-400 tracking-wide">${esc(sxe)}</p>` : ''}
+            ${episodesLeftLabel(item) ? `<p class="text-[11px] text-zinc-500 font-medium mt-0.5">${esc(episodesLeftLabel(item))}</p>` : ''}
           </a>
         </div>
       </div>

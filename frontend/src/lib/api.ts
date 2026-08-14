@@ -570,6 +570,10 @@ export interface MediaItem {
   // raw numbers, not TMDB's, regardless of whether show_tmdb_id is set.
   tvdb_sourced?: boolean;
   next_up_hidden?: boolean;
+  // Next Up remaining-content estimate (#170) — released unwatched episodes
+  // for the show and their estimated total runtime in minutes.
+  episodes_left?: number | null;
+  remaining_runtime?: number | null;
   known_for_department?: string | null;
   in_library?: boolean;
   playable?: boolean;

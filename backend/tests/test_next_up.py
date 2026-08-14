@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date
+from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _remaining_episode_stats
 
 
 class ComputeNextEpisodeTests(unittest.TestCase):
@@ -131,3 +131,45 @@ class HasConfirmedAirDateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RemainingEpisodeStatsTests(unittest.TestCase):
+    """Feature #170: episodes-left / remaining-runtime estimate on Next Up."""
+
+    def test_basic_remaining_count_and_runtime(self):
+        stats = _remaining_episode_stats(
+            {1: 12, 2: 10}, {1: 12, 2: 4}, avg_runtime=30.0
+        )
+        self.assertEqual(stats["episodes_left"], 6)
+        self.assertEqual(stats["remaining_runtime"], 180)
+
+    def test_specials_are_excluded(self):
+        stats = _remaining_episode_stats(
+            {0: 5, 1: 10}, {0: 5, 1: 3}, avg_runtime=None
+        )
+        self.assertEqual(stats["episodes_left"], 7)
+        self.assertIsNone(stats["remaining_runtime"])
+
+    def test_watched_capped_per_season(self):
+        # Provider numbering mismatch: more local watched rows than TMDB says
+        # the season has must not push the remainder of other seasons down.
+        stats = _remaining_episode_stats(
+            {1: 8, 2: 8}, {1: 12, 2: 0}, avg_runtime=45.0
+        )
+        self.assertEqual(stats["episodes_left"], 8)
+
+    def test_clamped_to_one_when_metadata_is_stale(self):
+        # The caller only asks about shows with an aired unwatched episode, so
+        # stale TMDB counts saying "all watched" still yield 1, never 0.
+        stats = _remaining_episode_stats({1: 10}, {1: 10}, avg_runtime=40.0)
+        self.assertEqual(stats["episodes_left"], 1)
+        self.assertEqual(stats["remaining_runtime"], 40)
+
+    def test_no_aired_episodes_returns_none(self):
+        self.assertIsNone(_remaining_episode_stats({}, {}, avg_runtime=30.0))
+        self.assertIsNone(_remaining_episode_stats({0: 3}, {}, avg_runtime=30.0))
+
+    def test_fractional_average_runtime_rounds(self):
+        stats = _remaining_episode_stats({1: 4}, {1: 1}, avg_runtime=42.5)
+        self.assertEqual(stats["episodes_left"], 3)
+        self.assertEqual(stats["remaining_runtime"], 128)

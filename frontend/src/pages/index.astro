@@ -5,6 +5,7 @@ import MediaCard from "../components/MediaCard.astro";
 import EpisodeCard from "../components/EpisodeCard.astro";
 import ContinueWatchingCard from "../components/ContinueWatchingCard.astro";
 import { api, type ContinueWatchingItem, type MediaItem, tmdbImageUrl } from "../lib/api";
+import { formatEpisodesLeft } from "../lib/media-format";
 
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -154,6 +155,11 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
               </h3>
               {hero.show_title && (
                 <p class="text-sm sm:text-base text-zinc-300 font-medium truncate">{hero.title}</p>
+              )}
+              {formatEpisodesLeft(hero.episodes_left, hero.remaining_runtime) && (
+                <p class="text-xs sm:text-sm text-zinc-400 font-medium mt-1.5 drop-shadow">
+                  {formatEpisodesLeft(hero.episodes_left, hero.remaining_runtime)}
+                </p>
               )}
             </a>
           </div>
