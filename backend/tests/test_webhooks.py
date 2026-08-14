@@ -158,6 +158,63 @@ class ParseJellyfinPayloadNestedEpisodeSeriesNameTests(unittest.TestCase):
         self.assertIsNone(data["series_name"])
 
 
+class ParseJellyfinPayloadPlayedToCompletionTests(unittest.TestCase):
+    """Regression tests for #206: on auto-play, Emby resets Session.PlayState
+    to the next episode before firing the "playback.stop" event for the one
+    that just finished, so PositionTicks/RunTimeTicks there read 0 - a
+    genuinely completed episode looked like a <5% no-op stop and was silently
+    dropped. PlaybackInfo carries this event's own authoritative position and
+    PlayedToCompletion flag; the flat plugin format exposes the same flag as
+    its own top-level property."""
+
+    def test_nested_format_falls_back_to_playback_info_position(self):
+        payload = {
+            "Event": "playback.stop",
+            "Item": {"Id": "ep1", "Name": "Finale", "Type": "Episode", "RunTimeTicks": 10_000_000},
+            # Session.PlayState already reset for the auto-playing next episode.
+            "Session": {"Id": "sess1", "PlayState": {"PositionTicks": 0}},
+            "PlaybackInfo": {"PositionTicks": 10_000_000, "PlayedToCompletion": True},
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertEqual(data["progress_percent"], 1.0)
+        self.assertTrue(data["played_to_completion"])
+
+    def test_nested_format_prefers_session_position_when_present(self):
+        # A normal (non-auto-play) stop still has a real Session position -
+        # PlaybackInfo must not override a legitimate in-progress stop.
+        payload = {
+            "Event": "playback.stop",
+            "Item": {"Id": "ep1", "Name": "Ep", "Type": "Episode", "RunTimeTicks": 10_000_000},
+            "Session": {"Id": "sess1", "PlayState": {"PositionTicks": 3_000_000}},
+            "PlaybackInfo": {"PositionTicks": 10_000_000, "PlayedToCompletion": True},
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertEqual(data["progress_percent"], 0.3)
+
+    def test_nested_format_defaults_played_to_completion_false(self):
+        payload = {
+            "Event": "playback.stop",
+            "Item": {"Id": "ep1", "Name": "Ep", "Type": "Episode"},
+            "Session": {"Id": "sess1", "PlayState": {}},
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertFalse(data["played_to_completion"])
+
+    def test_flat_format_reads_played_to_completion(self):
+        payload = {
+            "NotificationType": "PlaybackStop",
+            "ItemType": "Episode",
+            "PlayedToCompletion": True,
+        }
+        data = parse_jellyfin_payload(payload)
+        self.assertTrue(data["played_to_completion"])
+
+    def test_flat_format_defaults_played_to_completion_false(self):
+        payload = {"NotificationType": "PlaybackStop", "ItemType": "Episode"}
+        data = parse_jellyfin_payload(payload)
+        self.assertFalse(data["played_to_completion"])
+
+
 class ParseJellyfinFlatPayloadSeasonZeroTests(unittest.TestCase):
     """Regression test for #132: a Season 0 (specials) episode has
     SeasonNumber: 0 in the flat webhook payload, which a falsy check like
