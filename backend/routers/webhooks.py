@@ -480,31 +480,41 @@ async def _write_watch_event(
         await _update_playback_progress(db, user_id, media_id, progress_percent, progress_seconds)
 
 
-async def _handle_unwatch_toggle(db: AsyncSession, user_id: int, media: Media) -> None:
+async def _handle_unwatch_toggle(db: AsyncSession, user_id: int, media: Media) -> bool:
     """Server-reported "mark unwatched" for one item (currently only Jellyfin's
     webhook plugin reports this - see the UserDataSaved/TogglePlayed handling
     below). While a rewatch is active for the media's show, this only undoes
     that episode's progress on the current cycle - real watch history is left
     untouched either way. Without an active rewatch, it removes all watch
     history for the item, matching this connection's normal bidirectional
-    watched-status sync."""
+    watched-status sync.
+
+    Returns whether any row was actually deleted - callers use this to skip
+    re-pushing the "unwatched" state out when this was a no-op (already
+    unwatched). Without it, two two-way-sync connections can ping-pong: A's
+    webhook pushes unwatched to B (excluding A), B's own webhook fires back
+    reporting the same already-applied unwatch, and - since that inbound
+    connection is B, not A - a naive re-push would go back out to A too,
+    forever (see #190).
+    """
     active_rewatch = None
     if media.media_type == MediaType.episode and media.show_id:
         active_rewatch = await get_active_rewatch(db, user_id, media.show_id)
     if active_rewatch:
-        await db.execute(
+        result = await db.execute(
             delete(RewatchProgress).where(
                 RewatchProgress.rewatch_id == active_rewatch.id,
                 RewatchProgress.media_id == media.id,
             )
         )
     else:
-        await db.execute(
+        result = await db.execute(
             delete(WatchEvent).where(
                 WatchEvent.user_id == user_id,
                 WatchEvent.media_id == media.id,
             )
         )
+    return bool(result.rowcount)
 
 
 # ── Jellyfin ───────────────────────────────────────────────────────────────────
@@ -979,18 +989,25 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                     await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
                     await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
             elif played is False:
-                for m in media_list:
-                    await _handle_unwatch_toggle(db, user.id, m)
+                changed_ids = [
+                    m.id for m in media_list
+                    if await _handle_unwatch_toggle(db, user.id, m)
+                ]
                 await db.commit()
-                from routers.history import _push_watch_state
-                # exclude_connection_id: this unwatch was itself reported BY this
-                # connection - pushing it right back to the same server is what
-                # causes the infinite webhook loop in #190. Still propagates to
-                # any OTHER connection with push_watched enabled.
-                await _push_watch_state(
-                    db, user.id, [m.id for m in media_list], watched=False,
-                    exclude_connection_id=conn.id if conn else None,
-                )
+                if changed_ids:
+                    from routers.history import _push_watch_state
+                    # exclude_connection_id: this unwatch was itself reported BY this
+                    # connection - pushing it right back to the same server is what
+                    # causes the infinite webhook loop in #190. Still propagates to
+                    # any OTHER connection with push_watched enabled. changed_ids
+                    # (rather than every m in media_list) additionally skips the
+                    # push entirely when nothing was actually deleted - closing the
+                    # multi-connection ping-pong case exclude_connection_id alone
+                    # doesn't cover (see _handle_unwatch_toggle's docstring).
+                    await _push_watch_state(
+                        db, user.id, changed_ids, watched=False,
+                        exclude_connection_id=conn.id if conn else None,
+                    )
 
     return {"status": "ok", "event": notification_type, "title": data["title"]}
 
@@ -1274,17 +1291,23 @@ async def _handle_jellyfin_scrobble_webhook(
                     await _write_watch_event(db, user.id, m.id, 1.0, data["progress_seconds"], True)
                 await db.commit()
             elif played is False:
-                for m in media_list:
-                    await _handle_unwatch_toggle(db, user.id, m)
+                changed_ids = [
+                    m.id for m in media_list
+                    if await _handle_unwatch_toggle(db, user.id, m)
+                ]
                 await db.commit()
-                from routers.history import _push_watch_state
-                # Unlike _handle_jellyfin_webhook, there's no exclude_connection_id
-                # here - a ScrobbleConnection has no url of its own, so it can't be
-                # matched against push-enabled MediaServerConnections to identify
-                # "the server this came from" (see #190). This only becomes a loop
-                # if the user also has a separate full MediaServerConnection with
-                # push_watched enabled pointing at that same physical server.
-                await _push_watch_state(db, user.id, [m.id for m in media_list], watched=False)
+                if changed_ids:
+                    from routers.history import _push_watch_state
+                    # Unlike _handle_jellyfin_webhook, there's no exclude_connection_id
+                    # here - a ScrobbleConnection has no url of its own, so it can't be
+                    # matched against push-enabled MediaServerConnections to identify
+                    # "the server this came from" (see #190). This only becomes a loop
+                    # if the user also has a separate full MediaServerConnection with
+                    # push_watched enabled pointing at that same physical server.
+                    # changed_ids still helps here too: skips the push when this
+                    # delivery was a no-op (already unwatched), same reasoning as
+                    # _handle_jellyfin_webhook.
+                    await _push_watch_state(db, user.id, changed_ids, watched=False)
 
     return {"status": "ok", "event": notification_type, "title": data["title"]}
 
