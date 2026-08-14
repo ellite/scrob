@@ -329,6 +329,68 @@ class TraktClientTests(unittest.IsolatedAsyncioTestCase):
             [{"ids": {"tmdb": 3572}}],
         )
 
+    async def test_get_list_items_fetches_every_page(self) -> None:
+        # Regression test for #193: a single unpaginated GET silently
+        # truncated large personal lists to ~100 items. get_list_items must
+        # walk every page via _get_all_pages, same as history/ratings already do.
+        requested_pages: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/users/me/lists/my-list/items")
+            self.assertEqual(request.url.params["limit"], "250")
+            page = int(request.url.params["page"])
+            requested_pages.append(page)
+            page_items = {
+                1: [{"type": "movie", "movie": {"ids": {"tmdb": i}}} for i in range(1, 251)],
+                2: [{"type": "movie", "movie": {"ids": {"tmdb": i}}} for i in range(251, 351)],
+            }[page]
+            return httpx.Response(200, json=page_items, headers={"X-Pagination-Page-Count": "2"})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            trakt.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            items = await trakt.get_list_items("client-id", "access-token", "my-list")
+
+        self.assertEqual(requested_pages, [1, 2])
+        self.assertEqual(len(items), 350)
+        self.assertEqual(items[-1]["movie"]["ids"]["tmdb"], 350)
+
+    async def test_get_watchlist_fetches_every_page_for_both_kinds(self) -> None:
+        # Same truncation risk as get_list_items (#193), across both the
+        # movies and shows watchlist fetches.
+        requested: list[tuple[str, int]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            kind = "movies" if "movies" in request.url.path else "shows"
+            page = int(request.url.params["page"])
+            requested.append((kind, page))
+            page_items = {
+                ("movies", 1): [{"type": "movie", "movie": {"ids": {"tmdb": i}}} for i in range(1, 251)],
+                ("movies", 2): [{"type": "movie", "movie": {"ids": {"tmdb": i}}} for i in range(251, 261)],
+                ("shows", 1): [{"type": "show", "show": {"ids": {"tmdb": i}}} for i in range(1, 5)],
+            }[(kind, page)]
+            page_count = "2" if kind == "movies" else "1"
+            return httpx.Response(200, json=page_items, headers={"X-Pagination-Page-Count": page_count})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            trakt.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            items = await trakt.get_watchlist("client-id", "access-token")
+
+        self.assertIn(("movies", 1), requested)
+        self.assertIn(("movies", 2), requested)
+        self.assertIn(("shows", 1), requested)
+        movie_items = [i for i in items if i["type"] == "movie"]
+        show_items = [i for i in items if i["type"] == "show"]
+        self.assertEqual(len(movie_items), 260)
+        self.assertEqual(len(show_items), 4)
+
 
 class TraktSeasonListTests(unittest.IsolatedAsyncioTestCase):
     async def test_add_and_remove_season_from_list_use_season_tmdb_id(self) -> None:
