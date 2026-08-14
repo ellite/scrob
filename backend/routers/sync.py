@@ -31,6 +31,7 @@ from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media
 from core.image_cache import pre_cache_all_collected_bg
 from core.translations import get_user_metadata_language
 from core.rewatch import record_rewatch_progress, get_active_rewatches_for_shows
+from core.watchlist_reconcile import compute_new_baseline, media_key, plan_watchlist_reconcile
 from models.rewatch import ShowRewatch, RewatchProgress
 
 from dependencies import get_current_user, get_current_user_or_api_key
@@ -69,6 +70,11 @@ router = APIRouter()
 # Global semaphore — at most one sync running at a time across all users
 _sync_semaphore = asyncio.Semaphore(1)
 _stremio_push_locks: dict[int, asyncio.Lock] = {}
+# One reconcile at a time per Plex connection - the pull job, the scheduled
+# push and manual pushes all run independently and share no other lock.
+_plex_watchlist_locks: dict[int, asyncio.Lock] = {}
+
+_PLEX_WATCHLIST_SLUG = "__plex_watchlist__"
 
 BATCH_SIZE = 500
 TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
@@ -2877,6 +2883,291 @@ async def run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit:
         await _run_plex_sync(user_id, job_id, movie_limit, show_limit, connection_id)
 
 
+def _plex_watchlist_lock(connection_id: int) -> asyncio.Lock:
+    return _plex_watchlist_locks.setdefault(connection_id, asyncio.Lock())
+
+
+def _plex_watchlist_remote_map(remote_items: list[dict]) -> dict[str, dict]:
+    """Typed key -> raw watchlist item for every remote entry with a TMDB
+    guid. Entries without one can't match anything local, so they stay out
+    of the reconcile entirely."""
+    remote_by_key: dict[str, dict] = {}
+    for item in remote_items:
+        kind = item.get("type")
+        if kind not in ("movie", "show"):
+            continue
+        tmdb_id: int | None = None
+        for guid in item.get("Guid") or []:
+            gid = guid.get("id", "")
+            if gid.startswith("tmdb://"):
+                try:
+                    tmdb_id = int(gid[7:])
+                except ValueError:
+                    pass
+        if tmdb_id is None:
+            continue
+        remote_by_key.setdefault(media_key(kind, tmdb_id), item)
+    return remote_by_key
+
+
+async def _load_local_watchlist_state(db: AsyncSession, user_id: int):
+    """The managed list row (or None) plus typed key -> (media_id, title)
+    for its TMDB-mapped movies and shows."""
+    from models.lists import List as ListModel, ListItem
+
+    wl_result = await db.execute(
+        select(ListModel).where(
+            ListModel.user_id == user_id,
+            ListModel.trakt_slug == _PLEX_WATCHLIST_SLUG,
+        )
+    )
+    watchlist = wl_result.scalar_one_or_none()
+    local_by_key: dict[str, tuple[int, str]] = {}
+    if watchlist:
+        rows = await db.execute(
+            select(Media.id, Media.media_type, Media.tmdb_id, Media.title)
+            .join(ListItem, ListItem.media_id == Media.id)
+            .where(ListItem.list_id == watchlist.id)
+        )
+        for media_id, media_type, tmdb_id, title in rows:
+            if tmdb_id is None:
+                continue
+            if media_type == MediaType.movie:
+                kind = "movie"
+            elif media_type == MediaType.series:
+                kind = "show"
+            else:
+                continue
+            local_by_key[media_key(kind, tmdb_id)] = (media_id, title)
+    return watchlist, local_by_key
+
+
+async def _apply_local_watchlist_changes(
+    db: AsyncSession,
+    user_id: int,
+    watchlist,
+    local_by_key: dict[str, tuple[int, str]],
+    plan,
+    remote_by_key: dict[str, dict],
+    tmdb_api_key: str | None,
+) -> set[str]:
+    """Apply the plan's local side. Returns the keys actually present
+    afterwards: an import that failed stays out, so the baseline never
+    records state that doesn't exist."""
+    from models.lists import List as ListModel, ListItem
+
+    applied = set(local_by_key)
+
+    if plan.add_local and not tmdb_api_key:
+        print("  Warning: skipping Plex watchlist imports - no TMDB API key configured")
+    elif plan.add_local:
+        if not watchlist:
+            watchlist = ListModel(user_id=user_id, name="Plex - Watchlist", trakt_slug=_PLEX_WATCHLIST_SLUG)
+            db.add(watchlist)
+            await db.flush()
+        for key in sorted(plan.add_local):
+            item = remote_by_key.get(key, {})
+            kind, _, raw_id = key.partition(":")
+            tmdb_id_item = int(raw_id)
+            try:
+                if kind == "movie":
+                    media_result = await db.execute(
+                        select(Media)
+                        .where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.movie)
+                        .order_by(Media.id)
+                    )
+                    media = media_result.scalars().first()
+                    if not media:
+                        d = await tmdb.get_movie(tmdb_id_item, api_key=tmdb_api_key)
+                        media, _created = await create_media_safely(
+                            db, tmdb_id_item, MediaType.movie,
+                            title=d.get("title") or item.get("title", ""),
+                            poster_path=tmdb.poster_url(d.get("poster_path")),
+                            backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
+                            release_date=d.get("release_date"),
+                            tmdb_rating=d.get("vote_average"),
+                            overview=d.get("overview"),
+                            adult=d.get("adult", False),
+                        )
+                else:
+                    media_result = await db.execute(
+                        select(Media)
+                        .where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
+                        .order_by(Media.id)
+                    )
+                    media = media_result.scalars().first()
+                    if not media:
+                        d = await tmdb.get_show(tmdb_id_item, api_key=tmdb_api_key)
+                        media, _created = await create_media_safely(
+                            db, tmdb_id_item, MediaType.series,
+                            title=d.get("name") or item.get("title", ""),
+                            poster_path=tmdb.poster_url(d.get("poster_path")),
+                            backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
+                            release_date=d.get("first_air_date"),
+                            tmdb_rating=d.get("vote_average"),
+                            overview=d.get("overview"),
+                            adult=d.get("adult", False),
+                        )
+
+                # Idempotent against a concurrent add from the lists UI, which
+                # doesn't hold this connection's reconcile lock. uq_list_item was
+                # replaced by the uq_list_item_season expression index (#142) -
+                # ON CONFLICT ON CONSTRAINT needs a real constraint, not a bare
+                # index, so the conflict target is given as the matching
+                # expression list instead (verified against the actual index).
+                await db.execute(
+                    insert(ListItem)
+                    .values(list_id=watchlist.id, media_id=media.id)
+                    .on_conflict_do_nothing(
+                        index_elements=[ListItem.list_id, ListItem.media_id, func.coalesce(ListItem.season_number, -1)]
+                    )
+                )
+                applied.add(key)
+            except Exception as exc:
+                print(f"  Warning: failed to import Plex watchlist item {key}: {exc}")
+
+    if plan.remove_local and watchlist:
+        remove_ids = [local_by_key[key][0] for key in plan.remove_local if key in local_by_key]
+        if remove_ids:
+            await db.execute(
+                ListItem.__table__.delete().where(
+                    ListItem.list_id == watchlist.id,
+                    ListItem.media_id.in_(remove_ids),
+                )
+            )
+        applied -= set(plan.remove_local)
+
+    return applied
+
+
+async def _apply_remote_watchlist_changes(
+    conn,
+    plan,
+    local_by_key: dict[str, tuple[int, str]],
+    remote_by_key: dict[str, dict],
+) -> tuple[set[str], set[str]]:
+    """Push the plan's remote side to Plex. Failed keys are reported back so
+    the baseline keeps them pending and the next reconcile retries them."""
+    failed_add: set[str] = set()
+    failed_remove: set[str] = set()
+
+    for key in sorted(plan.push_add):
+        kind, _, raw_id = key.partition(":")
+        _, title = local_by_key.get(key, (None, None))
+        plex_type = "movie" if kind == "movie" else "show"
+        try:
+            rating_key = await plex.resolve_tmdb_ratingkey(conn.token, int(raw_id), plex_type, title)
+            if not rating_key:
+                logger.warning(
+                    "Could not resolve Plex ratingKey for %s (connection %s); will retry on the next reconcile",
+                    key, conn.id,
+                )
+                failed_add.add(key)
+                continue
+            if not await plex.add_to_watchlist(conn.token, rating_key):
+                failed_add.add(key)
+        except Exception as exc:
+            logger.warning("Plex watchlist add failed for %s (connection %s): %s", key, conn.id, exc)
+            failed_add.add(key)
+
+    for key in sorted(plan.push_remove):
+        # push_remove keys are on the remote by definition, so the fetched
+        # item usually carries its own ratingKey; resolving is the fallback.
+        item = remote_by_key.get(key) or {}
+        rating_key = item.get("ratingKey")
+        try:
+            if not rating_key:
+                kind, _, raw_id = key.partition(":")
+                plex_type = "movie" if kind == "movie" else "show"
+                rating_key = await plex.resolve_tmdb_ratingkey(conn.token, int(raw_id), plex_type, item.get("title"))
+            if not rating_key or not await plex.remove_from_watchlist(conn.token, rating_key):
+                failed_remove.add(key)
+        except Exception as exc:
+            logger.warning("Plex watchlist remove failed for %s (connection %s): %s", key, conn.id, exc)
+            failed_remove.add(key)
+
+    return failed_add, failed_remove
+
+
+async def _reconcile_plex_watchlist(db: AsyncSession, user_id: int, conn, tmdb_api_key: str | None) -> None:
+    """Reconcile the Plex account watchlist with the managed Scrob list in
+    both directions, against this connection's last-synced baseline (see
+    core/watchlist_reconcile.py for the semantics).
+
+    The pull job and the full push job both call this, and it honors both
+    direction flags itself, so it doesn't matter which job runs first.
+    Never raises: failures log a warning and leave the baseline alone so
+    the next run retries."""
+    pull_enabled = bool(conn.plex_sync_watchlist)
+    push_enabled = bool(conn.plex_push_watchlist)
+    if not (pull_enabled or push_enabled):
+        return
+
+    async with _plex_watchlist_lock(conn.id):
+        try:
+            # A concurrent job may have reconciled while we waited on the
+            # lock, and conn was loaded well before it. Re-read the baseline.
+            baseline_result = await db.execute(
+                select(MediaServerConnection.plex_watchlist_synced_keys).where(
+                    MediaServerConnection.id == conn.id
+                )
+            )
+            baseline = baseline_result.scalar_one_or_none()
+
+            print(f"  Fetching Plex watchlist...")
+            remote_items = await plex.get_watchlist(conn.token)
+            print(f"  {len(remote_items)} items in Plex watchlist")
+            remote_by_key = _plex_watchlist_remote_map(remote_items)
+
+            watchlist, local_by_key = await _load_local_watchlist_state(db, user_id)
+            if watchlist is None and baseline is not None:
+                # The managed list was deleted in the UI. Without this reset,
+                # every baseline key would read as a local deletion and wipe
+                # the user's real Plex watchlist. Start over instead.
+                baseline = None
+
+            plan = plan_watchlist_reconcile(
+                local_by_key.keys(),
+                remote_by_key.keys(),
+                baseline,
+                pull_enabled=pull_enabled,
+                push_enabled=push_enabled,
+            )
+            if plan.suppressed:
+                logger.warning(
+                    "Plex watchlist reconcile suppressed for connection %s: %s. Not acting on a fetch "
+                    "that may be truncated. If the removals are real, remove the items from the list "
+                    "in Scrob, or toggle watchlist sync off and on to rebuild from a fresh baseline.",
+                    conn.id, plan.suppressed_reason,
+                )
+                return
+
+            applied_local = await _apply_local_watchlist_changes(
+                db, user_id, watchlist, local_by_key, plan, remote_by_key, tmdb_api_key
+            )
+            failed_add, failed_remove = await _apply_remote_watchlist_changes(
+                conn, plan, local_by_key, remote_by_key
+            )
+
+            new_baseline = compute_new_baseline(
+                applied_local, failed_push_add=failed_add, failed_push_remove=failed_remove
+            )
+            await db.execute(
+                update(MediaServerConnection)
+                .where(MediaServerConnection.id == conn.id)
+                .values(plex_watchlist_synced_keys=new_baseline)
+            )
+            await db.commit()
+            print(
+                f"  Plex watchlist reconcile complete: "
+                f"+{len(plan.add_local)}/-{len(plan.remove_local)} local, "
+                f"+{len(plan.push_add) - len(failed_add)}/-{len(plan.push_remove) - len(failed_remove)} on Plex"
+            )
+        except Exception as exc:
+            print(f"  Warning: Plex watchlist reconcile failed: {exc}")
+            await db.rollback()
+
+
 async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
     print(f"Starting Plex sync for user {user_id}, job {job_id}")
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -3166,126 +3457,9 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         )
                         all_warnings.extend(w)
 
-            # ── Plex watchlist → Scrob list ──────────────────────────────────
+            # ── Plex watchlist ↔ Scrob list ──────────────────────────────────
             if conn.plex_sync_watchlist:
-                from models.lists import List as ListModel, ListItem
-                PLEX_WATCHLIST_SLUG = "__plex_watchlist__"
-                print(f"  Fetching Plex watchlist...")
-                try:
-                    wl_items = await plex.get_watchlist(p_token)
-                    print(f"  {len(wl_items)} items in Plex watchlist")
-
-                    wl_result = await db.execute(
-                        select(ListModel).where(
-                            ListModel.user_id == user_id,
-                            ListModel.trakt_slug == PLEX_WATCHLIST_SLUG,
-                        )
-                    )
-                    watchlist = wl_result.scalar_one_or_none()
-                    if not watchlist:
-                        watchlist = ListModel(user_id=user_id, name="Plex - Watchlist", trakt_slug=PLEX_WATCHLIST_SLUG)
-                        db.add(watchlist)
-                        await db.flush()
-
-                    existing_result = await db.execute(
-                        select(ListItem.media_id).where(ListItem.list_id == watchlist.id)
-                    )
-                    wl_existing_ids: set[int] = {row[0] for row in existing_result}
-
-                    # Build set of TMDB IDs currently on Plex watchlist
-                    plex_tmdb_ids: set[int] = set()
-                    for item in wl_items:
-                        for guid in item.get("Guid", []):
-                            gid = guid.get("id", "")
-                            if gid.startswith("tmdb://"):
-                                try:
-                                    plex_tmdb_ids.add(int(gid[7:]))
-                                except ValueError:
-                                    pass
-
-                    # Remove items no longer on Plex watchlist
-                    if wl_existing_ids:
-                        stale_result = await db.execute(
-                            select(Media).where(
-                                Media.id.in_(wl_existing_ids),
-                                Media.tmdb_id.notin_(plex_tmdb_ids) if plex_tmdb_ids else Media.tmdb_id.isnot(None),
-                            )
-                        )
-                        for stale in stale_result.scalars():
-                            await db.execute(
-                                ListItem.__table__.delete().where(
-                                    ListItem.list_id == watchlist.id,
-                                    ListItem.media_id == stale.id,
-                                )
-                            )
-                            wl_existing_ids.discard(stale.id)
-
-                    # Add new items
-                    for item in wl_items:
-                        item_type = item.get("type")  # "movie" or "show"
-                        tmdb_id_item: int | None = None
-                        for guid in item.get("Guid", []):
-                            gid = guid.get("id", "")
-                            if gid.startswith("tmdb://"):
-                                try:
-                                    tmdb_id_item = int(gid[7:])
-                                except ValueError:
-                                    pass
-                        if not tmdb_id_item:
-                            continue
-                        try:
-                            if item_type == "movie":
-                                media_result = await db.execute(
-                                    select(Media)
-                                    .where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.movie)
-                                    .order_by(Media.id)
-                                )
-                                media = media_result.scalars().first()
-                                if not media:
-                                    d = await tmdb.get_movie(tmdb_id_item, api_key=tmdb_api_key)
-                                    media, _created = await create_media_safely(
-                                        db, tmdb_id_item, MediaType.movie,
-                                        title=d.get("title") or item.get("title", ""),
-                                        poster_path=tmdb.poster_url(d.get("poster_path")),
-                                        backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-                                        release_date=d.get("release_date"),
-                                        tmdb_rating=d.get("vote_average"),
-                                        overview=d.get("overview"),
-                                        adult=d.get("adult", False),
-                                    )
-                            elif item_type == "show":
-                                media_result = await db.execute(
-                                    select(Media)
-                                    .where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
-                                    .order_by(Media.id)
-                                )
-                                media = media_result.scalars().first()
-                                if not media:
-                                    d = await tmdb.get_show(tmdb_id_item, api_key=tmdb_api_key)
-                                    media, _created = await create_media_safely(
-                                        db, tmdb_id_item, MediaType.series,
-                                        title=d.get("name") or item.get("title", ""),
-                                        poster_path=tmdb.poster_url(d.get("poster_path")),
-                                        backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-                                        release_date=d.get("first_air_date"),
-                                        tmdb_rating=d.get("vote_average"),
-                                        overview=d.get("overview"),
-                                        adult=d.get("adult", False),
-                                    )
-                            else:
-                                continue
-
-                            if media and media.id not in wl_existing_ids:
-                                db.add(ListItem(list_id=watchlist.id, media_id=media.id))
-                                wl_existing_ids.add(media.id)
-                        except Exception as exc:
-                            print(f"  Warning: failed to sync Plex watchlist item tmdb={tmdb_id_item}: {exc}")
-
-                    await db.commit()
-                    print(f"  Plex watchlist sync complete.")
-                except Exception as exc:
-                    print(f"  Warning: Plex watchlist sync failed: {exc}")
-                    await db.rollback()
+                await _reconcile_plex_watchlist(db, user_id, conn, tmdb_api_key)
 
             backfilled = await _backfill_plex_languages(user_id, conn.id, p_url, p_token, job_id)
             if backfilled:
@@ -3313,6 +3487,9 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             print(f"Plex sync job {job_id} completed. Stats: {stats}")
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
+            # The watchlist reconcile above is the one exception: it honors this
+            # connection's own plex_push_watchlist flag in both jobs, so pull/push
+            # scheduling order can't resurrect items removed on the other side.
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
@@ -5206,66 +5383,13 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             conn_source = CollectionSource(conn.type)
 
             if conn.type == "plex" and conn.plex_push_watchlist:
-                from models.lists import List as ListModel, ListItem
-                PLEX_WATCHLIST_SLUG = "__plex_watchlist__"
-                try:
-                    watchlist_result = await db.execute(
-                        select(ListModel).where(
-                            ListModel.user_id == user_id,
-                            ListModel.trakt_slug == PLEX_WATCHLIST_SLUG,
-                        )
-                    )
-                    watchlist = watchlist_result.scalar_one_or_none()
-                    local_watchlist_items: list[Media] = []
-                    if watchlist:
-                        local_items_result = await db.execute(
-                            select(Media)
-                            .join(ListItem, ListItem.media_id == Media.id)
-                            .where(
-                                ListItem.list_id == watchlist.id,
-                                Media.tmdb_id.isnot(None),
-                                Media.media_type.in_([MediaType.movie, MediaType.series]),
-                            )
-                        )
-                        local_watchlist_items = list(local_items_result.scalars().all())
-
-                    watchlist_pushed = 0
-                    if local_watchlist_items:
-                        # Additive only: a full push only knows the current local
-                        # watchlist list, not what changed since last time, so it
-                        # must never remove items from the user's real Plex
-                        # watchlist — only the explicit add/remove action on the
-                        # local list (_push_list_item_to_plex_watchlist) does that.
-                        remote_items = await plex.get_watchlist(conn.token)
-                        remote_tmdb_ids: set[int] = set()
-                        for item in remote_items:
-                            for guid in item.get("Guid", []) or []:
-                                gid = guid.get("id", "")
-                                if gid.startswith("tmdb://"):
-                                    try:
-                                        remote_tmdb_ids.add(int(gid[7:]))
-                                    except ValueError:
-                                        pass
-                        for media in local_watchlist_items:
-                            if media.tmdb_id in remote_tmdb_ids:
-                                continue
-                            plex_type = "movie" if media.media_type == MediaType.movie else "show"
-                            rating_key = await plex.resolve_tmdb_ratingkey(conn.token, media.tmdb_id, plex_type, media.title)
-                            if not rating_key:
-                                logger.warning(
-                                    "Full push: could not resolve Plex ratingKey for tmdb_id=%s (%s), connection %s",
-                                    media.tmdb_id, plex_type, connection_id,
-                                )
-                                continue
-                            if await plex.add_to_watchlist(conn.token, rating_key):
-                                watchlist_pushed += 1
-                    logger.info(
-                        "Full push for connection %s: pushed %s item(s) to Plex watchlist",
-                        connection_id,
-                        watchlist_pushed,
-                    )
-                except Exception as exc:
-                    logger.warning("Full push: Plex watchlist push failed for connection %s: %s", connection_id, exc)
+                # The reconcile can import remote-only items when the pull
+                # direction is also enabled, so it needs a TMDB key here too.
+                wl_settings_result = await db.execute(
+                    select(UserSettings).where(UserSettings.user_id == user_id)
+                )
+                wl_tmdb_key = await _get_effective_tmdb_key(db, wl_settings_result.scalar_one_or_none())
+                await _reconcile_plex_watchlist(db, user_id, conn, wl_tmdb_key)
 
             watched_ids: set[int] = set()
             ratings_map: RatingChanges = {}
@@ -5538,13 +5662,7 @@ async def push_upstream(
     current_user: User = Depends(get_current_user),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
-    if not (
-        conn.push_collection
-        or conn.push_watched
-        or conn.push_ratings
-        or conn.push_playback
-        or conn.plex_push_watchlist
-    ):
+    if not conn.push_enabled:
         raise HTTPException(
             status_code=400,
             detail="Enable 'Scrob → Server' push flags for this connection first",
