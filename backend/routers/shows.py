@@ -1587,7 +1587,11 @@ async def refresh_show_metadata(
         raise HTTPException(status_code=404, detail="Show not found in local library")
 
     try:
-        data = await tmdb.get_show(series_tmdb_id, api_key=api_key)
+        # cache_ttl=None: this is the user explicitly asking for fresh data -
+        # the shared 30-minute TMDB response cache would otherwise silently
+        # hand back whatever was last fetched (e.g. from just browsing the
+        # show page moments earlier), making "Refresh Metadata" a no-op.
+        data = await tmdb.get_show(series_tmdb_id, api_key=api_key, cache_ttl=None)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"TMDB fetch failed: {e}")
 
@@ -1655,7 +1659,8 @@ async def refresh_show_metadata(
     async def fetch_season(sn: int) -> None:
         async with semaphore:
             try:
-                d = await tmdb.get_season(series_tmdb_id, sn, api_key=api_key)
+                # See the matching comment on the tmdb.get_show call above.
+                d = await tmdb.get_season(series_tmdb_id, sn, api_key=api_key, cache_ttl=None)
                 season_data[sn] = {ep["episode_number"]: ep for ep in d.get("episodes", [])}
             except Exception:
                 season_data[sn] = {}

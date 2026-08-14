@@ -3491,7 +3491,9 @@ async def refresh_movie_metadata(
         raise HTTPException(status_code=403, detail="Movie not in your library")
 
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
-    await enrich_media(media, api_key=tmdb_key)
+    # bypass_cache: this is the user explicitly asking for fresh data - see
+    # the matching comment on enrich_media's bypass_cache parameter.
+    await enrich_media(media, api_key=tmdb_key, bypass_cache=True)
 
     await refresh_technical_data(db, [media.id], current_user.id)
 

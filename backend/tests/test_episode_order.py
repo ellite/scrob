@@ -149,6 +149,45 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary["tvdb_id"], 389597)
         self.assertEqual(summary["matched"], 1)
 
+    async def test_force_bypasses_the_shared_tmdb_cache(self) -> None:
+        # Regression for: a "Refresh Metadata"/force-recompute call must not
+        # silently return whatever TMDB response is already sitting in the
+        # shared cache from an unrelated request moments earlier.
+        db = AsyncMock()
+        db.execute.return_value = _ExistingResult([SimpleNamespace(tvdb_id=10414110)])
+        db.add_all = MagicMock()
+
+        tmdb_show = {"external_ids": {"tvdb_id": 389597}, "seasons": [{"season_number": 1}]}
+        tmdb_season = {
+            "episodes": [{"id": 1, "season_number": 1, "episode_number": 1, "name": "Pilot", "air_date": "2025-01-01"}]
+        }
+        tvdb_show = {"seasons": [{"number": 1, "type": {"type": "official"}}]}
+        tvdb_episodes = [{"id": 100, "seasonNumber": 1, "number": 1, "name": "Pilot", "aired": "2025-01-01"}]
+
+        get_show = AsyncMock(return_value=tmdb_show)
+        get_season = AsyncMock(return_value=tmdb_season)
+        with (
+            patch("core.episode_order.tmdb.get_show", get_show),
+            patch("core.episode_order.tmdb.get_season", get_season),
+            patch("core.episode_order.tmdb.get_episode_external_ids", AsyncMock(return_value={"tvdb_id": None})),
+            patch("core.episode_order.tvdb.get_series", AsyncMock(return_value=tvdb_show)),
+            patch("core.episode_order.tvdb.get_series_episodes", AsyncMock(return_value=tvdb_episodes)),
+        ):
+            await ensure_episode_order_mapping(db, 127532, "tmdb-key", "tvdb-key", force=True)
+
+        self.assertIsNone(get_show.call_args.kwargs["cache_ttl"])
+        self.assertIsNone(get_season.call_args.kwargs["cache_ttl"])
+
+    async def test_without_force_the_shared_tmdb_cache_is_used(self) -> None:
+        db = AsyncMock()
+        db.execute.return_value = _ExistingResult([SimpleNamespace(tvdb_id=10414110)])
+
+        get_show = AsyncMock(return_value={"external_ids": {"tvdb_id": 389597}})
+        with patch("core.episode_order.tmdb.get_show", get_show):
+            await ensure_episode_order_mapping(db, 127532, "tmdb-key", "tvdb-key")
+
+        self.assertIsNotNone(get_show.call_args.kwargs["cache_ttl"])
+
     async def test_tvdb_season_rating_stays_local(self) -> None:
         media = Media(
             id=1,

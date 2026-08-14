@@ -89,7 +89,11 @@ async def ensure_episode_order_mapping(
         )
     )
     existing = list(existing_result.scalars().all())
-    show_data = await tmdb.get_show(series_tmdb_id, api_key=tmdb_api_key)
+    # force=True means the caller explicitly asked to recompute (a "Refresh
+    # Metadata" action) - bypass the shared TMDB response cache so that isn't
+    # a silent no-op if this show was fetched moments earlier.
+    cache_ttl = None if force else tmdb.DEFAULT_CACHE_TTL
+    show_data = await tmdb.get_show(series_tmdb_id, api_key=tmdb_api_key, cache_ttl=cache_ttl)
     tvdb_id = (show_data.get("external_ids") or {}).get("tvdb_id")
     if not tvdb_id:
         raise ValueError("TMDB does not expose a TVDB identifier for this show")
@@ -130,7 +134,10 @@ async def ensure_episode_order_mapping(
 
     tmdb_seasons, tvdb_seasons = await asyncio.gather(
         asyncio.gather(
-            *(tmdb.get_season(series_tmdb_id, number, api_key=tmdb_api_key) for number in tmdb_season_numbers)
+            *(
+                tmdb.get_season(series_tmdb_id, number, api_key=tmdb_api_key, cache_ttl=cache_ttl)
+                for number in tmdb_season_numbers
+            )
         ),
         asyncio.gather(
             *(tvdb.get_series_episodes(tvdb_id, number, tvdb_api_key) for number in tvdb_season_numbers)
