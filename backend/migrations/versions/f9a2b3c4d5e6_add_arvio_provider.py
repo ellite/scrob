@@ -1,7 +1,7 @@
 """add ARVIO provider
 
 Revision ID: f9a2b3c4d5e6
-Revises: e4a1c2b3d5f6
+Revises: 5806acaa7d6e
 Create Date: 2026-08-14
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = "f9a2b3c4d5e6"
-down_revision = "d1e2f3a4b5c6"
+down_revision = "5806acaa7d6e"
 branch_labels = None
 depends_on = None
 
