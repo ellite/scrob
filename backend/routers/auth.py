@@ -973,7 +973,7 @@ async def login_arvio(
 
     url = await validate_service_url(body.url, "ARVIO URL")
     try:
-        session, profiles = await arvio.authenticate(url, body.email, body.password)
+        session, profiles = await arvio.authenticate(url, body.email, body.password, api_key=body.app_key)
     except arvio.ArvioAPIError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {
@@ -992,7 +992,7 @@ async def test_arvio(
 
     url = await validate_service_url(body.url, "ARVIO URL")
     try:
-        session, profiles = await arvio.validate_connection(url, body.token, body.profile_id)
+        session, profiles = await arvio.validate_connection(url, body.token, body.profile_id, api_key=body.app_key)
     except arvio.ArvioAPIError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {

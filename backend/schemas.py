@@ -164,12 +164,14 @@ class ArvioLoginRequest(BaseModel):
     email: EmailStr
     password: str
     url: str = "https://auth.arvio.tv/.netlify/functions"
+    app_key: Optional[str] = None
 
 
 class ArvioConnectionTestRequest(BaseModel):
     url: str
     token: str
     profile_id: str
+    app_key: Optional[str] = None
 
 
 class ApiKeyTestRequest(BaseModel):

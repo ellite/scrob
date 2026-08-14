@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -32,11 +33,18 @@ class ArvioSession:
 def _base_url(url: str) -> str:
     return (url or DEFAULT_URL).rstrip("/")
 
-def _public_headers() -> dict[str, str]:
-    return {"Content-Type": "application/json"}
+def _public_headers(api_key: str | None = None) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    key = api_key or os.getenv("ARVIO_APP_ANON_KEY") or ""
+    if key:
+        headers["apikey"] = key
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
 
-def _auth_headers(access_token: str) -> dict[str, str]:
-    return {**_public_headers(), "Authorization": f"Bearer {access_token}"}
+def _auth_headers(access_token: str, api_key: str | None = None) -> dict[str, str]:
+    headers = _public_headers(api_key)
+    headers["Authorization"] = f"Bearer {access_token}"
+    return headers
 
 async def _raise_api_error(response: httpx.Response, operation: str) -> None:
     if response.is_success:
@@ -75,13 +83,13 @@ def _parse_session(payload: dict[str, Any]) -> ArvioSession:
         email=str(email) if email else None,
     )
 
-async def sign_in(url: str, email: str, password: str) -> ArvioSession:
+async def sign_in(url: str, email: str, password: str, api_key: str | None = None) -> ArvioSession:
     base = _base_url(url)
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             resp = await client.post(
                 f"{base}/auth-login",
-                headers=_public_headers(),
+                headers=_public_headers(api_key),
                 json={"email": email, "password": password},
             )
         except httpx.RequestError as exc:
@@ -89,13 +97,13 @@ async def sign_in(url: str, email: str, password: str) -> ArvioSession:
     await _raise_api_error(resp, "login")
     return _parse_session(resp.json())
 
-async def refresh_session(url: str, refresh_token: str) -> ArvioSession:
+async def refresh_session(url: str, refresh_token: str, api_key: str | None = None) -> ArvioSession:
     base = _base_url(url)
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             resp = await client.post(
                 f"{base}/auth-refresh",
-                headers=_public_headers(),
+                headers=_public_headers(api_key),
                 json={"refresh_token": refresh_token},
             )
         except httpx.RequestError as exc:
@@ -103,13 +111,13 @@ async def refresh_session(url: str, refresh_token: str) -> ArvioSession:
     await _raise_api_error(resp, "token refresh")
     return _parse_session(resp.json())
 
-async def pull_snapshot(url: str, access_token: str) -> dict[str, Any]:
+async def pull_snapshot(url: str, access_token: str, api_key: str | None = None) -> dict[str, Any]:
     base = _base_url(url)
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             resp = await client.get(
                 f"{base}/account-sync-pull",
-                headers=_auth_headers(access_token),
+                headers=_auth_headers(access_token, api_key),
             )
         except httpx.RequestError as exc:
             raise ArvioAPIError(f"Could not pull ARVIO account snapshot: {exc}")
@@ -119,11 +127,9 @@ async def pull_snapshot(url: str, access_token: str) -> dict[str, Any]:
     if isinstance(payload, str):
         try:
             payload = json.loads(payload)
-        except json.JSONDecodeError:
+        except ValueError:
             payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
-    return payload
+    return payload if isinstance(payload, dict) else {}
 
 def extract_profiles(payload: dict[str, Any]) -> list[dict[str, str]]:
     raw_profiles = payload.get("profiles", [])
@@ -144,9 +150,9 @@ def get_profile_name(profiles: list[dict[str, str]], profile_id: str) -> str:
             return p.get("name") or f"Profile {profile_id}"
     return f"Profile {profile_id}"
 
-async def authenticate(url: str, email: str, password: str) -> tuple[ArvioSession, list[dict[str, str]]]:
-    session = await sign_in(url, email, password)
-    payload = await pull_snapshot(url, session.access_token)
+async def authenticate(url: str, email: str, password: str, api_key: str | None = None) -> tuple[ArvioSession, list[dict[str, str]]]:
+    session = await sign_in(url, email, password, api_key=api_key)
+    payload = await pull_snapshot(url, session.access_token, api_key=api_key)
     profiles = extract_profiles(payload)
     return session, profiles
 
@@ -156,11 +162,12 @@ async def validate_connection(
     profile_id: str | None = None,
     *,
     on_refresh: OnRefresh = None,
+    api_key: str | None = None,
 ) -> tuple[ArvioSession, list[dict[str, str]]]:
-    session = await refresh_session(url, refresh_token)
+    session = await refresh_session(url, refresh_token, api_key=api_key)
     if on_refresh:
         await on_refresh(session)
-    payload = await pull_snapshot(url, session.access_token)
+    payload = await pull_snapshot(url, session.access_token, api_key=api_key)
     profiles = extract_profiles(payload)
     if profile_id is not None:
         valid_ids = {p["id"] for p in profiles}
@@ -174,11 +181,12 @@ async def pull_sync_data(
     profile_id: str,
     *,
     on_refresh: OnRefresh = None,
+    api_key: str | None = None,
 ) -> tuple[ArvioSession, dict[str, Any]]:
-    session = await refresh_session(url, refresh_token)
+    session = await refresh_session(url, refresh_token, api_key=api_key)
     if on_refresh:
         await on_refresh(session)
-    payload = await pull_snapshot(url, session.access_token)
+    payload = await pull_snapshot(url, session.access_token, api_key=api_key)
 
     pid_str = str(profile_id)
     raw_movies = payload.get("localWatchedMoviesByProfile", {})

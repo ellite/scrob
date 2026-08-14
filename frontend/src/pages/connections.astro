@@ -3909,17 +3909,41 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const email = (document.getElementById('new-nuvio-email') as HTMLInputElement | null)?.value.trim() || '';
       const password = tokenInput?.value || '';
       const url = urlInput?.value || (isArvio ? 'https://auth.arvio.tv/.netlify/functions' : 'https://api.nuvio.tv');
-      if (!email || !password) throw new Error(`${isArvio ? 'ARVIO' : 'Nuvio'} email and password are required.`);
+      if (!password) throw new Error(`${isArvio ? 'ARVIO' : 'Nuvio'} password or refresh token is required.`);
       const selectedProfile = nuvioProfileSelect?.value || '';
-      const endpoint = isArvio ? '/api/proxy/auth/arvio-login' : '/api/proxy/auth/nuvio-login';
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, url }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || `${isArvio ? 'ARVIO' : 'Nuvio'} sign-in failed`);
-      pendingNuvioRefreshToken = data.refresh_token;
+      let response: Response | null = null;
+      let data: any = null;
+
+      if (email) {
+        const endpoint = isArvio ? '/api/proxy/auth/arvio-login' : '/api/proxy/auth/nuvio-login';
+        response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, url }),
+        });
+        data = await response.json();
+      }
+
+      if (!email || (response && !response.ok)) {
+        const testEndpoint = isArvio ? '/api/proxy/auth/test-arvio' : '/api/proxy/auth/test-nuvio';
+        const testRes = await fetch(testEndpoint, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, token: password, profile_id: selectedProfile || '0' }),
+        });
+        const testData = await testRes.json();
+        if (testRes.ok) {
+          response = testRes;
+          data = testData;
+        } else if (response && !response.ok) {
+          throw new Error(data?.detail || testData?.detail || `${isArvio ? 'ARVIO' : 'Nuvio'} sign-in failed`);
+        } else {
+          throw new Error(testData?.detail || `${isArvio ? 'ARVIO' : 'Nuvio'} authentication failed`);
+        }
+      }
+
+      if (!response || !response.ok) throw new Error(data?.detail || `${isArvio ? 'ARVIO' : 'Nuvio'} sign-in failed`);
+      pendingNuvioRefreshToken = data.refresh_token || password;
       if (nuvioProfileSelect) {
         nuvioProfileSelect.innerHTML = (data.profiles || []).map((profile: any) => {
           const pid = String(profile.id !== undefined ? profile.id : profile.profile_index);
