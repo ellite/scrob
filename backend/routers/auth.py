@@ -416,7 +416,7 @@ async def update_user_settings(
         if not await mdblist.validate_api_key(update_data["mdblist_api_key"]):
             raise HTTPException(status_code=400, detail="Invalid MDBList API key")
 
-    url_fields = {"radarr_url": "Radarr URL", "sonarr_url": "Sonarr URL"}
+    url_fields = {"radarr_url": "Radarr URL", "sonarr_url": "Sonarr URL", "bingebase_webhook_url": "Bingebase Webhook URL"}
     for field, label in url_fields.items():
         if field in update_data and update_data[field]:
             update_data[field] = await validate_service_url(update_data[field], label)

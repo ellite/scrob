@@ -329,5 +329,69 @@ class IntegrationCredentialRequestTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class _SettingsFakeDB:
+    """Queues results for db.execute() in call order: the UserSettings lookup,
+    then _settings_response's GlobalSettings lookup."""
+
+    def __init__(self, settings):
+        self._results = [settings, None]
+        self.commit = AsyncMock()
+        self.refresh = AsyncMock()
+
+    async def execute(self, stmt):
+        item = self._results.pop(0) if self._results else None
+        return SimpleNamespace(scalar_one_or_none=lambda: item)
+
+    def add(self, obj):
+        pass
+
+
+class UpdateUserSettingsBingebaseWebhookUrlValidationTests(unittest.IsolatedAsyncioTestCase):
+    """Regression test: bingebase_webhook_url is posted to on every playback
+    event with no validation at all, unlike every other user-supplied service
+    URL (Radarr/Sonarr/Jellyfin/etc.), which all go through validate_service_url
+    to block SSRF targets (cloud metadata endpoints, etc.). It needs the same
+    treatment - added to update_user_settings' url_fields map alongside
+    radarr_url/sonarr_url."""
+
+    async def test_bingebase_webhook_url_is_validated_like_radarr_and_sonarr(self) -> None:
+        from models.users import UserSettings
+
+        settings = UserSettings(user_id=1)
+        db = _SettingsFakeDB(settings)
+        validate_url = AsyncMock(return_value="https://bingebase.example/webhook")
+
+        with patch.object(auth, "validate_service_url", validate_url):
+            await auth.update_user_settings(
+                schemas.UserSettings(bingebase_webhook_url="https://bingebase.example/webhook/"),
+                db=db,
+                current_user=SimpleNamespace(id=1),
+            )
+
+        validate_url.assert_awaited_once_with(
+            "https://bingebase.example/webhook/", "Bingebase Webhook URL",
+        )
+        self.assertEqual(settings.bingebase_webhook_url, "https://bingebase.example/webhook")
+
+    async def test_ssrf_target_is_rejected(self) -> None:
+        from fastapi import HTTPException
+
+        from models.users import UserSettings
+        from core.url_validator import validate_service_url
+
+        settings = UserSettings(user_id=1)
+        db = _SettingsFakeDB(settings)
+
+        with patch.object(auth, "validate_service_url", validate_service_url):
+            with self.assertRaises(HTTPException) as ctx:
+                await auth.update_user_settings(
+                    schemas.UserSettings(bingebase_webhook_url="http://169.254.169.254/latest/meta-data/"),
+                    db=db,
+                    current_user=SimpleNamespace(id=1),
+                )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()
