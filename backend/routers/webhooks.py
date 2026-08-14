@@ -480,31 +480,32 @@ async def _write_watch_event(
         await _update_playback_progress(db, user_id, media_id, progress_percent, progress_seconds)
 
 
-async def _handle_unwatch_toggle(db: AsyncSession, user_id: int, media: Media) -> None:
+async def _handle_unwatch_toggle(db: AsyncSession, user_id: int, media: Media) -> bool:
     """Server-reported "mark unwatched" for one item (currently only Jellyfin's
     webhook plugin reports this - see the UserDataSaved/TogglePlayed handling
     below). While a rewatch is active for the media's show, this only undoes
     that episode's progress on the current cycle - real watch history is left
     untouched either way. Without an active rewatch, it removes all watch
     history for the item, matching this connection's normal bidirectional
-    watched-status sync."""
+    watched-status sync. Returns whether any rows were actually deleted."""
     active_rewatch = None
     if media.media_type == MediaType.episode and media.show_id:
         active_rewatch = await get_active_rewatch(db, user_id, media.show_id)
     if active_rewatch:
-        await db.execute(
+        result = await db.execute(
             delete(RewatchProgress).where(
                 RewatchProgress.rewatch_id == active_rewatch.id,
                 RewatchProgress.media_id == media.id,
             )
         )
     else:
-        await db.execute(
+        result = await db.execute(
             delete(WatchEvent).where(
                 WatchEvent.user_id == user_id,
                 WatchEvent.media_id == media.id,
             )
         )
+    return bool(result.rowcount)
 
 
 # ── Jellyfin ───────────────────────────────────────────────────────────────────
@@ -967,11 +968,14 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                     await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
                     await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
             elif played is False:
-                for m in media_list:
-                    await _handle_unwatch_toggle(db, user.id, m)
+                changed_ids = [
+                    m.id for m in media_list
+                    if await _handle_unwatch_toggle(db, user.id, m)
+                ]
                 await db.commit()
-                from routers.history import _push_watch_state
-                await _push_watch_state(db, user.id, [m.id for m in media_list], watched=False)
+                if changed_ids:
+                    from routers.history import _push_watch_state
+                    await _push_watch_state(db, user.id, changed_ids, watched=False)
 
     return {"status": "ok", "event": notification_type, "title": data["title"]}
 
@@ -1255,11 +1259,14 @@ async def _handle_jellyfin_scrobble_webhook(
                     await _write_watch_event(db, user.id, m.id, 1.0, data["progress_seconds"], True)
                 await db.commit()
             elif played is False:
-                for m in media_list:
-                    await _handle_unwatch_toggle(db, user.id, m)
+                changed_ids = [
+                    m.id for m in media_list
+                    if await _handle_unwatch_toggle(db, user.id, m)
+                ]
                 await db.commit()
-                from routers.history import _push_watch_state
-                await _push_watch_state(db, user.id, [m.id for m in media_list], watched=False)
+                if changed_ids:
+                    from routers.history import _push_watch_state
+                    await _push_watch_state(db, user.id, changed_ids, watched=False)
 
     return {"status": "ok", "event": notification_type, "title": data["title"]}
 

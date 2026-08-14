@@ -353,7 +353,9 @@ class _UnwatchFakeSession:
     async def execute(self, stmt):
         self.executed_statements.append(stmt)
         if isinstance(stmt, Delete):
-            return None
+            # Mimic a real Result: _handle_unwatch_toggle reads rowcount to
+            # report whether state actually changed (#190).
+            return SimpleNamespace(rowcount=1)
         item = self._results.pop(0) if self._results else None
         return _ScalarResult(item)
 
