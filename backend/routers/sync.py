@@ -1559,11 +1559,26 @@ async def _fan_out_changes_to_other_connections(
                     )
                 )
 
+    # ── Bingebase fan-out ───────────────────────────────────────────────────
+    push_bingebase_watched = (
+        settings
+        and exclude_cloud_source != CollectionSource.bingebase
+        and getattr(settings, "bingebase_push_watched", False)
+        and getattr(settings, "bingebase_webhook_url", None)
+    )
+    if push_bingebase_watched and new_watched_ids:
+        from routers.webhooks import _maybe_bingebase_scrobble
+        for media_id in new_watched_ids:
+            media = media_by_id.get(media_id)
+            if media:
+                push_tasks.append(_maybe_bingebase_scrobble(settings, media, "stop", 1.0, db=db))
+
     if push_tasks:
         target_count = len(push_candidates)
         target_count += 1 if (push_trakt_watched or push_trakt_ratings) else 0
         target_count += 1 if (push_mdblist_watched or push_mdblist_ratings) else 0
         target_count += 1 if (push_simkl_watched or push_simkl_ratings) else 0
+        target_count += 1 if push_bingebase_watched else 0
         print(f"  Fanning out {len(push_tasks)} changes to {target_count} other connection(s)...")
         # Chunked rather than one giant gather() — a large one-time import can
         # produce thousands of individual per-item media-server push tasks (Plex/
