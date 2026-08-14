@@ -13,7 +13,7 @@ class MediaServerConnection(Base):
 
     id               : Mapped[int]           = mapped_column(Integer, primary_key=True)
     user_id          : Mapped[int]           = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    type             : Mapped[str]           = mapped_column(String(50), nullable=False)   # plex | jellyfin | emby | nuvio | stremio
+    type             : Mapped[str]           = mapped_column(String(50), nullable=False)   # plex | jellyfin | emby | nuvio | stremio | arvio
     name             : Mapped[str]           = mapped_column(String(255), nullable=False)
     url              : Mapped[str]           = mapped_column(String(500), nullable=False)
     token            : Mapped[str]           = mapped_column(String(500), nullable=False)

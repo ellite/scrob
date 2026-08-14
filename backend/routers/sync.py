@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from typing import Any
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -25,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from models.base import MediaType, CollectionSource
 from models.global_settings import GlobalSettings
-from core import jellyfin, emby, plex, nuvio, stremio, tmdb
+from core import arvio, jellyfin, emby, plex, nuvio, stremio, tmdb
 import core.trakt as trakt_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely, enrich_media_safely, apply_media_change_safely, enrich_episode_from_tvdb
 from core.image_cache import pre_cache_all_collected_bg
@@ -85,6 +86,7 @@ _MEDIA_BROWSER_ITEM_SOURCES = (
     CollectionSource.emby,
     CollectionSource.nuvio,
     CollectionSource.stremio,
+    CollectionSource.arvio,
 )
 
 
@@ -1563,11 +1565,26 @@ async def _fan_out_changes_to_other_connections(
                     )
                 )
 
+    # ── Bingebase fan-out ───────────────────────────────────────────────────
+    push_bingebase_watched = (
+        settings
+        and exclude_cloud_source != CollectionSource.bingebase
+        and getattr(settings, "bingebase_push_watched", False)
+        and getattr(settings, "bingebase_webhook_url", None)
+    )
+    if push_bingebase_watched and new_watched_ids:
+        from routers.webhooks import _maybe_bingebase_scrobble
+        for media_id in new_watched_ids:
+            media = media_by_id.get(media_id)
+            if media:
+                push_tasks.append(_maybe_bingebase_scrobble(settings, media, "stop", 1.0, db=db))
+
     if push_tasks:
         target_count = len(push_candidates)
         target_count += 1 if (push_trakt_watched or push_trakt_ratings) else 0
         target_count += 1 if (push_mdblist_watched or push_mdblist_ratings) else 0
         target_count += 1 if (push_simkl_watched or push_simkl_ratings) else 0
+        target_count += 1 if push_bingebase_watched else 0
         print(f"  Fanning out {len(push_tasks)} changes to {target_count} other connection(s)...")
         # Chunked rather than one giant gather() — a large one-time import can
         # produce thousands of individual per-item media-server push tasks (Plex/
@@ -4682,7 +4699,7 @@ async def get_connection_libraries(
             ]
             return {"libraries": libraries, "all_selected": len(selected_keys) == 0}
 
-        elif conn.type in ("nuvio", "stremio"):
+        elif conn.type in ("nuvio", "stremio", "arvio"):
             return {"libraries": [], "all_selected": True}
 
         else:
@@ -4703,7 +4720,7 @@ async def trigger_library_scan(
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
 
     try:
-        if conn.type in ("nuvio", "stremio"):
+        if conn.type in ("nuvio", "stremio", "arvio"):
             settings_result = await db.execute(
                 select(UserSettings).where(UserSettings.user_id == current_user.id)
             )
@@ -4736,8 +4753,9 @@ async def trigger_library_scan(
             db.add(job)
             await db.commit()
             await db.refresh(job)
+            runner_fn = run_arvio_sync if conn.type == "arvio" else (run_nuvio_sync if conn.type == "nuvio" else run_stremio_sync)
             background_tasks.add_task(
-                run_nuvio_sync if conn.type == "nuvio" else run_stremio_sync,
+                runner_fn,
                 current_user.id,
                 job.id,
                 0,
@@ -4813,7 +4831,7 @@ async def save_connection_libraries(
             await db.commit()
             return {"saved": len(library_keys)}
 
-        elif conn.type in ("nuvio", "stremio"):
+        elif conn.type in ("nuvio", "stremio", "arvio"):
             return {"saved": 0}
 
         else:
@@ -4822,6 +4840,459 @@ async def save_connection_libraries(
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not reach server: {e}")
+
+
+def _parse_arvio_timestamp(ts: Any) -> datetime | None:
+    if not ts:
+        return None
+    if isinstance(ts, (int, float)):
+        if ts > 1e11:
+            ts = ts / 1000.0
+        try:
+            return datetime.fromtimestamp(ts, timezone.utc).replace(tzinfo=None)
+        except Exception:
+            return None
+    if isinstance(ts, str):
+        try:
+            dt = parser.isoparse(ts)
+            if dt.tzinfo:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
+        except Exception:
+            try:
+                val = float(ts)
+                return _parse_arvio_timestamp(val)
+            except Exception:
+                return None
+    return None
+
+
+async def _apply_arvio_watched_movie(
+    db: AsyncSession,
+    user_id: int,
+    item: dict[str, Any] | int | str,
+    tmdb_api_key: str | None,
+) -> bool:
+    if isinstance(item, (int, str)):
+        item = {"tmdbId": item}
+    elif not isinstance(item, dict):
+        return False
+
+    tmdb_id_raw = item.get("tmdbId") or item.get("tmdb_id") or item.get("id")
+    if not tmdb_id_raw:
+        return False
+    try:
+        tmdb_id = int(tmdb_id_raw)
+    except (TypeError, ValueError):
+        return False
+
+    watched_at = _parse_arvio_timestamp(item.get("watchedAt") or item.get("timestamp") or item.get("updatedAtMs"))
+
+    result = await db.execute(
+        select(Media).where(
+            Media.tmdb_id == tmdb_id,
+            Media.media_type == MediaType.movie,
+        )
+    )
+    media = result.scalars().first()
+    if not media:
+        title = str(item.get("title") or f"Movie {tmdb_id}")
+        media = Media(tmdb_id=tmdb_id, media_type=MediaType.movie, title=title)
+        db.add(media)
+        await db.flush()
+        if tmdb_api_key:
+            await enrich_media(media, api_key=tmdb_api_key)
+
+    event_query = select(WatchEvent).where(
+        WatchEvent.user_id == user_id,
+        WatchEvent.media_id == media.id,
+        WatchEvent.completed == True,
+    )
+    if watched_at:
+        event_query = event_query.where(WatchEvent.watched_at == watched_at)
+
+    existing = (await db.execute(event_query)).scalars().first()
+    if not existing:
+        event = WatchEvent(
+            user_id=user_id,
+            media_id=media.id,
+            completed=True,
+            watched_at=watched_at or datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db.add(event)
+        await db.commit()
+        return True
+    return False
+
+
+async def _apply_arvio_watched_episode(
+    db: AsyncSession,
+    user_id: int,
+    item: dict[str, Any] | int | str,
+    tmdb_api_key: str | None,
+) -> bool:
+    if not isinstance(item, dict):
+        return False
+
+    show_tmdb_id_raw = item.get("showTmdbId") or item.get("show_tmdb_id") or item.get("showId") or item.get("id")
+    season_raw = item.get("season") or item.get("seasonNumber")
+    episode_raw = item.get("episode") or item.get("episodeNumber")
+
+    if not show_tmdb_id_raw or season_raw is None or episode_raw is None:
+        return False
+    try:
+        show_tmdb_id = int(show_tmdb_id_raw)
+        season = int(season_raw)
+        episode = int(episode_raw)
+    except (TypeError, ValueError):
+        return False
+
+    watched_at = _parse_arvio_timestamp(item.get("watchedAt") or item.get("timestamp") or item.get("updatedAtMs"))
+
+    show_res = await db.execute(select(Show).where(Show.tmdb_id == show_tmdb_id))
+    show = show_res.scalars().first()
+    if not show:
+        show_title = str(item.get("title") or item.get("showTitle") or f"Show {show_tmdb_id}")
+        show = Show(tmdb_id=show_tmdb_id, title=show_title)
+        db.add(show)
+        await db.flush()
+
+    ep_res = await db.execute(
+        select(Media).where(
+            Media.show_id == show.id,
+            Media.season_number == season,
+            Media.episode_number == episode,
+            Media.media_type == MediaType.episode,
+        )
+    )
+    media = ep_res.scalars().first()
+    if not media:
+        ep_title = str(item.get("episodeTitle") or f"S{season:02d}E{episode:02d}")
+        media = Media(
+            show_id=show.id,
+            season_number=season,
+            episode_number=episode,
+            media_type=MediaType.episode,
+            title=ep_title,
+        )
+        db.add(media)
+        await db.flush()
+        if tmdb_api_key:
+            await enrich_media(media, api_key=tmdb_api_key)
+
+    event_query = select(WatchEvent).where(
+        WatchEvent.user_id == user_id,
+        WatchEvent.media_id == media.id,
+        WatchEvent.completed == True,
+    )
+    if watched_at:
+        event_query = event_query.where(WatchEvent.watched_at == watched_at)
+
+    existing = (await db.execute(event_query)).scalars().first()
+    if not existing:
+        event = WatchEvent(
+            user_id=user_id,
+            media_id=media.id,
+            completed=True,
+            watched_at=watched_at or datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db.add(event)
+        await db.commit()
+        return True
+    return False
+
+
+async def _apply_arvio_playback_progress(
+    db: AsyncSession,
+    user_id: int,
+    item: dict[str, Any] | int | str,
+    tmdb_api_key: str | None,
+) -> bool:
+    if not isinstance(item, dict):
+        return False
+
+    media_type_str = str(item.get("mediaType") or "").upper()
+    progress_val = item.get("progress", 0)
+    try:
+        progress_pct = float(progress_val)
+        if progress_pct <= 1.0 and progress_pct > 0:
+            progress_pct *= 100.0
+    except (TypeError, ValueError):
+        progress_pct = 0.0
+
+    if progress_pct < 1.0 or progress_pct >= 90.0:
+        return False
+
+    pos_sec = item.get("resumePositionSeconds") or item.get("positionSeconds") or item.get("position")
+    dur_sec = item.get("durationSeconds") or item.get("duration")
+
+    try:
+        position_seconds = float(pos_sec) if pos_sec is not None else 0.0
+    except (TypeError, ValueError):
+        position_seconds = 0.0
+
+    try:
+        duration_seconds = float(dur_sec) if dur_sec is not None else 0.0
+    except (TypeError, ValueError):
+        duration_seconds = 0.0
+
+    if position_seconds <= 0 and duration_seconds > 0 and progress_pct > 0:
+        position_seconds = (progress_pct / 100.0) * duration_seconds
+
+    updated_at = _parse_arvio_timestamp(item.get("updatedAtMs") or item.get("updatedAt")) or datetime.now(timezone.utc).replace(tzinfo=None)
+
+    season_raw = item.get("season")
+    episode_raw = item.get("episode")
+    is_episode = (
+        media_type_str in ("TV", "EPISODE", "SERIES")
+        or (season_raw is not None and episode_raw is not None)
+    )
+
+    media: Media | None = None
+    if is_episode:
+        show_tmdb_raw = item.get("showTmdbId") or item.get("show_tmdb_id") or item.get("showId") or item.get("id")
+        if not show_tmdb_raw or season_raw is None or episode_raw is None:
+            return False
+        try:
+            show_tmdb_id = int(show_tmdb_raw)
+            season = int(season_raw)
+            episode = int(episode_raw)
+        except (TypeError, ValueError):
+            return False
+
+        show_res = await db.execute(select(Show).where(Show.tmdb_id == show_tmdb_id))
+        show = show_res.scalars().first()
+        if not show:
+            show_title = str(item.get("seriesTitle") or item.get("title") or f"Show {show_tmdb_id}")
+            show = Show(tmdb_id=show_tmdb_id, title=show_title)
+            db.add(show)
+            await db.flush()
+
+        ep_res = await db.execute(
+            select(Media).where(
+                Media.show_id == show.id,
+                Media.season_number == season,
+                Media.episode_number == episode,
+                Media.media_type == MediaType.episode,
+            )
+        )
+        media = ep_res.scalars().first()
+        if not media:
+            ep_title = str(item.get("episodeTitle") or item.get("title") or f"S{season:02d}E{episode:02d}")
+            media = Media(
+                show_id=show.id,
+                season_number=season,
+                episode_number=episode,
+                media_type=MediaType.episode,
+                title=ep_title,
+            )
+            db.add(media)
+            await db.flush()
+            if tmdb_api_key:
+                await enrich_media(media, api_key=tmdb_api_key)
+    else:
+        tmdb_raw = item.get("tmdbId") or item.get("tmdb_id") or item.get("id")
+        if not tmdb_raw:
+            return False
+        try:
+            tmdb_id = int(tmdb_raw)
+        except (TypeError, ValueError):
+            return False
+
+        m_res = await db.execute(
+            select(Media).where(
+                Media.tmdb_id == tmdb_id,
+                Media.media_type == MediaType.movie,
+            )
+        )
+        media = m_res.scalars().first()
+        if not media:
+            title = str(item.get("title") or f"Movie {tmdb_id}")
+            media = Media(tmdb_id=tmdb_id, media_type=MediaType.movie, title=title)
+            db.add(media)
+            await db.flush()
+            if tmdb_api_key:
+                await enrich_media(media, api_key=tmdb_api_key)
+
+    if not media:
+        return False
+
+    pp_res = await db.execute(
+        select(PlaybackProgress).where(
+            PlaybackProgress.user_id == user_id,
+            PlaybackProgress.media_id == media.id,
+        )
+    )
+    pp = pp_res.scalars().first()
+    if not pp:
+        pp = PlaybackProgress(
+            user_id=user_id,
+            media_id=media.id,
+            progress_seconds=int(position_seconds),
+            progress_percent=progress_pct,
+            updated_at=updated_at,
+        )
+        db.add(pp)
+    else:
+        pp.progress_seconds = int(position_seconds)
+        pp.progress_percent = progress_pct
+        pp.updated_at = updated_at
+
+    await db.commit()
+    return True
+
+
+async def run_arvio_sync(
+    user_id: int,
+    job_id: int,
+    movie_limit: int,
+    show_limit: int,
+    connection_id: int | None = None,
+) -> None:
+    async with _sync_semaphore:
+        await _run_arvio_sync(user_id, job_id, movie_limit, show_limit, connection_id)
+
+
+async def _run_arvio_sync(
+    user_id: int,
+    job_id: int,
+    movie_limit: int,
+    show_limit: int,
+    connection_id: int | None = None,
+) -> None:
+    logger.info("Starting ARVIO sync for user %s, job %s", user_id, job_id)
+    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with async_session() as db:
+        try:
+            await db.execute(
+                update(SyncJob)
+                .where(SyncJob.id == job_id)
+                .values(status=SyncStatus.running, processed_items=0, total_items=0, updated_at=func.now())
+            )
+            await db.commit()
+
+            settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+            settings = settings_result.scalar_one_or_none()
+            tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+
+            conn_query = select(MediaServerConnection).where(
+                MediaServerConnection.user_id == user_id,
+                MediaServerConnection.type == "arvio",
+            )
+            if connection_id:
+                conn_query = conn_query.where(MediaServerConnection.id == connection_id)
+            else:
+                conn_query = conn_query.order_by(MediaServerConnection.id.asc()).limit(1)
+            conn_result = await db.execute(conn_query)
+            conn = conn_result.scalar_one_or_none()
+            if not conn:
+                raise RuntimeError("Missing ARVIO connection")
+
+            profile_id = str(conn.server_user_id) if conn.server_user_id is not None else ""
+            if not profile_id:
+                try:
+                    _, profiles = await arvio.validate_connection(conn.url, conn.token)
+                    if profiles:
+                        profile_id = profiles[0]["id"]
+                        conn.server_user_id = profile_id
+                        await db.commit()
+                    else:
+                        profile_id = "0"
+                except Exception:
+                    profile_id = "0"
+
+            async def _persist_refresh(refreshed: arvio.ArvioSession) -> None:
+                conn.token = refreshed.refresh_token
+                await db.commit()
+
+            async with arvio.connection_lock(conn.id):
+                session, sync_data = await arvio.pull_sync_data(
+                    conn.url,
+                    conn.token,
+                    profile_id,
+                    on_refresh=_persist_refresh,
+                )
+                conn.token = session.refresh_token
+                await db.commit()
+
+            watched_movies = sync_data.get("watched_movies", [])
+            watched_episodes = sync_data.get("watched_episodes", [])
+            progress_items = sync_data.get("progress", [])
+
+            total_items = len(watched_movies) + len(watched_episodes) + len(progress_items)
+            await db.execute(
+                update(SyncJob)
+                .where(SyncJob.id == job_id)
+                .values(total_items=total_items, updated_at=func.now())
+            )
+            await db.commit()
+
+            processed = 0
+
+            if conn.sync_watched:
+                for movie_item in watched_movies:
+                    await _raise_if_cancelled(db, job_id)
+                    await _apply_arvio_watched_movie(db, user_id, movie_item, tmdb_api_key)
+                    processed += 1
+                    if processed % 10 == 0:
+                        await db.execute(
+                            update(SyncJob)
+                            .where(SyncJob.id == job_id)
+                            .values(processed_items=processed, updated_at=func.now())
+                        )
+                        await db.commit()
+
+                for ep_item in watched_episodes:
+                    await _raise_if_cancelled(db, job_id)
+                    await _apply_arvio_watched_episode(db, user_id, ep_item, tmdb_api_key)
+                    processed += 1
+                    if processed % 10 == 0:
+                        await db.execute(
+                            update(SyncJob)
+                            .where(SyncJob.id == job_id)
+                            .values(processed_items=processed, updated_at=func.now())
+                        )
+                        await db.commit()
+
+            if conn.sync_playback:
+                for cw_item in progress_items:
+                    await _raise_if_cancelled(db, job_id)
+                    await _apply_arvio_playback_progress(db, user_id, cw_item, tmdb_api_key)
+                    processed += 1
+                    if processed % 10 == 0:
+                        await db.execute(
+                            update(SyncJob)
+                            .where(SyncJob.id == job_id)
+                            .values(processed_items=processed, updated_at=func.now())
+                        )
+                        await db.commit()
+
+            await db.execute(
+                update(SyncJob)
+                .where(SyncJob.id == job_id)
+                .values(
+                    status=SyncStatus.completed,
+                    processed_items=processed,
+                    updated_at=func.now(),
+                )
+            )
+            await db.commit()
+            logger.info("ARVIO sync completed for user %s, job %s: movies=%s episodes=%s cw=%s", user_id, job_id, len(watched_movies), len(watched_episodes), len(progress_items))
+
+        except SyncCancelled:
+            logger.info("ARVIO sync job %s cancelled", job_id)
+        except Exception as exc:
+            logger.error("ARVIO sync job %s failed: %s", job_id, exc, exc_info=True)
+            await db.execute(
+                update(SyncJob)
+                .where(SyncJob.id == job_id)
+                .values(
+                    status=SyncStatus.failed,
+                    error_message=str(exc)[:900],
+                    updated_at=func.now(),
+                )
+            )
+            await db.commit()
 
 
 @router.post("/connection/{connection_id}")
@@ -4841,12 +5312,14 @@ async def sync_connection(
     if not await _get_effective_tmdb_key(db, settings):
         raise HTTPException(status_code=400, detail="TMDB API key required")
 
+
     source_map = {
         "jellyfin": CollectionSource.jellyfin,
         "emby": CollectionSource.emby,
         "plex": CollectionSource.plex,
         "nuvio": CollectionSource.nuvio,
         "stremio": CollectionSource.stremio,
+        "arvio": CollectionSource.arvio,
     }
     source = source_map.get(conn.type)
     if not source:
@@ -4863,6 +5336,7 @@ async def sync_connection(
         "plex": run_plex_sync,
         "nuvio": run_nuvio_sync,
         "stremio": run_stremio_sync,
+        "arvio": run_arvio_sync,
     }
     runner_args = (current_user.id, job.id, movie_limit, show_limit, connection_id)
     if conn.type == "stremio":

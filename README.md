@@ -13,7 +13,7 @@
 
 ---
 
-Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, and **Stremio**, tracks your watch history, ratings, and personal lists, and can push watched activity back to connected providers - all from a clean, app-like web interface that installs as a PWA on any device.
+Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **ARVIO**, and **Stremio**, tracks your watch history, ratings, and personal lists, and can push watched activity back to connected providers - all from a clean, app-like web interface that installs as a PWA on any device.
 
 ## Table of Contents
 
@@ -26,6 +26,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, and
   - [First Setup](#first-setup)
   - [Updating](#updating)
 - [Configuration](#configuration)
+- [ARVIO Cloud Synchronization](#arvio-cloud-synchronization)
 - [Nuvio Cloud Synchronization](#nuvio-cloud-synchronization)
   - [Connect Nuvio](#connect-nuvio)
   - [Synchronization Directions](#synchronization-directions)
@@ -58,6 +59,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, and
 - **Trakt integration**: Sync your watched history, ratings, and lists from Trakt, and push Scrob activity back to Trakt automatically. Connecting live requires a Trakt VIP subscription (a recent Trakt-side restriction) - everyone else can still import via a Trakt data export, no VIP needed. See [Trakt Synchronization](#trakt-synchronization).
 - **Simkl integration**: Sync your watched history and ratings from Simkl, and push Scrob activity back to Simkl automatically.
 - **MDBList integration**: Pull watched history, ratings, and watchlist items from MDBList, and optionally push Scrob changes back using an MDBList API key.
+- **Bingebase integration**: Push watch history and live scrobbles to your Bingebase account via personal Webhook URL.
 - **Watch history & ratings**: Track every movie and episode you've watched, including multiple plays with individual timestamps. Log plays manually with a custom date, or remove individual entries - all from the watched button on any movie or episode page. Rate them on a 10-point scale with optional reviews.
 - **Season ratings**: Rate individual seasons separately from the overall show.
 - **Personal lists**: Create and curate lists of movies and shows. Mark them public to share with other users on the same instance.
@@ -310,6 +312,26 @@ Remove the `scrob-db` service and set `DATABASE_URL` to your existing instance:
 ```yaml
 DATABASE_URL: postgresql+asyncpg://user:password@your-db-host:5432/scrob
 ```
+
+## ARVIO Cloud Synchronization
+
+Scrob supports pull synchronization from **ARVIO Cloud** (`https://auth.arvio.tv/.netlify/functions`), importing watched movies, watched episodes, and continue watching playback progress per profile.
+
+### Connect ARVIO
+
+1. Go to **Connections → Media Players** and select **ARVIO**.
+2. Sign in with your ARVIO Cloud email and password (or enter an existing ARVIO refresh token directly).
+3. Select the ARVIO profile to synchronize.
+
+### Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `ARVIO_APP_ANON_KEY` | *(Official embedded key)* | Public anon API key for `auth.arvio.tv`. The official key is embedded by default. |
+
+### CI Key Verification Guardrail
+
+The GitHub Actions workflow (`.github/workflows/docker-x64.yml`) automatically validates the embedded `ARVIO_APP_ANON_KEY` against `auth.arvio.tv` during every container build, ensuring builds fail immediately with a GitHub workflow error if the public key is ever rotated.
 
 ## Nuvio Cloud Synchronization
 
