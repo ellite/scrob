@@ -196,6 +196,22 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length, 0);
       });
     });
 
+    // Native radios can't be unchecked by clicking the already-selected one
+    // again - only switching to a different option in the group can change
+    // the selection. Capture the pre-click checked state on mousedown, then
+    // explicitly uncheck on click if it was already checked, so a single-
+    // select section can be cleared without using "Clear all".
+    root.querySelectorAll<HTMLInputElement>('input[type="radio"]').forEach((radio) => {
+      radio.addEventListener("mousedown", () => {
+        radio.dataset.wasChecked = radio.checked ? "true" : "false";
+      });
+      radio.addEventListener("click", () => {
+        if (radio.dataset.wasChecked === "true") {
+          radio.checked = false;
+        }
+      });
+    });
+
     clearBtn?.addEventListener("click", () => {
       root.querySelectorAll<HTMLInputElement>('input[type="checkbox"], input[type="radio"]').forEach((cb) => (cb.checked = false));
     });

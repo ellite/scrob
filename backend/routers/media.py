@@ -1805,25 +1805,46 @@ async def get_collection_details(
         raise HTTPException(status_code=404, detail=f"Collection not found: {e}")
 
 
+_COLLECTION_CHECKS = {
+    "in": lambda i: bool(i.get("in_library")),
+    "out": lambda i: not i.get("in_library"),
+}
+_WATCH_CHECKS = {
+    "watched": lambda i: bool(i.get("watched")),
+    "unwatched": lambda i: not i.get("watched") and not i.get("watch_started"),
+    "started": lambda i: bool(i.get("watch_started")) and not i.get("watched"),
+}
+_ARR_CHECKS = {
+    "added": lambda i: bool(i.get("is_monitored")),
+    "notadded": lambda i: not i.get("is_monitored"),
+}
+
+
 def _apply_local_filters(
-    items: list[dict], collection: str | None, watch: str | None, arr: str | None
+    items: list[dict], collection: list[str], watch: list[str], arr: list[str], year: list[int] | None = None,
 ) -> list[dict]:
-    """Local-only filters get_tmdb_list applies after TMDB enrichment, since
-    TMDB's discover API can't express collection/watched/Radarr-Sonarr state."""
-    if collection == "in":
-        items = [i for i in items if i.get("in_library")]
-    elif collection == "out":
-        items = [i for i in items if not i.get("in_library")]
-    if watch == "watched":
-        items = [i for i in items if i.get("watched")]
-    elif watch == "unwatched":
-        items = [i for i in items if not i.get("watched") and not i.get("watch_started")]
-    elif watch == "started":
-        items = [i for i in items if i.get("watch_started") and not i.get("watched")]
-    if arr == "added":
-        items = [i for i in items if i.get("is_monitored")]
-    elif arr == "notadded":
-        items = [i for i in items if not i.get("is_monitored")]
+    """Local-only filters get_tmdb_list applies after TMDB enrichment.
+
+    collection/watch/arr can't be expressed by TMDB's discover API at all.
+    year could (primary_release_year/first_air_date_year), but only as a
+    single value - TMDB has no "year A OR year B" for discover, so a
+    multi-year selection is applied locally here instead, same as the others.
+
+    Each category is OR'd internally (an item matching any selected value in
+    that category passes) and AND'd across categories - same convention as
+    the genre/year filters on /media/list. An unrecognized value contributes
+    no check, so a category made up entirely of unrecognized values is a
+    no-op rather than matching nothing.
+    """
+    for values, checks in ((collection, _COLLECTION_CHECKS), (watch, _WATCH_CHECKS), (arr, _ARR_CHECKS)):
+        if not values:
+            continue
+        active = [checks[v] for v in values if v in checks]
+        if active:
+            items = [i for i in items if any(c(i) for c in active)]
+    if year:
+        wanted = {str(y) for y in year}
+        items = [i for i in items if (i.get("release_date") or "")[:4] in wanted]
     return items
 
 
@@ -1845,14 +1866,19 @@ async def get_tmdb_list(
     type: MediaType = Query(...),
     category: str = Query("popular"),
     page: int = Query(1, ge=1),
-    genre: str | None = Query(None),
-    year: int | None = Query(None),
+    genre: list[str] = Query(default=[]),  # OR'd together via TMDB's own with_genres "|" syntax
+    # year can't be OR'd in a single TMDB discover request (no multi-value
+    # param for it) - applied as a local filter alongside collection/watch/arr
+    # below instead, so a multi-year selection still works in one response.
+    year: list[int] = Query(default=[]),
     min_rating: float | None = Query(None),
     status: str | None = Query(None),
-    # Local-state filters: collection = in|out, watch = watched|unwatched|started, arr = added|notadded.
-    collection: str | None = Query(None),
-    watch: str | None = Query(None),
-    arr: str | None = Query(None),
+    # Local-state filters, applied after TMDB enrichment (OR'd within each,
+    # same convention as genre above): collection = in|out,
+    # watch = watched|unwatched|started, arr = added|notadded.
+    collection: list[str] = Query(default=[]),
+    watch: list[str] = Query(default=[]),
+    arr: list[str] = Query(default=[]),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
@@ -1866,21 +1892,21 @@ async def get_tmdb_list(
             "top_rated": "vote_average.desc",
             "trending": "popularity.desc",
         }
-        has_filters = bool(genre or year or min_rating or status)
+        has_filters = bool(genre or min_rating or status)
 
         async def _fetch_tmdb_page(fetch_page: int) -> dict:
             if has_filters:
                 sort_by = category_sort_map.get(category, "popularity.desc")
                 if type == MediaType.movie:
-                    genre_id = MOVIE_GENRE_IDS.get(genre) if genre else None
+                    genre_ids = [MOVIE_GENRE_IDS[g] for g in genre if g in MOVIE_GENRE_IDS]
                     return await tmdb.discover_movies(
-                        page=fetch_page, genre_id=genre_id, year=year,
+                        page=fetch_page, genre_ids=genre_ids or None,
                         min_rating=min_rating, sort_by=sort_by, api_key=tmdb_key,
                     )
-                genre_id = TV_GENRE_IDS.get(genre) if genre else None
+                genre_ids = [TV_GENRE_IDS[g] for g in genre if g in TV_GENRE_IDS]
                 status_id = TV_STATUS_IDS.get(status) if status else None
                 return await tmdb.discover_shows(
-                    page=fetch_page, genre_id=genre_id, year=year,
+                    page=fetch_page, genre_ids=genre_ids or None,
                     min_rating=min_rating, sort_by=sort_by,
                     status=status_id, api_key=tmdb_key,
                 )
@@ -1944,7 +1970,7 @@ async def get_tmdb_list(
             await enrich_with_state(db, current_user.id, enriched)
             return enriched
 
-        if not (collection or watch or arr):
+        if not (collection or watch or arr or year):
             data = await _fetch_tmdb_page(page)
             enriched = await _build_enriched(data.get("results", []))
             return {
@@ -1983,7 +2009,7 @@ async def get_tmdb_list(
                         batch_results.append(res)
             if batch_results:
                 enriched = await _build_enriched(batch_results)
-                matched.extend(_apply_local_filters(enriched, collection, watch, arr))
+                matched.extend(_apply_local_filters(enriched, collection, watch, arr, year))
             scan_page = batch_end + 1
             if total_tmdb_pages is not None and scan_page > total_tmdb_pages:
                 break

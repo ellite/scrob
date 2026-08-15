@@ -393,5 +393,79 @@ class UpdateUserSettingsBingebaseWebhookUrlValidationTests(unittest.IsolatedAsyn
         self.assertEqual(ctx.exception.status_code, 400)
 
 
+class _GlobalSettingsFakeDB:
+    """Queues a single result for _settings_response's own GlobalSettings
+    lookup (unlike _SettingsFakeDB, which also fronts a UserSettings lookup
+    update_user_settings does first - _settings_response takes settings
+    directly and only queries once)."""
+
+    def __init__(self, global_settings):
+        self._global_settings = global_settings
+
+    async def execute(self, stmt):
+        return SimpleNamespace(scalar_one_or_none=lambda: self._global_settings)
+
+
+class SettingsResponseEffectiveRadarrSonarrTests(unittest.IsolatedAsyncioTestCase):
+    """Regression: the Explore Movies/Shows Radarr/Sonarr filter (#171) was
+    shown regardless of whether Radarr/Sonarr was actually configured, since
+    nothing on the settings response said either way - unlike TMDB/TVDB,
+    which already have has_effective_*_key for exactly this. has_effective_
+    radarr/sonarr mirrors _effective_radarr/_effective_sonarr's own "all 4
+    fields set, user config first" rule (inlined to avoid a routers.media
+    <-> routers.auth cross-import)."""
+
+    def _user_settings(self, **radarr_sonarr_fields):
+        from models.users import UserSettings
+
+        return UserSettings(user_id=1, **radarr_sonarr_fields)
+
+    async def test_neither_configured_is_false(self) -> None:
+        settings = self._user_settings()
+        result = await auth._settings_response(settings, _GlobalSettingsFakeDB(None))
+        self.assertFalse(result.has_effective_radarr)
+        self.assertFalse(result.has_effective_sonarr)
+
+    async def test_fully_configured_user_radarr_is_true(self) -> None:
+        settings = self._user_settings(
+            radarr_url="http://radarr.local", radarr_token="tok",
+            radarr_root_folder="/movies", radarr_quality_profile=1,
+        )
+        result = await auth._settings_response(settings, _GlobalSettingsFakeDB(None))
+        self.assertTrue(result.has_effective_radarr)
+        self.assertFalse(result.has_effective_sonarr)
+
+    async def test_partially_configured_user_radarr_is_false(self) -> None:
+        # Missing quality_profile - the "all 4 fields" rule must not treat
+        # this as configured just because most fields are set.
+        settings = self._user_settings(
+            radarr_url="http://radarr.local", radarr_token="tok", radarr_root_folder="/movies",
+        )
+        result = await auth._settings_response(settings, _GlobalSettingsFakeDB(None))
+        self.assertFalse(result.has_effective_radarr)
+
+    async def test_global_only_sonarr_is_true(self) -> None:
+        from models.global_settings import GlobalSettings
+
+        settings = self._user_settings()
+        gs = GlobalSettings(
+            id=1, sonarr_url="http://sonarr.local", sonarr_token="tok",
+            sonarr_root_folder="/tv", sonarr_quality_profile=1,
+        )
+        result = await auth._settings_response(settings, _GlobalSettingsFakeDB(gs))
+        self.assertTrue(result.has_effective_sonarr)
+        self.assertFalse(result.has_effective_radarr)
+
+    async def test_user_config_does_not_need_global_settings_row_to_exist(self) -> None:
+        # gs is None (no GlobalSettings row at all) - must not crash on the
+        # `gs and all([...])` short-circuit when checking the global side.
+        settings = self._user_settings(
+            sonarr_url="http://sonarr.local", sonarr_token="tok",
+            sonarr_root_folder="/tv", sonarr_quality_profile=1,
+        )
+        result = await auth._settings_response(settings, _GlobalSettingsFakeDB(None))
+        self.assertTrue(result.has_effective_sonarr)
+
+
 if __name__ == "__main__":
     unittest.main()

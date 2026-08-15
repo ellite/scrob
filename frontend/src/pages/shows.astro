@@ -8,19 +8,20 @@ import { api, type MediaItem } from "../lib/api";
 export const prerender = false;
 
 const category = Astro.url.searchParams.get("category") ?? "popular";
-const genre = Astro.url.searchParams.get("genre") ?? "";
-const year = Astro.url.searchParams.get("year") ? Number(Astro.url.searchParams.get("year")) : undefined;
+const genre = Astro.url.searchParams.getAll("genre");
+const year = Astro.url.searchParams.getAll("year").map(Number);
 const minRating = Astro.url.searchParams.get("min_rating") ? Number(Astro.url.searchParams.get("min_rating")) : undefined;
 const status = Astro.url.searchParams.get("status") ?? "";
-const collection = Astro.url.searchParams.get("collection") ?? "";
-const watch = Astro.url.searchParams.get("watch") ?? "";
-const arr = Astro.url.searchParams.get("arr") ?? "";
+const collection = Astro.url.searchParams.getAll("collection");
+const watch = Astro.url.searchParams.getAll("watch");
+const arr = Astro.url.searchParams.getAll("arr");
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 
 const settings = await api.auth.getSettings(token!);
 const hasTmdbKey = !!settings?.has_effective_tmdb_key;
+const hasSonarr = !!settings?.has_effective_sonarr;
 
 let data: { results: MediaItem[]; total_pages: number; page: number } = { results: [], total_pages: 0, page: 1 };
 if (hasTmdbKey) {
@@ -29,13 +30,13 @@ if (hasTmdbKey) {
       type: "series",
       category,
       page,
-      ...(genre ? { genre } : {}),
-      ...(year ? { year } : {}),
+      ...(genre.length ? { genre } : {}),
+      ...(year.length ? { year } : {}),
       ...(minRating ? { min_rating: minRating } : {}),
       ...(status ? { status } : {}),
-      ...(collection ? { collection } : {}),
-      ...(watch ? { watch } : {}),
-      ...(arr ? { arr } : {}),
+      ...(collection.length ? { collection } : {}),
+      ...(watch.length ? { watch } : {}),
+      ...(hasSonarr && arr.length ? { arr } : {}),
     }, token);
   } catch (e) {
     console.error("Failed to fetch TMDB show list:", e);
@@ -56,13 +57,13 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
 // Build base URL preserving active filters (without page)
 const baseParams = new URLSearchParams();
 baseParams.set("category", category);
-if (genre) baseParams.set("genre", genre);
-if (year) baseParams.set("year", String(year));
+genre.forEach((v) => baseParams.append("genre", v));
+year.forEach((v) => baseParams.append("year", String(v)));
 if (minRating) baseParams.set("min_rating", String(minRating));
 if (status) baseParams.set("status", status);
-if (collection) baseParams.set("collection", collection);
-if (watch) baseParams.set("watch", watch);
-if (arr) baseParams.set("arr", arr);
+collection.forEach((v) => baseParams.append("collection", v));
+watch.forEach((v) => baseParams.append("watch", v));
+if (hasSonarr) arr.forEach((v) => baseParams.append("arr", v));
 const baseUrl = `/shows?${baseParams.toString()}`;
 ---
 
@@ -96,13 +97,13 @@ const baseUrl = `/shows?${baseParams.toString()}`;
           basePath="/shows"
           extraParams={{ category }}
           sections={[
-            { key: "genre", label: "Genre", options: TV_GENRES.map((g) => ({ value: g, label: g })), selected: genre ? [genre] : [], multi: false },
-            { key: "year", label: "Year", options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year ? [String(year)] : [], multi: false },
+            { key: "genre", label: "Genre", options: TV_GENRES.map((g) => ({ value: g, label: g })), selected: genre },
+            { key: "year", label: "Year", options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },
             { key: "min_rating", label: "Rating", options: [9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: `${r}+ Stars` })), selected: minRating ? [String(minRating)] : [], multi: false },
             { key: "status", label: "Status", options: TV_STATUSES.map((s) => ({ value: s, label: s })), selected: status ? [status] : [], multi: false },
-            { key: "collection", label: "Collection", options: [{ value: "in", label: "In My Collection" }, { value: "out", label: "Not In My Collection" }], selected: collection ? [collection] : [], multi: false },
-            { key: "watch", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }, { value: "started", label: "In Progress" }], selected: watch ? [watch] : [], multi: false },
-            { key: "arr", label: "Sonarr", options: [{ value: "added", label: "In Sonarr" }, { value: "notadded", label: "Not In Sonarr" }], selected: arr ? [arr] : [], multi: false },
+            { key: "collection", label: "Collection", options: [{ value: "in", label: "In My Collection" }, { value: "out", label: "Not In My Collection" }], selected: collection },
+            { key: "watch", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }, { value: "started", label: "In Progress" }], selected: watch },
+            ...(hasSonarr ? [{ key: "arr", label: "Sonarr", options: [{ value: "added", label: "In Sonarr" }, { value: "notadded", label: "Not In Sonarr" }], selected: arr }] : []),
           ]}
         />
       </div>

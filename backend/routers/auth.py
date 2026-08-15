@@ -359,6 +359,17 @@ async def _settings_response(settings: UserSettings, db: AsyncSession) -> schema
     data.has_effective_tmdb_key = bool(settings.tmdb_api_key) or data.has_global_tmdb_key
     data.has_global_tvdb_key = bool(gs and gs.tvdb_api_key)
     data.has_effective_tvdb_key = bool(settings.tvdb_api_key) or data.has_global_tvdb_key
+    # Same "all 4 fields set, user config first" rule as _effective_radarr/
+    # _effective_sonarr in routers/media.py - inlined rather than imported to
+    # avoid a routers.media <-> routers.auth cross-import.
+    data.has_effective_radarr = bool(
+        all([settings.radarr_url, settings.radarr_token, settings.radarr_root_folder, settings.radarr_quality_profile])
+        or (gs and all([gs.radarr_url, gs.radarr_token, gs.radarr_root_folder, gs.radarr_quality_profile]))
+    )
+    data.has_effective_sonarr = bool(
+        all([settings.sonarr_url, settings.sonarr_token, settings.sonarr_root_folder, settings.sonarr_quality_profile])
+        or (gs and all([gs.sonarr_url, gs.sonarr_token, gs.sonarr_root_folder, gs.sonarr_quality_profile]))
+    )
     return data
 
 

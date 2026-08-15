@@ -406,12 +406,14 @@ export interface UserSettings {
   radarr_root_folder: string | null;
   radarr_quality_profile: number | null;
   radarr_tags: number[] | null;
+  has_effective_radarr: boolean;
 
   sonarr_url: string | null;
   sonarr_token: string | null;
   sonarr_root_folder: string | null;
   sonarr_quality_profile: number | null;
   sonarr_tags: number[] | null;
+  has_effective_sonarr: boolean;
 
   // Trakt
   trakt_connected: boolean;
@@ -1123,7 +1125,7 @@ export const api = {
     getCollection: (collectionId: number, token?: string) =>
       get<CollectionDetail>(`/media/collection/${collectionId}`, undefined, token),
 
-    tmdbList: (params: { type: string; category?: string; page?: number; genre?: string; year?: number; min_rating?: number; status?: string; collection?: string; watch?: string; arr?: string }, token?: string) =>
+    tmdbList: (params: { type: string; category?: string; page?: number; genre?: string[]; year?: number[]; min_rating?: number; status?: string; collection?: string[]; watch?: string[]; arr?: string[] }, token?: string) =>
       get<{ results: MediaItem[]; page: number; total_pages: number; total_results: number }>("/media/tmdb/list", params, token),
 
     search: (q: string, type?: string, page: number = 1, year?: number, token?: string, inLibrary?: boolean) =>
