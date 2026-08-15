@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, func, and_, or_
+from sqlalchemy.orm import selectinload, aliased
 
 from db import get_db
 from models.lists import List as ListModel, ListItem
@@ -158,11 +158,29 @@ async def get_public_lists(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
+    # Friends-only lists of mutual follows belong in discovery too — they were
+    # invisible to the very friends they're shared with (#210).
+    FollowBack = aliased(Follow)
+    mutual_rows = await db.execute(
+        select(Follow.following_id)
+        .join(FollowBack, and_(
+            FollowBack.follower_id == Follow.following_id,
+            FollowBack.following_id == Follow.follower_id,
+        ))
+        .where(Follow.follower_id == current_user.id)
+    )
+    mutual_ids = [r[0] for r in mutual_rows.all()]
+    visibility = ListModel.privacy_level == PrivacyLevel.public
+    if mutual_ids:
+        visibility = or_(visibility, and_(
+            ListModel.privacy_level == PrivacyLevel.friends_only,
+            ListModel.user_id.in_(mutual_ids),
+        ))
     result = await db.execute(
         select(ListModel, User.username)
         .join(User, User.id == ListModel.user_id)
         .options(selectinload(ListModel.items).selectinload(ListItem.media).selectinload(Media.show))
-        .where(ListModel.privacy_level == PrivacyLevel.public, ListModel.user_id != current_user.id)
+        .where(visibility, ListModel.user_id != current_user.id)
         .order_by(func.random())
         .limit(3)
     )
