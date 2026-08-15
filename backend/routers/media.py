@@ -171,6 +171,39 @@ async def enrich_with_state(
             if t == "movie": request_enabled_map[tid] = radarr_ready
             elif t == "series": request_enabled_map[tid] = sonarr_ready
 
+    # Mark items already in Radarr/Sonarr (cached bulk lists); best-effort.
+    if radarr_cfg and movie_tmdb_ids:
+        from core import radarr as radarr_client
+
+        radarr_ids = await radarr_client.get_all_movie_tmdb_ids(
+            radarr_cfg.radarr_url, radarr_cfg.radarr_token
+        )
+        if radarr_ids:
+            for tid in movie_tmdb_ids:
+                if tid in radarr_ids:
+                    monitored_status[tid] = True
+    if sonarr_cfg and show_tmdb_ids:
+        from core import sonarr as sonarr_client
+
+        sonarr_ids = await sonarr_client.get_all_series_ids(
+            sonarr_cfg.sonarr_url, sonarr_cfg.sonarr_token
+        )
+        if sonarr_ids:
+            sonarr_tmdb, sonarr_tvdb = sonarr_ids
+            # Sonarr pre-v4 has no tmdbId - fall back to TVDB ids of local shows.
+            tvdb_map: dict[int, int] = {}
+            if sonarr_tvdb:
+                tvdb_q = await db.execute(
+                    select(ShowModel.tmdb_id, ShowModel.tvdb_id).where(
+                        ShowModel.tmdb_id.in_(show_tmdb_ids),
+                        ShowModel.tvdb_id.isnot(None),
+                    )
+                )
+                tvdb_map = {r[0]: r[1] for r in tvdb_q.all()}
+            for tid in show_tmdb_ids:
+                if tid in sonarr_tmdb or tvdb_map.get(tid) in sonarr_tvdb:
+                    monitored_status[tid] = True
+
     # --- Pending/rejected request state ---
     request_status_map: dict[int, str] = {}
     if len(items) == 1:
@@ -1772,6 +1805,41 @@ async def get_collection_details(
         raise HTTPException(status_code=404, detail=f"Collection not found: {e}")
 
 
+def _apply_local_filters(
+    items: list[dict], collection: str | None, watch: str | None, arr: str | None
+) -> list[dict]:
+    """Local-only filters get_tmdb_list applies after TMDB enrichment, since
+    TMDB's discover API can't express collection/watched/Radarr-Sonarr state."""
+    if collection == "in":
+        items = [i for i in items if i.get("in_library")]
+    elif collection == "out":
+        items = [i for i in items if not i.get("in_library")]
+    if watch == "watched":
+        items = [i for i in items if i.get("watched")]
+    elif watch == "unwatched":
+        items = [i for i in items if not i.get("watched") and not i.get("watch_started")]
+    elif watch == "started":
+        items = [i for i in items if i.get("watch_started") and not i.get("watched")]
+    if arr == "added":
+        items = [i for i in items if i.get("is_monitored")]
+    elif arr == "notadded":
+        items = [i for i in items if not i.get("is_monitored")]
+    return items
+
+
+def _paginate_matches(matched: list[dict], page: int, page_size: int) -> tuple[list[dict], int]:
+    """Slice a full scanned-and-filtered match list into one fixed-size page.
+
+    total_pages is an approximation: the real total isn't knowable without
+    scanning every remaining TMDB page, so this only ever advertises one page
+    ahead of the current one when a next page is known to exist.
+    """
+    page_items = matched[(page - 1) * page_size : page * page_size]
+    has_more = len(matched) > page * page_size
+    total_pages = page + 1 if has_more else max(page, 1)
+    return page_items, total_pages
+
+
 @router.get("/tmdb/list")
 async def get_tmdb_list(
     type: MediaType = Query(...),
@@ -1781,6 +1849,10 @@ async def get_tmdb_list(
     year: int | None = Query(None),
     min_rating: float | None = Query(None),
     status: str | None = Query(None),
+    # Local-state filters: collection = in|out, watch = watched|unwatched|started, arr = added|notadded.
+    collection: str | None = Query(None),
+    watch: str | None = Query(None),
+    arr: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
@@ -1796,87 +1868,132 @@ async def get_tmdb_list(
         }
         has_filters = bool(genre or year or min_rating or status)
 
-        if has_filters:
-            sort_by = category_sort_map.get(category, "popularity.desc")
-            if type == MediaType.movie:
-                genre_id = MOVIE_GENRE_IDS.get(genre) if genre else None
-                data = await tmdb.discover_movies(
-                    page=page, genre_id=genre_id, year=year,
-                    min_rating=min_rating, sort_by=sort_by, api_key=tmdb_key,
-                )
-            else:
+        async def _fetch_tmdb_page(fetch_page: int) -> dict:
+            if has_filters:
+                sort_by = category_sort_map.get(category, "popularity.desc")
+                if type == MediaType.movie:
+                    genre_id = MOVIE_GENRE_IDS.get(genre) if genre else None
+                    return await tmdb.discover_movies(
+                        page=fetch_page, genre_id=genre_id, year=year,
+                        min_rating=min_rating, sort_by=sort_by, api_key=tmdb_key,
+                    )
                 genre_id = TV_GENRE_IDS.get(genre) if genre else None
                 status_id = TV_STATUS_IDS.get(status) if status else None
-                data = await tmdb.discover_shows(
-                    page=page, genre_id=genre_id, year=year,
+                return await tmdb.discover_shows(
+                    page=fetch_page, genre_id=genre_id, year=year,
                     min_rating=min_rating, sort_by=sort_by,
                     status=status_id, api_key=tmdb_key,
                 )
-        elif type == MediaType.movie:
+            if type == MediaType.movie:
+                if category == "top_rated":
+                    return await tmdb.get_top_rated_movies(page=fetch_page, api_key=tmdb_key)
+                if category == "trending":
+                    return await tmdb.get_trending_movies(page=fetch_page, api_key=tmdb_key)
+                return await tmdb.get_popular_movies(page=fetch_page, api_key=tmdb_key)
+            # series/episode
             if category == "top_rated":
-                data = await tmdb.get_top_rated_movies(page=page, api_key=tmdb_key)
-            elif category == "trending":
-                data = await tmdb.get_trending_movies(page=page, api_key=tmdb_key)
-            else:
-                data = await tmdb.get_popular_movies(page=page, api_key=tmdb_key)
-        else:  # series/episode
-            if category == "top_rated":
-                data = await tmdb.get_top_rated_shows(page=page, api_key=tmdb_key)
-            elif category == "trending":
-                data = await tmdb.get_trending_shows(page=page, api_key=tmdb_key)
-            else:
-                data = await tmdb.get_popular_shows(page=page, api_key=tmdb_key)
+                return await tmdb.get_top_rated_shows(page=fetch_page, api_key=tmdb_key)
+            if category == "trending":
+                return await tmdb.get_trending_shows(page=fetch_page, api_key=tmdb_key)
+            return await tmdb.get_popular_shows(page=fetch_page, api_key=tmdb_key)
 
-        results = data.get("results", [])
-        tmdb_ids = [res["id"] for res in results]
+        async def _build_enriched(results: list[dict]) -> list[dict]:
+            tmdb_ids = [res["id"] for res in results]
 
-        # Check local library
-        if type == MediaType.series:
-            # Match against Show.tmdb_id — never use episode tmdb_ids here,
-            # as TMDB IDs across shows and episodes share the same number space
-            # and collide (causing episodes to appear in show listings).
-            show_q = (
-                select(ShowModel.tmdb_id)
-                .join(Media, Media.show_id == ShowModel.id)
-                .join(Collection, Collection.media_id == Media.id)
-                .where(
-                    Collection.user_id == current_user.id,
-                    ShowModel.tmdb_id.in_(tmdb_ids),
+            # Check local library
+            if type == MediaType.series:
+                # Match against Show.tmdb_id — never use episode tmdb_ids here,
+                # as TMDB IDs across shows and episodes share the same number space
+                # and collide (causing episodes to appear in show listings).
+                show_q = (
+                    select(ShowModel.tmdb_id)
+                    .join(Media, Media.show_id == ShowModel.id)
+                    .join(Collection, Collection.media_id == Media.id)
+                    .where(
+                        Collection.user_id == current_user.id,
+                        ShowModel.tmdb_id.in_(tmdb_ids),
+                    )
+                    .distinct()
                 )
-                .distinct()
-            )
-            show_result = await db.execute(show_q)
-            library_tmdb_ids = {row[0] for row in show_result.all()}
-        else:
-            query = (
-                select(Media)
-                .where(Media.tmdb_id.in_(tmdb_ids), Media.media_type == MediaType.movie)
-            )
-            result = await db.execute(query)
-            library_tmdb_ids = {m.tmdb_id for m in result.scalars().all()}
+                show_result = await db.execute(show_q)
+                library_tmdb_ids = {row[0] for row in show_result.all()}
+            else:
+                query = (
+                    select(Media)
+                    .where(Media.tmdb_id.in_(tmdb_ids), Media.media_type == MediaType.movie)
+                )
+                result = await db.execute(query)
+                library_tmdb_ids = {m.tmdb_id for m in result.scalars().all()}
 
-        enriched = []
-        for res in results:
-            tmdb_id = res["id"]
-            enriched.append(
-                {
-                    "id": None,
-                    "tmdb_id": tmdb_id,
-                    "type": type,
-                    "title": res.get("title") or res.get("name"),
-                    "poster_path": tmdb.poster_url(res.get("poster_path")),
-                    "release_date": res.get("release_date") or res.get("first_air_date"),
-                    "tmdb_rating": res.get("vote_average"),
-                    "in_library": tmdb_id in library_tmdb_ids,
-                    "adult": res.get("adult", False),
-                }
-            )
-        await enrich_with_state(db, current_user.id, enriched)
+            enriched = []
+            for res in results:
+                tmdb_id = res["id"]
+                enriched.append(
+                    {
+                        "id": None,
+                        "tmdb_id": tmdb_id,
+                        "type": type,
+                        "title": res.get("title") or res.get("name"),
+                        "poster_path": tmdb.poster_url(res.get("poster_path")),
+                        "release_date": res.get("release_date") or res.get("first_air_date"),
+                        "tmdb_rating": res.get("vote_average"),
+                        "in_library": tmdb_id in library_tmdb_ids,
+                        "adult": res.get("adult", False),
+                    }
+                )
+            await enrich_with_state(db, current_user.id, enriched)
+            return enriched
+
+        if not (collection or watch or arr):
+            data = await _fetch_tmdb_page(page)
+            enriched = await _build_enriched(data.get("results", []))
+            return {
+                "page": data.get("page", 1),
+                "total_pages": data.get("total_pages", 1),
+                "total_results": data.get("total_results", 0),
+                "results": enriched,
+            }
+
+        # The local filters drop an unpredictable share of each TMDB page, so
+        # scan pages forward and rebuild fixed-size pages of matches.
+        PAGE_SIZE = 20
+        MAX_SCAN_PAGES = 30
+        SCAN_BATCH = 5
+        needed = page * PAGE_SIZE
+        matched: list[dict] = []
+        seen_ids: set[int] = set()
+        scan_page = 1
+        total_tmdb_pages: int | None = None
+        while scan_page <= MAX_SCAN_PAGES and len(matched) <= needed:
+            batch_end = min(scan_page + SCAN_BATCH - 1, MAX_SCAN_PAGES)
+            if total_tmdb_pages is not None:
+                batch_end = min(batch_end, total_tmdb_pages)
+            batch_pages = list(range(scan_page, batch_end + 1))
+            if not batch_pages:
+                break
+            datas = await asyncio.gather(*(_fetch_tmdb_page(p) for p in batch_pages))
+            if total_tmdb_pages is None:
+                total_tmdb_pages = datas[0].get("total_pages", 1)
+            batch_results = []
+            for d in datas:
+                for res in d.get("results", []):
+                    # popular/trending ordering shifts between fetches - dedupe
+                    if res["id"] not in seen_ids:
+                        seen_ids.add(res["id"])
+                        batch_results.append(res)
+            if batch_results:
+                enriched = await _build_enriched(batch_results)
+                matched.extend(_apply_local_filters(enriched, collection, watch, arr))
+            scan_page = batch_end + 1
+            if total_tmdb_pages is not None and scan_page > total_tmdb_pages:
+                break
+
+        page_items, total_pages = _paginate_matches(matched, page, PAGE_SIZE)
         return {
-            "page": data.get("page", 1),
-            "total_pages": data.get("total_pages", 1),
-            "total_results": data.get("total_results", 0),
-            "results": enriched,
+            "page": page,
+            "total_pages": total_pages,
+            "total_results": len(matched),
+            "results": page_items,
         }
     except Exception as e:
         print(f"Error fetching TMDB list: {e}")
