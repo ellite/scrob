@@ -3662,6 +3662,7 @@ async def _apply_nuvio_watch_history(
     tmdb_ids: dict[str, int],
     *,
     include_unknown_dates: bool = False,
+    dedupe_by_media_id_only: bool = False,
 ) -> set[int]:
     standalone_tmdb_ids = {
         tmdb_id
@@ -3737,12 +3738,22 @@ async def _apply_nuvio_watch_history(
         )
     )
     existing = set(existing_result.all())
+    existing_by_media: dict[int, datetime | None] = {}
+    for existing_media_id, existing_watched_at in existing:
+        existing_by_media.setdefault(existing_media_id, existing_watched_at)
     added_media_ids: set[int] = set()
     new_events: list[WatchEvent] = []
     for media, watched_at in candidates:
-        key = (media.id, watched_at)
-        if key in existing:
-            continue
+        if dedupe_by_media_id_only:
+            if media.id in existing_by_media:
+                continue
+        else:
+            existing_watched_at = existing_by_media.get(media.id)
+            if watched_at is None:
+                if existing_watched_at is not None:
+                    continue
+            elif (media.id, watched_at) in existing:
+                continue
         event = WatchEvent(
             user_id=user_id,
             media_id=media.id,
@@ -3753,7 +3764,7 @@ async def _apply_nuvio_watch_history(
         )
         db.add(event)
         new_events.append(event)
-        existing.add(key)
+        existing_by_media[media.id] = watched_at
         added_media_ids.add(media.id)
     await db.commit()
     for event in new_events:
@@ -4574,6 +4585,7 @@ async def _run_stremio_sync(
                         show_map,
                         tmdb_ids,
                         include_unknown_dates=True,
+                        dedupe_by_media_id_only=True,
                     )
                 )
             if progress_records:

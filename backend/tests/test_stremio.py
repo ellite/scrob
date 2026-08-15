@@ -790,3 +790,86 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
         added = db.add.call_args.args[0]
         self.assertEqual(added.token, "fresh-auth-key")
         self.assertEqual(added.name, "My Stremio")
+
+    async def test_stremio_sync_dedup_by_media_id_only_skips_existing_watched(self) -> None:
+        movie = Media(
+            id=10,
+            tmdb_id=603,
+            media_type=MediaType.movie,
+            title="The Matrix",
+        )
+        media_result = SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: [movie]),
+        )
+        existing_result = SimpleNamespace(
+            all=lambda: [(10, datetime(2026, 8, 13, 10, 0, 0))],
+        )
+        rewatch_media_result = SimpleNamespace(scalar_one_or_none=lambda: None)
+        db = SimpleNamespace(
+            execute=AsyncMock(side_effect=[media_result, existing_result, rewatch_media_result]),
+            add=MagicMock(),
+            commit=AsyncMock(),
+        )
+
+        added = await _apply_nuvio_watch_history(
+            db,
+            user_id=7,
+            rows=[
+                {
+                    "content_id": "tt0133093",
+                    "content_type": "movie",
+                    "watched_at": datetime(2026, 8, 15, 11, 0, 0).timestamp() * 1000,
+                }
+            ],
+            show_map={},
+            tmdb_ids={"tt0133093": 603},
+            include_unknown_dates=True,
+            dedupe_by_media_id_only=True,
+        )
+
+        self.assertEqual(added, set())
+        db.add.assert_not_called()
+
+    async def test_nuvio_sync_allows_new_timestamps_by_default(self) -> None:
+        movie = Media(
+            id=10,
+            tmdb_id=603,
+            media_type=MediaType.movie,
+            title="The Matrix",
+        )
+        media_result = SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: [movie]),
+        )
+        existing_result = SimpleNamespace(
+            all=lambda: [(10, datetime(2026, 8, 13, 10, 0, 0))],
+        )
+        rewatch_media_result = SimpleNamespace(scalar_one_or_none=lambda: None)
+        db = SimpleNamespace(
+            execute=AsyncMock(side_effect=[media_result, existing_result, rewatch_media_result]),
+            add=MagicMock(),
+            commit=AsyncMock(),
+        )
+
+        expected_watched_at = datetime(2026, 8, 15, 11, 0, 0)
+        added = await _apply_nuvio_watch_history(
+            db,
+            user_id=7,
+            rows=[
+                {
+                    "content_id": "tt0133093",
+                    "content_type": "movie",
+                    "watched_at": int(
+                        datetime(2026, 8, 15, 11, 0, 0, tzinfo=timezone.utc).timestamp() * 1000
+                    ),
+                }
+            ],
+            show_map={},
+            tmdb_ids={"tt0133093": 603},
+            include_unknown_dates=True,
+        )
+
+        self.assertEqual(added, {10})
+        db.add.assert_called_once()
+        event = db.add.call_args.args[0]
+        self.assertEqual(event.media_id, 10)
+        self.assertEqual(event.watched_at, expected_watched_at)
