@@ -102,17 +102,32 @@ def upgrade() -> None:
         """
     )
 
-    # media_translations: unique on (media_id, language) - drop the loser's
-    # translation where the winner already has one for that language, repoint
-    # the rest.
+    # media_translations: unique on (media_id, language). A dedup group can
+    # have more than two rows (three or more Media rows sharing a tmdb_id),
+    # so it's not enough to check each loser against the winner alone - two
+    # losers in the same group can each hold a translation for the same
+    # language that collides with neither the winner nor each other *until*
+    # both get repointed onto the winner by the same UPDATE. Drop a loser's
+    # translation when the winner already has one for that language, or when
+    # another loser in the same group has a lower id for that same language
+    # (keeping exactly one candidate per winner+language to repoint).
     op.execute(
         """
         DELETE FROM media_translations mt
         USING media_dedup d
         WHERE mt.media_id = d.loser_id
-          AND EXISTS (
-              SELECT 1 FROM media_translations mt2
-              WHERE mt2.media_id = d.winner_id AND mt2.language = mt.language
+          AND (
+              EXISTS (
+                  SELECT 1 FROM media_translations mt2
+                  WHERE mt2.media_id = d.winner_id AND mt2.language = mt.language
+              )
+              OR EXISTS (
+                  SELECT 1 FROM media_translations mt3
+                  JOIN media_dedup d3 ON mt3.media_id = d3.loser_id
+                  WHERE d3.winner_id = d.winner_id
+                    AND mt3.language = mt.language
+                    AND mt3.id < mt.id
+              )
           )
         """
     )
@@ -125,17 +140,29 @@ def upgrade() -> None:
 
     # list_items: unique on (list_id, media_id, COALESCE(season_number, -1)) -
     # drop the loser's entry where the winner is already on that same list
-    # (same season, if a season entry), repoint the rest.
+    # (same season, if a season entry) or another loser in the group already
+    # claims the same list+season and has a lower id (see media_translations
+    # above for why a group can have more than one loser), repoint the rest.
     op.execute(
         """
         DELETE FROM list_items li
         USING media_dedup d
         WHERE li.media_id = d.loser_id
-          AND EXISTS (
-              SELECT 1 FROM list_items li2
-              WHERE li2.media_id = d.winner_id
-                AND li2.list_id = li.list_id
-                AND COALESCE(li2.season_number, -1) = COALESCE(li.season_number, -1)
+          AND (
+              EXISTS (
+                  SELECT 1 FROM list_items li2
+                  WHERE li2.media_id = d.winner_id
+                    AND li2.list_id = li.list_id
+                    AND COALESCE(li2.season_number, -1) = COALESCE(li.season_number, -1)
+              )
+              OR EXISTS (
+                  SELECT 1 FROM list_items li3
+                  JOIN media_dedup d3 ON li3.media_id = d3.loser_id
+                  WHERE d3.winner_id = d.winner_id
+                    AND li3.list_id = li.list_id
+                    AND COALESCE(li3.season_number, -1) = COALESCE(li.season_number, -1)
+                    AND li3.id < li.id
+              )
           )
         """
     )
@@ -148,18 +175,30 @@ def upgrade() -> None:
 
     # ratings: unique on (user_id, media_id, COALESCE(season_number, -1),
     # COALESCE(episode_order, 'tmdb')) - drop the loser's rating where the user
-    # already rated the winner on that same key, repoint the rest.
+    # already rated the winner on that same key, or another loser in the group
+    # already claims the same key and has a lower id, repoint the rest.
     op.execute(
         """
         DELETE FROM ratings r
         USING media_dedup d
         WHERE r.media_id = d.loser_id
-          AND EXISTS (
-              SELECT 1 FROM ratings r2
-              WHERE r2.media_id = d.winner_id
-                AND r2.user_id = r.user_id
-                AND COALESCE(r2.season_number, -1) = COALESCE(r.season_number, -1)
-                AND COALESCE(r2.episode_order, 'tmdb') = COALESCE(r.episode_order, 'tmdb')
+          AND (
+              EXISTS (
+                  SELECT 1 FROM ratings r2
+                  WHERE r2.media_id = d.winner_id
+                    AND r2.user_id = r.user_id
+                    AND COALESCE(r2.season_number, -1) = COALESCE(r.season_number, -1)
+                    AND COALESCE(r2.episode_order, 'tmdb') = COALESCE(r.episode_order, 'tmdb')
+              )
+              OR EXISTS (
+                  SELECT 1 FROM ratings r3
+                  JOIN media_dedup d3 ON r3.media_id = d3.loser_id
+                  WHERE d3.winner_id = d.winner_id
+                    AND r3.user_id = r.user_id
+                    AND COALESCE(r3.season_number, -1) = COALESCE(r.season_number, -1)
+                    AND COALESCE(r3.episode_order, 'tmdb') = COALESCE(r.episode_order, 'tmdb')
+                    AND r3.id < r.id
+              )
           )
         """
     )
@@ -171,15 +210,26 @@ def upgrade() -> None:
     )
 
     # rewatch_progress: unique on (rewatch_id, media_id) - drop the loser's
-    # progress row where the winner already has one for that rewatch cycle.
+    # progress row where the winner already has one for that rewatch cycle,
+    # or another loser in the group already claims the same rewatch cycle and
+    # has a lower id.
     op.execute(
         """
         DELETE FROM rewatch_progress rp
         USING media_dedup d
         WHERE rp.media_id = d.loser_id
-          AND EXISTS (
-              SELECT 1 FROM rewatch_progress rp2
-              WHERE rp2.media_id = d.winner_id AND rp2.rewatch_id = rp.rewatch_id
+          AND (
+              EXISTS (
+                  SELECT 1 FROM rewatch_progress rp2
+                  WHERE rp2.media_id = d.winner_id AND rp2.rewatch_id = rp.rewatch_id
+              )
+              OR EXISTS (
+                  SELECT 1 FROM rewatch_progress rp3
+                  JOIN media_dedup d3 ON rp3.media_id = d3.loser_id
+                  WHERE d3.winner_id = d.winner_id
+                    AND rp3.rewatch_id = rp.rewatch_id
+                    AND rp3.id < rp.id
+              )
           )
         """
     )
@@ -191,15 +241,26 @@ def upgrade() -> None:
     )
 
     # playback_progress: unique on (user_id, media_id) - drop the loser's
-    # in-progress marker where the user already has one against the winner.
+    # in-progress marker where the user already has one against the winner,
+    # or another loser in the group already claims the same user and has a
+    # lower id.
     op.execute(
         """
         DELETE FROM playback_progress pp
         USING media_dedup d
         WHERE pp.media_id = d.loser_id
-          AND EXISTS (
-              SELECT 1 FROM playback_progress pp2
-              WHERE pp2.media_id = d.winner_id AND pp2.user_id = pp.user_id
+          AND (
+              EXISTS (
+                  SELECT 1 FROM playback_progress pp2
+                  WHERE pp2.media_id = d.winner_id AND pp2.user_id = pp.user_id
+              )
+              OR EXISTS (
+                  SELECT 1 FROM playback_progress pp3
+                  JOIN media_dedup d3 ON pp3.media_id = d3.loser_id
+                  WHERE d3.winner_id = d.winner_id
+                    AND pp3.user_id = pp.user_id
+                    AND pp3.id < pp.id
+              )
           )
         """
     )
@@ -210,62 +271,91 @@ def upgrade() -> None:
         """
     )
 
-    # collections: unique on (user_id, media_id). Two cases:
-    #  1. The user only collected the loser -> plain repoint.
-    #  2. The user collected both -> merge: move the loser's CollectionFile
-    #     rows onto the winner's collection (dropping any that collide with a
-    #     file the winner's collection already has from the same source), then
-    #     delete the now-empty loser collection row.
+    # collections: unique on (user_id, media_id). Unlike the tables above, a
+    # collision here can't just be dropped in favor of the winner's row -
+    # collections carries child collection_files that need merging first. And
+    # since a dedup group can span more than two Media rows, a user may have
+    # separately collected *two or more* losers with no collections row on
+    # the winner at all - a plain "repoint onto the winner" would then try to
+    # create two rows for the same (user, winner) pair in one UPDATE. So:
+    # pick one canonical target collection per (winner, user) up front - the
+    # winner's own row if it has one, else the lowest-id row among the
+    # group's members - merge every other member's files into it, then
+    # collapse every non-target row in the group onto it.
     op.execute(
         """
-        UPDATE collections c SET media_id = d.winner_id
-        FROM media_dedup d
-        WHERE c.media_id = d.loser_id
-          AND NOT EXISTS (
-              SELECT 1 FROM collections c2
-              WHERE c2.media_id = d.winner_id AND c2.user_id = c.user_id
-          )
+        CREATE TEMP TABLE media_group_members AS
+        SELECT winner_id, winner_id AS member_id FROM (SELECT DISTINCT winner_id FROM media_dedup) w
+        UNION ALL
+        SELECT winner_id, loser_id AS member_id FROM media_dedup
         """
     )
     op.execute(
         """
+        CREATE TEMP TABLE collection_targets AS
+        SELECT DISTINCT ON (g.winner_id, c.user_id)
+            g.winner_id, c.user_id, c.id AS target_id
+        FROM media_group_members g
+        JOIN collections c ON c.media_id = g.member_id
+        ORDER BY g.winner_id, c.user_id, (g.member_id = g.winner_id) DESC, c.id ASC
+        """
+    )
+    # Move every other group member's collection_files onto the target,
+    # dropping any that collide with a file the target already has from the
+    # same source.
+    op.execute(
+        """
         UPDATE collection_files cf
-        SET collection_id = c_winner.id
-        FROM media_dedup d
-        JOIN collections c_loser ON c_loser.media_id = d.loser_id
-        JOIN collections c_winner
-            ON c_winner.media_id = d.winner_id AND c_winner.user_id = c_loser.user_id
-        WHERE cf.collection_id = c_loser.id
+        SET collection_id = ct.target_id
+        FROM media_group_members g
+        JOIN collections c ON c.media_id = g.member_id
+        JOIN collection_targets ct ON ct.winner_id = g.winner_id AND ct.user_id = c.user_id
+        WHERE cf.collection_id = c.id
+          AND c.id != ct.target_id
           AND NOT EXISTS (
               SELECT 1 FROM collection_files cf2
-              WHERE cf2.collection_id = c_winner.id
+              WHERE cf2.collection_id = ct.target_id
                 AND cf2.source = cf.source
                 AND cf2.source_id IS NOT DISTINCT FROM cf.source_id
           )
         """
     )
-    # Any collection_files still attached to a (still-existing) loser collection
-    # at this point are the ones that collided above - drop them, the winner's
-    # collection already has an equivalent file from that same source.
+    # Any collection_files still attached to a non-target collection at this
+    # point are the ones that collided above - drop them, the target already
+    # has an equivalent file from that same source.
     op.execute(
         """
         DELETE FROM collection_files cf
-        USING media_dedup d, collections c_loser
-        WHERE c_loser.media_id = d.loser_id
-          AND cf.collection_id = c_loser.id
+        USING media_group_members g, collections c, collection_targets ct
+        WHERE c.media_id = g.member_id
+          AND ct.winner_id = g.winner_id AND ct.user_id = c.user_id
+          AND cf.collection_id = c.id
+          AND c.id != ct.target_id
         """
     )
+    # Repoint the target row itself onto the winner Media row - only changes
+    # anything when the target came from a loser (i.e. the winner had no
+    # collections row of its own for that user).
+    op.execute(
+        """
+        UPDATE collections c
+        SET media_id = ct.winner_id
+        FROM collection_targets ct
+        WHERE c.id = ct.target_id AND c.media_id != ct.winner_id
+        """
+    )
+    # Every other collections row in the group is now empty - drop it.
     op.execute(
         """
         DELETE FROM collections c
-        USING media_dedup d
-        WHERE c.media_id = d.loser_id
-          AND EXISTS (
-              SELECT 1 FROM collections c2
-              WHERE c2.media_id = d.winner_id AND c2.user_id = c.user_id
-          )
+        USING media_group_members g, collection_targets ct
+        WHERE c.media_id = g.member_id
+          AND ct.winner_id = g.winner_id AND ct.user_id = c.user_id
+          AND c.id != ct.target_id
         """
     )
+    op.execute("DROP TABLE collection_targets")
+    op.execute("DROP TABLE media_group_members")
 
     # Every dependent table has been repointed or reconciled - the loser rows
     # are now unreferenced and safe to delete.
