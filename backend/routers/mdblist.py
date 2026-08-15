@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from dateutil import parser as dt_parser
@@ -35,16 +35,6 @@ from routers.trakt import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 WATCHLIST_SLUG = "__watchlist__"
-
-# MDBList's own watched_at for the same play can differ slightly between pulls
-# (and doesn't always agree with a timestamp for the same watch reported by
-# another source, e.g. after a push round-trips through a media server). A
-# watch reported within this window of one we already have for the title is
-# treated as the same watch rather than a rewatch. Mirrors
-# routers.sync.PLEX_WEBHOOK_RECONCILE_WINDOW, which reconciles the exact same
-# kind of same-play-different-timestamp drift. See #148.
-WATCH_DEDUP_WINDOW = timedelta(minutes=10)
-
 
 def _utc_naive(value: Any) -> datetime:
     if isinstance(value, datetime):
@@ -424,10 +414,9 @@ async def _import_watched(
                         stats["skipped"] += 1
                         continue
                     watched_at = _utc_naive(entry.get("watched_at") or entry.get("last_watched_at"))
-                    if any(
-                        existing_at is not None and abs(watched_at - existing_at) <= WATCH_DEDUP_WINDOW
-                        for existing_at in existing.get(media.id, [])
-                    ):
+                    # MDBList re-stamps pushed plays, so any dedup window eventually
+                    # re-imports the whole watched list (#148) - only record a first play.
+                    if existing.get(media.id):
                         stats["skipped"] += 1
                         continue
                     event = WatchEvent(

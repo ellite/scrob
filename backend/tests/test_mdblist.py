@@ -484,13 +484,13 @@ class _WatchedFakeSessionWithHistory(_WatchedFakeSession):
         return SimpleNamespace(all=lambda: [], scalar_one_or_none=lambda: None)
 
 
-class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
-    async def test_watch_within_window_of_existing_is_skipped(self) -> None:
+class ImportWatchedFirstPlayOnlyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_watch_close_to_existing_is_skipped(self) -> None:
         """Regression test for #148: MDBList (and a source it round-tripped
         through, e.g. a push to a media server) doesn't always agree on the
         exact watched_at for what's really the same play. A new watch
-        reported within WATCH_DEDUP_WINDOW of one we already have for the
-        title must not create a second WatchEvent."""
+        close to one we already have for the title must not create a second
+        WatchEvent."""
         from routers.mdblist import _import_watched
 
         async def fake_resolve_media(db, kind, entry, api_key, external_cache):
@@ -514,11 +514,12 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["skipped"], 1)
         self.assertEqual(changed, set())
 
-    async def test_watch_outside_window_of_existing_is_recorded(self) -> None:
-        """A watch reported more than WATCH_DEDUP_WINDOW away from the last
-        known one for the title is a genuine rewatch and must still be
-        recorded - including a same-day rewatch a couple hours later (e.g.
-        watching a movie twice in a row to make sense of it)."""
+    async def test_any_existing_play_skips_the_import(self) -> None:
+        """Cloud pulls only ever record a FIRST play: MDBList re-stamps
+        pushed plays with its own times, so any window-based dedup
+        eventually re-imports the whole watched list on a later pull cycle
+        (push -> re-stamp -> pull echo). A title with ANY existing play is
+        skipped regardless of how far apart the timestamps are."""
         from routers.mdblist import _import_watched
 
         async def fake_resolve_media(db, kind, entry, api_key, external_cache):
@@ -537,18 +538,17 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
                 db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
             )
 
-        self.assertEqual({obj.media_id for obj in db.added}, {1})
-        self.assertEqual(stats["watched"], 1)
-        self.assertEqual(stats["skipped"], 0)
-        self.assertEqual(changed, {1})
+        self.assertEqual(db.added, [])
+        self.assertEqual(stats["watched"], 0)
+        self.assertEqual(stats["skipped"], 1)
+        self.assertEqual(changed, set())
 
-    async def test_null_dated_existing_watch_does_not_crash_the_window_check(self) -> None:
+    async def test_null_dated_existing_watch_also_skips_the_import(self) -> None:
         """A title can already have a completed WatchEvent with no date at
         all (explicit "mark watched without a date" - see
-        UnknownWatchDateTests in test_history.py). The window comparison
-        must not blow up comparing a real timestamp against that None, and
-        a null-dated existing watch can't be used to dedup against (there's
-        no timestamp to compare), so the new watch is still recorded."""
+        UnknownWatchDateTests in test_history.py). That still counts as an
+        existing play, so the pull import skips it without blowing up on
+        the None timestamp."""
         from routers.mdblist import _import_watched
 
         async def fake_resolve_media(db, kind, entry, api_key, external_cache):
@@ -567,9 +567,9 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(stats["errors"], 0)
-        self.assertEqual({obj.media_id for obj in db.added}, {1})
-        self.assertEqual(stats["watched"], 1)
-        self.assertEqual(changed, {1})
+        self.assertEqual(db.added, [])
+        self.assertEqual(stats["watched"], 0)
+        self.assertEqual(changed, set())
 
 
 class ImportWatchedSkipsShowRollupTests(unittest.IsolatedAsyncioTestCase):
@@ -624,3 +624,10 @@ class ImportWatchedSkipsShowRollupTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MDBListPushLimitTests(unittest.TestCase):
+    def test_push_batch_size_within_mdblist_limit(self) -> None:
+        # MDBList rejects >200 shows per sync request (#176) - pin the
+        # contract so the constant can't silently drift above it again.
+        self.assertLessEqual(mdblist.PUSH_BATCH_SIZE, 200)
