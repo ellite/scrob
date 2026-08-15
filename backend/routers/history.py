@@ -4,9 +4,9 @@ from datetime import date, datetime, timezone
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import and_, or_, select, desc, func, delete
+from sqlalchemy import and_, or_, select, desc, func, delete, case
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, aliased
 from db import get_db
 from models.media import Media
 from models.show import Show
@@ -21,7 +21,7 @@ from models.episode_order import EpisodeOrderMapping
 from models.rewatch import ShowRewatch, RewatchProgress
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations
-from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark
+from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
 from core.enrichment import create_media_safely
 
 from dependencies import get_current_user, get_current_user_or_api_key
@@ -624,6 +624,129 @@ class _NextUpEpisodeNotOnTmdb(Exception):
     doesn't actually have it — not a real error, never raised past get_next_up."""
 
 
+def _remaining_episode_stats(
+    season_ep_counts: dict[int, int],
+    watched_per_season: dict[int, int],
+    avg_runtime: float | None,
+) -> dict | None:
+    """episodes_left / remaining_runtime for one show's Next Up card (#170).
+
+    season_ep_counts is capped_season_episode_counts output (released episodes
+    per season); watched counts are capped per season so provider numbering
+    mismatches (more local watched rows than TMDB says a season has) can't push
+    the remainder negative. Specials (season 0) are excluded, matching
+    total_aired_episodes. The caller only asks about shows that have an aired
+    unwatched episode, so the count is clamped to at least 1 even when stale
+    TMDB season data hasn't caught up with the episode that just aired.
+    """
+    total_aired = sum(v for sn, v in season_ep_counts.items() if sn != 0)
+    if not total_aired:
+        return None
+    watched_aired = sum(
+        min(watched_per_season.get(sn, 0), cnt)
+        for sn, cnt in season_ep_counts.items()
+        if sn != 0
+    )
+    episodes_left = max(total_aired - watched_aired, 1)
+    remaining_runtime = int(round(episodes_left * float(avg_runtime))) if avg_runtime else None
+    return {"episodes_left": episodes_left, "remaining_runtime": remaining_runtime}
+
+
+async def _next_up_remaining_stats(
+    db: AsyncSession,
+    user_id: int,
+    next_up_media: list[Media],
+    active_rewatch_by_show: dict[int, ShowRewatch],
+) -> dict[int, dict]:
+    """Batched per-show remaining-episode estimates for the Next Up items (#170).
+
+    Watched counts follow the show detail page's definition (any WatchEvent for
+    the episode, or RewatchProgress on the active rewatch) so the numbers agree
+    with the watch percentages shown there. Runtime is estimated from the
+    average effective runtime of the show's local episode rows, falling back to
+    TMDB's episode_run_time; None when neither is known.
+    """
+    shows_by_id = {m.show_id: m.show for m in next_up_media if m.show_id and m.show}
+    if not shows_by_id:
+        return {}
+
+    # Grouped by show_id up front so the per-show lookup below is a single dict
+    # access instead of a full-dict filter repeated once per show.
+    watched_per_by_show: dict[int, dict[int, int]] = {}
+    non_rewatch_ids = [sid for sid in shows_by_id if sid not in active_rewatch_by_show]
+    if non_rewatch_ids:
+        watch_a = aliased(WatchEvent)
+        rows = await db.execute(
+            select(
+                Media.show_id,
+                Media.season_number,
+                func.count(func.distinct(
+                    case((watch_a.id.isnot(None), Media.episode_number), else_=None)
+                )),
+            )
+            .outerjoin(watch_a, and_(watch_a.media_id == Media.id, watch_a.user_id == user_id))
+            .where(
+                Media.show_id.in_(non_rewatch_ids),
+                Media.media_type == MediaType.episode,
+                Media.season_number.isnot(None),
+                Media.episode_number.isnot(None),
+            )
+            .group_by(Media.show_id, Media.season_number)
+        )
+        for sid, sn, cnt in rows.all():
+            watched_per_by_show.setdefault(sid, {})[sn] = cnt
+
+    rewatch_show_ids = [sid for sid in shows_by_id if sid in active_rewatch_by_show]
+    if rewatch_show_ids:
+        rewatch_ids = [active_rewatch_by_show[sid].id for sid in rewatch_show_ids]
+        rows = await db.execute(
+            select(Media.show_id, Media.season_number, func.count(func.distinct(Media.episode_number)))
+            .select_from(RewatchProgress)
+            .join(Media, Media.id == RewatchProgress.media_id)
+            .where(
+                RewatchProgress.rewatch_id.in_(rewatch_ids),
+                Media.show_id.in_(rewatch_show_ids),
+                Media.season_number.isnot(None),
+                Media.episode_number.isnot(None),
+            )
+            .group_by(Media.show_id, Media.season_number)
+        )
+        for sid, sn, cnt in rows.all():
+            watched_per_by_show.setdefault(sid, {})[sn] = cnt
+
+    # Average effective runtime per show — same coalesce as profile.py's watch
+    # time stats: episodes often only carry runtime in tmdb_data['runtime'].
+    from sqlalchemy import Integer as SAInteger
+    from sqlalchemy.types import Text as SAText
+
+    json_runtime = func.cast(
+        func.nullif(func.cast(Media.tmdb_data["runtime"], SAText), "null"),
+        SAInteger,
+    )
+    avg_rows = await db.execute(
+        select(Media.show_id, func.avg(func.coalesce(Media.runtime, json_runtime)))
+        .where(
+            Media.show_id.in_(list(shows_by_id)),
+            Media.media_type == MediaType.episode,
+        )
+        .group_by(Media.show_id)
+    )
+    avg_by_show = {sid: float(avg) for sid, avg in avg_rows.all() if avg is not None}
+
+    stats: dict[int, dict] = {}
+    for sid, show in shows_by_id.items():
+        season_counts = capped_season_episode_counts(show)
+        avg_runtime = avg_by_show.get(sid)
+        if not avg_runtime:
+            run_times = (show.tmdb_data or {}).get("episode_run_time") or []
+            avg_runtime = run_times[0] if run_times else None
+        per_season = watched_per_by_show.get(sid, {})
+        show_stats = _remaining_episode_stats(season_counts, per_season, avg_runtime)
+        if show_stats:
+            stats[sid] = show_stats
+    return stats
+
+
 @router.get("/next-up")
 async def get_next_up(
     db: AsyncSession = Depends(get_db),
@@ -847,9 +970,17 @@ async def get_next_up(
     if limit is not None:
         next_up = next_up[:limit]
 
+    remaining_stats = await _next_up_remaining_stats(
+        db, current_user.id, next_up, active_rewatch_by_show
+    )
+
     items = [_format_media_item(m) for m in next_up]
     for item in items:
         item["next_up_hidden"] = item.get("show_id") in hidden_set
+        show_stats = remaining_stats.get(item.get("show_id"))
+        if show_stats:
+            item["episodes_left"] = show_stats["episodes_left"]
+            item["remaining_runtime"] = show_stats["remaining_runtime"]
     if items:
         await enrich_with_state(db, current_user.id, items)
         lang = await get_user_metadata_language(db, current_user.id)

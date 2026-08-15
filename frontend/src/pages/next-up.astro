@@ -1,5 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
+import SortButton from "../components/SortButton.astro";
 export const prerender = false;
 
 const { token } = Astro.locals;
@@ -7,11 +8,25 @@ Astro.response.headers.set("Cache-Control", "no-store");
 ---
 
 <Base title="Next Up">
-  <div class="mb-8 flex items-center justify-between gap-4">
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
     <div>
       <h1 class="page-title mb-2">Next Up</h1>
       <p class="text-zinc-500">Continue where you left off</p>
     </div>
+    <div class="flex items-center gap-3">
+    <SortButton
+      id="next-up-sort"
+      current="recent"
+      label="Sort By"
+      navigate={false}
+      options={[
+        { value: "recent", label: "Recently watched" },
+        { value: "episodes_asc", label: "Episodes left ↑" },
+        { value: "episodes_desc", label: "Episodes left ↓" },
+        { value: "time_asc", label: "Time left ↑" },
+        { value: "time_desc", label: "Time left ↓" },
+      ]}
+    />
     <button
       id="toggle-hidden-btn"
       class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer shrink-0"
@@ -22,6 +37,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
       </svg>
       <span id="toggle-label">Show hidden</span>
     </button>
+    </div>
   </div>
 
   <div id="loading-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
@@ -65,6 +81,39 @@ Astro.response.headers.set("Cache-Control", "no-store");
   const SPIN   = `<svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>`;
 
   let showingHidden = false;
+  let allItems = [];
+  let sortMode = localStorage.getItem('nextUpSort') || 'recent';
+
+  // 'recent' keeps the server's order (most recently watched first). The
+  // other modes sort on the #170 stats; items without stats always sink to
+  // the bottom, whatever the direction.
+  function sortedItems() {
+    if (sortMode === 'recent') return allItems;
+    const key = sortMode.startsWith('episodes') ? 'episodes_left' : 'remaining_runtime';
+    const dir = sortMode.endsWith('_desc') ? -1 : 1;
+    return [...allItems].sort((a, b) => {
+      const av = a[key], bv = b[key];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return (av - bv) * dir;
+    });
+  }
+
+  // Local copy of lib/media-format's formatEpisodesLeft — this define:vars
+  // script can't import from lib/ (same reason tmdbImageUrl is re-implemented
+  // above).
+  function episodesLeftLabel(item) {
+    const n = item.episodes_left;
+    if (n == null || n <= 0) return null;
+    let label = `${n} episode${n === 1 ? '' : 's'} left`;
+    const mins = item.remaining_runtime;
+    if (mins && mins > 0) {
+      const h = Math.floor(mins / 60), m = mins % 60;
+      label += ` · ~${h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`}`;
+    }
+    return label;
+  }
 
   function buildCard(item) {
     const isHidden = item.next_up_hidden === true;
@@ -91,8 +140,9 @@ Astro.response.headers.set("Cache-Control", "no-store");
       >${isHidden ? EYE : EYE_SLASH}</button>
     ` : '';
 
-    // Hidden cards: rendered as opacity-50 + hidden (show/hide toggled by JS)
-    const wrapperClass = isHidden ? 'opacity-50 hidden' : '';
+    // Hidden cards: rendered as opacity-50 + hidden (show/hide toggled by JS).
+    // A re-render while "Show hidden" is active must keep them visible.
+    const wrapperClass = isHidden ? (showingHidden ? 'opacity-50' : 'opacity-50 hidden') : '';
 
     return `
       <div class="${wrapperClass}" data-next-up-hidden="${isHidden ? 'true' : 'false'}">
@@ -112,10 +162,19 @@ Astro.response.headers.set("Cache-Control", "no-store");
             ${item.show_title ? `<h3 class="text-xs font-medium text-zinc-400 truncate mb-0.5">${esc(item.show_title)}</h3>` : ''}
             <h3 class="text-sm font-bold text-zinc-100 group-hover:text-blue-400 truncate transition-colors leading-tight mb-1">${esc(item.title)}</h3>
             ${sxe ? `<p class="text-[11px] font-bold text-blue-400 tracking-wide">${esc(sxe)}</p>` : ''}
+            ${episodesLeftLabel(item) ? `<p class="text-[11px] text-zinc-500 font-medium mt-0.5">${esc(episodesLeftLabel(item))}</p>` : ''}
           </a>
         </div>
       </div>
     `;
+  }
+
+  function renderGrid() {
+    const grid = document.getElementById('next-up-grid');
+    grid.innerHTML = sortedItems().map(buildCard).join('');
+    grid.classList.remove('hidden');
+    updateEmptyState();
+    bindHideButtons();
   }
 
   function updateEmptyState() {
@@ -140,19 +199,16 @@ Astro.response.headers.set("Cache-Control", "no-store");
       });
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
-      const items = data.next_up ?? [];
+      allItems = data.next_up ?? [];
 
       loading.classList.add('hidden');
 
-      if (items.length === 0) {
+      if (allItems.length === 0) {
         empty.classList.remove('hidden');
         return;
       }
 
-      grid.innerHTML = items.map(buildCard).join('');
-      grid.classList.remove('hidden');
-      updateEmptyState();
-      bindHideButtons();
+      renderGrid();
     } catch {
       loading.classList.add('hidden');
       empty.classList.remove('hidden');
@@ -181,7 +237,10 @@ Astro.response.headers.set("Cache-Control", "no-store");
               method: 'DELETE',
               headers: { 'Authorization': `Bearer ${token}` },
             });
-            // Restore
+            // Restore — also sync allItems so a later re-sort re-render
+            // doesn't resurrect the stale hidden state.
+            const restored = allItems.find(i => i.show_id === showId);
+            if (restored) restored.next_up_hidden = false;
             wrapper.dataset.nextUpHidden = 'false';
             wrapper.classList.remove('opacity-50', 'hidden');
             btn.classList.remove('bg-amber-900/60', 'border-amber-600', 'text-amber-300', 'hover:bg-amber-700', 'hover:border-amber-500', 'hover:text-white');
@@ -194,7 +253,9 @@ Astro.response.headers.set("Cache-Control", "no-store");
               headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ show_id: showId }),
             });
-            // Hide
+            // Hide — same allItems sync as the restore branch above.
+            const hidden = allItems.find(i => i.show_id === showId);
+            if (hidden) hidden.next_up_hidden = true;
             wrapper.dataset.nextUpHidden = 'true';
             wrapper.classList.add('opacity-50');
             if (!showingHidden) {
@@ -231,6 +292,27 @@ Astro.response.headers.set("Cache-Control", "no-store");
     });
 
     updateEmptyState();
+  });
+
+  const sortButton = document.getElementById('next-up-sort');
+  const validSortModes = ['recent', 'episodes_asc', 'episodes_desc', 'time_asc', 'time_desc'];
+  if (!validSortModes.includes(sortMode)) {
+    // Unknown value lingering in localStorage — fall back to the default.
+    sortMode = 'recent';
+  }
+  if (sortMode !== 'recent') {
+    // The button is server-rendered as "recent" (localStorage isn't available
+    // at that point) — sync the checked option and visible label to match.
+    const input = sortButton.querySelector(`[data-role="option"][value="${sortMode}"]`);
+    const optionLabel = input?.closest('label')?.querySelector('span')?.textContent;
+    const triggerLabel = sortButton.querySelector('[data-role="trigger-label"]');
+    if (input) input.checked = true;
+    if (triggerLabel && optionLabel) triggerLabel.textContent = optionLabel;
+  }
+  sortButton.addEventListener('sortchange', (e) => {
+    sortMode = e.detail.value;
+    localStorage.setItem('nextUpSort', sortMode);
+    if (allItems.length) renderGrid();
   });
 
   loadNextUp();
