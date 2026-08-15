@@ -1805,6 +1805,41 @@ async def get_collection_details(
         raise HTTPException(status_code=404, detail=f"Collection not found: {e}")
 
 
+def _apply_local_filters(
+    items: list[dict], collection: str | None, watch: str | None, arr: str | None
+) -> list[dict]:
+    """Local-only filters get_tmdb_list applies after TMDB enrichment, since
+    TMDB's discover API can't express collection/watched/Radarr-Sonarr state."""
+    if collection == "in":
+        items = [i for i in items if i.get("in_library")]
+    elif collection == "out":
+        items = [i for i in items if not i.get("in_library")]
+    if watch == "watched":
+        items = [i for i in items if i.get("watched")]
+    elif watch == "unwatched":
+        items = [i for i in items if not i.get("watched") and not i.get("watch_started")]
+    elif watch == "started":
+        items = [i for i in items if i.get("watch_started") and not i.get("watched")]
+    if arr == "added":
+        items = [i for i in items if i.get("is_monitored")]
+    elif arr == "notadded":
+        items = [i for i in items if not i.get("is_monitored")]
+    return items
+
+
+def _paginate_matches(matched: list[dict], page: int, page_size: int) -> tuple[list[dict], int]:
+    """Slice a full scanned-and-filtered match list into one fixed-size page.
+
+    total_pages is an approximation: the real total isn't knowable without
+    scanning every remaining TMDB page, so this only ever advertises one page
+    ahead of the current one when a next page is known to exist.
+    """
+    page_items = matched[(page - 1) * page_size : page * page_size]
+    has_more = len(matched) > page * page_size
+    total_pages = page + 1 if has_more else max(page, 1)
+    return page_items, total_pages
+
+
 @router.get("/tmdb/list")
 async def get_tmdb_list(
     type: MediaType = Query(...),
@@ -1909,23 +1944,6 @@ async def get_tmdb_list(
             await enrich_with_state(db, current_user.id, enriched)
             return enriched
 
-        def _apply_local_filters(items: list[dict]) -> list[dict]:
-            if collection == "in":
-                items = [i for i in items if i.get("in_library")]
-            elif collection == "out":
-                items = [i for i in items if not i.get("in_library")]
-            if watch == "watched":
-                items = [i for i in items if i.get("watched")]
-            elif watch == "unwatched":
-                items = [i for i in items if not i.get("watched") and not i.get("watch_started")]
-            elif watch == "started":
-                items = [i for i in items if i.get("watch_started") and not i.get("watched")]
-            if arr == "added":
-                items = [i for i in items if i.get("is_monitored")]
-            elif arr == "notadded":
-                items = [i for i in items if not i.get("is_monitored")]
-            return items
-
         if not (collection or watch or arr):
             data = await _fetch_tmdb_page(page)
             enriched = await _build_enriched(data.get("results", []))
@@ -1965,16 +1983,15 @@ async def get_tmdb_list(
                         batch_results.append(res)
             if batch_results:
                 enriched = await _build_enriched(batch_results)
-                matched.extend(_apply_local_filters(enriched))
+                matched.extend(_apply_local_filters(enriched, collection, watch, arr))
             scan_page = batch_end + 1
             if total_tmdb_pages is not None and scan_page > total_tmdb_pages:
                 break
 
-        page_items = matched[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
-        has_more = len(matched) > page * PAGE_SIZE
+        page_items, total_pages = _paginate_matches(matched, page, PAGE_SIZE)
         return {
             "page": page,
-            "total_pages": page + 1 if has_more else max(page, 1),
+            "total_pages": total_pages,
             "total_results": len(matched),
             "results": page_items,
         }
