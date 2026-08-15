@@ -1,5 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
+import SortButton from "../components/SortButton.astro";
 export const prerender = false;
 
 const { token } = Astro.locals;
@@ -7,23 +8,25 @@ Astro.response.headers.set("Cache-Control", "no-store");
 ---
 
 <Base title="Next Up">
-  <div class="mb-8 flex items-center justify-between gap-4">
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
     <div>
       <h1 class="page-title mb-2">Next Up</h1>
       <p class="text-zinc-500">Continue where you left off</p>
     </div>
-    <div class="flex items-center gap-3 shrink-0">
-    <select
-      id="sort-select"
-      title="Sort"
-      class="px-3 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer"
-    >
-      <option value="recent">Recently watched</option>
-      <option value="episodes_asc">Episodes left ↑</option>
-      <option value="episodes_desc">Episodes left ↓</option>
-      <option value="time_asc">Time left ↑</option>
-      <option value="time_desc">Time left ↓</option>
-    </select>
+    <div class="flex items-center gap-3">
+    <SortButton
+      id="next-up-sort"
+      current="recent"
+      label="Sort By"
+      navigate={false}
+      options={[
+        { value: "recent", label: "Recently watched" },
+        { value: "episodes_asc", label: "Episodes left ↑" },
+        { value: "episodes_desc", label: "Episodes left ↓" },
+        { value: "time_asc", label: "Time left ↑" },
+        { value: "time_desc", label: "Time left ↓" },
+      ]}
+    />
     <button
       id="toggle-hidden-btn"
       class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer shrink-0"
@@ -291,15 +294,23 @@ Astro.response.headers.set("Cache-Control", "no-store");
     updateEmptyState();
   });
 
-  const sortSelect = document.getElementById('sort-select');
-  sortSelect.value = sortMode;
-  if (sortSelect.value !== sortMode) {
+  const sortButton = document.getElementById('next-up-sort');
+  const validSortModes = ['recent', 'episodes_asc', 'episodes_desc', 'time_asc', 'time_desc'];
+  if (!validSortModes.includes(sortMode)) {
     // Unknown value lingering in localStorage — fall back to the default.
     sortMode = 'recent';
-    sortSelect.value = 'recent';
   }
-  sortSelect.addEventListener('change', () => {
-    sortMode = sortSelect.value;
+  if (sortMode !== 'recent') {
+    // The button is server-rendered as "recent" (localStorage isn't available
+    // at that point) — sync the checked option and visible label to match.
+    const input = sortButton.querySelector(`[data-role="option"][value="${sortMode}"]`);
+    const optionLabel = input?.closest('label')?.querySelector('span')?.textContent;
+    const triggerLabel = sortButton.querySelector('[data-role="trigger-label"]');
+    if (input) input.checked = true;
+    if (triggerLabel && optionLabel) triggerLabel.textContent = optionLabel;
+  }
+  sortButton.addEventListener('sortchange', (e) => {
+    sortMode = e.detail.value;
     localStorage.setItem('nextUpSort', sortMode);
     if (allItems.length) renderGrid();
   });
