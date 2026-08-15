@@ -18,6 +18,12 @@ from models.follows import Follow
 from models.global_settings import GlobalSettings
 from routers.media import enrich_with_state
 from core.enrichment import is_unmapped_tvdb_episode, create_media_safely
+from core.translations import (
+    apply_media_translations,
+    get_media_translations,
+    get_show_translations,
+    get_user_metadata_language,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +258,7 @@ async def get_list(
         if item["media"].get("type") in (MediaType.series, "series")
         and item["media"].get("tmdb_id")
     }
+    show_map: dict = {}
     if series_tmdb_ids:
         shows_result = await db.execute(
             select(ShowModel).where(ShowModel.tmdb_id.in_(series_tmdb_ids))
@@ -279,6 +286,34 @@ async def get_list(
     media_dicts = [item["media"] for item in formatted_items]
     if current_user:
         await enrich_with_state(db, current_user.id, media_dicts)
+
+    # Apply the viewer's metadata language, same as detail pages and history
+    # do - list items were the one place translations never reached (#221).
+    # Movies/episodes translate via MediaTranslation on their own media id;
+    # series (and season) items translate via ShowTranslation on the Show row.
+    lang = await get_user_metadata_language(db, current_user.id) if current_user else None
+    if lang:
+        translations = await get_media_translations(
+            db, [m["id"] for m in media_dicts if m.get("id")], lang
+        )
+        apply_media_translations(media_dicts, translations)
+
+        show_ids = {i.media.show_id for i in items_sorted if i.media.show_id}
+        show_by_tmdb = {tmdb_id: s.id for tmdb_id, s in show_map.items()}
+        show_ids.update(show_by_tmdb.values())
+        if show_ids:
+            show_translations = await get_show_translations(db, list(show_ids), lang)
+            for item, li in zip(formatted_items, items_sorted):
+                m = item["media"]
+                t = None
+                if m.get("type") in (MediaType.series, "series"):
+                    t = show_translations.get(show_by_tmdb.get(m.get("tmdb_id")))
+                    if t and t.get("title") and m.get("season_number") is None:
+                        m["title"] = t["title"]
+                elif li.media.show_id:
+                    t = show_translations.get(li.media.show_id)
+                if t and t.get("title") and m.get("show_title"):
+                    m["show_title"] = t["title"]
 
     return {
         **_format_list(lst),
