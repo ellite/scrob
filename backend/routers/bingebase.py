@@ -7,10 +7,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from database import get_db
+from db import engine, get_db
 from models import CollectionSource, Media, Show, SyncJob, SyncStatus, User, UserSettings, WatchEvent
-from models.sync import SyncCancelled, _raise_if_cancelled
 from routers.auth import get_current_user
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +19,11 @@ router = APIRouter()
 
 async def run_bingebase_push(user_id: int, job_id: int) -> None:
     """Push all historical watched events from Scrob DB to Bingebase Webhook URL."""
-    from database import AsyncSessionLocal
+    from routers.sync import SyncCancelled, _raise_if_cancelled
     from routers.webhooks import _maybe_bingebase_scrobble
 
-    async with AsyncSessionLocal() as db:
+    session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_factory() as db:
         try:
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.in_progress)
