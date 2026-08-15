@@ -257,6 +257,31 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(added)
 
+    def test_extract_profile_data_fallbacks(self) -> None:
+        self.assertEqual(arvio._extract_profile_data(["item1"], "0"), ["item1"])
+        self.assertEqual(arvio._extract_profile_data({"0": ["item1"]}, "0"), ["item1"])
+        self.assertEqual(arvio._extract_profile_data({"profile_0": ["item1"]}, "0"), ["item1"])
+        self.assertEqual(arvio._extract_profile_data({"uuid-123": ["item1"]}, "0"), ["item1"])
+        self.assertEqual(arvio._extract_profile_data({"p1": ["a"], "p2": ["b"]}, "0"), ["a", "b"])
+
+    async def test_apply_arvio_watched_episode_formats(self) -> None:
+        db = AsyncMock()
+        db.add = MagicMock()
+        db.execute = AsyncMock(side_effect=[
+            _Result(scalars=[]),  # Show search
+            _Result(scalars=[]),  # Media episode search
+            _Result(scalars=[]),  # WatchEvent search
+        ])
+
+        # Test string format "94997:3:1"
+        added = await _apply_arvio_watched_episode(
+            db,
+            user_id=1,
+            item="94997:3:1",
+            tmdb_api_key=None,
+        )
+        self.assertTrue(added)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4925,34 +4925,92 @@ async def _apply_arvio_watched_movie(
     return False
 
 
+def _parse_arvio_episode_info(item: dict[str, Any] | str | int) -> tuple[int, int, int] | None:
+    """Extract (show_tmdb_id, season, episode) from various ARVIO item representations."""
+    import re
+    if isinstance(item, (int, str)):
+        item_str = str(item).strip()
+        match = re.search(r"(?:tv:|series:|tmdb:)?(\d+)[:_\-\s]+(?:s|season)?(\d+)[:_\-\s]+(?:e|ep|episode)?(\d+)", item_str, re.IGNORECASE)
+        if match:
+            try:
+                return int(match.group(1)), int(match.group(2)), int(match.group(3))
+            except ValueError:
+                pass
+        try:
+            parsed = json.loads(item_str)
+            if isinstance(parsed, dict):
+                item = parsed
+        except Exception:
+            return None
+
+    if isinstance(item, dict):
+        for field in ("id", "mediaId", "episodeId", "item_id", "itemId"):
+            val = item.get(field)
+            if isinstance(val, str):
+                match = re.search(r"(?:tv:|series:|tmdb:)?(\d+)[:_\-\s]+(?:s|season)?(\d+)[:_\-\s]+(?:e|ep|episode)?(\d+)", val, re.IGNORECASE)
+                if match:
+                    try:
+                        return int(match.group(1)), int(match.group(2)), int(match.group(3))
+                    except ValueError:
+                        pass
+
+        show_tmdb_id_raw = (
+            item.get("showTmdbId")
+            or item.get("show_tmdb_id")
+            or item.get("showId")
+            or item.get("seriesTmdbId")
+            or item.get("series_tmdb_id")
+            or item.get("seriesId")
+            or item.get("series_id")
+            or item.get("tmdbId")
+            or item.get("tmdb_id")
+        )
+        season_raw = (
+            item.get("season")
+            or item.get("seasonNumber")
+            or item.get("season_number")
+            or item.get("seasonIndex")
+            or item.get("s")
+        )
+        episode_raw = (
+            item.get("episode")
+            or item.get("episodeNumber")
+            or item.get("episode_number")
+            or item.get("episodeIndex")
+            or item.get("e")
+        )
+
+        if show_tmdb_id_raw is not None and season_raw is not None and episode_raw is not None:
+            try:
+                return int(show_tmdb_id_raw), int(season_raw), int(episode_raw)
+            except (TypeError, ValueError):
+                pass
+
+    return None
+
+
 async def _apply_arvio_watched_episode(
     db: AsyncSession,
     user_id: int,
     item: dict[str, Any] | int | str,
     tmdb_api_key: str | None,
 ) -> bool:
-    if not isinstance(item, dict):
+    info = _parse_arvio_episode_info(item)
+    if not info:
         return False
 
-    show_tmdb_id_raw = item.get("showTmdbId") or item.get("show_tmdb_id") or item.get("showId") or item.get("id")
-    season_raw = item.get("season") or item.get("seasonNumber")
-    episode_raw = item.get("episode") or item.get("episodeNumber")
+    show_tmdb_id, season, episode = info
 
-    if not show_tmdb_id_raw or season_raw is None or episode_raw is None:
-        return False
-    try:
-        show_tmdb_id = int(show_tmdb_id_raw)
-        season = int(season_raw)
-        episode = int(episode_raw)
-    except (TypeError, ValueError):
-        return False
-
-    watched_at = _parse_arvio_timestamp(item.get("watchedAt") or item.get("timestamp") or item.get("updatedAtMs"))
+    watched_at = None
+    if isinstance(item, dict):
+        watched_at = _parse_arvio_timestamp(item.get("watchedAt") or item.get("timestamp") or item.get("updatedAtMs") or item.get("updatedAt"))
 
     show_res = await db.execute(select(Show).where(Show.tmdb_id == show_tmdb_id))
     show = show_res.scalars().first()
     if not show:
-        show_title = str(item.get("title") or item.get("showTitle") or f"Show {show_tmdb_id}")
+        show_title = f"Show {show_tmdb_id}"
+        if isinstance(item, dict):
+            show_title = str(item.get("title") or item.get("showTitle") or item.get("seriesTitle") or show_title)
         show = Show(tmdb_id=show_tmdb_id, title=show_title)
         db.add(show)
         await db.flush()
@@ -4967,7 +5025,9 @@ async def _apply_arvio_watched_episode(
     )
     media = ep_res.scalars().first()
     if not media:
-        ep_title = str(item.get("episodeTitle") or f"S{season:02d}E{episode:02d}")
+        ep_title = f"S{season:02d}E{episode:02d}"
+        if isinstance(item, dict):
+            ep_title = str(item.get("episodeTitle") or item.get("title") or ep_title)
         media = Media(
             show_id=show.id,
             season_number=season,
@@ -5008,6 +5068,11 @@ async def _apply_arvio_playback_progress(
     item: dict[str, Any] | int | str,
     tmdb_api_key: str | None,
 ) -> bool:
+    if isinstance(item, str):
+        try:
+            item = json.loads(item)
+        except Exception:
+            pass
     if not isinstance(item, dict):
         return False
 
@@ -5020,7 +5085,16 @@ async def _apply_arvio_playback_progress(
     except (TypeError, ValueError):
         progress_pct = 0.0
 
-    if progress_pct < 1.0 or progress_pct >= 90.0:
+    is_completed = item.get("completed") is True or progress_pct >= 85.0
+
+    if is_completed:
+        ep_info = _parse_arvio_episode_info(item)
+        if ep_info:
+            return await _apply_arvio_watched_episode(db, user_id, item, tmdb_api_key)
+        else:
+            return await _apply_arvio_watched_movie(db, user_id, item, tmdb_api_key)
+
+    if progress_pct < 1.0:
         return False
 
     pos_sec = item.get("resumePositionSeconds") or item.get("positionSeconds") or item.get("position")
@@ -5046,19 +5120,15 @@ async def _apply_arvio_playback_progress(
     is_episode = (
         media_type_str in ("TV", "EPISODE", "SERIES")
         or (season_raw is not None and episode_raw is not None)
+        or _parse_arvio_episode_info(item) is not None
     )
 
     media: Media | None = None
     if is_episode:
-        show_tmdb_raw = item.get("showTmdbId") or item.get("show_tmdb_id") or item.get("showId") or item.get("id")
-        if not show_tmdb_raw or season_raw is None or episode_raw is None:
+        ep_info = _parse_arvio_episode_info(item)
+        if not ep_info:
             return False
-        try:
-            show_tmdb_id = int(show_tmdb_raw)
-            season = int(season_raw)
-            episode = int(episode_raw)
-        except (TypeError, ValueError):
-            return False
+        show_tmdb_id, season, episode = ep_info
 
         show_res = await db.execute(select(Show).where(Show.tmdb_id == show_tmdb_id))
         show = show_res.scalars().first()
