@@ -263,39 +263,43 @@ const bottomNavItem = (active: boolean) =>
     </nav>
   )}
 
-  <!-- Rating popover (shared, repositioned on use) -->
-  <div id="rating-popover" class="hidden absolute z-50 w-72 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl overflow-hidden">
-    <div class="px-3 py-2 border-b border-zinc-800 flex items-center justify-between">
-      <span class="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Your rating</span>
-      <button id="rating-popover-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer" aria-label="Close">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <div class="px-3 py-3">
-      <div id="rating-stars" class="flex items-center justify-center gap-1"></div>
-    </div>
-    <div class="border-t border-zinc-800">
-      <button id="rating-remove" class="hidden w-full px-3 py-2 text-sm text-red-400 hover:bg-zinc-800 transition text-left flex items-center gap-2 cursor-pointer">
-        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        Remove rating
-      </button>
+  <!-- Rating popover (shared, reused across cards - centered modal, same convention as watch-history-modal/list-popover) -->
+  <div id="rating-popover" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+      <div class="px-5 pt-5 pb-4 border-b border-zinc-800 flex items-center justify-between gap-3">
+        <span class="text-base font-bold text-zinc-100">Your rating</span>
+        <button id="rating-popover-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="px-6 py-7">
+        <div id="rating-stars" class="flex items-center justify-center gap-2"></div>
+      </div>
+      <div class="border-t border-zinc-800">
+        <button id="rating-remove" class="hidden w-full px-3 py-2.5 text-sm text-red-400 hover:bg-zinc-800 transition flex items-center justify-center gap-2 cursor-pointer">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          Remove rating
+        </button>
+      </div>
     </div>
   </div>
 
-  <!-- List popover (shared, repositioned on use) -->
-  <div id="list-popover" class="hidden absolute z-50 w-64 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl overflow-hidden">
-    <div class="px-3 py-2 border-b border-zinc-800 flex items-center justify-between">
-      <span class="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Add to list</span>
-      <button id="list-popover-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer" aria-label="Close">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <div id="list-popover-items" class="max-h-56 overflow-y-auto py-1"></div>
-    <div class="border-t border-zinc-800">
-      <button id="list-popover-create" class="w-full px-3 py-2 text-sm text-blue-400 hover:bg-zinc-800 transition text-left flex items-center gap-2 cursor-pointer">
-        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Create new list
-      </button>
+  <!-- List popover (shared, reused across cards - now a centered modal, same convention as watch-history-modal) -->
+  <div id="list-popover" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+      <div class="px-5 pt-5 pb-4 border-b border-zinc-800 flex items-center justify-between gap-3">
+        <span class="text-base font-bold text-zinc-100">Add to list</span>
+        <button id="list-popover-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div id="list-popover-items" class="max-h-56 overflow-y-auto py-1 list-popover-scroll"></div>
+      <div class="border-t border-zinc-800">
+        <button id="list-popover-create" class="w-full px-3 py-2 text-sm text-blue-400 hover:bg-zinc-800 transition text-left flex items-center gap-2 cursor-pointer">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Create new list
+        </button>
+      </div>
     </div>
   </div>
 
@@ -830,20 +834,15 @@ const bottomNavItem = (active: boolean) =>
         } catch { /* ignore */ }
       };
 
-      const rect = btn.getBoundingClientRect();
       popover.classList.remove('hidden');
-      const popW = popover.offsetWidth;
-      const left = Math.min(rect.left + window.scrollX, window.innerWidth - popW - 8);
-      popover.style.left = `${Math.max(8, left)}px`;
-      popover.style.top = `${rect.bottom + window.scrollY + 6}px`;
     }
 
     document.getElementById('rating-popover-close')!.addEventListener('click', () => closeRatingPopover());
-    document.addEventListener('click', (e) => {
-      const popover = document.getElementById('rating-popover')!;
-      if (!popover.classList.contains('hidden') && !popover.contains(e.target as Node) && e.target !== _activeRatingBtn) {
-        closeRatingPopover();
-      }
+    document.getElementById('rating-popover')!.addEventListener('click', (e) => {
+      if (e.target === document.getElementById('rating-popover')) closeRatingPopover();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeRatingPopover();
     });
 
     // ── List popover ───────────────────────────────────────────────────────────
@@ -866,13 +865,6 @@ const bottomNavItem = (active: boolean) =>
       const itemsEl = document.getElementById('list-popover-items')!;
       itemsEl.innerHTML = '<div class="px-3 py-2 text-xs text-zinc-500">Loading…</div>';
       popover.classList.remove('hidden');
-
-      // Position near button (popover is absolute, so use page coords)
-      const rect = btn.getBoundingClientRect();
-      const top = rect.bottom + window.scrollY + 4;
-      const left = Math.min(rect.left + window.scrollX, window.innerWidth - 272);
-      popover.style.top = `${top}px`;
-      popover.style.left = `${left}px`;
 
       // Fetch lists
       let lists: { id: number; name: string }[] = [];
@@ -963,11 +955,11 @@ const bottomNavItem = (active: boolean) =>
       openCreateListModal();
     });
 
-    document.addEventListener('click', (e) => {
-      const popover = document.getElementById('list-popover')!;
-      if (!popover.classList.contains('hidden') && !popover.contains(e.target as Node) && e.target !== _activeListBtn) {
-        closeListPopover();
-      }
+    document.getElementById('list-popover')!.addEventListener('click', (e) => {
+      if (e.target === document.getElementById('list-popover')) closeListPopover();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeListPopover();
     });
 
     // ── Rewatch popover ────────────────────────────────────────────────────────
@@ -1907,6 +1899,13 @@ const bottomNavItem = (active: boolean) =>
       -ms-overflow-style: none;
     }
     .watch-history-scroll::-webkit-scrollbar {
+      display: none;
+    }
+    .list-popover-scroll {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .list-popover-scroll::-webkit-scrollbar {
       display: none;
     }
   </style>
