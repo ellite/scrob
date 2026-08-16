@@ -43,11 +43,34 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const body = hasBody ? await request.arrayBuffer() : undefined;
 
-  const res = await fetch(backendUrl, {
-    method: request.method,
-    headers: forwardHeaders,
-    body,
-  });
+  let res: Response;
+  try {
+    res = await fetch(backendUrl, {
+      method: request.method,
+      headers: forwardHeaders,
+      body,
+      // Some backend routes (e.g. image serving) 3xx-redirect straight to a
+      // third-party host (TMDB) when nothing is locally cached. Following
+      // that here would make this dev-server process itself open the
+      // outbound connection instead of the browser - if that connection
+      // has trouble (flaky network, TLS/SNI issues), it throws an unhandled
+      // error that took down the whole page. Passing the redirect straight
+      // through lets the browser fetch it directly, the same as any other
+      // cross-origin redirect, and fail gracefully (e.g. a broken <img>)
+      // instead of crashing the SSR request.
+      redirect: "manual",
+    });
+  } catch (e) {
+    console.error(`Proxy request to ${backendUrl} failed:`, e);
+    return new Response(null, { status: 502 });
+  }
+
+  if (res.status >= 300 && res.status < 400) {
+    const location = res.headers.get("Location");
+    if (location) {
+      return new Response(null, { status: res.status, headers: { Location: location } });
+    }
+  }
 
   const responseHeaders = new Headers();
   const resCt = res.headers.get("Content-Type");

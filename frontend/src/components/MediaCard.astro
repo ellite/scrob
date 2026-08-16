@@ -80,13 +80,20 @@ const inLibrary = item.in_library ?? false;
     <a href={href} class="block">
       <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300" data-adult={item.adult ? "true" : undefined}>
         {posterPath ? (
-          <img
-            src={posterPath}
-            alt={cardTitle}
-            class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-            loading="lazy"
-            decoding="async"
-          />
+          <>
+            <img
+              src={posterPath}
+              alt={cardTitle}
+              class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+              loading="lazy"
+              decoding="async"
+              onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'"
+            />
+            <div class="hidden w-full h-full flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center">
+              <span class="text-3xl mb-2 opacity-30">🎬</span>
+              <span class="text-xs font-bold uppercase tracking-widest">{cardTitle}</span>
+            </div>
+          </>
         ) : (
           <div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center">
             <span class="text-3xl mb-2 opacity-30">🎬</span>
