@@ -12,6 +12,7 @@ from typing import Optional
 
 from db import get_db, AsyncSessionLocal
 from core import tmdb as tmdb_client
+from core.credits import credits_stats, maybe_backfill_credits
 from core.translations import upsert_media_translation, upsert_show_translation
 
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
@@ -1168,6 +1169,83 @@ async def get_user_stats(
     )
     shows_watched_collected = watched_shows_collected_q.scalar_one()
 
+    # ── Top titles, networks and people (#124) ──────────────────────────────
+    # Own-profile views kick the TMDB credits backfill (background, throttled
+    # by a TTL in core/credits.py); the people/studio groups on the page stay
+    # hidden until credits data exists.
+    if current_user and current_user.id == user_id:
+        await maybe_backfill_credits(db, user_id)
+
+    top_rows = (await db.execute(
+        select(
+            Media.media_type, Media.id, Media.title, Media.poster_path,
+            Media.tmdb_id, Media.show_id, effective_runtime.label("runtime"),
+        )
+        .join(WatchEvent, WatchEvent.media_id == Media.id)
+        .where(
+            WatchEvent.user_id == user_id,
+            Media.media_type.in_(["movie", "episode"]),
+            *date_filters,
+        )
+    )).all()
+
+    per_show: dict[int, dict] = defaultdict(lambda: {"plays": 0, "minutes": 0, "episodes": set()})
+    per_movie: dict[int, dict] = {}
+    for media_type, mid, m_title, m_poster, m_tmdb_id, show_id, runtime in top_rows:
+        minutes = runtime or 0
+        if media_type == "episode" and show_id:
+            s = per_show[show_id]
+            s["plays"] += 1
+            s["minutes"] += minutes
+            s["episodes"].add(mid)
+        elif media_type == "movie":
+            m = per_movie.setdefault(mid, {
+                "title": m_title, "poster_path": m_poster, "tmdb_id": m_tmdb_id,
+                "plays": 0, "minutes": 0,
+            })
+            m["plays"] += 1
+            m["minutes"] += minutes
+
+    show_meta: dict[int, dict] = {}
+    network_stats: dict[str, dict] = defaultdict(lambda: {"plays": 0, "minutes": 0, "titles": set()})
+    network_logos: dict[str, str] = {}
+    if per_show:
+        top_show_rows = (await db.execute(
+            select(ShowModel).where(ShowModel.id.in_(per_show.keys()))
+        )).scalars().all()
+        for sh in top_show_rows:
+            show_meta[sh.id] = {
+                "title": sh.title, "poster_path": sh.poster_path,
+                "tmdb_id": sh.tmdb_id, "tvdb_id": sh.tvdb_id,
+            }
+            for net in (sh.tmdb_data or {}).get("networks") or []:
+                # Networks appear in tmdb_data both as TMDB's {"name", "logo_path"}
+                # dicts and as plain strings, depending on which sync path stored it.
+                name = net.get("name") if isinstance(net, dict) else (net if isinstance(net, str) else None)
+                if not name:
+                    continue
+                st = network_stats[name]
+                st["plays"] += per_show[sh.id]["plays"]
+                st["minutes"] += per_show[sh.id]["minutes"]
+                st["titles"].add(sh.id)
+                if isinstance(net, dict) and net.get("logo_path"):
+                    network_logos[name] = net["logo_path"]
+
+    top_shows = sorted(
+        ({**show_meta.get(sid, {"title": None, "poster_path": None, "tmdb_id": None, "tvdb_id": None}),
+          "plays": s["plays"], "minutes": s["minutes"], "episodes": len(s["episodes"])}
+         for sid, s in per_show.items()),
+        key=lambda x: x["minutes"], reverse=True,
+    )[:12]
+    top_movies = sorted(per_movie.values(), key=lambda x: (x["plays"], x["minutes"]), reverse=True)[:12]
+    top_networks = sorted(
+        ({"name": name, "plays": v["plays"], "minutes": v["minutes"],
+          "titles": len(v["titles"]), "logo_path": network_logos.get(name)}
+         for name, v in network_stats.items()),
+        key=lambda x: (x["plays"], x["titles"]), reverse=True,
+    )[:15]
+    top_people = await credits_stats(db, user_id, date_filters)
+
     return {
         # Watching
         "granularity": "day" if use_daily else "month",
@@ -1193,4 +1271,9 @@ async def get_user_stats(
         "movies_unwatched_collected": unwatched_movies,
         "shows_watched_collected": shows_watched_collected,
         "shows_unwatched_collected": max(shows_collected - shows_watched_collected, 0),
+        # Top titles & people (#124)
+        "top_shows": top_shows,
+        "top_movies": top_movies,
+        "top_networks": top_networks,
+        "top_people": top_people,
     }
