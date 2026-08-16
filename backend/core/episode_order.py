@@ -74,6 +74,52 @@ async def get_mapping_by_tvdb_position(
     return result.scalar_one_or_none()
 
 
+async def get_episode_orders_for_series(
+    db: AsyncSession,
+    user_id: int,
+    series_tmdb_ids: list[int],
+) -> dict[int, UserShowEpisodeOrder]:
+    """Batched form of get_episode_order - one query for many shows at once
+    (see enrich_with_state, which needs this for every show on a page at
+    once). A series_tmdb_id missing from the returned dict has no row, same
+    "tmdb" default meaning as get_episode_order returning None."""
+    if not series_tmdb_ids:
+        return {}
+    result = await db.execute(
+        select(UserShowEpisodeOrder).where(
+            UserShowEpisodeOrder.user_id == user_id,
+            UserShowEpisodeOrder.series_tmdb_id.in_(series_tmdb_ids),
+        )
+    )
+    return {row.series_tmdb_id: row for row in result.scalars().all()}
+
+
+async def get_tmdb_to_tvdb_positions(
+    db: AsyncSession,
+    series_tmdb_ids: list[int],
+) -> dict[tuple[int, int, int], EpisodeOrderMapping]:
+    """Batched forward lookup (TMDB season/episode -> TVDB position) across
+    many shows at once - the counterpart to get_mapping_by_tvdb_position's
+    reverse lookup. Keyed by (series_tmdb_id, tmdb_season_number,
+    tmdb_episode_number), which is unique per this table's own constraint.
+    Callers should pass only the shows actually known to have a "tvdb"
+    episode_order preference (see get_episode_orders_for_series) - passing
+    every show on a page would turn this into a full-table fetch for no
+    reason, since shows without that preference never need translated
+    positions."""
+    if not series_tmdb_ids:
+        return {}
+    result = await db.execute(
+        select(EpisodeOrderMapping).where(
+            EpisodeOrderMapping.series_tmdb_id.in_(series_tmdb_ids)
+        )
+    )
+    return {
+        (m.series_tmdb_id, m.tmdb_season_number, m.tmdb_episode_number): m
+        for m in result.scalars().all()
+    }
+
+
 async def ensure_episode_order_mapping(
     db: AsyncSession,
     series_tmdb_id: int,

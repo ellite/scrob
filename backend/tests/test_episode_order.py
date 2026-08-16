@@ -3,8 +3,14 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
 
-from core.episode_order import ensure_episode_order_mapping, validate_episode_order
+from core.episode_order import (
+    ensure_episode_order_mapping,
+    get_episode_orders_for_series,
+    get_tmdb_to_tvdb_positions,
+    validate_episode_order,
+)
 from models.base import MediaType
+from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.media import Media
 from models.ratings import Rating
 from models.show import Show as ShowModel
@@ -397,6 +403,61 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(validate_episode_order("tvdb"), "tvdb")
         with self.assertRaisesRegex(ValueError, "Unsupported episode order"):
             validate_episode_order("absolute")
+
+
+class BatchedLookupTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for #186: enrich_with_state needs batched forms of
+    get_episode_order/the TMDB->TVDB mapping lookup to attach the user's
+    episode-order preference and translated positions to every item on a
+    page in a fixed number of queries, not one per show."""
+
+    async def test_get_episode_orders_for_series_keys_by_series_tmdb_id(self) -> None:
+        rows = [
+            UserShowEpisodeOrder(user_id=7, series_tmdb_id=100, episode_order="tvdb", tvdb_id=900),
+            UserShowEpisodeOrder(user_id=7, series_tmdb_id=200, episode_order="tmdb", tvdb_id=None),
+        ]
+        db = AsyncMock()
+        db.execute.return_value = _ExistingResult(rows)
+
+        result = await get_episode_orders_for_series(db, user_id=7, series_tmdb_ids=[100, 200, 300])
+
+        self.assertEqual(set(result.keys()), {100, 200})
+        self.assertEqual(result[100].episode_order, "tvdb")
+        self.assertEqual(result[200].episode_order, "tmdb")
+
+    async def test_get_episode_orders_for_series_empty_input_skips_query(self) -> None:
+        db = AsyncMock()
+        result = await get_episode_orders_for_series(db, user_id=7, series_tmdb_ids=[])
+        self.assertEqual(result, {})
+        db.execute.assert_not_called()
+
+    async def test_get_tmdb_to_tvdb_positions_keys_by_series_season_episode(self) -> None:
+        rows = [
+            EpisodeOrderMapping(
+                series_tmdb_id=100, tmdb_season_number=1, tmdb_episode_number=1,
+                tmdb_episode_id=1, tvdb_id=901, tvdb_season_number=1, tvdb_episode_number=1,
+                match_method="external_id",
+            ),
+            EpisodeOrderMapping(
+                series_tmdb_id=100, tmdb_season_number=4, tmdb_episode_number=12,
+                tmdb_episode_id=2, tvdb_id=902, tvdb_season_number=3, tvdb_episode_number=8,
+                match_method="title_date",
+            ),
+        ]
+        db = AsyncMock()
+        db.execute.return_value = _ExistingResult(rows)
+
+        result = await get_tmdb_to_tvdb_positions(db, series_tmdb_ids=[100])
+
+        self.assertEqual(set(result.keys()), {(100, 1, 1), (100, 4, 12)})
+        mapping = result[(100, 4, 12)]
+        self.assertEqual((mapping.tvdb_season_number, mapping.tvdb_episode_number), (3, 8))
+
+    async def test_get_tmdb_to_tvdb_positions_empty_input_skips_query(self) -> None:
+        db = AsyncMock()
+        result = await get_tmdb_to_tvdb_positions(db, series_tmdb_ids=[])
+        self.assertEqual(result, {})
+        db.execute.assert_not_called()
 
 
 if __name__ == "__main__":

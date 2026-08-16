@@ -17,12 +17,13 @@ from models.collection import Collection, CollectionFile
 from models.base import MediaType, CollectionSource
 from models.users import UserSettings
 from models.connections import MediaServerConnection
-from models.episode_order import EpisodeOrderMapping
+from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.rewatch import ShowRewatch, RewatchProgress
-from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key
+from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, _attach_episode_order_fields
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
 from core.enrichment import create_media_safely
+from core.episode_order import get_episode_orders_for_series, get_tmdb_to_tvdb_positions
 
 from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
@@ -457,6 +458,27 @@ async def get_now_playing(
             if hint:
                 item["media"]["show_title"] = hint
         sessions.append(item)
+
+    # Episode-order preference / TVDB position translation (#186) - this
+    # endpoint builds its own dict inline rather than going through
+    # enrich_with_state, so it needs the same batched lookups + attach step
+    # done separately, in a second pass now that every session's show_tmdb_id
+    # is known. Session counts here are always small (active playback only),
+    # so a second pass over `sessions` costs nothing.
+    series_ids = {
+        s["media"]["show_tmdb_id"] for s in sessions if s["media"].get("show_tmdb_id")
+    }
+    if series_ids:
+        episode_orders = await get_episode_orders_for_series(db, current_user.id, list(series_ids))
+        tvdb_series_ids = [
+            sid for sid, pref in episode_orders.items() if pref.episode_order == "tvdb"
+        ]
+        tmdb_to_tvdb = (
+            await get_tmdb_to_tvdb_positions(db, tvdb_series_ids) if tvdb_series_ids else {}
+        )
+        for s in sessions:
+            _attach_episode_order_fields(s["media"], episode_orders, tmdb_to_tvdb)
+
     return {"now_playing": sessions}
 
 

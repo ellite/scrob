@@ -25,7 +25,8 @@ from models.ratings import Rating
 from models.base import MediaType, CollectionSource
 from models.lists import List as UserList, ListItem
 from models.media_request import MediaRequest, RequestStatus
-from models.episode_order import EpisodeOrderMapping
+from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
+from core.episode_order import get_episode_orders_for_series, get_tmdb_to_tvdb_positions
 from models.profile import UserProfileData
 from core import tmdb
 from core.rewatch import get_active_rewatches_for_shows
@@ -128,6 +129,60 @@ TV_STATUS_IDS: dict[str, int] = {
 }
 
 
+def _attach_episode_order_fields(
+    item: dict,
+    episode_orders: dict[int, UserShowEpisodeOrder],
+    tmdb_to_tvdb: dict[tuple[int, int, int], EpisodeOrderMapping],
+) -> None:
+    """Attaches show_episode_order/tvdb_season_number/tvdb_episode_number so
+    frontend link-builders can route to /show/tvdb/... instead of guessing
+    off tvdb_sourced (which only means "no TMDB counterpart", not "user
+    prefers TVDB") - see enrich_with_state's call site and #186. A pure
+    function over the already-batched lookups, deliberately DB-free so it's
+    trivial to unit test without mocking a session.
+    """
+    t = item.get("type")
+    if t == "series":
+        series_id = item.get("tmdb_id")
+    elif t == "episode":
+        series_id = item.get("show_tmdb_id")
+    else:
+        return
+
+    pref = episode_orders.get(series_id)
+    if not pref or pref.episode_order != "tvdb":
+        return
+    item["show_episode_order"] = "tvdb"
+
+    season = item.get("season_number")
+    episode = item.get("episode_number")
+    # tvdb_sourced episodes (no TMDB counterpart at all) already store their
+    # OWN season_number/episode_number as TVDB-native values, not TMDB ones -
+    # looking those up against tmdb_to_tvdb (keyed by real TMDB positions)
+    # risks a coincidental match against some unrelated episode in the same
+    # show (both are small integers) and attaching the WRONG translated
+    # position. Skip the lookup entirely for them; the frontend already
+    # knows to use season_number/episode_number directly in that case.
+    if t == "episode" and season is not None and episode is not None and not item.get("tvdb_sourced"):
+        mapping = tmdb_to_tvdb.get((series_id, season, episode))
+        if mapping:
+            item["tvdb_season_number"] = mapping.tvdb_season_number
+            item["tvdb_episode_number"] = mapping.tvdb_episode_number
+    elif t == "series" and season is not None:
+        # Season list item - no single episode to translate, so pick a
+        # representative TVDB season number from the lowest-numbered mapped
+        # episode in this TMDB season. Assumes a TMDB season doesn't split
+        # across two TVDB seasons, true in the overwhelming majority of
+        # cases; if wrong, the link still lands on the right show under the
+        # wrong season rather than 404ing outright.
+        candidates = sorted(
+            (m for (sid, s, _e), m in tmdb_to_tvdb.items() if sid == series_id and s == season),
+            key=lambda m: m.tmdb_episode_number,
+        )
+        if candidates:
+            item["tvdb_season_number"] = candidates[0].tvdb_season_number
+
+
 async def enrich_with_state(
     db: AsyncSession,
     user_id: int,
@@ -151,6 +206,30 @@ async def enrich_with_state(
 
     if not all_tmdb_ids:
         return items
+
+    # --- Episode-order preference / TVDB position translation (#186) ---
+    # A show's episode/season links should route to /show/tvdb/... using
+    # TVDB-native numbers when the user has switched that show to TVDB
+    # numbering - the TMDB-style route can 404 if TMDB has since renumbered
+    # the episode. Every item needing this shares a show's series_tmdb_id:
+    # a season/whole-show item's own tmdb_id, or an episode item's show_tmdb_id.
+    episode_order_series_ids = set(show_tmdb_ids) | {
+        i["show_tmdb_id"] for i in items
+        if i.get("type") == "episode" and i.get("show_tmdb_id")
+    }
+    episode_orders: dict[int, UserShowEpisodeOrder] = {}
+    tmdb_to_tvdb: dict[tuple[int, int, int], EpisodeOrderMapping] = {}
+    if episode_order_series_ids:
+        episode_orders = await get_episode_orders_for_series(
+            db, user_id, list(episode_order_series_ids)
+        )
+        # Only shows actually switched to "tvdb" need their mapping table
+        # pulled - keeps the common case (nobody switched) at zero extra cost.
+        tvdb_series_ids = [
+            sid for sid, pref in episode_orders.items() if pref.episode_order == "tvdb"
+        ]
+        if tvdb_series_ids:
+            tmdb_to_tvdb = await get_tmdb_to_tvdb_positions(db, tvdb_series_ids)
 
     # --- Radarr / Sonarr state (Request button logic) ---
     settings_q = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
@@ -663,6 +742,7 @@ async def enrich_with_state(
         item["request_status"] = request_status_map.get(tid)
         item["user_rating"] = user_ratings.get((tid, t))
         item["play_count"] = play_count_map.get(tid, 0)
+        _attach_episode_order_fields(item, episode_orders, tmdb_to_tvdb)
 
     return items
 

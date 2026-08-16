@@ -571,6 +571,12 @@ export interface MediaItem {
   // from TVDB instead (see #101) — its season/episode numbers are TVDB's
   // raw numbers, not TMDB's, regardless of whether show_tmdb_id is set.
   tvdb_sourced?: boolean;
+  // The show's actual TVDB/TMDB numbering preference (#186) and, when it's
+  // "tvdb", this item's translated position — see lib/episodeHref.ts, which
+  // every card/link builder should go through rather than re-deriving this.
+  show_episode_order?: "tmdb" | "tvdb" | null;
+  tvdb_season_number?: number | null;
+  tvdb_episode_number?: number | null;
   next_up_hidden?: boolean;
   // Next Up remaining-content estimate (#170) — released unwatched episodes
   // for the show and their estimated total runtime in minutes.
@@ -862,6 +868,7 @@ export interface ProfileWatchedItem {
   watched_at: string;
   show_title: string | null;
   show_tmdb_id: number | null;
+  show_tvdb_id: number | null;
   show_poster_path: string | null;
   season_number: number | null;
   episode_number: number | null;

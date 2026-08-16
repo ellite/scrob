@@ -1439,6 +1439,15 @@ async def get_episode_detail(
                     # No mapping computed for this episode - don't guess by
                     # reusing the TMDB numbers as TVDB ones; that's how this
                     # regressed from "404" to "wrong episode's data" before.
+                    # Raise Scrob's own message instead of falling through to
+                    # the bare `raise` below, which would surface TMDB's raw
+                    # API error (including its URL) to the client verbatim.
+                    raise HTTPException(
+                        status_code=404,
+                        detail="This episode isn't available under TMDB's numbering, and no TVDB "
+                        "episode mapping has been computed for this show yet. Try Refresh Metadata "
+                        "on the show page, or switch this show to TVDB numbering.",
+                    )
                 raise
             show_info = format_show(show)
         else:

@@ -616,6 +616,7 @@ async def get_public_profile(
             "watched_at": we.watched_at.isoformat(),
             "show_title": show.title if show else None,
             "show_tmdb_id": show.tmdb_id if show else None,
+            "show_tvdb_id": show.tvdb_id if show else None,
             "season_number": media.season_number,
             "episode_number": media.episode_number,
         }

@@ -114,6 +114,7 @@ class GetEpisodeDetailTvdbFallbackMappingTests(unittest.IsolatedAsyncioTestCase)
                 await shows.get_episode_detail(980001, 9, 9, db, self._user())
 
         self.assertEqual(ctx.exception.status_code, 404)
+        self.assertIn("TVDB episode mapping", ctx.exception.detail)
         tvdb_mock.assert_not_awaited()
 
 

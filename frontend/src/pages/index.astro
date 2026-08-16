@@ -6,6 +6,7 @@ import EpisodeCard from "../components/EpisodeCard.astro";
 import ContinueWatchingCard from "../components/ContinueWatchingCard.astro";
 import { api, type ContinueWatchingItem, type MediaItem, tmdbImageUrl } from "../lib/api";
 import { formatEpisodesLeft } from "../lib/media-format";
+import { episodeHref } from "../lib/episodeHref";
 
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -106,11 +107,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   {nextUp.length > 0 && !settings?.minimalist_next_up && (() => {
     const hero = nextUp[0];
     const rest = nextUp.slice(1);
-    const heroHref = !hero.tvdb_sourced && hero.show_tmdb_id && hero.season_number != null && hero.episode_number != null
-      ? `/show/${hero.show_tmdb_id}/season/${hero.season_number}/${hero.episode_number}`
-      : hero.show_tvdb_id && hero.season_number != null && hero.episode_number != null
-        ? `/show/tvdb/${hero.show_tvdb_id}/season/${hero.season_number}/${hero.episode_number}`
-        : `/media/${hero.type}/${hero.tmdb_id}`;
+    const heroHref = episodeHref(hero) ?? `/media/${hero.type}/${hero.tmdb_id}`;
     const episodeLabel = hero.season_number != null && hero.episode_number != null
       ? `S${hero.season_number} E${hero.episode_number}`
       : null;
@@ -412,7 +409,15 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
 
         function episodeCardHtml(item) {
           const isSeries = item.type === 'series';
-          const href = !item.tvdb_sourced && item.show_tmdb_id && item.season_number != null && item.episode_number != null
+          // Local copy of lib/episodeHref's episode branch - this
+          // define:vars script can't import (see lib/episodeHref.ts's
+          // header comment for the full list of duplicate sites to keep in
+          // sync). #186: route to /show/tvdb/... using the translated
+          // position when the show is set to TVDB numbering.
+          const href = !item.tvdb_sourced && item.show_episode_order === 'tvdb' && item.show_tvdb_id
+            && item.tvdb_season_number != null && item.tvdb_episode_number != null
+            ? `/show/tvdb/${item.show_tvdb_id}/season/${item.tvdb_season_number}/${item.tvdb_episode_number}`
+            : !item.tvdb_sourced && item.show_tmdb_id && item.season_number != null && item.episode_number != null
             ? `/show/${item.show_tmdb_id}/season/${item.season_number}/${item.episode_number}`
             : item.show_tvdb_id && item.season_number != null && item.episode_number != null
               ? `/show/tvdb/${item.show_tvdb_id}/season/${item.season_number}/${item.episode_number}`

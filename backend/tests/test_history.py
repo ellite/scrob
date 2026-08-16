@@ -8,8 +8,10 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from models.base import MediaType, CollectionSource
+from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.events import WatchEvent
 from models.media import Media
+from models.playback_session import PlaybackSession
 from models.show import Show
 from routers import history
 from schemas import WatchEventCreate
@@ -381,6 +383,67 @@ class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("http://origin.local", calls)
         self.assertIn("http://other.local", calls)
+
+
+class GetNowPlayingEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
+    """Regression test for #186: get_now_playing builds its media dict
+    inline rather than going through enrich_with_state, so it needs its own
+    wiring for the episode-order preference / TVDB position translation used
+    by the Now Playing bar's link building."""
+
+    async def test_tvdb_preference_session_gets_translated_position(self) -> None:
+        media = Media(
+            id=10, tmdb_id=550, media_type=MediaType.episode,
+            title="Ep", season_number=4, episode_number=12, show_id=1,
+        )
+        show = Show(id=1, tmdb_id=550, tvdb_id=999, title="Show")
+        session = PlaybackSession(
+            id=1, user_id=7, media_id=10, session_key="k", source="plex",
+            state="playing", progress_percent=0.1, progress_seconds=60,
+            started_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 1),
+        )
+        preference = UserShowEpisodeOrder(user_id=7, series_tmdb_id=550, episode_order="tvdb")
+        mapping = EpisodeOrderMapping(
+            series_tmdb_id=550, tmdb_season_number=4, tmdb_episode_number=12,
+            tmdb_episode_id=1, tvdb_id=1, tvdb_season_number=3, tvdb_episode_number=8,
+            match_method="external_id",
+        )
+        db = _FakeSession([
+            [(session, media)],  # main PlaybackSession+Media query
+            show,                # per-session Show lookup
+            [preference],        # get_episode_orders_for_series
+            [mapping],           # get_tmdb_to_tvdb_positions
+        ])
+
+        result = await history.get_now_playing(db=db, current_user=SimpleNamespace(id=7))
+
+        item = result["now_playing"][0]["media"]
+        self.assertEqual(item["show_episode_order"], "tvdb")
+        self.assertEqual(item["tvdb_season_number"], 3)
+        self.assertEqual(item["tvdb_episode_number"], 8)
+
+    async def test_tmdb_preference_session_is_untouched(self) -> None:
+        media = Media(
+            id=10, tmdb_id=550, media_type=MediaType.episode,
+            title="Ep", season_number=4, episode_number=12, show_id=1,
+        )
+        show = Show(id=1, tmdb_id=550, tvdb_id=999, title="Show")
+        session = PlaybackSession(
+            id=1, user_id=7, media_id=10, session_key="k", source="plex",
+            state="playing", progress_percent=0.1, progress_seconds=60,
+            started_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 1),
+        )
+        db = _FakeSession([
+            [(session, media)],  # main PlaybackSession+Media query
+            show,                # per-session Show lookup
+            [],                  # get_episode_orders_for_series - no preference row
+        ])
+
+        result = await history.get_now_playing(db=db, current_user=SimpleNamespace(id=7))
+
+        item = result["now_playing"][0]["media"]
+        self.assertNotIn("show_episode_order", item)
+        self.assertNotIn("tvdb_season_number", item)
 
 
 if __name__ == "__main__":
