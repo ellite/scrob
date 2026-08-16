@@ -1,7 +1,7 @@
 import logging
 import httpx
 import xmltodict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict
 
 logger = logging.getLogger(__name__)
@@ -262,6 +262,12 @@ async def get_history(url: str, token: str, since: Optional[datetime] = None) ->
     start = 0
     params: Dict = {"sort": "viewedAt:asc"}
     if since is not None:
+        # The cursor is stored as naive UTC; .timestamp() on a naive datetime
+        # interprets it as *local* time, shifting the window by the host's UTC
+        # offset. West of UTC that starts the fetch hours too late, and since
+        # the cursor still advances, those plays are then skipped forever (#126).
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
         params["viewedAt>"] = int(since.timestamp())
     try:
         while True:
