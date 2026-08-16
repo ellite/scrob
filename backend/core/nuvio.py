@@ -1,4 +1,5 @@
 import asyncio
+import os
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -6,7 +7,7 @@ import httpx
 
 
 DEFAULT_URL = "https://api.nuvio.tv"
-PUBLISHABLE_KEY = "sb_publishable_1Clq8rlTVACkdcZuqr6_AD__xUUC_EN"
+DEFAULT_APP_ANON_KEY = "sb_publishable_1Clq8rlTVACkdcZuqr6_AD__xUUC_EN"
 _PAGE_SIZE = 500
 
 
@@ -62,7 +63,10 @@ def _base_url(url: str) -> str:
 
 
 def _public_headers() -> dict[str, str]:
-    return {"apikey": PUBLISHABLE_KEY, "Content-Type": "application/json"}
+    return {
+        "apikey": os.getenv("NUVIO_APP_ANON_KEY") or DEFAULT_APP_ANON_KEY,
+        "Content-Type": "application/json",
+    }
 
 
 def _auth_headers(access_token: str) -> dict[str, str]:
