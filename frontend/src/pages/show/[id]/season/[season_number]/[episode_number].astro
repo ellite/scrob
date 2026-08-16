@@ -58,7 +58,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
           <span class="text-zinc-700">/</span>
           <a href={`/show/${id}`} class="hover:text-zinc-100 transition truncate">{show?.title}</a>
           <span class="text-zinc-700 shrink-0">/</span>
-          <a href={`/show/${id}/season/${season_number}`} class="hover:text-zinc-100 transition shrink-0">Season {season_number}</a>
+          <a href={`/show/${id}/season/${season_number}`} class="hover:text-zinc-100 transition shrink-0">{episode?.season?.name ?? `Season ${season_number}`}</a>
           <span class="text-zinc-700 shrink-0">/</span>
           <span class="text-zinc-100 font-bold shrink-0">Episode {episode_number}</span>
         </nav>

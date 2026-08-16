@@ -182,6 +182,11 @@ export interface EpisodeDetail {
   cast: CastMember[];
   guest_stars: CastMember[];
   episodes: EpisodeItem[];
+  season?: {
+    name: string;
+    season_number: number;
+    poster_path: string | null;
+  };
   library: {
     resolution: string;
     video_codec: string;

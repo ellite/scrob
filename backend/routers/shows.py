@@ -26,7 +26,12 @@ from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enric
 from dependencies import get_current_user, get_current_user_or_api_key
 from core import tmdb
 from core import tvdb as tvdb_client
-from core.episode_order import ensure_episode_order_mapping, get_episode_order, validate_episode_order
+from core.episode_order import (
+    ensure_episode_order_mapping,
+    get_episode_order,
+    reconcile_divergent_episode_media,
+    validate_episode_order,
+)
 from core.enrichment import (
     tmdb_season_covers,
     enrich_episode_from_tvdb,
@@ -430,6 +435,10 @@ async def _run_episode_order_mapping(
             local_show = show_result.scalar_one_or_none()
             if local_show:
                 local_show.tvdb_id = tvdb_id
+                # #162: this show's TMDB<->TVDB positions are now fully known -
+                # merge any episode that was previously tracked under the "wrong"
+                # (TVDB-native) numbering into its canonical TMDB-numbered row.
+                await reconcile_divergent_episode_media(db, local_show)
 
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
                 status=SyncStatus.completed,
@@ -1579,6 +1588,11 @@ async def get_episode_detail(
             "cast": cast,
             "guest_stars": guest_stars,
             "show": show_info,
+            "season": {
+                "name": season_tmdb.get("name") or f"Season {season_number}",
+                "season_number": season_number,
+                "poster_path": tmdb.poster_url(season_tmdb.get("poster_path")),
+            },
             "episodes": episodes_nav,
             "library": library_info,
         }
