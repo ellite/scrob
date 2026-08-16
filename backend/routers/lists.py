@@ -197,7 +197,7 @@ async def get_lists(
 async def create_list(
     body: ListCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     lst = ListModel(
         user_id=current_user.id,
@@ -292,7 +292,7 @@ async def update_list(
     list_id: int,
     body: ListUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(ListModel).where(ListModel.id == list_id, ListModel.user_id == current_user.id)
@@ -323,7 +323,7 @@ async def update_list(
 async def delete_list(
     list_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(ListModel).where(ListModel.id == list_id, ListModel.user_id == current_user.id)
@@ -537,7 +537,7 @@ async def add_list_item(
     list_id: int,
     body: ListItemAdd,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     list_result = await db.execute(
         select(ListModel).where(ListModel.id == list_id, ListModel.user_id == current_user.id)
@@ -661,7 +661,7 @@ async def remove_list_item(
     list_id: int,
     item_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(ListItem)
