@@ -181,6 +181,43 @@ async def validate_connection(
             raise ArvioAPIError(f"ARVIO profile '{profile_id}' not found in account profiles")
     return session, profiles
 
+def _extract_profile_data(raw: Any, profile_id: str) -> list[Any]:
+    if isinstance(raw, list):
+        return raw
+    if not isinstance(raw, dict) or not raw:
+        return []
+
+    pid_str = str(profile_id)
+    # 1. Exact string match
+    if pid_str in raw and isinstance(raw[pid_str], list):
+        return raw[pid_str]
+
+    # 2. Integer match
+    if pid_str.isdigit():
+        pid_int = int(pid_str)
+        if pid_int in raw and isinstance(raw[pid_int], list):
+            return raw[pid_int]
+
+    # 3. Case-insensitive / suffix match (e.g. "profile_0", "p0", "0")
+    for k, v in raw.items():
+        if isinstance(v, list):
+            k_str = str(k).lower().strip()
+            if k_str == pid_str.lower() or k_str.endswith(f"_{pid_str}") or k_str.endswith(f"-{pid_str}"):
+                return v
+
+    # 4. If single key in dictionary, return that list
+    if len(raw) == 1:
+        val = list(raw.values())[0]
+        if isinstance(val, list):
+            return val
+
+    # 5. Still unmatched - fail safe rather than combine every profile's data
+    # together, which would leak another profile's watch history into this
+    # one on a multi-profile ARVIO account (cases 1-4 above already cover
+    # exact/int/suffix matches and the single-profile shortcut).
+    return []
+
+
 async def pull_sync_data(
     url: str,
     refresh_token: str,
@@ -194,21 +231,31 @@ async def pull_sync_data(
         await on_refresh(session)
     payload = await pull_snapshot(url, session.access_token, api_key=api_key)
 
-    pid_str = str(profile_id)
-    raw_movies = payload.get("localWatchedMoviesByProfile", {})
-    raw_episodes = payload.get("localWatchedEpisodesByProfile", {})
-    raw_cw = payload.get("localContinueWatchingByProfile", {})
+    raw_movies = (
+        payload.get("localWatchedMoviesByProfile")
+        or payload.get("watchedMoviesByProfile")
+        or payload.get("watchedMovies")
+        or payload.get("localWatchedMovies")
+        or {}
+    )
+    raw_episodes = (
+        payload.get("localWatchedEpisodesByProfile")
+        or payload.get("watchedEpisodesByProfile")
+        or payload.get("watchedEpisodes")
+        or payload.get("localWatchedEpisodes")
+        or {}
+    )
+    raw_cw = (
+        payload.get("localContinueWatchingByProfile")
+        or payload.get("continueWatchingByProfile")
+        or payload.get("continueWatching")
+        or payload.get("localContinueWatching")
+        or {}
+    )
 
-    movies_data = raw_movies.get(pid_str, []) if isinstance(raw_movies, dict) else []
-    episodes_data = raw_episodes.get(pid_str, []) if isinstance(raw_episodes, dict) else []
-    cw_data = raw_cw.get(pid_str, []) if isinstance(raw_cw, dict) else []
-
-    if not isinstance(movies_data, list):
-        movies_data = []
-    if not isinstance(episodes_data, list):
-        episodes_data = []
-    if not isinstance(cw_data, list):
-        cw_data = []
+    movies_data = _extract_profile_data(raw_movies, profile_id)
+    episodes_data = _extract_profile_data(raw_episodes, profile_id)
+    cw_data = _extract_profile_data(raw_cw, profile_id)
 
     return session, {
         "watched_movies": movies_data,
