@@ -818,7 +818,7 @@ async def get_show(
                 val = tmdb_extra.get(tmdb_key)
                 if val:
                     show_dict[field] = val
-            # Use the language-specific poster when TMDB has one — its
+            # Use the language-specific poster when TMDB has one - its
             # get_show(language=...) already returns the localized poster if it
             # exists, or the default otherwise, so this only changes anything
             # when a translated poster is actually available (#235 follow-up).
@@ -861,7 +861,7 @@ async def get_show(
             "where_to_watch": where_to_watch,
         }
 
-    # 2. If not local, fetch from TMDB — pass the viewer's metadata language so
+    # 2. If not local, fetch from TMDB - pass the viewer's metadata language so
     # list-only / non-library shows are translated too (in-library shows use the
     # stored ShowTranslation instead; see the `if show:` branch above). #235.
     api_key = await get_user_tmdb_key(db, current_user.id)
