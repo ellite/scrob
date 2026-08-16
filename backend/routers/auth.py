@@ -13,6 +13,7 @@ from typing import Optional
 from jose import jwt, JWTError
 
 from db import get_db
+from models.base import UserRole
 from models.users import User, UserSettings, TotpBackupCode
 from models.global_settings import GlobalSettings
 from models.connections import MediaServerConnection
@@ -180,7 +181,12 @@ async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSessi
         username=user_in.username,
         password_hash=get_password_hash(user_in.password),
         api_key=_generate_api_key(),
-        role=user_in.role,
+        # Never take the role from the request body: role == "admin" grants
+        # elevated access in several routers independently of is_admin, so a
+        # self-registering user could escalate by posting {"role": "admin"}.
+        # The first user is the bootstrap admin, so it gets both is_admin and
+        # the admin role (some routers check role, others is_admin).
+        role=UserRole.admin if is_first_user else UserRole.user,
         is_admin=is_first_user,
         email_confirmed=email_confirmed,
     )
