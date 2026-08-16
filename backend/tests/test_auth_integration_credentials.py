@@ -467,5 +467,73 @@ class SettingsResponseEffectiveRadarrSonarrTests(unittest.IsolatedAsyncioTestCas
         self.assertTrue(result.has_effective_sonarr)
 
 
+class _RegisterFakeDB:
+    """Queues results for register()'s db.execute() calls in order: the
+    registration-allowed count check, the existing-user lookup, and the
+    is_first_user count check."""
+
+    def __init__(self, count: int, existing_user=None):
+        self._results = [count, existing_user, count]
+        self.commit = AsyncMock()
+        self.refresh = AsyncMock()
+        self.added: list = []
+
+    async def execute(self, stmt):
+        item = self._results.pop(0)
+        if isinstance(item, int):
+            return SimpleNamespace(scalar_one=lambda item=item: item)
+        return SimpleNamespace(scalar_one_or_none=lambda item=item: item)
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def flush(self):
+        pass
+
+
+class RegisterRoleEscalationTests(unittest.IsolatedAsyncioTestCase):
+    """Regression (#226): role was taken directly from the registration
+    request body, and role == "admin" grants elevated access in several
+    routers independently of is_admin (comments.py, lists.py, profile.py) -
+    a self-registering user could escalate by posting {"role": "admin"}.
+    Calls register.__wrapped__ to bypass the @limiter.limit decorator, which
+    needs a real starlette Request; functools.wraps keeps the undecorated
+    function reachable there."""
+
+    async def test_role_admin_in_request_body_is_ignored_for_non_first_user(self) -> None:
+        from models.base import UserRole
+
+        db = _RegisterFakeDB(count=3)
+        user_in = schemas.UserCreate(
+            email="attacker@example.com",
+            username="attacker",
+            password="password123",
+            role=UserRole.admin,
+        )
+        with patch.object(auth.app_settings, "enable_registrations", True), \
+             patch.object(auth.app_settings, "registration_max_allowed_users", 0), \
+             patch.object(auth.app_settings, "require_email_validation", False):
+            new_user = await auth.register.__wrapped__(SimpleNamespace(), user_in, db)
+
+        self.assertEqual(new_user.role, UserRole.user)
+        self.assertFalse(new_user.is_admin)
+
+    async def test_first_user_still_becomes_admin_regardless_of_requested_role(self) -> None:
+        from models.base import UserRole
+
+        db = _RegisterFakeDB(count=0)
+        user_in = schemas.UserCreate(
+            email="first@example.com",
+            username="first",
+            password="password123",
+            role=UserRole.user,
+        )
+        with patch.object(auth.app_settings, "require_email_validation", False):
+            new_user = await auth.register.__wrapped__(SimpleNamespace(), user_in, db)
+
+        self.assertEqual(new_user.role, UserRole.admin)
+        self.assertTrue(new_user.is_admin)
+
+
 if __name__ == "__main__":
     unittest.main()
