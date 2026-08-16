@@ -351,7 +351,11 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                                 db.add(WatchEvent(
                                     user_id=user_id,
                                     media_id=media.id,
-                                    watched_at=watched_at or datetime.utcnow(),
+                                    # A dateless Simkl play stays dateless (the
+                                    # column is nullable, same as the Trakt
+                                    # import) — stamping "now" floods history
+                                    # with "watched today" on first sync (#127).
+                                    watched_at=watched_at,
                                     completed=True,
                                     play_count=1,
                                 ))
@@ -412,7 +416,8 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                                             event = WatchEvent(
                                                 user_id=user_id,
                                                 media_id=media.id,
-                                                watched_at=watched_at or datetime.utcnow(),
+                                                # See the movie branch above (#127).
+                                                watched_at=watched_at,
                                                 completed=True,
                                                 play_count=1,
                                             )
