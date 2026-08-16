@@ -2624,7 +2624,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           if (profileSelect) {
             const selectedProfile = profileSelect.value;
             profileSelect.innerHTML = cs.profiles.map((profile: any) => {
-              const pid = String(profile.id !== undefined ? profile.id : (profile.profile_index !== undefined ? profile.profile_index : '0'));
+              const pid = String(profile.profile_index !== undefined && profile.profile_index !== null ? profile.profile_index : (profile.id !== undefined ? profile.id : '0'));
               const pname = profile.name || `Profile ${pid}`;
               return `<option value="${esc(pid)}">${esc(pname)}</option>`;
             }).join('');
@@ -3914,7 +3914,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           const previousProfileId = profileSelect?.value || '';
           if (profileSelect) {
             profileSelect.innerHTML = profiles.map((profile: any) => {
-              const pid = String(profile.id !== undefined ? profile.id : (profile.profile_index !== undefined ? profile.profile_index : '0'));
+              const pid = String(profile.profile_index !== undefined && profile.profile_index !== null ? profile.profile_index : (profile.id !== undefined ? profile.id : '0'));
               const pname = profile.name || `Profile ${pid}`;
               return `<option value="${esc(pid)}">${esc(pname)}</option>`;
             }).join('');
@@ -4182,7 +4182,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       pendingNuvioRefreshToken = data.refresh_token || password;
       if (nuvioProfileSelect) {
         nuvioProfileSelect.innerHTML = (data.profiles || []).map((profile: any) => {
-          const pid = String(profile.id !== undefined ? profile.id : profile.profile_index);
+          const pid = String(profile.profile_index !== undefined && profile.profile_index !== null ? profile.profile_index : profile.id);
           const pname = profile.name || `Profile ${pid}`;
           return `<option value="${esc(pid)}">${esc(pname)}</option>`;
         }).join('');
