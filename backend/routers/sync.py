@@ -714,6 +714,10 @@ async def _push_nuvio_library_delta(
         await db.commit()
 
     async with nuvio.connection_lock(conn.id):
+        # See core/nuvio.py's connection_lock docstring - conn may have been
+        # loaded before another request already rotated this single-use
+        # refresh token while this one waited.
+        await db.refresh(conn)
         await nuvio.merge_library(
             conn.url,
             conn.token,
@@ -1082,6 +1086,10 @@ async def _fan_out_changes_to_other_connections(
                 await db.commit()
 
             async with nuvio.connection_lock(conn.id):
+                # See core/nuvio.py's connection_lock docstring - conn may
+                # have been loaded before another request already rotated
+                # this single-use refresh token while this one waited.
+                await db.refresh(conn)
                 await nuvio.push_watched_items(
                     conn.url,
                     conn.token,
@@ -3937,6 +3945,10 @@ async def _run_nuvio_sync(
                 await db.commit()
 
             async with nuvio.connection_lock(conn.id):
+                # See core/nuvio.py's connection_lock docstring - conn may
+                # have been loaded before another request already rotated
+                # this single-use refresh token while this one waited.
+                await db.refresh(conn)
                 _, data = await nuvio.pull_sync_data(
                     conn.url, conn.token, profile_id, on_refresh=_persist_refresh
                 )
@@ -5282,13 +5294,20 @@ async def _run_arvio_sync(
             profile_id = str(conn.server_user_id) if conn.server_user_id is not None else ""
             if not profile_id:
                 try:
-                    _, profiles = await arvio.validate_connection(conn.url, conn.token)
-                    if profiles:
-                        profile_id = profiles[0]["id"]
-                        conn.server_user_id = profile_id
+                    # validate_connection redeems (rotates) conn.token, so the
+                    # resulting session must be persisted here - discarding it
+                    # would leave conn.token pointing at an already-used
+                    # token, breaking the pull_sync_data call below.
+                    async with arvio.connection_lock(conn.id):
+                        await db.refresh(conn)
+                        session, profiles = await arvio.validate_connection(conn.url, conn.token)
+                        conn.token = session.refresh_token
+                        if profiles:
+                            profile_id = profiles[0]["id"]
+                            conn.server_user_id = profile_id
+                        else:
+                            profile_id = "0"
                         await db.commit()
-                    else:
-                        profile_id = "0"
                 except Exception:
                     profile_id = "0"
 
@@ -5297,6 +5316,10 @@ async def _run_arvio_sync(
                 await db.commit()
 
             async with arvio.connection_lock(conn.id):
+                # See core/nuvio.py's connection_lock docstring - conn may
+                # have been loaded before another request already rotated
+                # this single-use refresh token while this one waited.
+                await db.refresh(conn)
                 session, sync_data = await arvio.pull_sync_data(
                     conn.url,
                     conn.token,
@@ -5895,6 +5918,10 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     await db.commit()
 
                 async with nuvio.connection_lock(conn.id):
+                    # See core/nuvio.py's connection_lock docstring - conn may
+                    # have been loaded before another request already rotated
+                    # this single-use refresh token while this one waited.
+                    await db.refresh(conn)
                     if conn.push_collection:
                         # Merge rather than replace: a full/scheduled push only knows
                         # the current local library, not what changed since last time,

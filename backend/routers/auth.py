@@ -598,7 +598,6 @@ async def update_connection(
             from core import nuvio
 
             candidate_url = update_data.get("url", conn.url)
-            candidate_token = update_data.get("token", conn.token)
             profile_id = _parse_nuvio_profile_id(update_data.get("server_user_id", conn.server_user_id))
 
             async def _persist_refresh(session: nuvio.NuvioSession) -> None:
@@ -610,6 +609,15 @@ async def update_connection(
 
             try:
                 async with nuvio.connection_lock(conn.id):
+                    # Refresh_token is single-use and rotates on every redeem
+                    # (see core/nuvio.py's connection_lock docstring) - conn
+                    # may have been loaded before another request (e.g. the
+                    # connections page's status check) already rotated it
+                    # while this one waited for the lock. Re-read the latest
+                    # persisted value now, inside the lock, rather than reuse
+                    # whatever was loaded at request start.
+                    await db.refresh(conn)
+                    candidate_token = update_data.get("token", conn.token)
                     session, profiles = await nuvio.validate_connection(
                         candidate_url, candidate_token, profile_id, on_refresh=_persist_refresh
                     )
@@ -1148,15 +1156,24 @@ async def get_connection_status(
                 profile_id = _parse_nuvio_profile_id(conn.server_user_id)
                 # Nuvio's refresh token is single-use; the lock keeps this
                 # status check from racing another request (e.g. a second
-                # open tab) that reads and redeems the same stale token.
+                # open tab) that reads and redeems the same stale token. The
+                # lock alone isn't enough though - conn was loaded before
+                # acquiring it, so a request that already rotated the token
+                # while this one waited would still leave conn.token stale;
+                # re-read it now that the lock is held.
                 async with nuvio.connection_lock(conn.id):
+                    await db.refresh(conn)
                     session, profiles = await nuvio.validate_connection(conn.url, conn.token, profile_id)
                     conn.token = session.refresh_token
                 conn.server_username = _nuvio_profile_name(profiles, profile_id)
                 connected = True
             elif conn.type == "arvio":
                 profile_id = conn.server_user_id if (conn.server_user_id and conn.server_user_id != "undefined") else None
+                # Same single-use rotating refresh token as Nuvio - see the
+                # comment on the Nuvio branch above. Re-read conn under the
+                # lock before redeeming its token.
                 async with arvio.connection_lock(conn.id):
+                    await db.refresh(conn)
                     session, profiles = await arvio.validate_connection(conn.url, conn.token, profile_id)
                     conn.token = session.refresh_token
                 if profile_id is None and profiles:

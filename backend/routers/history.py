@@ -207,7 +207,10 @@ async def _push_watch_state(
         results = await asyncio.gather(*(coro for _, coro in tasks), return_exceptions=True)
         for (label, _), result in zip(tasks, results):
             if isinstance(result, Exception):
-                logger.exception("Failed to push watch state to %s", label, exc_info=result)
+                # A warning with a plain reason, not a full traceback dump -
+                # these are almost always an expired/revoked credential on
+                # the remote service, not a bug here.
+                logger.warning("Can't send history event to %s because %s", label, result)
 
     nuvio_connections = [conn for conn in connections if conn.type == "nuvio"]
     if nuvio_connections:
@@ -254,6 +257,10 @@ async def _push_watch_state(
                     await db.commit()
 
                 async with nuvio_client.connection_lock(conn.id):
+                    # See core/nuvio.py's connection_lock docstring - conn may
+                    # have been loaded before another request already rotated
+                    # this single-use refresh token while this one waited.
+                    await db.refresh(conn)
                     if watched and nuvio_items:
                         await nuvio_client.push_watched_items(
                             conn.url, conn.token, profile_id, nuvio_items, on_refresh=_persist_refresh
@@ -264,8 +271,8 @@ async def _push_watch_state(
                         )
                     else:
                         continue
-            except Exception:
-                logger.exception("Failed to push watch state to Nuvio connection %s", conn.id)
+            except Exception as e:
+                logger.warning("Can't send history event to Nuvio (connection %s) because %s", conn.id, e)
                 continue
         await db.commit()
 
@@ -293,11 +300,8 @@ async def _push_watch_state(
                     changed_media_ids=stremio_eligible_ids,
                     watch_overrides=watch_overrides,
                 )
-            except Exception:
-                logger.exception(
-                    "Failed to push watch state to Stremio connection %s",
-                    conn.id,
-                )
+            except Exception as e:
+                logger.warning("Can't send history event to Stremio (connection %s) because %s", conn.id, e)
         await db.commit()
 
 

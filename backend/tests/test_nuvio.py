@@ -607,7 +607,7 @@ class NuvioCollectionFanoutTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(404, json={"message": "unexpected request"})
 
         conn = SimpleNamespace(id=77, url="https://api.nuvio.tv", token="old-refresh", server_user_id="2")
-        db = SimpleNamespace(commit=AsyncMock())
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
 
         transport = httpx.MockTransport(handler)
         with patch.object(
@@ -908,6 +908,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
                 ]
             ),
             commit=AsyncMock(),
+            refresh=AsyncMock(),
         )
 
         pushed_items: list[dict] = []
