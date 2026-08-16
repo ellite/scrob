@@ -854,15 +854,18 @@ async def get_show(
             "where_to_watch": where_to_watch,
         }
 
-    # 2. If not local, fetch from TMDB
+    # 2. If not local, fetch from TMDB — pass the viewer's metadata language so
+    # list-only / non-library shows are translated too (in-library shows use the
+    # stored ShowTranslation instead; see the `if show:` branch above). #235.
     api_key = await get_user_tmdb_key(db, current_user.id)
     if not check_tmdb_key(api_key):
         raise HTTPException(
             status_code=404, detail="Show not found and TMDB key not configured"
         )
 
+    metadata_lang = await get_user_metadata_language(db, current_user.id)
     try:
-        data = await tmdb.get_show(series_tmdb_id, api_key=api_key)
+        data = await tmdb.get_show(series_tmdb_id, api_key=api_key, language=metadata_lang)
 
         cast = [
             {
