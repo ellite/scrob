@@ -1873,6 +1873,7 @@ async def get_tmdb_list(
     year: list[int] = Query(default=[]),
     min_rating: float | None = Query(None),
     status: str | None = Query(None),
+    original_language: str | None = Query(None),
     # Local-state filters, applied after TMDB enrichment (OR'd within each,
     # same convention as genre above): collection = in|out,
     # watch = watched|unwatched|started, arr = added|notadded.
@@ -1892,7 +1893,7 @@ async def get_tmdb_list(
             "top_rated": "vote_average.desc",
             "trending": "popularity.desc",
         }
-        has_filters = bool(genre or min_rating or status)
+        has_filters = bool(genre or min_rating or status or original_language)
 
         async def _fetch_tmdb_page(fetch_page: int) -> dict:
             if has_filters:
@@ -1901,14 +1902,16 @@ async def get_tmdb_list(
                     genre_ids = [MOVIE_GENRE_IDS[g] for g in genre if g in MOVIE_GENRE_IDS]
                     return await tmdb.discover_movies(
                         page=fetch_page, genre_ids=genre_ids or None,
-                        min_rating=min_rating, sort_by=sort_by, api_key=tmdb_key,
+                        min_rating=min_rating, sort_by=sort_by,
+                        with_original_language=original_language, api_key=tmdb_key,
                     )
                 genre_ids = [TV_GENRE_IDS[g] for g in genre if g in TV_GENRE_IDS]
                 status_id = TV_STATUS_IDS.get(status) if status else None
                 return await tmdb.discover_shows(
                     page=fetch_page, genre_ids=genre_ids or None,
                     min_rating=min_rating, sort_by=sort_by,
-                    status=status_id, api_key=tmdb_key,
+                    status=status_id, with_original_language=original_language,
+                    api_key=tmdb_key,
                 )
             if type == MediaType.movie:
                 if category == "top_rated":
