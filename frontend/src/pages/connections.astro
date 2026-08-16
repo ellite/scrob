@@ -4178,10 +4178,15 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         try {
           const loginEndpoint = isArvio ? '/api/proxy/auth/arvio-login' : '/api/proxy/auth/nuvio-login';
           const defaultUrl = isArvio ? 'https://auth.arvio.tv/.netlify/functions' : 'https://api.nuvio.tv';
+          // Self-hosted Nuvio backends store a custom Cloud API URL on the
+          // connection itself - re-auth must hit that URL, not the official
+          // default, or it silently authenticates against the wrong backend.
+          const reauthUrlInput = card?.querySelector('.conn-url-input') as HTMLInputElement | null;
+          const reauthUrl = reauthUrlInput?.value.trim() || defaultUrl;
           const loginRes = await fetch(loginEndpoint, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password, url: defaultUrl }),
+            body: JSON.stringify({ email, password, url: reauthUrl }),
           });
           const loginData = await loginRes.json();
           if (!loginRes.ok) throw new Error(loginData.detail || `${isArvio ? 'ARVIO' : 'Nuvio'} sign-in failed`);
