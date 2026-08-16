@@ -891,7 +891,11 @@ const bottomNavItem = (active: boolean) =>
         cb.addEventListener('change', async () => {
           const listId = cb.dataset.listId!;
           try {
-            const seasonNumber = _listSeasonNumber ? Number(_listSeasonNumber) : null;
+            // season_number identifies a whole-season list entry
+            // (media_type=series) - individual episodes have their own
+            // tmdb_id and never carry one, even though an episode card's
+            // dataset also has a season number for display purposes.
+            const seasonNumber = _listMediaType === 'series' && _listSeasonNumber ? Number(_listSeasonNumber) : null;
             if (cb.checked) {
               const body: Record<string, unknown> = { tmdb_id: Number(_listTmdbId), media_type: _listMediaType };
               if (seasonNumber != null) body.season_number = seasonNumber;
