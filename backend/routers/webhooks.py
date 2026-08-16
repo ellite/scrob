@@ -1678,6 +1678,71 @@ async def _remove_collection_entry(
         await db.flush()
 
 
+async def _backfill_plex_runtime(
+    db: AsyncSession, media: Media, data: dict, conn: MediaServerConnection | None, tmdb_key: str | None,
+) -> None:
+    """Actively fills in Media.runtime when a Plex webhook event finds it
+    still missing - without it, the Now Playing bar's live progress
+    interpolation can never engage and stays frozen at a flat 0%/whatever
+    percent the last event reported (#169). Some Plex clients (e.g. TV apps)
+    under-report duration on their first play/resume event, so the current
+    event's own duration_ms isn't always enough; asks Plex directly for the
+    item next, then TMDB as a last resort. All three sources are best-effort -
+    leaves media.runtime untouched (still None) if none of them pan out, to
+    be retried on the next event for this item.
+    """
+    if media.runtime:
+        return
+
+    # Each source below is independently wrapped - a webhook-only setup may
+    # have no Plex *connection* at all (conn is None, or one exists but its
+    # url/token weren't filled in), and a multi-server user's webhook can
+    # arrive from a Plex server other than the one configured here, so a
+    # "wrong server" lookup failure is a normal, expected outcome, not a bug.
+    # One source failing must still let the next be tried, and none of them
+    # may ever take the webhook down with it.
+    duration_ms = data.get("duration_ms")
+
+    if not duration_ms and conn and getattr(conn, "url", None) and getattr(conn, "token", None) and data.get("plex_rating_key"):
+        try:
+            import core.plex as plex_client
+            item = await plex_client.get_item(conn.url, conn.token, str(data["plex_rating_key"]))
+            if item:
+                duration_ms = item.get("duration")
+        except Exception as e:
+            print(f"  Could not fetch Plex item to backfill runtime: {e}")
+
+    if duration_ms:
+        try:
+            media.runtime = max(1, round(duration_ms / 60000))
+            return
+        except (TypeError, ValueError) as e:
+            print(f"  Could not compute runtime from duration_ms={duration_ms!r}: {e}")
+
+    if not tmdb_key:
+        return
+
+    try:
+        if media.media_type == MediaType.movie and media.tmdb_id:
+            tmdb_data = await tmdb.get_movie(media.tmdb_id, api_key=tmdb_key)
+            media.runtime = tmdb_data.get("runtime") or media.runtime
+        elif (
+            media.media_type == MediaType.episode
+            and media.show_id
+            and media.season_number is not None
+            and media.episode_number is not None
+        ):
+            show_result = await db.execute(select(Show).where(Show.id == media.show_id))
+            show = show_result.scalar_one_or_none()
+            if show and show.tmdb_id:
+                tmdb_data = await tmdb.get_episode(
+                    show.tmdb_id, media.season_number, media.episode_number, api_key=tmdb_key,
+                )
+                media.runtime = tmdb_data.get("runtime") or media.runtime
+    except Exception as e:
+        print(f"  Could not backfill runtime from TMDB for media_id={getattr(media, 'id', None)}: {e}")
+
+
 async def find_or_create_media_plex(
     data: dict, db: AsyncSession, api_key: str = None, conn: MediaServerConnection | None = None,
     user_id: int | None = None,
@@ -1961,8 +2026,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
             if data["progress_percent"] > 0:
                 session.progress_percent = data["progress_percent"]
                 session.progress_seconds = data["progress_seconds"]
-            if not media.runtime and data.get("duration_ms"):
-                media.runtime = max(1, round(data["duration_ms"] / 60000))
+            await _backfill_plex_runtime(db, media, data, conn, tmdb_key)
             await db.commit()
         await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
         await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
@@ -1979,8 +2043,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
             session.progress_percent = data["progress_percent"]
             session.progress_seconds = data["progress_seconds"]
             session.updated_at = datetime.utcnow()
-            if not media.runtime and data.get("duration_ms"):
-                media.runtime = max(1, round(data["duration_ms"] / 60000))
+            await _backfill_plex_runtime(db, media, data, conn, tmdb_key)
             await db.commit()
         await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
         await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
@@ -1998,6 +2061,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
                 session.progress_percent = data["progress_percent"]
                 session.progress_seconds = data["progress_seconds"]
                 session.updated_at = datetime.utcnow()
+                await _backfill_plex_runtime(db, media, data, conn, tmdb_key)
                 await db.commit()
         await _maybe_trakt_scrobble(settings, media, "pause", data["progress_percent"], db=db)
         await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
@@ -2018,6 +2082,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
                     progress_percent, progress_seconds,
                     progress_percent >= 0.90,
                 )
+            await _backfill_plex_runtime(db, media, data, conn, tmdb_key)
             await db.commit()
         await _maybe_trakt_scrobble(settings, media, "stop", progress_percent, db=db)
         await _maybe_mdblist_scrobble(settings, media, "stop", progress_percent, db=db)
@@ -2261,8 +2326,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
             if data["progress_percent"] > 0:
                 session.progress_percent = data["progress_percent"]
                 session.progress_seconds = data["progress_seconds"]
-            if not media.runtime and data.get("duration_ms"):
-                media.runtime = max(1, round(data["duration_ms"] / 60000))
+            await _backfill_plex_runtime(db, media, data, None, tmdb_key)
             await db.commit()
 
     elif event == "media.resume":
@@ -2275,8 +2339,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
             session.progress_percent = data["progress_percent"]
             session.progress_seconds = data["progress_seconds"]
             session.updated_at = datetime.utcnow()
-            if not media.runtime and data.get("duration_ms"):
-                media.runtime = max(1, round(data["duration_ms"] / 60000))
+            await _backfill_plex_runtime(db, media, data, None, tmdb_key)
             await db.commit()
 
     elif event == "media.pause":
@@ -2290,6 +2353,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
                 session.progress_percent = data["progress_percent"]
                 session.progress_seconds = data["progress_seconds"]
                 session.updated_at = datetime.utcnow()
+                await _backfill_plex_runtime(db, media, data, None, tmdb_key)
                 await db.commit()
 
     elif event == "media.stop":
@@ -2299,6 +2363,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
             progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
             if conn.sync_watched and progress_percent > 0.05:
                 await _write_watch_event(db, user.id, media.id, progress_percent, progress_seconds, progress_percent >= 0.90)
+        await _backfill_plex_runtime(db, media, data, None, tmdb_key)
         if conn.sync_collection:
             quality = data.get("quality")
             await _ensure_collection_entry(

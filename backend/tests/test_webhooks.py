@@ -12,6 +12,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from models.base import MediaType
 from routers import webhooks
 from routers.webhooks import (
+    _backfill_plex_runtime,
     _commit_playback_session_update,
     _episode_for_progress,
     _is_duplicate_webhook_delivery,
@@ -659,6 +660,123 @@ class TestBingebaseScrobble(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kwargs["json"]["Event"], "playback.stop")
             self.assertEqual(kwargs["json"]["Item"]["ProviderIds"]["Tmdb"], "550")
             self.assertEqual(kwargs["headers"]["Authorization"], "Bearer secret-token")
+
+
+class BackfillPlexRuntimeTests(IsolatedAsyncioTestCase):
+    """Regression tests for #169: the Now Playing bar's live progress
+    interpolation never engages while Media.runtime is unset, freezing the
+    bar at a flat percentage. Some Plex clients under-report duration_ms on
+    their first play/resume event, so _backfill_plex_runtime tries, in
+    order: the current event's own duration_ms, asking Plex directly for the
+    item, then TMDB - so any event (not just play/resume) can self-heal it."""
+
+    def _movie(self, **overrides):
+        defaults = dict(runtime=None, media_type=MediaType.movie, tmdb_id=550, show_id=None, season_number=None, episode_number=None)
+        return SimpleNamespace(**{**defaults, **overrides})
+
+    def _episode(self, **overrides):
+        defaults = dict(runtime=None, media_type=MediaType.episode, tmdb_id=None, show_id=1, season_number=1, episode_number=1)
+        return SimpleNamespace(**{**defaults, **overrides})
+
+    async def test_noop_when_runtime_already_set(self) -> None:
+        media = self._movie(runtime=42)
+        db = _FakeDB([])
+        with patch("core.plex.get_item", new_callable=AsyncMock) as mock_get_item:
+            await _backfill_plex_runtime(db, media, {"duration_ms": 999999}, SimpleNamespace(url="u", token="t"), "tmdb-key")
+        self.assertEqual(media.runtime, 42)
+        mock_get_item.assert_not_called()
+
+    async def test_uses_current_event_duration_ms_first(self) -> None:
+        media = self._movie()
+        db = _FakeDB([])
+        with patch("core.plex.get_item", new_callable=AsyncMock) as mock_get_item:
+            await _backfill_plex_runtime(db, media, {"duration_ms": 5_400_000}, SimpleNamespace(url="u", token="t"), "tmdb-key")
+        self.assertEqual(media.runtime, 90)
+        mock_get_item.assert_not_called()
+
+    async def test_asks_plex_directly_when_event_duration_missing(self) -> None:
+        media = self._movie()
+        db = _FakeDB([])
+        conn = SimpleNamespace(url="http://plex.local", token="plex-token")
+        with patch("core.plex.get_item", new_callable=AsyncMock, return_value={"duration": 3_600_000}) as mock_get_item:
+            await _backfill_plex_runtime(db, media, {"duration_ms": 0, "plex_rating_key": "123"}, conn, "tmdb-key")
+        mock_get_item.assert_awaited_once_with("http://plex.local", "plex-token", "123")
+        self.assertEqual(media.runtime, 60)
+
+    async def test_falls_back_to_tmdb_movie_when_plex_unavailable(self) -> None:
+        media = self._movie(tmdb_id=550)
+        db = _FakeDB([])
+        with patch("core.tmdb.get_movie", new_callable=AsyncMock, return_value={"runtime": 139}) as mock_get_movie:
+            await _backfill_plex_runtime(db, media, {"duration_ms": 0}, None, "tmdb-key")
+        mock_get_movie.assert_awaited_once_with(550, api_key="tmdb-key")
+        self.assertEqual(media.runtime, 139)
+
+    async def test_falls_back_to_tmdb_episode_via_show_lookup(self) -> None:
+        media = self._episode(show_id=7, season_number=2, episode_number=3)
+        show = SimpleNamespace(id=7, tmdb_id=999)
+        db = _FakeDB([show])
+        with patch("core.tmdb.get_episode", new_callable=AsyncMock, return_value={"runtime": 45}) as mock_get_episode:
+            await _backfill_plex_runtime(db, media, {"duration_ms": 0}, None, "tmdb-key")
+        mock_get_episode.assert_awaited_once_with(999, 2, 3, api_key="tmdb-key")
+        self.assertEqual(media.runtime, 45)
+
+    async def test_leaves_runtime_none_when_every_source_fails(self) -> None:
+        media = self._movie(tmdb_id=None)
+        db = _FakeDB([])
+        await _backfill_plex_runtime(db, media, {"duration_ms": 0}, None, "tmdb-key")
+        self.assertIsNone(media.runtime)
+
+    async def test_no_conn_skips_plex_and_goes_straight_to_tmdb(self) -> None:
+        # Scrobble-only Plex connections have no url/token to call Plex with -
+        # conn=None must not raise, and should fall through to TMDB.
+        media = self._movie(tmdb_id=550)
+        db = _FakeDB([])
+        with patch("core.plex.get_item", new_callable=AsyncMock) as mock_get_item, \
+             patch("core.tmdb.get_movie", new_callable=AsyncMock, return_value={"runtime": 120}):
+            await _backfill_plex_runtime(db, media, {"duration_ms": 0, "plex_rating_key": "123"}, None, "tmdb-key")
+        mock_get_item.assert_not_called()
+        self.assertEqual(media.runtime, 120)
+
+    async def test_connection_with_no_url_or_token_skips_plex_without_crashing(self) -> None:
+        # A webhook-only user may have a MediaServerConnection row that was
+        # never fully filled in (url/token blank) - must behave the same as
+        # conn=None, not attempt the call and definitely not raise.
+        media = self._movie(tmdb_id=550)
+        db = _FakeDB([])
+        conn = SimpleNamespace(url="", token="")
+        with patch("core.plex.get_item", new_callable=AsyncMock) as mock_get_item, \
+             patch("core.tmdb.get_movie", new_callable=AsyncMock, return_value={"runtime": 120}):
+            await _backfill_plex_runtime(db, media, {"duration_ms": 0, "plex_rating_key": "123"}, conn, "tmdb-key")
+        mock_get_item.assert_not_called()
+        self.assertEqual(media.runtime, 120)
+
+    async def test_plex_lookup_raising_does_not_crash_and_falls_back_to_tmdb(self) -> None:
+        # A multi-server user's webhook can arrive from a Plex server other
+        # than the one configured in Scrob - that server won't have this
+        # item, so the lookup can fail in ways get_item's own try/except
+        # might not anticipate. Must not propagate.
+        media = self._movie(tmdb_id=550)
+        db = _FakeDB([])
+        conn = SimpleNamespace(url="http://wrong-server.local", token="tok")
+        with patch("core.plex.get_item", new_callable=AsyncMock, side_effect=RuntimeError("boom")), \
+             patch("core.tmdb.get_movie", new_callable=AsyncMock, return_value={"runtime": 120}):
+            await _backfill_plex_runtime(db, media, {"duration_ms": 0, "plex_rating_key": "123"}, conn, "tmdb-key")
+        self.assertEqual(media.runtime, 120)
+
+    async def test_tmdb_failure_does_not_crash_and_leaves_runtime_none(self) -> None:
+        media = self._movie(tmdb_id=550)
+        db = _FakeDB([])
+        with patch("core.tmdb.get_movie", new_callable=AsyncMock, side_effect=Exception("network error")):
+            await _backfill_plex_runtime(db, media, {"duration_ms": 0}, None, "tmdb-key")
+        self.assertIsNone(media.runtime)
+
+    async def test_malformed_duration_does_not_crash(self) -> None:
+        media = self._movie()
+        db = _FakeDB([])
+        # No tmdb_key, so this isolates the malformed-duration path itself
+        # rather than also exercising the TMDB fallback that follows it.
+        await _backfill_plex_runtime(db, media, {"duration_ms": "not-a-number"}, None, None)
+        self.assertIsNone(media.runtime)
 
 
 if __name__ == "__main__":
