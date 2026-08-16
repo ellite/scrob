@@ -903,9 +903,19 @@ const bottomNavItem = (active: boolean) =>
             } else {
               // Find the list_item id — need to fetch list detail
               const detail = await apiFetch(`/lists/${listId}`);
-              const item = detail.items?.find((i: { media: { tmdb_id: number; season_number: number | null } }) =>
-                i.media?.tmdb_id === Number(_listTmdbId) && (i.media?.season_number ?? null) === seasonNumber
-              );
+              const item = detail.items?.find((i: { media: { tmdb_id: number; season_number: number | null } }) => {
+                if (i.media?.tmdb_id !== Number(_listTmdbId)) return false;
+                // Only a whole-season list entry (media_type=series) needs
+                // season_number to disambiguate one season from another on
+                // the same show. For everything else (movies, episodes,
+                // shows added whole) tmdb_id alone is already unique - and
+                // for an episode, media.season_number here is the episode's
+                // own season within its show (a display fallback the API
+                // uses when there's no stored list_item.season_number), not
+                // something to match against.
+                if (_listMediaType !== 'series') return true;
+                return (i.media?.season_number ?? null) === seasonNumber;
+              });
               if (item) {
                 await apiFetch(`/lists/${listId}/items/${item.id}`, 'DELETE');
                 // If we're on the list detail page for this list, remove the card immediately
