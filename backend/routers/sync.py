@@ -4886,7 +4886,11 @@ async def _apply_arvio_watched_movie(
     except (TypeError, ValueError):
         return False
 
-    watched_at = _parse_arvio_timestamp(item.get("watchedAt") or item.get("timestamp") or item.get("updatedAtMs"))
+    # updatedAt (in addition to updatedAtMs) matters here now too: a completed
+    # continue-watching movie routed in via _apply_arvio_playback_progress's
+    # high-completion branch may only carry that field, same as the episode
+    # version of this fallback chain below.
+    watched_at = _parse_arvio_timestamp(item.get("watchedAt") or item.get("timestamp") or item.get("updatedAtMs") or item.get("updatedAt"))
 
     result = await db.execute(
         select(Media).where(

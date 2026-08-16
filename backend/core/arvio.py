@@ -211,12 +211,11 @@ def _extract_profile_data(raw: Any, profile_id: str) -> list[Any]:
         if isinstance(val, list):
             return val
 
-    # 5. If profile_id is "0" or empty or unmatched, combine all non-empty lists from dict
-    combined: list[Any] = []
-    for v in raw.values():
-        if isinstance(v, list):
-            combined.extend(v)
-    return combined
+    # 5. Still unmatched - fail safe rather than combine every profile's data
+    # together, which would leak another profile's watch history into this
+    # one on a multi-profile ARVIO account (cases 1-4 above already cover
+    # exact/int/suffix matches and the single-profile shortcut).
+    return []
 
 
 async def pull_sync_data(
