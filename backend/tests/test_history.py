@@ -11,7 +11,9 @@ from models.base import MediaType, CollectionSource
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.events import WatchEvent
 from models.media import Media
+from models.playback_progress import PlaybackProgress
 from models.playback_session import PlaybackSession
+from models.rewatch import ShowRewatch
 from models.show import Show
 from routers import history
 from schemas import WatchEventCreate
@@ -444,6 +446,22 @@ class GetNowPlayingEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
         item = result["now_playing"][0]["media"]
         self.assertNotIn("show_episode_order", item)
         self.assertNotIn("tvdb_season_number", item)
+
+
+class ClearHistoryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_clears_playback_progress_along_with_watch_events(self) -> None:
+        # Continue Watching is sourced from PlaybackProgress, not WatchEvent -
+        # a full clear must reset it too, or finished/cleared items keep
+        # showing up there as if still in progress.
+        db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+
+        await history.clear_history(db=db, current_user=SimpleNamespace(id=7))
+
+        tables_deleted = {
+            call.args[0].table.name for call in db.execute.call_args_list
+        }
+        self.assertEqual(tables_deleted, {ShowRewatch.__tablename__, WatchEvent.__tablename__, PlaybackProgress.__tablename__})
+        db.commit.assert_awaited_once()
 
 
 if __name__ == "__main__":

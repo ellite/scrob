@@ -239,7 +239,7 @@ class ClearHistoryAndUnwatchShowRewatchCleanupTests(unittest.IsolatedAsyncioTest
         db = _DeletedTablesSession([])
         response = await history.clear_history(db=db, current_user=SimpleNamespace(id=1))
         self.assertEqual(response["status"], "ok")
-        self.assertEqual(db._deleted_tables(), ["show_rewatches", "watch_events"])
+        self.assertEqual(db._deleted_tables(), ["show_rewatches", "watch_events", "playback_progress"])
 
     async def test_unwatch_show_also_deletes_the_shows_active_rewatch(self):
         show = Show(id=55, tmdb_id=100, title="Test Show")

@@ -1397,6 +1397,9 @@ async def clear_history(
     # progress forever with nothing left to progress it.
     await db.execute(delete(ShowRewatch).where(ShowRewatch.user_id == current_user.id))
     await db.execute(delete(WatchEvent).where(WatchEvent.user_id == current_user.id))
+    # Continue Watching is sourced from PlaybackProgress, not WatchEvent -
+    # without this, in-progress items kept showing up there after a clear.
+    await db.execute(delete(PlaybackProgress).where(PlaybackProgress.user_id == current_user.id))
     await db.commit()
     return {"status": "ok", "message": "Watch history cleared"}
 
