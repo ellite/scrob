@@ -628,6 +628,15 @@ if (me.totp_enabled) {
               Clear Collection
             </button>
           </div>
+          <div class="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6">
+            <div>
+              <h3 class="text-lg font-bold text-zinc-100 mb-1">Clear Lists</h3>
+              <p class="text-zinc-400 text-sm">Permanently deletes all your lists, including Watchlist, and everything in them. Your watch history, ratings, and collection will not be affected.</p>
+            </div>
+            <button type="button" id="clear-lists-btn" class="px-6 py-3 bg-red-600/10 hover:bg-red-600/20 text-red-500 border border-red-500/30 font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap">
+              Clear Lists
+            </button>
+          </div>
         </div>
       </section>
 
@@ -1136,6 +1145,37 @@ if (me.totp_enabled) {
         } finally {
           clearCollectionBtn.disabled = false;
           clearCollectionBtn.textContent = 'Clear Collection';
+        }
+      };
+    }
+
+    const clearListsBtn = document.getElementById('clear-lists-btn') as HTMLButtonElement | null;
+    if (clearListsBtn) {
+      clearListsBtn.onclick = async () => {
+        const ok = await showConfirmModal(
+          'Clear lists?',
+          'Are you sure you want to delete all your lists, including Watchlist, and everything in them? This cannot be undone.',
+          'Clear Lists'
+        );
+        if (!ok) return;
+        clearListsBtn.disabled = true;
+        clearListsBtn.textContent = 'Clearing...';
+        try {
+          const res = await fetch(`/api/proxy/lists/all`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (res.ok) {
+            showMessage('Lists cleared successfully!');
+          } else {
+            const data = await res.json();
+            throw new Error(data.detail || 'Failed to clear lists');
+          }
+        } catch (e: any) {
+          showMessage(e.message, 'error');
+        } finally {
+          clearListsBtn.disabled = false;
+          clearListsBtn.textContent = 'Clear Lists';
         }
       };
     }

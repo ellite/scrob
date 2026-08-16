@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, delete, func, and_, or_
 from sqlalchemy.orm import selectinload, aliased
 
 from db import get_db
@@ -370,6 +370,17 @@ async def update_list(
     )
     lst = result.scalar_one()
     return _format_list(lst)
+
+
+@router.delete("/all")
+async def clear_all_lists(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    # ListItem rows cascade via the FK's ondelete=CASCADE - no separate delete needed.
+    await db.execute(delete(ListModel).where(ListModel.user_id == current_user.id))
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.delete("/{list_id}")
