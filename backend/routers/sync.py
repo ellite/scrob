@@ -3764,6 +3764,11 @@ async def _apply_nuvio_watch_history(
         )
         db.add(event)
         new_events.append(event)
+        # Keep both structures in sync - exact-match dedup (the default path)
+        # still checks `existing` directly, and without this an exact-duplicate
+        # row later in the same batch would no longer be caught, creating a
+        # second WatchEvent for it in one sync run.
+        existing.add((media.id, watched_at))
         existing_by_media[media.id] = watched_at
         added_media_ids.add(media.id)
     await db.commit()
