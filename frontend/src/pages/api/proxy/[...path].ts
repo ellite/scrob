@@ -3,6 +3,13 @@ import type { APIRoute } from "astro";
 const BACKEND_PORT = (import.meta.env.BACKEND_PORT as string | undefined) ?? "7331";
 const BACKEND = `http://localhost:${BACKEND_PORT}`;
 
+// This proxy is a generic catch-all for every backend path, so a redirect
+// passed straight through to the browser must be pinned to hosts we actually
+// expect - otherwise a bug (or a future endpoint) returning an unexpected
+// Location would have the browser follow it unchecked. Today the only
+// backend route that redirects here is image serving, straight to TMDB.
+const ALLOWED_REDIRECT_HOSTS = new Set(["image.tmdb.org"]);
+
 async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Response> {
   const path = params.path ?? "";
   const search = new URL(request.url).search;
@@ -68,6 +75,16 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
   if (res.status >= 300 && res.status < 400) {
     const location = res.headers.get("Location");
     if (location) {
+      let allowed = false;
+      try {
+        allowed = ALLOWED_REDIRECT_HOSTS.has(new URL(location).hostname);
+      } catch {
+        // Relative or otherwise unparseable Location - not one of ours, reject below.
+      }
+      if (!allowed) {
+        console.error(`Proxy refused to forward redirect to unexpected host: ${location}`);
+        return new Response(null, { status: 502 });
+      }
       return new Response(null, { status: res.status, headers: { Location: location } });
     }
   }
