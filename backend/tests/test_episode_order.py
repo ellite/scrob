@@ -366,6 +366,7 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
                     _ExistingResult([(201,)]),                          # collected_q — only 201 collected
                     _ExistingResult([]),                                # episode_ratings_q
                     _ScalarOneResult(None),                             # show_media_result
+                    _ExistingResult([]),                                # user_lists_q — no lists for this user
                 ]
             ),
         )

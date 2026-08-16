@@ -2054,6 +2054,15 @@ async def get_tvdb_show(
                 "total": total_aired_episodes(show),
             }
 
+    # Same pattern as get_tvdb_episode - this was previously hardcoded to [],
+    # so a TVDB-ordered show's own page never reflected list membership even
+    # though adding/removing worked correctly against series_tmdb_id underneath.
+    in_lists: list = []
+    if series_tmdb_id:
+        show_state: dict = {"tmdb_id": series_tmdb_id, "type": "series"}
+        await enrich_with_state(db, current_user.id, [show_state])
+        in_lists = show_state.get("in_lists", [])
+
     return {
         **show_data,
         "id": show.id if show else None,
@@ -2068,7 +2077,7 @@ async def get_tvdb_show(
         "in_library": in_library,
         "watched": watched_overall,
         "rewatch": rewatch_info,
-        "in_lists": [],
+        "in_lists": in_lists,
         "collection_pct": collection_pct,
         "watch_pct": watch_pct,
         "watch_started": watch_started,
@@ -2362,14 +2371,39 @@ async def get_tvdb_season(
             )
             season_in_lists = [r[0] for r in season_lists_result.all()]
 
+    # Batched list membership per episode - same pattern as the TMDB-native
+    # season endpoint above (episode_in_lists). Previously hardcoded to [] for
+    # every episode here, so a TVDB-ordered show's season page never reflected
+    # list membership even though adding/removing worked correctly underneath.
+    ep_resolved_tmdb_ids = [
+        (mapping.tmdb_episode_id if mapping else (local_episode.tmdb_id if local_episode else None))
+        for _episode, mapping, local_episode, _unmatched_ep in mapped_rows
+    ]
+    tvdb_episode_in_lists: dict[int, list[int]] = {}
+    _present_ep_tmdb_ids = [tid for tid in ep_resolved_tmdb_ids if tid]
+    if _present_ep_tmdb_ids:
+        user_lists_q = await db.execute(select(UserList.id).where(UserList.user_id == current_user.id))
+        user_list_ids = [r[0] for r in user_lists_q.all()]
+        if user_list_ids:
+            ep_lists_q = await db.execute(
+                select(Media.tmdb_id, ListItem.list_id)
+                .join(ListItem, ListItem.media_id == Media.id)
+                .where(
+                    Media.tmdb_id.in_(_present_ep_tmdb_ids),
+                    Media.media_type == MediaType.episode,
+                    ListItem.list_id.in_(user_list_ids),
+                )
+                .distinct()
+            )
+            for ep_tmdb_id, list_id in ep_lists_q.all():
+                tvdb_episode_in_lists.setdefault(ep_tmdb_id, []).append(list_id)
+
     enriched_eps = []
-    for episode, mapping, local_episode, unmatched_ep in mapped_rows:
+    for (episode, mapping, local_episode, unmatched_ep), ep_tmdb_id in zip(mapped_rows, ep_resolved_tmdb_ids):
         enriched_eps.append({
             **episode,
             "id": local_episode.id if local_episode else None,
-            "tmdb_id": mapping.tmdb_episode_id if mapping else (
-                local_episode.tmdb_id if local_episode else None
-            ),
+            "tmdb_id": ep_tmdb_id,
             "show_tmdb_id": series_tmdb_id,
             "tmdb_season_number": mapping.tmdb_season_number if mapping else season_number,
             "tmdb_episode_number": mapping.tmdb_episode_number if mapping else episode.get("episode_number"),
@@ -2377,7 +2411,7 @@ async def get_tvdb_season(
             "in_library": local_episode.id in collected_ep_ids if local_episode else False,
             "watched": local_episode.id in watched_ep_ids if local_episode else False,
             "user_rating": episode_ratings.get(local_episode.id) if local_episode else None,
-            "in_lists": [],
+            "in_lists": tvdb_episode_in_lists.get(ep_tmdb_id, []) if ep_tmdb_id else [],
         })
 
     total_eps = len(eps)
@@ -2658,12 +2692,23 @@ async def get_tvdb_episode(
     cast = tvdb_client.format_cast(raw_series)
     season_meta = next((s for s in show_data["seasons"] if s["season_number"] == season_number), {})
 
+    resolved_tmdb_id = mapping.tmdb_episode_id if mapping else (
+        local_ep.tmdb_id if local_ep else None
+    )
+    # Same pattern as get_episode_detail's TMDB-native sibling - this was
+    # previously hardcoded to [], so a TVDB-ordered show's episode page never
+    # reflected list membership even though adding/removing worked correctly
+    # against the resolved tmdb_id underneath.
+    in_lists: list = []
+    if resolved_tmdb_id:
+        ep_state: dict = {"tmdb_id": resolved_tmdb_id, "type": "episode"}
+        await enrich_with_state(db, current_user.id, [ep_state])
+        in_lists = ep_state.get("in_lists", [])
+
     return {
         **ep_data,
         "id": local_ep_id,
-        "tmdb_id": mapping.tmdb_episode_id if mapping else (
-            local_ep.tmdb_id if local_ep else None
-        ),
+        "tmdb_id": resolved_tmdb_id,
         "show_tmdb_id": series_tmdb_id,
         "tmdb_season_number": canonical_season,
         "tmdb_episode_number": canonical_episode,
@@ -2672,7 +2717,7 @@ async def get_tvdb_episode(
         "watched": watched,
         "user_rating": user_rating,
         "play_count": play_count,
-        "in_lists": [],
+        "in_lists": in_lists,
         "library": library_info,
         "cast": cast,
         "episodes": [{"episode_number": e["episode_number"], "name": e["name"]} for e in eps],
