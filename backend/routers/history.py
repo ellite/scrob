@@ -463,7 +463,7 @@ async def get_now_playing(
 @router.delete("/sessions")
 async def clear_now_playing_sessions(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Delete all active playback sessions for the current user."""
     await db.execute(
@@ -509,7 +509,7 @@ async def get_continue_watching(
 async def dismiss_continue_watching(
     media_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Remove a single item from the continue-watching list."""
     await db.execute(
@@ -1009,7 +1009,7 @@ class NextUpHideRequest(BaseModel):
 async def hide_next_up_show(
     body: NextUpHideRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
@@ -1028,7 +1028,7 @@ async def hide_next_up_show(
 async def unhide_next_up_show(
     show_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
@@ -1060,7 +1060,7 @@ class ShowWatchRequest(BaseModel):
 async def mark_as_watched(
     event_in: schemas.WatchEventCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     # 1. Check if Media exists locally
     media = None
@@ -1324,7 +1324,7 @@ async def get_item_events(
 async def delete_single_event(
     event_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Delete a single watch event by its ID."""
     result = await db.execute(
@@ -1362,7 +1362,7 @@ async def delete_single_event(
 @router.delete("")
 async def clear_history(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     # Any active rewatch is meaningless once its underlying history is gone -
     # RewatchProgress cascades from WatchEvent deletion already, but the
@@ -1381,7 +1381,7 @@ async def unwatch_item(
     media_id: int | None = Query(None, alias="id"),
     media_type: MediaType = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Remove all watch events for a specific item."""
     if not tmdb_id and not media_id:
@@ -1416,7 +1416,7 @@ async def unwatch_item(
 async def mark_season_watched(
     body: SeasonWatchRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Mark all aired episodes of a season as watched, fetching from TMDB if needed."""
     # 1. Ensure show exists
@@ -1663,7 +1663,7 @@ async def unwatch_season(
     season_number: int = Query(...),
     episode_order: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Remove all watch events for a season."""
     show_q = await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
@@ -1726,7 +1726,7 @@ async def unwatch_season(
 async def mark_show_watched(
     body: ShowWatchRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Mark all aired episodes of all seasons as watched."""
     # 1. Ensure show exists and get its metadata
@@ -1974,7 +1974,7 @@ async def mark_show_watched(
 async def unwatch_show(
     series_tmdb_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Remove all watch events for all episodes of a show."""
     show_q = await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
@@ -2013,7 +2013,7 @@ async def unwatch_show(
 async def start_rewatch(
     series_tmdb_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Start (or restart) a rewatch cycle for a show. Watch history is never
     touched - this just makes the show/season/episode pages and Next Up
@@ -2040,7 +2040,7 @@ async def start_rewatch(
 async def cancel_rewatch(
     series_tmdb_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Cancel an active rewatch cycle without finishing it. Watch history is
     untouched; the show goes back to reading watched status from full
@@ -2130,7 +2130,7 @@ async def _get_or_create_media_for_session(
 async def start_manual_session(
     body: schemas.ManualSessionStart,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Start a manual scrobble session for any movie or episode."""
     media = await _get_or_create_media_for_session(db, body, current_user.id)
@@ -2161,7 +2161,7 @@ async def update_manual_session(
     session_key: str,
     body: schemas.ManualSessionUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Heartbeat / pause / resume for a manual session."""
     result = await db.execute(
@@ -2214,7 +2214,7 @@ async def update_manual_session(
 async def stop_manual_session(
     session_key: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Stop and discard a manual session without marking as watched."""
     result = await db.execute(
@@ -2287,7 +2287,7 @@ async def auto_complete_manual_sessions(db: AsyncSession) -> None:
 async def complete_manual_session(
     session_key: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Mark as fully watched and end the session."""
     result = await db.execute(

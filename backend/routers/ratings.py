@@ -63,7 +63,7 @@ def format_rating(rating: Rating, media: Media) -> dict:
 @router.delete("/all")
 async def clear_all_ratings(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     await db.execute(delete(Rating).where(Rating.user_id == current_user.id))
     await db.commit()
@@ -74,7 +74,7 @@ async def clear_all_ratings(
 async def submit_rating(
     body: RatingIn,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     try:
         media_type = MediaType(body.media_type)
@@ -198,7 +198,7 @@ async def delete_rating(
     season_number: Optional[int] = Query(None),
     episode_order: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     try:
         mt = MediaType(media_type)
