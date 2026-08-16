@@ -93,7 +93,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     <div class="space-y-4">
                       <div class={`space-y-2 ${conn.type === "stremio" ? "hidden" : ""}`}>
                         <label class="block text-sm font-medium text-zinc-400">{conn.type === "nuvio" || conn.type === "arvio" ? "Cloud API URL" : "Server URL"}</label>
-                        <input type="url" class="conn-url-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all disabled:opacity-70" value={conn.url} data-conn-id={conn.id} disabled={conn.type === "nuvio" || conn.type === "arvio"} />
+                        <input type="url" class="conn-url-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all disabled:opacity-70" value={conn.url} data-conn-id={conn.id} disabled={conn.type === "arvio"} />
                       </div>
                       <div class={`space-y-2 ${conn.type === "stremio" ? "hidden" : ""}`}>
                         <label class="block text-sm font-medium text-zinc-400">{conn.type === "plex" ? "X-Plex-Token" : conn.type === "nuvio" || conn.type === "arvio" ? "Refresh Token" : "API Token"}</label>
@@ -4363,7 +4363,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (urlInput) {
         if (isNuvio) {
           urlInput.value = 'https://api.nuvio.tv';
-          urlInput.disabled = true;
+          urlInput.disabled = false;
         } else if (isArvio) {
           urlInput.value = 'https://auth.arvio.tv/.netlify/functions';
           urlInput.disabled = true;

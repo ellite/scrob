@@ -62,6 +62,31 @@ class _SessionCM:
 
 
 class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sign_in_uses_custom_app_anon_key(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.headers["apikey"], "self-hosted-anon-key")
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "expires_in": 3600,
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+        with (
+            patch.dict(os.environ, {"NUVIO_APP_ANON_KEY": "self-hosted-anon-key"}),
+            patch.object(
+                nuvio.httpx,
+                "AsyncClient",
+                side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+            ),
+        ):
+            session = await nuvio.sign_in("https://nuvio.example.com", "user@example.com", "password")
+
+        self.assertEqual(session.refresh_token, "refresh-token")
+
     async def test_pull_sync_data_refreshes_session_and_paginates_library(self) -> None:
         library_offsets: list[int] = []
 
