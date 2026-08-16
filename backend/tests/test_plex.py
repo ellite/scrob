@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import httpx
@@ -7,6 +8,34 @@ from core import plex
 
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
+
+
+class GetHistorySinceCursorTests(unittest.IsolatedAsyncioTestCase):
+    """Regression (#126): plex_history_cursor_at is stored as naive UTC (the
+    codebase-wide convention), but datetime.timestamp() on a naive datetime
+    interprets it as *local* time - west of UTC that shifted the viewedAt>
+    filter hours too late, and since the cursor still advances, those plays
+    were then skipped forever. The fix attaches tzinfo=utc before calling
+    .timestamp() so the epoch value is correct independent of the host's
+    system timezone."""
+
+    async def test_naive_since_is_treated_as_utc_not_local_time(self) -> None:
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["viewedAt>"] = request.url.params.get("viewedAt>")
+            return httpx.Response(200, json={"MediaContainer": {"Metadata": [], "totalSize": 0}})
+
+        transport = httpx.MockTransport(handler)
+        naive_since = datetime(2026, 1, 1, 0, 0, 0)  # naive, UTC semantics
+        expected_epoch = int(datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp())
+
+        with patch.object(
+            plex.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
+        ):
+            await plex.get_history("http://plex.local", "token", since=naive_since)
+
+        self.assertEqual(captured["viewedAt>"], str(expected_epoch))
 
 
 class PlexSeasonRatingTests(unittest.IsolatedAsyncioTestCase):
