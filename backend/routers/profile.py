@@ -769,11 +769,17 @@ async def get_public_profile(
     ]
 
     is_following = False
+    is_mutual_follow = False
     if current_user and current_user.id != user_id:
         follow_check = await db.execute(
             select(Follow).where(Follow.follower_id == current_user.id, Follow.following_id == user_id)
         )
         is_following = follow_check.scalar_one_or_none() is not None
+        if is_following:
+            follow_back = await db.execute(
+                select(Follow).where(Follow.follower_id == user_id, Follow.following_id == current_user.id)
+            )
+            is_mutual_follow = follow_back.scalar_one_or_none() is not None
 
     # --- Lists ---
     lists_query = (
@@ -791,7 +797,11 @@ async def get_public_profile(
         .order_by(ListModel.updated_at.desc())
     )
     if not (is_owner or is_admin):
-        lists_query = lists_query.where(ListModel.privacy_level == PrivacyLevel.public)
+        # Mutual follows also get this user's friends-only lists (#210).
+        visible = [PrivacyLevel.public]
+        if is_mutual_follow:
+            visible.append(PrivacyLevel.friends_only)
+        lists_query = lists_query.where(ListModel.privacy_level.in_(visible))
 
     lists_result = await db.execute(lists_query)
     lists_rows = lists_result.all()
