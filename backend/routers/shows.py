@@ -818,6 +818,13 @@ async def get_show(
                 val = tmdb_extra.get(tmdb_key)
                 if val:
                     show_dict[field] = val
+            # Use the language-specific poster when TMDB has one — its
+            # get_show(language=...) already returns the localized poster if it
+            # exists, or the default otherwise, so this only changes anything
+            # when a translated poster is actually available (#235 follow-up).
+            tmdb_poster = tmdb_extra.get("poster_path")
+            if tmdb_poster:
+                show_dict["poster_path"] = tmdb.poster_url(tmdb_poster)
 
         return {
             **show_dict,
