@@ -28,6 +28,7 @@ class CollectionSource(str, enum.Enum):
     bingebase = "bingebase"
     manual   = "manual"
     tmdb     = "tmdb"
+    yamtrack = "yamtrack"
 
 class PrivacyLevel(str, enum.Enum):
     public       = "public"

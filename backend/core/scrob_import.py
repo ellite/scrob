@@ -567,11 +567,21 @@ async def apply_scrob_import(
             if key in existing_comment_keys:
                 stats["skipped"] += 1
                 return
+            try:
+                # Unlike the watched/ratings/collection/lists sections above,
+                # a malformed created_at here (plausible from a hand-edited or
+                # third-party CSV, unlike Trakt's own well-formed dates) must
+                # only drop this one comment, not abort the whole import.
+                created_at = _parse_iso(entry.get("created_at")) or datetime.utcnow()
+            except ValueError:
+                logger.exception("Error importing comment (media_type=%s tmdb_id=%s)", media_type, tmdb_id)
+                stats["errors"] += 1
+                return
             db.add(Comment(
                 user_id=user_id, media_type=media_type, tmdb_id=tmdb_id,
                 season_number=season_number, episode_number=episode_number,
                 content=content, is_spoiler=bool(entry.get("spoiler")),
-                created_at=_parse_iso(entry.get("created_at")) or datetime.utcnow(),
+                created_at=created_at,
             ))
             existing_comment_keys.add(key)
             stats["comments"] += 1

@@ -1345,6 +1345,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         <div class="flex items-center gap-1 mb-4 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit">
           <button type="button" data-import-tab="scrob" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors cursor-pointer active:scale-95 active:opacity-70">Scrob</button>
           <button type="button" data-import-tab="trakt" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 transition-colors cursor-pointer active:scale-95 active:opacity-70">Trakt</button>
+          <button type="button" data-import-tab="yamtrack" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 transition-colors cursor-pointer active:scale-95 active:opacity-70">Yamtrack</button>
         </div>
 
         <div data-import-panel="scrob">
@@ -1407,6 +1408,38 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             <div class="flex justify-between text-xs text-zinc-500 mt-2">
               <span id="trakt-import-items"></span>
               <span id="trakt-import-status"></span>
+            </div>
+          </div>
+        </div>
+
+        <div data-import-panel="yamtrack" class="hidden">
+          <input type="file" id="yamtrack_export_file" accept=".csv" class="hidden" disabled={!hasTmdbKey} />
+          <div
+            id="yamtrack-import-dropzone"
+            class:list={[
+              "flex flex-col items-center justify-center gap-2 text-center border-2 border-dashed rounded-2xl px-6 py-10 transition-colors",
+              hasTmdbKey ? "border-zinc-700 hover:border-zinc-600 cursor-pointer bg-zinc-900/40" : "border-zinc-800 bg-zinc-900/20 opacity-50 cursor-not-allowed",
+            ]}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-zinc-500">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
+            </svg>
+            <p class="text-sm text-zinc-300 font-medium">
+              {hasTmdbKey ? "Drop a Yamtrack or Floppy .csv export here, or click to browse" : "TMDB Read Access Token is required for import"}
+            </p>
+            <p class="text-xs text-zinc-500">From <span class="text-zinc-400">Yamtrack's or Floppy's Export</span> page. Imports watch history, ratings, and comments — Floppy exports also bring in lists and collection.</p>
+          </div>
+          <div id="yamtrack-import-progress" class="hidden border border-zinc-800 rounded-2xl px-6 py-8 bg-zinc-900/40">
+            <div class="flex justify-between items-center mb-2">
+              <span id="yamtrack-import-label" class="text-sm font-semibold text-zinc-200">Importing…</span>
+              <span id="yamtrack-import-pct" class="text-sm font-bold text-zinc-400"></span>
+            </div>
+            <div class="w-full bg-zinc-800 rounded-full h-2 overflow-hidden">
+              <div id="yamtrack-import-bar" class="h-2 rounded-full transition-all duration-500 bg-green-500 animate-pulse" style="width: 100%"></div>
+            </div>
+            <div class="flex justify-between text-xs text-zinc-500 mt-2">
+              <span id="yamtrack-import-items"></span>
+              <span id="yamtrack-import-status"></span>
             </div>
           </div>
         </div>
@@ -1564,6 +1597,39 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       <div class="flex gap-3">
         <button type="button" id="trakt-import-modal-cancel" class="flex-1 px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-bold rounded-xl transition-all cursor-pointer">Cancel</button>
         <button type="button" id="trakt-import-modal-confirm" class="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-zinc-100 font-bold rounded-xl transition-all cursor-pointer">Import</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Yamtrack / Floppy Import Modal -->
+  <div id="yamtrack-import-modal" class="fixed inset-0 bg-zinc-950/80 backdrop-blur-sm z-[100] hidden items-center justify-center p-4">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+      <h2 class="text-2xl font-bold text-zinc-100 mb-2">Import from Yamtrack/Floppy export?</h2>
+      <p id="yamtrack-import-modal-body" class="text-zinc-400 mb-6 text-sm leading-relaxed"></p>
+      <div class="space-y-2 mb-8">
+        {[
+          { key: "watched", label: "Watch History" },
+          { key: "ratings", label: "Ratings" },
+          { key: "collection", label: "Collection" },
+          { key: "lists", label: "Lists" },
+          { key: "comments", label: "Comments" },
+        ].map(({ key, label }) => (
+          <button
+            type="button"
+            data-yamtrack-import-option={key}
+            class="yamtrack-import-option w-full flex items-center justify-between px-4 py-3 bg-zinc-800 hover:bg-zinc-700 border-2 border-transparent rounded-xl transition-colors cursor-pointer"
+          >
+            <span class="text-sm font-medium text-zinc-100">{label}</span>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="check-icon w-5 h-5 text-green-500">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+            </svg>
+          </button>
+        ))}
+      </div>
+      <p class="text-xs text-zinc-500 mb-6 leading-relaxed">Collection and Lists only come from a Floppy export - a vanilla Yamtrack file has neither, and simply won't add anything for those.</p>
+      <div class="flex gap-3">
+        <button type="button" id="yamtrack-import-modal-cancel" class="flex-1 px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-bold rounded-xl transition-all cursor-pointer">Cancel</button>
+        <button type="button" id="yamtrack-import-modal-confirm" class="flex-1 px-6 py-3 bg-green-600 hover:bg-green-500 text-zinc-100 font-bold rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-green-600">Import</button>
       </div>
     </div>
   </div>
@@ -2130,6 +2196,86 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     pollScrobImportJob(jobId);
   }
 
+  // ── Yamtrack/Floppy import progress (the "Import" section's Yamtrack tab) ──
+  let yamtrackImportPoller: ReturnType<typeof setTimeout> | null = null;
+
+  function renderYamtrackImportProgress(job: any) {
+    const dropzone = document.getElementById('yamtrack-import-dropzone');
+    const progress = document.getElementById('yamtrack-import-progress');
+    const bar      = document.getElementById('yamtrack-import-bar');
+    const pctEl    = document.getElementById('yamtrack-import-pct');
+    const label    = document.getElementById('yamtrack-import-label');
+    const items    = document.getElementById('yamtrack-import-items');
+    const statusEl = document.getElementById('yamtrack-import-status');
+    if (!dropzone || !progress) return;
+
+    if (!job) {
+      progress.classList.add('hidden');
+      dropzone.classList.remove('hidden');
+      return;
+    }
+    dropzone.classList.add('hidden');
+    progress.classList.remove('hidden');
+
+    const isFailed    = job.status === 'failed';
+    const isCancelled = job.status === 'cancelled';
+    const isCompleted = job.status === 'completed';
+    const isPending   = job.status === 'pending';
+
+    if (isFailed || isCancelled) {
+      if (bar) { bar.className = 'h-2 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
+      if (label) label.textContent = isCancelled ? 'Import cancelled' : 'Import failed';
+      if (pctEl) pctEl.textContent = '';
+      if (items) items.textContent = '';
+      if (statusEl) statusEl.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
+      return;
+    }
+
+    if (isCompleted) {
+      if (bar) { bar.className = 'h-2 rounded-full transition-all duration-500 bg-green-500'; bar.style.width = '100%'; }
+      if (label) label.textContent = 'Import complete';
+      if (pctEl) pctEl.textContent = '100%';
+      if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : `${job.processed_items} items`;
+      if (statusEl) statusEl.textContent = '';
+      return;
+    }
+
+    const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
+    const indeterminate = isPending || pct === 0;
+    if (bar) {
+      bar.className = `h-2 rounded-full transition-all duration-500 bg-green-500${indeterminate ? ' animate-pulse' : ''}`;
+      bar.style.width = indeterminate ? '100%' : `${pct}%`;
+    }
+    if (label) label.textContent = isPending ? 'Import queued…' : 'Importing…';
+    if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
+    if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
+    if (statusEl) statusEl.textContent = '';
+  }
+
+  async function pollYamtrackImportJob(jobId: number) {
+    try {
+      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!res.ok) return;
+      const jobs: any[] = await res.json();
+      const job = jobs.find(j => j.id === jobId);
+      if (!job) { yamtrackImportPoller = null; return; }
+      const isActive = job.status === 'pending' || job.status === 'running';
+      renderYamtrackImportProgress(job);
+      if (isActive) {
+        yamtrackImportPoller = setTimeout(() => pollYamtrackImportJob(jobId), 1500);
+      } else {
+        yamtrackImportPoller = setTimeout(() => { renderYamtrackImportProgress(null); yamtrackImportPoller = null; }, 4000);
+      }
+    } catch {
+      yamtrackImportPoller = null;
+    }
+  }
+
+  function startYamtrackImportPoller(jobId: number) {
+    if (yamtrackImportPoller != null) clearTimeout(yamtrackImportPoller);
+    pollYamtrackImportJob(jobId);
+  }
+
   // ── MDBList progress tracking ─────────────────────────────────────────────
   let mdblistPoller: ReturnType<typeof setTimeout> | null = null;
   let mdblistHideTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2512,6 +2658,68 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         media_connections: selected.has('media_connections'),
         scrobble_connections: selected.has('scrobble_connections'),
         connections: selected.has('connections'),
+      });
+      const onCancel = () => cleanup(null);
+      confirmBtn.addEventListener('click', onConfirm, { once: true });
+      cancelBtn.addEventListener('click', onCancel, { once: true });
+    });
+  }
+
+  type YamtrackImportSelection = { watched: boolean; ratings: boolean; collection: boolean; lists: boolean; comments: boolean };
+
+  function showYamtrackImportModal(filename: string): Promise<YamtrackImportSelection | null> {
+    return new Promise(resolve => {
+      const modal = document.getElementById('yamtrack-import-modal');
+      const bodyEl = document.getElementById('yamtrack-import-modal-body');
+      const confirmBtn = document.getElementById('yamtrack-import-modal-confirm') as HTMLButtonElement | null;
+      const cancelBtn = document.getElementById('yamtrack-import-modal-cancel') as HTMLButtonElement | null;
+      const options = Array.from(document.querySelectorAll<HTMLButtonElement>('.yamtrack-import-option'));
+      if (!modal || !bodyEl || !confirmBtn || !cancelBtn || options.length === 0) { resolve(null); return; }
+
+      // All five preselected by default.
+      const selected = new Set(options.map(o => o.getAttribute('data-yamtrack-import-option')!));
+
+      const syncOptionUI = () => {
+        options.forEach(opt => {
+          const isOn = selected.has(opt.getAttribute('data-yamtrack-import-option')!);
+          const icon = opt.querySelector('.check-icon');
+          icon?.classList.toggle('invisible', !isOn);
+          opt.classList.toggle('border-green-500', isOn);
+          opt.classList.toggle('border-transparent', !isOn);
+        });
+        confirmBtn.disabled = selected.size === 0;
+      };
+      syncOptionUI();
+
+      bodyEl.textContent = `Choose what to import from "${filename}". Existing Scrob data is retained and deduplicated.`;
+
+      const optionHandlers = options.map(opt => {
+        const handler = () => {
+          const name = opt.getAttribute('data-yamtrack-import-option')!;
+          if (selected.has(name)) selected.delete(name); else selected.add(name);
+          syncOptionUI();
+        };
+        opt.addEventListener('click', handler);
+        return { opt, handler };
+      });
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+
+      const cleanup = (result: YamtrackImportSelection | null) => {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        confirmBtn.removeEventListener('click', onConfirm);
+        cancelBtn.removeEventListener('click', onCancel);
+        optionHandlers.forEach(({ opt, handler }) => opt.removeEventListener('click', handler));
+        resolve(result);
+      };
+      const onConfirm = () => cleanup({
+        watched: selected.has('watched'),
+        ratings: selected.has('ratings'),
+        collection: selected.has('collection'),
+        lists: selected.has('lists'),
+        comments: selected.has('comments'),
       });
       const onCancel = () => cleanup(null);
       confirmBtn.addEventListener('click', onConfirm, { once: true });
@@ -3692,6 +3900,72 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       });
     }
     setupScrobExportImport();
+
+    // Yamtrack / Floppy CSV export import
+    function setupYamtrackExportImport() {
+      const dropzone = document.getElementById('yamtrack-import-dropzone') as HTMLDivElement | null;
+      const fileInput = document.getElementById('yamtrack_export_file') as HTMLInputElement | null;
+      if (!dropzone || !fileInput) return;
+
+      const uploadFile = async (file: File) => {
+        if (!file.name.toLowerCase().endsWith('.csv')) {
+          showMessage('Please select a .csv export file.', 'error');
+          return;
+        }
+
+        const selection = await showYamtrackImportModal(file.name);
+        if (!selection) return;
+
+        try {
+          const form = new FormData();
+          form.append('file', file);
+          form.append('watched', String(selection.watched));
+          form.append('ratings', String(selection.ratings));
+          form.append('collection', String(selection.collection));
+          form.append('lists', String(selection.lists));
+          form.append('comments', String(selection.comments));
+          const res = await fetch('/api/proxy/yamtrack/import/upload', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: form,
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Import failed');
+          showMessage(data.message || 'Import started!', 'success', { scroll: false });
+          if (data.job_id) startYamtrackImportPoller(data.job_id);
+        } catch (e) {
+          showMessage(e instanceof Error ? e.message : 'Import failed', 'error');
+        }
+      };
+
+      dropzone.addEventListener('click', () => {
+        if (!fileInput.disabled) fileInput.click();
+      });
+
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files?.[0];
+        if (file) uploadFile(file);
+        fileInput.value = '';
+      });
+
+      ['dragover', 'dragenter'].forEach((evt) => {
+        dropzone.addEventListener(evt, (e) => {
+          e.preventDefault();
+          if (!fileInput.disabled) dropzone.classList.add('border-green-500', 'bg-zinc-900/70');
+        });
+      });
+      ['dragleave', 'dragend'].forEach((evt) => {
+        dropzone.addEventListener(evt, () => dropzone.classList.remove('border-green-500', 'bg-zinc-900/70'));
+      });
+      dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('border-green-500', 'bg-zinc-900/70');
+        if (fileInput.disabled) return;
+        const file = e.dataTransfer?.files?.[0];
+        if (file) uploadFile(file);
+      });
+    }
+    setupYamtrackExportImport();
 
     // Simkl PIN Auth
     function setupSimklAuth() {

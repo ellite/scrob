@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from db import engine, Base
 import models # noqa: F401
-from routers import webhooks, media, history, ratings, sync, shows, auth, lists, oidc, profile, trakt, simkl, mdblist, bingebase, comments, admin, compat, export
+from routers import webhooks, media, history, ratings, sync, shows, auth, lists, oidc, profile, trakt, simkl, mdblist, bingebase, comments, admin, compat, export, yamtrack
 
 from core.access_log import install as install_access_log_redaction
 install_access_log_redaction()
@@ -525,6 +525,7 @@ app.include_router(bingebase.router, prefix="/bingebase", tags=["bingebase"])
 app.include_router(comments.router, prefix="/comments", tags=["comments"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(export.router, prefix="/export", tags=["export"])
+app.include_router(yamtrack.router, prefix="/yamtrack", tags=["yamtrack"])
 app.include_router(compat.router, tags=["compat"])
 
 @app.get("/health")
