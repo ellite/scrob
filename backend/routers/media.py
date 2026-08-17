@@ -1975,6 +1975,12 @@ async def get_tmdb_list(
         }
         has_filters = bool(genre or min_rating or status or original_language)
 
+        # Explore cards render straight from these TMDB responses, so ask TMDB
+        # for the user's Metadata Language directly - detail pages and list
+        # cards already translate, Explore was the one place still hardcoded
+        # to TMDB's default English (#235 follow-up).
+        metadata_lang = await get_user_metadata_language(db, current_user.id)
+
         async def _fetch_tmdb_page(fetch_page: int) -> dict:
             if has_filters:
                 sort_by = category_sort_map.get(category, "popularity.desc")
@@ -1984,6 +1990,7 @@ async def get_tmdb_list(
                         page=fetch_page, genre_ids=genre_ids or None,
                         min_rating=min_rating, sort_by=sort_by,
                         with_original_language=original_language, api_key=tmdb_key,
+                        language=metadata_lang,
                     )
                 genre_ids = [TV_GENRE_IDS[g] for g in genre if g in TV_GENRE_IDS]
                 status_id = TV_STATUS_IDS.get(status) if status else None
@@ -1991,20 +1998,20 @@ async def get_tmdb_list(
                     page=fetch_page, genre_ids=genre_ids or None,
                     min_rating=min_rating, sort_by=sort_by,
                     status=status_id, with_original_language=original_language,
-                    api_key=tmdb_key,
+                    api_key=tmdb_key, language=metadata_lang,
                 )
             if type == MediaType.movie:
                 if category == "top_rated":
-                    return await tmdb.get_top_rated_movies(page=fetch_page, api_key=tmdb_key)
+                    return await tmdb.get_top_rated_movies(page=fetch_page, api_key=tmdb_key, language=metadata_lang)
                 if category == "trending":
-                    return await tmdb.get_trending_movies(page=fetch_page, api_key=tmdb_key)
-                return await tmdb.get_popular_movies(page=fetch_page, api_key=tmdb_key)
+                    return await tmdb.get_trending_movies(page=fetch_page, api_key=tmdb_key, language=metadata_lang)
+                return await tmdb.get_popular_movies(page=fetch_page, api_key=tmdb_key, language=metadata_lang)
             # series/episode
             if category == "top_rated":
-                return await tmdb.get_top_rated_shows(page=fetch_page, api_key=tmdb_key)
+                return await tmdb.get_top_rated_shows(page=fetch_page, api_key=tmdb_key, language=metadata_lang)
             if category == "trending":
-                return await tmdb.get_trending_shows(page=fetch_page, api_key=tmdb_key)
-            return await tmdb.get_popular_shows(page=fetch_page, api_key=tmdb_key)
+                return await tmdb.get_trending_shows(page=fetch_page, api_key=tmdb_key, language=metadata_lang)
+            return await tmdb.get_popular_shows(page=fetch_page, api_key=tmdb_key, language=metadata_lang)
 
         async def _build_enriched(results: list[dict]) -> list[dict]:
             tmdb_ids = [res["id"] for res in results]
