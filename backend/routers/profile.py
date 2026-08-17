@@ -247,6 +247,14 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
                         WatchEvent.user_id == user_id, WatchEvent.completed == True
                     )
                 ),
+                # Items that only live in one of the user's lists (never
+                # collected or watched) render on the list pages too, so they
+                # need translations as well (#235 follow-up).
+                Media.id.in_(
+                    select(ListItem.media_id)
+                    .join(ListModel, ListModel.id == ListItem.list_id)
+                    .where(ListModel.user_id == user_id)
+                ),
             )
 
             movie_q = await db.execute(
@@ -278,11 +286,31 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
             )
             eps = ep_q.all()
 
+            # Series-type media (a show sitting in a list as a whole, #235):
+            # the list cards read MediaTranslation on the Media row itself,
+            # plus ShowTranslation on the linked Show row when one exists —
+            # cover both. The episode-based show query above misses these
+            # when the user never collected/watched an episode.
+            series_q = await db.execute(
+                select(Media.id, Media.tmdb_id)
+                .where(Media.media_type == "series", Media.tmdb_id.isnot(None), has_items_filter)
+                .distinct()
+            )
+            series_rows = series_q.all()
+
+            series_show_q = await db.execute(
+                select(ShowModel.id, ShowModel.tmdb_id)
+                .join(Media, or_(Media.show_id == ShowModel.id, Media.tmdb_id == ShowModel.tmdb_id))
+                .where(Media.media_type == "series", ShowModel.tmdb_id.isnot(None), has_items_filter)
+                .distinct()
+            )
+            shows = list({tuple(r) for r in [*shows, *series_show_q.all()]})
+
         season_map: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
         for media_id, ep_num, season_num, show_tmdb_id in eps:
             season_map[(show_tmdb_id, season_num)].append((media_id, ep_num))
 
-        total = len(movies) + len(shows) + len(season_map)
+        total = len(movies) + len(shows) + len(season_map) + len(series_rows)
         state["total"] = total
         if total == 0:
             return
@@ -293,6 +321,7 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
         # Collected results written to DB after all fetches complete
         movie_results: list[tuple[int, dict]] = []   # (media_id, data)
         show_results: list[tuple[int, dict]] = []    # (show_id, data)
+        series_results: list[tuple[int, dict]] = []  # (media_id, show data)
         season_results: list[tuple[list[tuple[int, int]], dict]] = []  # (ep_list, season_data)
 
         async def fetch_movie(media_id: int, tmdb_id: int) -> None:
@@ -315,6 +344,16 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
                         pass
             state["progress"] += 1
 
+        async def fetch_series_media(media_id: int, tmdb_id: int) -> None:
+            async with sem:
+                if not state.get("abort"):
+                    try:
+                        data = await tmdb_client.get_show_light(tmdb_id, api_key=tmdb_key, language=language)
+                        series_results.append((media_id, data))
+                    except Exception:
+                        pass
+            state["progress"] += 1
+
         async def fetch_season(show_tmdb_id: int, season_num: int, ep_list: list[tuple[int, int]]) -> None:
             async with sem:
                 if not state.get("abort"):
@@ -328,6 +367,7 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
         await asyncio.gather(
             *[fetch_movie(mid, tid) for mid, tid in movies],
             *[fetch_show(sid, stid) for sid, stid in shows],
+            *[fetch_series_media(mid, tid) for mid, tid in series_rows],
             *[fetch_season(stid, snum, ep_list) for (stid, snum), ep_list in season_map.items()],
         )
 
@@ -342,6 +382,12 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
             for show_id, data in show_results:
                 await upsert_show_translation(
                     db, show_id, language,
+                    data.get("name"), data.get("overview"),
+                    data.get("tagline"), data.get("poster_path"),
+                )
+            for media_id, data in series_results:
+                await upsert_media_translation(
+                    db, media_id, language,
                     data.get("name"), data.get("overview"),
                     data.get("tagline"), data.get("poster_path"),
                 )
