@@ -1504,7 +1504,9 @@ async def get_episode_detail(
                     select(CollectionFile)
                     .join(Collection, Collection.id == CollectionFile.collection_id)
                     .where(Collection.media_id == local_ep.id, Collection.user_id == current_user.id)
-                    .order_by(CollectionFile.added_at.desc())
+                    # Rows from sources with no file details (Nuvio, Stremio) carry no
+                    # quality at all, so keep them behind real files or the badge blanks out.
+                    .order_by(CollectionFile.resolution.is_(None).asc(), CollectionFile.added_at.desc())
                 )
                 coll_res = await db.execute(coll_q)
                 coll_file = coll_res.scalars().first()
@@ -2690,7 +2692,9 @@ async def get_tvdb_episode(
                         Collection.media_id == local_ep.id,
                         Collection.user_id == current_user.id,
                     )
-                    .order_by(CollectionFile.added_at.desc())
+                    # Rows from sources with no file details (Nuvio, Stremio) carry no
+                    # quality at all, so keep them behind real files or the badge blanks out.
+                    .order_by(CollectionFile.resolution.is_(None).asc(), CollectionFile.added_at.desc())
                 )
                 coll_file = coll_file_q.scalars().first()
                 if coll_file:

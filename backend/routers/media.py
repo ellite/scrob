@@ -920,6 +920,8 @@ async def list_media(
     total_pages = (total_count + page_size - 1) // page_size
 
     # Sort and Paginate
+    # Every sort here is paginated, so each one needs a unique final key or rows
+    # shift between pages and items get shown twice or skipped entirely.
     if sort == "last_watched":
         last_watched_sq = (
             select(WatchEvent.media_id, func.max(WatchEvent.watched_at).label("last_watched_at"))
@@ -930,7 +932,7 @@ async def list_media(
         query = (
             base_query
             .outerjoin(last_watched_sq, last_watched_sq.c.media_id == Media.id)
-            .order_by(last_watched_sq.c.last_watched_at.desc().nulls_last())
+            .order_by(last_watched_sq.c.last_watched_at.desc().nulls_last(), Media.id.desc())
             .offset(offset).limit(page_size)
         )
     else:
@@ -941,7 +943,7 @@ async def list_media(
             "created_at": Collection.added_at.desc(),
         }
         order = sort_map.get(sort, Collection.added_at.desc())
-        query = base_query.order_by(order).offset(offset).limit(page_size)
+        query = base_query.order_by(order, Media.id.desc()).offset(offset).limit(page_size)
     result = await db.execute(query)
     items = result.scalars().all()
 
@@ -1594,6 +1596,25 @@ async def airing_today_collected(
     return {"results": results}
 
 
+def recently_added_order(max_added):
+    """Ordering for the Recently Added rail.
+
+    The add-date leads, but media servers stamp a batch of files with the same
+    second, so without the rest of these keys Postgres is free to return a
+    different arrangement every time and a season comes back shuffled. Grouping
+    on show_id keeps one show's episodes together inside a shared timestamp,
+    season and episode descending put the newest one first, and the id makes
+    the result fully deterministic. Movies have no season/episode, hence
+    nulls_last: a DESC sort in Postgres puts NULLs first otherwise."""
+    return [
+        max_added.desc(),
+        Media.show_id.desc().nulls_last(),
+        Media.season_number.desc().nulls_last(),
+        Media.episode_number.desc().nulls_last(),
+        Media.id.desc(),
+    ]
+
+
 @router.get("/recently-added")
 async def recently_added(
     type: MediaType | None = Query(None),
@@ -1632,7 +1653,7 @@ async def recently_added(
         .join(coll_subq, coll_subq.c.media_id == Media.id)
         .options(joinedload(Media.show))
         .where(*media_filters)
-        .order_by(coll_subq.c.max_added.desc())
+        .order_by(*recently_added_order(coll_subq.c.max_added))
         .limit(limit)
     )
     result = await db.execute(query)
@@ -4757,7 +4778,9 @@ async def get_media_details(
                     select(CollectionFile)
                     .join(Collection, Collection.id == CollectionFile.collection_id)
                     .where(Collection.media_id == local_ep.id, Collection.user_id == current_user.id)
-                    .order_by(CollectionFile.added_at.desc())
+                    # Rows from sources with no file details (Nuvio, Stremio) carry no
+                    # quality at all, so keep them behind real files or the badge blanks out.
+                    .order_by(CollectionFile.resolution.is_(None).asc(), CollectionFile.added_at.desc())
                 )
                 coll_res = await db.execute(coll_q)
                 coll_files = coll_res.scalars().all()
@@ -4848,7 +4871,9 @@ async def get_media_details(
                 select(CollectionFile)
                 .join(Collection, Collection.id == CollectionFile.collection_id)
                 .where(Collection.media_id.in_(all_media_ids), Collection.user_id == current_user.id)
-                .order_by(CollectionFile.added_at.desc())
+                # Rows from sources with no file details (Nuvio, Stremio) carry no
+                # quality at all, so keep them behind real files or the badge blanks out.
+                .order_by(CollectionFile.resolution.is_(None).asc(), CollectionFile.added_at.desc())
             )
             coll_res = await db.execute(coll_q)
             coll_files = coll_res.scalars().all()

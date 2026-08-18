@@ -392,5 +392,24 @@ class ImportEndpointValidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 400)
 
 
+class ParseCollectedAtTests(unittest.TestCase):
+    """The exporter writes collected_at for every collection entry, so a
+    restore should keep those dates instead of restamping the whole
+    collection as added today."""
+
+    def test_reads_the_date_the_exporter_writes(self):
+        # Format comes from core/data_export.py's _iso().
+        entry = {"collected_at": "2019-05-01T08:00:00.000Z"}
+        self.assertEqual(scrob_import._parse_collected_at(entry), datetime(2019, 5, 1, 8, 0, 0))
+
+    def test_offsets_are_converted_to_naive_utc(self):
+        entry = {"collected_at": "2019-05-01T10:00:00+02:00"}
+        self.assertEqual(scrob_import._parse_collected_at(entry), datetime(2019, 5, 1, 8, 0, 0))
+
+    def test_missing_or_malformed_dates_fall_back_to_the_default(self):
+        for entry in ({}, {"collected_at": None}, {"collected_at": ""}, {"collected_at": "nonsense"}):
+            self.assertIsNone(scrob_import._parse_collected_at(entry), entry)
+
+
 if __name__ == "__main__":
     unittest.main()

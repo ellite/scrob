@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy import select, update, delete, func, cast
+from sqlalchemy import select, update, delete, func, cast, bindparam, DateTime
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.dialects.postgresql import insert, JSONB
@@ -215,6 +215,55 @@ def extract_watch_state(item: dict, source: CollectionSource) -> dict:
             state["user_rating"] = float(r)
 
     return state
+
+
+def provider_added_at(item: dict, source: CollectionSource) -> datetime | None:
+    """When the media server added this item to its library, as naive UTC.
+
+    Returns None when the source has no such concept or the value is missing
+    or unparseable, in which case the caller leaves the column on its server
+    default. Sources are matched explicitly rather than through
+    _MEDIA_BROWSER_ITEM_SOURCES: Nuvio and Stremio items are synthesized with
+    a fixed key set and carry no date, and matching them here would only wait
+    for a key rename to start feeding in something wrong."""
+    if source is CollectionSource.plex:
+        raw = item.get("addedAt")
+        if raw is None:
+            return None
+        try:
+            return datetime.fromtimestamp(int(raw), tz=timezone.utc).replace(tzinfo=None)
+        except (TypeError, ValueError, OSError, OverflowError):
+            return None
+
+    if source in (CollectionSource.jellyfin, CollectionSource.emby, CollectionSource.arvio):
+        raw = item.get("DateCreated")
+        if not raw:
+            return None
+        try:
+            dt = parser.isoparse(raw)
+        except (TypeError, ValueError):
+            return None
+        return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+
+    return None
+
+
+def collection_added_at_heal_stmt():
+    """Lower Collection.added_at towards the provider's date, in SQL.
+
+    LEAST is deliberate. Taking the minimum in Python would go wrong in three
+    ways: a multi-episode file expands into several items sharing one
+    collection, so last-write-wins could raise the value; a preloaded snapshot
+    goes stale after the first batch commit; and a concurrent webhook could
+    interleave. Doing it in the database makes the write monotonic and
+    idempotent, so a run that dies half way just leaves the rest for the next
+    one."""
+    table = Collection.__table__
+    return (
+        update(table)
+        .where(table.c.id == bindparam("b_id"))
+        .values(added_at=func.least(table.c.added_at, bindparam("b_added", type_=DateTime)))
+    )
 
 
 def is_fresh_rewatch_play(
@@ -1852,6 +1901,19 @@ async def sync_items(
     new_media_for_enrichment: list[tuple] = []  # (Media, series_tmdb_id | None)
     skipped_warnings: list[dict] = []
 
+    # collection_id → earliest add-date seen this run, applied in batches so a
+    # large library costs one statement per batch rather than one per item.
+    collection_heals: dict[int, datetime] = {}
+
+    async def flush_collection_heals() -> None:
+        if not collection_heals:
+            return
+        await db.execute(
+            collection_added_at_heal_stmt(),
+            [{"b_id": cid, "b_added": dt} for cid, dt in collection_heals.items()],
+        )
+        collection_heals.clear()
+
     for i, item in enumerate(items):
         new_media: Media | None = None
         try:
@@ -1873,11 +1935,14 @@ async def sync_items(
                     season_num = item.get("parentIndex")
                     episode_num = item.get("index")
 
+                added_at = provider_added_at(item, source)
+
                 if seen_source_ids is not None:
                     seen_source_ids.add(source_id)
 
                 file_entry = existing_files.get((source_id, episode_num))
                 media_id_for_watch: int | None = None
+                heal_collection_id: int | None = None
                 show_id: int | None = None  # (re)assigned below for episodes; stays None for movies
 
                 # Detect re-match: same Plex ratingKey but TMDB ID changed.
@@ -1921,6 +1986,9 @@ async def sync_items(
                         existing_file.file_path = quality.get("file_path")
                         if connection_id is not None:
                             existing_file.connection_id = connection_id
+                        if added_at is not None:
+                            existing_file.added_at = added_at
+                        heal_collection_id = existing_file.collection_id
                     stats["skipped"] += 1
                     media_id_for_watch = existing_media_id
 
@@ -2019,11 +2087,14 @@ async def sync_items(
                             existing_alt_file.file_path = quality.get("file_path")
                             if connection_id is not None:
                                 existing_alt_file.connection_id = connection_id
+                            if added_at is not None:
+                                existing_alt_file.added_at = added_at
                             # Keep in-memory maps consistent
                             old_source_id = existing_alt_file.source_id
                             existing_files.pop((old_source_id, episode_num), None)
                             existing_files[(source_id, episode_num)] = (existing_alt_file, media.id, tmdb_id)
                             files_by_media_source[(media.id, source)] = existing_alt_file
+                            heal_collection_id = existing_alt_file.collection_id
                         stats["skipped"] += 1
                         media_id_for_watch = media.id
                     else:
@@ -2108,11 +2179,22 @@ async def sync_items(
                         if sync_collection:
                             coll_id = existing_coll_by_media_id.get(media.id)
                             if coll_id is None:
-                                # Upsert: ON CONFLICT DO NOTHING guards against races
-                                # between concurrent webhooks / savepoint rollbacks that
-                                # desynchronise the in-memory dict from the DB.
-                                coll_stmt = insert(Collection).values(user_id=user_id, media_id=media.id)
-                                coll_stmt = coll_stmt.on_conflict_do_nothing(constraint="uq_collection_user_media")
+                                # Upsert guards against races between concurrent
+                                # webhooks / savepoint rollbacks that desynchronise the
+                                # in-memory dict from the DB. On conflict the row already
+                                # exists, so keep whichever add-date is earlier rather
+                                # than leaving it on the row's insert time.
+                                coll_values = {"user_id": user_id, "media_id": media.id}
+                                if added_at is not None:
+                                    coll_values["added_at"] = added_at
+                                coll_stmt = insert(Collection).values(**coll_values)
+                                if added_at is not None:
+                                    coll_stmt = coll_stmt.on_conflict_do_update(
+                                        constraint="uq_collection_user_media",
+                                        set_={"added_at": func.least(Collection.added_at, coll_stmt.excluded.added_at)},
+                                    )
+                                else:
+                                    coll_stmt = coll_stmt.on_conflict_do_nothing(constraint="uq_collection_user_media")
                                 await db.execute(coll_stmt)
                                 await db.flush()
                                 coll_result = await db.execute(
@@ -2133,6 +2215,7 @@ async def sync_items(
                                 connection_id=connection_id,
                                 source=source,
                                 source_id=source_id,
+                                added_at=added_at,
                                 file_path=quality.get("file_path"),
                                 resolution=quality.get("resolution"),
                                 video_codec=quality.get("video_codec"),
@@ -2141,6 +2224,7 @@ async def sync_items(
                                 audio_languages=quality.get("audio_languages"),
                                 subtitle_languages=quality.get("subtitle_languages"),
                             ))
+                            heal_collection_id = coll_id
                         media_id_for_watch = media.id
 
                 if ratingkey_to_media_id is not None and media_id_for_watch is not None:
@@ -2189,6 +2273,14 @@ async def sync_items(
                         if new_ratings is not None:
                             new_ratings[(media_id_for_watch, None)] = watch_state["user_rating"]
 
+            # Savepoint committed, so queue the collection's add-date only now:
+            # an item that rolled back must not leave a heal behind for work
+            # that was undone.
+            if heal_collection_id is not None and added_at is not None:
+                queued = collection_heals.get(heal_collection_id)
+                if queued is None or added_at < queued:
+                    collection_heals[heal_collection_id] = added_at
+
             # Savepoint committed — update pre-loaded caches so duplicates within the
             # same sync batch reuse the newly created media instead of creating another.
             if new_media:
@@ -2207,6 +2299,7 @@ async def sync_items(
             print(f"    Error syncing item {i}: {e}")
 
         if (i + 1) % BATCH_SIZE == 0:
+            await flush_collection_heals()
             await db.commit()
             if job_id:
                 await db.execute(
@@ -2218,6 +2311,7 @@ async def sync_items(
                 await _raise_if_cancelled(db, job_id)
             print(f"    Processed {i+1}/{len(items)} items...")
 
+    await flush_collection_heals()
     await db.commit()
     processed_remainder = len(items) % BATCH_SIZE
     if job_id and processed_remainder > 0:
