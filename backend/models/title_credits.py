@@ -8,11 +8,12 @@ from .base import Base
 
 
 class TitleCredits(Base):
-    """Cast/crew/studios per title, fetched from TMDB.
+    """Cast/crew/studios/networks per title, fetched from TMDB.
 
-    Feeds the people/studio stats on the profile stats page (#124). One row
-    per (tmdb_id, media_type), instance-wide (not per user) since credits are
-    the same for everyone. Lists are stored as [{"id": int, "name": str}].
+    Feeds the people/studio/network stats on the profile stats page (#124).
+    One row per (tmdb_id, media_type), instance-wide (not per user) since
+    credits are the same for everyone. Lists are stored as
+    [{"id": int, "name": str}] (networks also carry "logo_path").
     Refreshed in the background at most once per TTL (see core/credits.py).
     """
 
@@ -26,4 +27,5 @@ class TitleCredits(Base):
     directors  : Mapped[list]     = mapped_column(JSONB, nullable=False, default=list)
     writers    : Mapped[list]     = mapped_column(JSONB, nullable=False, default=list)
     studios    : Mapped[list]     = mapped_column(JSONB, nullable=False, default=list)
+    networks   : Mapped[list]     = mapped_column(JSONB, nullable=False, default=list)  # series only; empty for movies
     fetched_at : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

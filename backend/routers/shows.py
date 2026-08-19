@@ -1672,6 +1672,15 @@ async def refresh_show_metadata(
             }
             for s in data.get("seasons", [])
         ],
+        "networks": [
+            {
+                "id": n.get("id"),
+                "name": n.get("name"),
+                "logo_path": n.get("logo_path"),
+                "origin_country": n.get("origin_country"),
+            }
+            for n in data.get("networks", [])
+        ],
     }
 
     # Re-enrich all local episodes linked to this show

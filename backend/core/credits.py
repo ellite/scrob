@@ -1,11 +1,11 @@
-"""Background TMDB credits import and people/studio stat aggregation.
+"""Background TMDB credits import and people/studio/network stat aggregation.
 
 Backs the "Most Watched Actors" / "Favorite Directors" / "Favorite Writers" /
-"Favorite Studios" groups on the profile stats page (#124). Credits are the
-same for every user, so they live in one instance-wide title_credits table,
-refreshed in the background at most once per TTL. The stats page triggers the
-backfill on view (own profile only) and the sections simply stay hidden until
-data is available.
+"Favorite Studios" / "Favourite Networks" groups on the profile stats page
+(#124). Credits (and networks) are the same for every user, so they live in
+one instance-wide title_credits table, refreshed in the background at most
+once per TTL. The stats page triggers the backfill on view (own profile only)
+and the sections simply stay hidden until data is available.
 """
 
 import asyncio
@@ -43,6 +43,20 @@ def _people(raw: list, jobs: set | None = None, limit: int | None = None) -> lis
         out.append({"id": pid, "name": p.get("name")})
         if limit and len(out) >= limit:
             break
+    return out
+
+
+def _networks(raw: list) -> list[dict]:
+    """Reduce a TMDB show's networks list to unique {id, name, logo_path} entries.
+    logo_path stays a raw TMDB path fragment (e.g. "/abc.png") - the stats page
+    prepends its own image base + size, same convention as the rest of the app."""
+    out, seen = [], set()
+    for n in raw or []:
+        nid = n.get("id")
+        if nid is None or nid in seen:
+            continue
+        seen.add(nid)
+        out.append({"id": nid, "name": n.get("name"), "logo_path": n.get("logo_path")})
     return out
 
 
@@ -99,22 +113,26 @@ async def _import_credits(api_key: str) -> None:
                 if mt == "series" and not writers:
                     writers = _people(data.get("created_by"))
                 studios = _people(data.get("production_companies"))
-                return mt, tid, cast, directors, writers, studios
+                networks = _networks(data.get("networks")) if mt == "series" else []
+                return mt, tid, cast, directors, writers, studios, networks
 
         results = await asyncio.gather(*[_one(mt, tid) for mt, tid in todo])
         for res in results:
             if not res:
                 continue
-            mt, tid, cast, directors, writers, studios = res
+            mt, tid, cast, directors, writers, studios, networks = res
             row = (await db.execute(
                 select(TitleCredits).where(TitleCredits.tmdb_id == tid, TitleCredits.media_type == mt)
             )).scalars().first()
             if row:
-                row.cast, row.directors, row.writers, row.studios = cast, directors, writers, studios
+                row.cast, row.directors, row.writers, row.studios, row.networks = (
+                    cast, directors, writers, studios, networks,
+                )
                 row.fetched_at = datetime.utcnow()
             else:
                 db.add(TitleCredits(tmdb_id=tid, media_type=mt, cast=cast,
-                                    directors=directors, writers=writers, studios=studios))
+                                    directors=directors, writers=writers, studios=studios,
+                                    networks=networks))
         await db.commit()
 
 
@@ -155,8 +173,10 @@ async def maybe_backfill_credits(db: AsyncSession, user_id: int) -> None:
 
 
 async def credits_stats(db: AsyncSession, user_id: int, date_filters: list) -> dict:
-    """Aggregate watched titles' cast/crew/studios into ranked lists. Each
-    title contributes its people once; ranked by distinct titles then plays.
+    """Aggregate watched titles' cast/crew/studios/networks into ranked lists.
+    Each title contributes its people/networks once; people/studios rank by
+    distinct titles then plays, networks rank by plays then distinct titles
+    (a network you rewatch heavily should outrank one you merely sampled once).
     date_filters are the same WatchEvent filters the stats endpoint uses."""
     rows = (await db.execute(
         select(
@@ -176,20 +196,22 @@ async def credits_stats(db: AsyncSession, user_id: int, date_filters: list) -> d
             weight[("movie", tmdb_id)] += plays
         elif media_type == MediaType.episode and show_tmdb:
             weight[("series", show_tmdb)] += plays
-    empty = {"actors": [], "directors": [], "writers": [], "studios": []}
+    empty = {"actors": [], "directors": [], "writers": [], "studios": [], "networks": []}
     if not weight:
         return empty
 
     credits = (await db.execute(select(TitleCredits))).scalars().all()
     by_key = {(c.media_type, c.tmdb_id): c for c in credits}
 
-    buckets = {"actors": {}, "directors": {}, "writers": {}, "studios": {}}
+    buckets = {"actors": {}, "directors": {}, "writers": {}, "studios": {}, "networks": {}}
 
     def _add(bucket: str, person: dict, plays: int):
         pid = person.get("id")
         if pid is None:
             return
-        e = buckets[bucket].setdefault(pid, {"name": person.get("name"), "titles": 0, "plays": 0})
+        e = buckets[bucket].setdefault(
+            pid, {"name": person.get("name"), "logo_path": person.get("logo_path"), "titles": 0, "plays": 0}
+        )
         e["titles"] += 1
         e["plays"] += plays
 
@@ -205,11 +227,19 @@ async def credits_stats(db: AsyncSession, user_id: int, date_filters: list) -> d
             _add("writers", p, plays)
         for p in c.studios or []:
             _add("studios", p, plays)
+        for p in c.networks or []:
+            _add("networks", p, plays)
 
-    def _top(bucket: str, limit: int = 15) -> list[dict]:
+    def _top(bucket: str, limit: int = 15, key=lambda x: (x["titles"], x["plays"])) -> list[dict]:
         return sorted(
             ({"id": pid, **v} for pid, v in buckets[bucket].items()),
-            key=lambda x: (x["titles"], x["plays"]), reverse=True,
+            key=key, reverse=True,
         )[:limit]
 
-    return {k: _top(k) for k in buckets}
+    return {
+        "actors": _top("actors"),
+        "directors": _top("directors"),
+        "writers": _top("writers"),
+        "studios": _top("studios"),
+        "networks": _top("networks", key=lambda x: (x["plays"], x["titles"])),
+    }

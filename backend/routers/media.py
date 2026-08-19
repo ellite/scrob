@@ -2945,7 +2945,16 @@ async def manually_collect(
                                     "name": s["name"],
                                 }
                                 for s in show_data.get("seasons", [])
-                            ]
+                            ],
+                            "networks": [
+                                {
+                                    "id": n.get("id"),
+                                    "name": n.get("name"),
+                                    "logo_path": n.get("logo_path"),
+                                    "origin_country": n.get("origin_country"),
+                                }
+                                for n in show_data.get("networks", [])
+                            ],
                         }
                     )
                     db.add(show)
@@ -3298,6 +3307,15 @@ async def collect_season(
                     }
                     for s in show_data.get("seasons", [])
                 ],
+                "networks": [
+                    {
+                        "id": n.get("id"),
+                        "name": n.get("name"),
+                        "logo_path": n.get("logo_path"),
+                        "origin_country": n.get("origin_country"),
+                    }
+                    for n in show_data.get("networks", [])
+                ],
             },
         )
         db.add(show)
@@ -3408,6 +3426,15 @@ async def collect_show(
                         "name": s["name"],
                     }
                     for s in show_data.get("seasons", [])
+                ],
+                "networks": [
+                    {
+                        "id": n.get("id"),
+                        "name": n.get("name"),
+                        "logo_path": n.get("logo_path"),
+                        "origin_country": n.get("origin_country"),
+                    }
+                    for n in show_data.get("networks", [])
                 ],
             },
         )

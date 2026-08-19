@@ -7,7 +7,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from core import credits
-from core.credits import CREDITS_TTL, _people, credits_stats, maybe_backfill_credits
+from core.credits import CREDITS_TTL, _networks, _people, credits_stats, maybe_backfill_credits
 from models.base import MediaType
 
 
@@ -37,6 +37,31 @@ class PeopleHelperTests(unittest.TestCase):
 
     def test_none_input_is_empty(self):
         self.assertEqual(_people(None), [])
+
+
+class NetworksHelperTests(unittest.TestCase):
+    """_networks() reduces a TMDB show's networks list to unique {id, name,
+    logo_path} entries, keeping logo_path as a raw TMDB path fragment (the
+    stats page prepends its own image base + size, same as the rest of the app)."""
+
+    def test_deduplicates_by_id(self):
+        raw = [{"id": 1, "name": "Fox", "logo_path": "/fox.png"}, {"id": 1, "name": "Fox", "logo_path": "/fox.png"}]
+        self.assertEqual(_networks(raw), [{"id": 1, "name": "Fox", "logo_path": "/fox.png"}])
+
+    def test_logo_path_is_kept_raw_not_a_full_url(self):
+        raw = [{"id": 1, "name": "Fox", "logo_path": "/fox.png"}]
+        self.assertEqual(_networks(raw)[0]["logo_path"], "/fox.png")
+
+    def test_missing_logo_path_is_none(self):
+        raw = [{"id": 1, "name": "Fox"}]
+        self.assertIsNone(_networks(raw)[0]["logo_path"])
+
+    def test_entries_missing_an_id_are_dropped(self):
+        raw = [{"id": None, "name": "Unknown"}, {"id": 1, "name": "Fox"}]
+        self.assertEqual(_networks(raw), [{"id": 1, "name": "Fox", "logo_path": None}])
+
+    def test_none_input_is_empty(self):
+        self.assertEqual(_networks(None), [])
 
 
 class _AllResult:
@@ -79,13 +104,14 @@ class _QueuedSession:
 
 
 class _Credit:
-    def __init__(self, media_type, tmdb_id, cast=None, directors=None, writers=None, studios=None):
+    def __init__(self, media_type, tmdb_id, cast=None, directors=None, writers=None, studios=None, networks=None):
         self.media_type = media_type
         self.tmdb_id = tmdb_id
         self.cast = cast or []
         self.directors = directors or []
         self.writers = writers or []
         self.studios = studios or []
+        self.networks = networks or []
 
 
 class CreditsStatsTests(unittest.IsolatedAsyncioTestCase):
@@ -96,7 +122,7 @@ class CreditsStatsTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_watched_titles_short_circuits_without_querying_credits(self):
         db = _QueuedSession([_AllResult([])])
         result = await credits_stats(db, user_id=1, date_filters=[])
-        self.assertEqual(result, {"actors": [], "directors": [], "writers": [], "studios": []})
+        self.assertEqual(result, {"actors": [], "directors": [], "writers": [], "studios": [], "networks": []})
         # Only the weight query should have run - the empty-weight path must
         # return before touching title_credits at all.
         self.assertEqual(db._results, [])
@@ -146,7 +172,7 @@ class CreditsStatsTests(unittest.IsolatedAsyncioTestCase):
         rows = [(MediaType.movie, 999, None, 1)]
         db = _QueuedSession([_AllResult(rows), _ScalarsResult([])])
         result = await credits_stats(db, user_id=1, date_filters=[])
-        self.assertEqual(result, {"actors": [], "directors": [], "writers": [], "studios": []})
+        self.assertEqual(result, {"actors": [], "directors": [], "writers": [], "studios": [], "networks": []})
 
     async def test_top_list_is_capped_at_fifteen(self):
         rows = [(MediaType.movie, i, None, 1) for i in range(20)]
@@ -154,6 +180,28 @@ class CreditsStatsTests(unittest.IsolatedAsyncioTestCase):
         db = _QueuedSession([_AllResult(rows), _ScalarsResult(credits_rows)])
         result = await credits_stats(db, user_id=1, date_filters=[])
         self.assertEqual(len(result["actors"]), 15)
+
+    async def test_networks_rank_by_plays_before_titles_unlike_people(self):
+        # Opposite tiebreak from people: a network you rewatch heavily (one
+        # title, many plays) should outrank one you only sampled across a
+        # couple of shows once each - people intentionally rank the other way.
+        rows = [
+            (MediaType.episode, 111, 1, 50),
+            (MediaType.episode, 222, 2, 1),
+            (MediaType.episode, 333, 3, 1),
+        ]
+        credits_rows = [
+            _Credit("series", 1, networks=[{"id": 9, "name": "Rewatched Network", "logo_path": "/a.png"}]),
+            _Credit("series", 2, networks=[{"id": 8, "name": "Sampled Network", "logo_path": "/b.png"}]),
+            _Credit("series", 3, networks=[{"id": 8, "name": "Sampled Network", "logo_path": "/b.png"}]),
+        ]
+        db = _QueuedSession([_AllResult(rows), _ScalarsResult(credits_rows)])
+
+        result = await credits_stats(db, user_id=1, date_filters=[])
+
+        self.assertEqual(result["networks"][0]["id"], 9)
+        self.assertEqual(result["networks"][0]["plays"], 50)
+        self.assertEqual(result["networks"][0]["logo_path"], "/a.png")
 
 
 class MaybeBackfillCreditsTests(unittest.IsolatedAsyncioTestCase):

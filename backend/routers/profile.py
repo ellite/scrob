@@ -1257,8 +1257,6 @@ async def get_user_stats(
             m["minutes"] += minutes
 
     show_meta: dict[int, dict] = {}
-    network_stats: dict[str, dict] = defaultdict(lambda: {"plays": 0, "minutes": 0, "titles": set()})
-    network_logos: dict[str, str] = {}
     if per_show:
         top_show_rows = (await db.execute(
             select(ShowModel).where(ShowModel.id.in_(per_show.keys()))
@@ -1268,33 +1266,20 @@ async def get_user_stats(
                 "title": sh.title, "poster_path": sh.poster_path,
                 "tmdb_id": sh.tmdb_id, "tvdb_id": sh.tvdb_id,
             }
-            for net in (sh.tmdb_data or {}).get("networks") or []:
-                # Networks appear in tmdb_data both as TMDB's {"name", "logo_path"}
-                # dicts and as plain strings, depending on which sync path stored it.
-                name = net.get("name") if isinstance(net, dict) else (net if isinstance(net, str) else None)
-                if not name:
-                    continue
-                st = network_stats[name]
-                st["plays"] += per_show[sh.id]["plays"]
-                st["minutes"] += per_show[sh.id]["minutes"]
-                st["titles"].add(sh.id)
-                if isinstance(net, dict) and net.get("logo_path"):
-                    network_logos[name] = net["logo_path"]
 
     top_shows = sorted(
         ({**show_meta.get(sid, {"title": None, "poster_path": None, "tmdb_id": None, "tvdb_id": None}),
           "plays": s["plays"], "minutes": s["minutes"], "episodes": len(s["episodes"])}
          for sid, s in per_show.items()),
-        key=lambda x: x["minutes"], reverse=True,
+        key=lambda x: (x["plays"], x["minutes"]), reverse=True,
     )[:12]
     top_movies = sorted(per_movie.values(), key=lambda x: (x["plays"], x["minutes"]), reverse=True)[:12]
-    top_networks = sorted(
-        ({"name": name, "plays": v["plays"], "minutes": v["minutes"],
-          "titles": len(v["titles"]), "logo_path": network_logos.get(name)}
-         for name, v in network_stats.items()),
-        key=lambda x: (x["plays"], x["titles"]), reverse=True,
-    )[:15]
+    # Networks come from the same instance-wide TMDB credits cache as the people
+    # stats below (core/credits.py) - it already fetches a full show response per
+    # watched title, so this reuses that instead of relying on Show.tmdb_data
+    # (which detail pages fetch live and never persist networks into anyway).
     top_people = await credits_stats(db, user_id, date_filters)
+    top_networks = top_people.pop("networks")
 
     return {
         # Watching
