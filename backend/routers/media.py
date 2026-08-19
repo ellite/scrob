@@ -890,12 +890,22 @@ async def list_media(
     genre: list[str] = Query(default=[]),
     year: list[int] = Query(default=[]),
     watched: list[str] = Query(default=[]),
+    # in_list = in|out: membership of any of the user's lists (#255).
+    in_list: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     offset = (page - 1) * page_size
 
     filters = [Collection.user_id == current_user.id]
+    if in_list in ("in", "out"):
+        in_list_exists = (
+            select(ListItem.id)
+            .join(UserList, UserList.id == ListItem.list_id)
+            .where(ListItem.media_id == Media.id, UserList.user_id == current_user.id)
+            .exists()
+        )
+        filters.append(in_list_exists if in_list == "in" else ~in_list_exists)
     if type:
         filters.append(Media.media_type == type)
     if genre:
@@ -2054,10 +2064,16 @@ _ARR_CHECKS = {
     "added": lambda i: bool(i.get("is_monitored")),
     "notadded": lambda i: not i.get("is_monitored"),
 }
+# in_list = in|out: membership of any of the user's lists (#255).
+_IN_LIST_CHECKS = {
+    "in": lambda i: bool(i.get("in_lists")),
+    "out": lambda i: not i.get("in_lists"),
+}
 
 
 def _apply_local_filters(
     items: list[dict], collection: list[str], watch: list[str], arr: list[str], year: list[int] | None = None,
+    in_list: list[str] | None = None,
 ) -> list[dict]:
     """Local-only filters get_tmdb_list applies after TMDB enrichment.
 
@@ -2072,7 +2088,7 @@ def _apply_local_filters(
     no check, so a category made up entirely of unrecognized values is a
     no-op rather than matching nothing.
     """
-    for values, checks in ((collection, _COLLECTION_CHECKS), (watch, _WATCH_CHECKS), (arr, _ARR_CHECKS)):
+    for values, checks in ((collection, _COLLECTION_CHECKS), (watch, _WATCH_CHECKS), (arr, _ARR_CHECKS), (in_list or [], _IN_LIST_CHECKS)):
         if not values:
             continue
         active = [checks[v] for v in values if v in checks]
@@ -2116,6 +2132,8 @@ async def get_tmdb_list(
     collection: list[str] = Query(default=[]),
     watch: list[str] = Query(default=[]),
     arr: list[str] = Query(default=[]),
+    # in_list = in|out: membership of any of the user's lists (#255).
+    in_list: list[str] = Query(default=[]),
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
@@ -2237,7 +2255,7 @@ async def get_tmdb_list(
                 await enrich_with_state(db, current_user.id, enriched)
             return enriched
 
-        if not (collection or watch or arr or year):
+        if not (collection or watch or arr or year or in_list):
             data = await _fetch_tmdb_page(page)
             enriched = await _build_enriched(data.get("results", []))
             return {
@@ -2276,7 +2294,7 @@ async def get_tmdb_list(
                         batch_results.append(res)
             if batch_results:
                 enriched = await _build_enriched(batch_results)
-                matched.extend(_apply_local_filters(enriched, collection, watch, arr, year))
+                matched.extend(_apply_local_filters(enriched, collection, watch, arr, year, in_list))
             scan_page = batch_end + 1
             if total_tmdb_pages is not None and scan_page > total_tmdb_pages:
                 break

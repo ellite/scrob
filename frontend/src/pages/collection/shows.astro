@@ -12,6 +12,7 @@ const genres = Astro.url.searchParams.getAll("genre");
 const years = Astro.url.searchParams.getAll("year").map(Number).filter((n) => !Number.isNaN(n));
 const statuses = Astro.url.searchParams.getAll("status");
 const watched = Astro.url.searchParams.getAll("watched");
+const inList = Astro.url.searchParams.get("in_list") ?? "";
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -23,6 +24,7 @@ const data = await api.shows.list({
   year: years,
   status: statuses,
   watched,
+  ...(inList ? { in_list: inList } : {}),
 }, token);
 
 const TV_GENRES = [
@@ -33,7 +35,7 @@ const TV_GENRES = [
 
 const TV_STATUSES = ["Returning Series", "In Production", "Planned", "Ended", "Canceled"];
 
-const hasFilters = genres.length > 0 || years.length > 0 || statuses.length > 0 || watched.length > 0;
+const hasFilters = genres.length > 0 || years.length > 0 || statuses.length > 0 || watched.length > 0 || !!inList;
 
 // Build base URL preserving active filters (without page)
 const baseParams = new URLSearchParams();
@@ -42,6 +44,7 @@ genres.forEach((g) => baseParams.append("genre", g));
 years.forEach((y) => baseParams.append("year", String(y)));
 statuses.forEach((s) => baseParams.append("status", s));
 watched.forEach((w) => baseParams.append("watched", w));
+if (inList) baseParams.set("in_list", inList);
 const baseUrl = `/collection/shows?${baseParams.toString()}`;
 ---
 
@@ -78,6 +81,7 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
           { key: "year", label: "Year", selected: years.map(String), dynamic: true, endpoint: "/api/proxy/shows/years" },
           { key: "status", label: "Status", options: TV_STATUSES.map((s) => ({ value: s, label: s })), selected: statuses },
           { key: "watched", label: "Progress", options: [{ value: "watched", label: "Started" }, { value: "unwatched", label: "Not Started" }], selected: watched },
+          { key: "in_list", label: "Lists", options: [{ value: "in", label: "In a List" }, { value: "out", label: "Not In a List" }], selected: inList ? [inList] : [], multi: false },
         ]}
       />
     </div>

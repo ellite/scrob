@@ -209,6 +209,9 @@ async def list_shows(
     year: list[int] = Query(default=[]),
     status: list[str] = Query(default=[]),
     watched: list[str] = Query(default=[]),
+    # in_list = in|out: membership of any of the user's lists (#255;
+    # season-level list items live on the same series Media row and count too).
+    in_list: str | None = Query(None),
 ):
     offset = (page - 1) * page_size
 
@@ -247,6 +250,19 @@ async def list_shows(
             ShowModel.tmdb_id.in_(select(direct_series_tmdb_ids)),
         )
     )
+    if in_list in ("in", "out"):
+        series_in_list = (
+            select(ListItem.id)
+            .join(UserList, UserList.id == ListItem.list_id)
+            .join(Media, Media.id == ListItem.media_id)
+            .where(
+                UserList.user_id == current_user.id,
+                Media.media_type == MediaType.series,
+                Media.tmdb_id == ShowModel.tmdb_id,
+            )
+            .exists()
+        )
+        base_query = base_query.where(series_in_list if in_list == "in" else ~series_in_list)
     if genre:
         base_query = base_query.where(or_(*[
             sa_cast(ShowModel.tmdb_data["genres"], Text).contains(f'"{g}"') for g in genre
