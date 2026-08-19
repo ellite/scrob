@@ -14,6 +14,7 @@ from routers import webhooks
 from routers.webhooks import (
     _backfill_plex_runtime,
     _commit_playback_session_update,
+    _consume_recently_pushed_watched,
     _episode_for_progress,
     _is_duplicate_webhook_delivery,
     _maybe_bingebase_scrobble,
@@ -21,6 +22,7 @@ from routers.webhooks import (
     _write_watch_event,
     find_or_create_media_jellyfin,
     find_or_create_media_jellyfin_multi,
+    mark_pushed_watched,
     parse_jellyfin_payload,
 )
 
@@ -69,6 +71,9 @@ class DuplicateWebhookDeliveryTests(unittest.TestCase):
 
 
 class WriteWatchEventDedupTests(IsolatedAsyncioTestCase):
+    def setUp(self):
+        webhooks._recently_pushed_watched.clear()
+
     async def test_first_completed_event_is_recorded(self):
         db = _FakeDB(queued_scalars=[None])  # no recent WatchEvent found
         await _write_watch_event(db, user_id=1, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True)
@@ -80,6 +85,62 @@ class WriteWatchEventDedupTests(IsolatedAsyncioTestCase):
         db = _FakeDB(queued_scalars=[123])  # a recent WatchEvent id is found
         await _write_watch_event(db, user_id=1, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True)
         self.assertEqual(len(db.added), 0)
+
+    async def test_echo_of_a_just_pushed_mark_watched_is_skipped(self):
+        # Regression for #247/#251: pushing "mark watched" to Jellyfin/Emby can
+        # echo straight back as a UserDataSaved webhook. The item's real watch
+        # event is typically old (imported history), so the 5-minute dedup
+        # above never catches it and it used to land as a brand new WatchEvent
+        # stamped at push time - even though no recent duplicate is queued here.
+        mark_pushed_watched(user_id=1, media_id=2)
+        db = _FakeDB(queued_scalars=[None])
+        await _write_watch_event(db, user_id=1, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True)
+        self.assertEqual(len(db.added), 0)
+
+    async def test_echo_suppression_is_scoped_to_the_pushed_user_and_media(self):
+        mark_pushed_watched(user_id=1, media_id=2)
+        db = _FakeDB(queued_scalars=[None, None])
+        await _write_watch_event(db, user_id=1, media_id=999, progress_percent=1.0, progress_seconds=120, completed=True)
+        await _write_watch_event(db, user_id=999, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True)
+        self.assertEqual(len(db.added), 2)
+
+    async def test_echo_suppression_is_one_shot(self):
+        # A real rewatch shortly after must not be silently swallowed too -
+        # only the one echo actually expected back from the push is consumed.
+        mark_pushed_watched(user_id=1, media_id=2)
+        db = _FakeDB(queued_scalars=[None, None])
+        await _write_watch_event(db, user_id=1, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True)
+        await _write_watch_event(db, user_id=1, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True)
+        self.assertEqual(len(db.added), 1)
+
+
+class ConsumeRecentlyPushedWatchedTests(unittest.TestCase):
+    def setUp(self):
+        webhooks._recently_pushed_watched.clear()
+
+    def test_unmarked_media_is_not_consumed(self):
+        self.assertFalse(_consume_recently_pushed_watched(user_id=1, media_id=2))
+
+    def test_marked_media_is_consumed_once(self):
+        mark_pushed_watched(user_id=1, media_id=2)
+        self.assertTrue(_consume_recently_pushed_watched(user_id=1, media_id=2))
+        self.assertFalse(_consume_recently_pushed_watched(user_id=1, media_id=2))
+
+    def test_expired_marker_is_not_consumed(self):
+        import datetime
+        mark_pushed_watched(user_id=1, media_id=2)
+        webhooks._recently_pushed_watched[(1, 2)][0] = datetime.datetime.utcnow() - webhooks._PUSHED_WATCHED_TTL - datetime.timedelta(seconds=1)
+        self.assertFalse(_consume_recently_pushed_watched(user_id=1, media_id=2))
+
+    def test_two_pending_pushes_each_consume_their_own_echo(self):
+        # A user pushing the same item to two Jellyfin/Emby connections at
+        # once expects two echoes back - the second shouldn't be treated as
+        # an unexpected duplicate just because the first already consumed.
+        mark_pushed_watched(user_id=1, media_id=2)
+        mark_pushed_watched(user_id=1, media_id=2)
+        self.assertTrue(_consume_recently_pushed_watched(user_id=1, media_id=2))
+        self.assertTrue(_consume_recently_pushed_watched(user_id=1, media_id=2))
+        self.assertFalse(_consume_recently_pushed_watched(user_id=1, media_id=2))
 
 
 class ParseJellyfinPayloadEmbyEventFieldTests(unittest.TestCase):

@@ -989,6 +989,8 @@ async def _fan_out_changes_to_other_connections(
     if not new_watched_ids and not new_ratings and not removed_ratings and not new_collected_ids and not removed_collected_ids:
         return
 
+    from routers.webhooks import mark_pushed_watched
+
     all_changed_ids = (
         set(new_watched_ids)
         | {media_id for media_id, _ in new_ratings}
@@ -1194,8 +1196,13 @@ async def _fan_out_changes_to_other_connections(
                         if conn.type == "plex":
                             push_tasks.append(_guarded(plex.mark_watched(conn.url, conn.token, sid)))
                         elif conn.type == "jellyfin":
+                            # Registered before the call, not inside it - Jellyfin/Emby's
+                            # UserDataSaved webhook can echo this back fast enough that a
+                            # post-await registration would already be too late (#247/#251).
+                            mark_pushed_watched(user_id, mid)
                             push_tasks.append(_guarded(jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid)))
                         elif conn.type == "emby":
+                            mark_pushed_watched(user_id, mid)
                             push_tasks.append(_guarded(emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid)))
             if conn.push_ratings:
                 for (mid, season_number), rating in server_rating_changes.items():
@@ -5978,6 +5985,7 @@ async def _push_stremio_connection(
 
 async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
     import httpx as _httpx
+    from routers.webhooks import mark_pushed_watched
 
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
@@ -6205,9 +6213,18 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             # Build push list: (action, source_id, [rating])
             push_items: list[tuple] = []
 
+            # Jellyfin/Emby's UserDataSaved webhook can echo a mark-watched push
+            # straight back and, without this, land as a brand new WatchEvent
+            # stamped at push time (see #247/#251) - registered up front for
+            # every item about to be pushed, not inside the push call itself,
+            # since the echo can arrive before an in-task registration would.
+            echoes_watched = conn.type in ("jellyfin", "emby")
+
             if conn.push_watched:
                 for mid in watched_ids:
                     for sid in source_ids_map.get(mid, []):
+                        if echoes_watched:
+                            mark_pushed_watched(user_id, mid)
                         push_items.append(("watched", sid))
 
             if conn.push_ratings:
@@ -6334,8 +6351,10 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             if conn.type == "plex":
                                 return await plex.mark_watched(conn.url, conn.token, sid, client=client)
                             elif conn.type == "jellyfin":
+                                mark_pushed_watched(user_id, mid)
                                 return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
                             else:
+                                mark_pushed_watched(user_id, mid)
                                 return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
                         else:
                             rating = item[2]

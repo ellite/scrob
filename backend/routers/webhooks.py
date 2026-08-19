@@ -387,6 +387,41 @@ def _is_duplicate_webhook_delivery(dedup_key: str) -> bool:
     return last_seen is not None and (now - last_seen) < _WEBHOOK_DEDUP_WINDOW
 
 
+# Jellyfin/Emby's UserDataSaved webhook fires for *any* played-state change,
+# including ones Scrob itself just caused by pushing a "mark watched" call to
+# the server (see #247/#251) - unlike a genuine fresh play, that echo has no
+# recent local WatchEvent to catch it against (routers/sync.py's full/partial
+# push covers a user's whole history, most of it imported long ago), so
+# without this it lands as a brand new WatchEvent stamped at push time. Set
+# right before each outbound mark-watched call; consumed (popped) by the one
+# echo expected back, so a genuine later rewatch isn't silently swallowed too.
+# A small per-key queue rather than a single timestamp - a user pushing the
+# same item to two Jellyfin/Emby connections at once expects two echoes back,
+# not one real write plus one silently-swallowed second echo.
+_recently_pushed_watched: dict[tuple[int, int], list[datetime]] = {}
+_PUSHED_WATCHED_TTL = timedelta(minutes=10)
+
+
+def mark_pushed_watched(user_id: int, media_id: int) -> None:
+    if len(_recently_pushed_watched) > 5000:
+        cutoff = datetime.utcnow() - _PUSHED_WATCHED_TTL
+        for key, queue in list(_recently_pushed_watched.items()):
+            if all(pushed_at < cutoff for pushed_at in queue):
+                del _recently_pushed_watched[key]
+    _recently_pushed_watched.setdefault((user_id, media_id), []).append(datetime.utcnow())
+
+
+def _consume_recently_pushed_watched(user_id: int, media_id: int) -> bool:
+    key = (user_id, media_id)
+    queue = _recently_pushed_watched.get(key)
+    if not queue:
+        return False
+    pushed_at = queue.pop(0)
+    if not queue:
+        del _recently_pushed_watched[key]
+    return (datetime.utcnow() - pushed_at) < _PUSHED_WATCHED_TTL
+
+
 async def _get_or_open_session(
     db: AsyncSession,
     session_key: str,
@@ -508,6 +543,11 @@ async def _write_watch_event(
     completed: bool,
 ) -> None:
     if completed:
+        # Echo of a mark-watched call Scrob itself just pushed to this server
+        # (see the _recently_pushed_watched comment above) - not a real play.
+        if _consume_recently_pushed_watched(user_id, media_id):
+            return
+
         # A single completed viewing is often reported by more than one webhook
         # event for the same session (e.g. Plex sends both `media.scrobble` at
         # ~90% and `media.stop` when the session actually closes) — without this
