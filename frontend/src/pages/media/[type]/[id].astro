@@ -9,7 +9,7 @@ import { api, type MediaItem } from "../../../lib/api";
 export const prerender = false;
 
 const { type, id } = Astro.params;
-const { token } = Astro.locals;
+const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 
 let item: MediaItem | null = null;
@@ -30,7 +30,7 @@ const rating = item?.tmdb_rating ? item.tmdb_rating.toFixed(1) : null;
 const isEpisode = item?.type === "episode";
 const isMovie = item?.type === "movie";
 const collection = item?.collection;
-const showRefreshBtn = item?.in_library && (item.type === "movie" || (isEpisode && !!item.show_tmdb_id));
+const showRefreshBtn = !!user && item?.in_library && (item.type === "movie" || (isEpisode && !!item.show_tmdb_id));
 
 const today = new Date();
 function fmtDate(iso: string): string {
@@ -194,26 +194,28 @@ const refreshUrl = isEpisode
               {!isEpisode && (() => { const c = item.production_companies?.find(c => c.logo_path); return c ? <div class="bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm flex items-center"><img src={c.logo_path!} alt={c.name} title={c.name} class="h-5 max-w-[80px] object-contain" loading="lazy" /></div> : null; })()}
             </div>
 
-            <div class="mb-4">
-              <ActionBar
-                tmdbId={item.tmdb_id}
-                mediaType={item.type}
-                watched={item.watched ?? false}
-                inLists={item.in_lists ?? []}
-                inLibrary={item.in_library ?? false}
-                collectionPct={item.collection_pct ?? 0}
-                showTmdbId={item.show_tmdb_id}
-                seasonNumber={item.season_number}
-                episodeNumber={item.episode_number}
-                isMonitored={item.is_monitored ?? false}
-                requestEnabled={item.request_enabled ?? false}
-                requestStatus={item.request_status ?? null}
-                mediaId={item.id}
-                userRating={item.user_rating ?? null}
-              />
-            </div>
+            {user && (
+              <div class="mb-4">
+                <ActionBar
+                  tmdbId={item.tmdb_id}
+                  mediaType={item.type}
+                  watched={item.watched ?? false}
+                  inLists={item.in_lists ?? []}
+                  inLibrary={item.in_library ?? false}
+                  collectionPct={item.collection_pct ?? 0}
+                  showTmdbId={item.show_tmdb_id}
+                  seasonNumber={item.season_number}
+                  episodeNumber={item.episode_number}
+                  isMonitored={item.is_monitored ?? false}
+                  requestEnabled={item.request_enabled ?? false}
+                  requestStatus={item.request_status ?? null}
+                  mediaId={item.id}
+                  userRating={item.user_rating ?? null}
+                />
+              </div>
+            )}
 
-            {(item.type === 'movie' || item.type === 'episode') && (
+            {user && (item.type === 'movie' || item.type === 'episode') && (
               <ManualScrobble
                 tmdbId={item.tmdb_id}
                 mediaType={item.type}

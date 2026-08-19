@@ -34,12 +34,16 @@ router = APIRouter()
 
 @router.get("/public-access-status")
 async def get_public_access_status(db: AsyncSession = Depends(get_db)):
-    """Unauthenticated: whether the admin allows viewing public profiles without
-    being logged in. Read by the frontend's auth middleware to decide whether an
-    anonymous request to a profile page should be let through."""
+    """Unauthenticated: whether the admin allows anonymous browsing/viewing.
+    Read by the frontend's auth middleware to decide whether an anonymous
+    request to a gated page should be let through."""
     result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
     gs = result.scalar_one_or_none()
-    return {"allow_public_profiles": bool(gs and gs.allow_public_profiles)}
+    return {
+        # Requires a global TMDB key even if the toggle is on, in case the key
+        # was removed after the admin enabled it.
+        "enable_logged_out_navigation": bool(gs and gs.enable_logged_out_navigation and gs.tmdb_api_key),
+    }
 
 
 async def _check_profile_access(user_id: int, current_user, db: AsyncSession):
@@ -83,7 +87,7 @@ async def _check_profile_access(user_id: int, current_user, db: AsyncSession):
     if not current_user and privacy == PrivacyLevel.public:
         gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
         gs = gs_result.scalar_one_or_none()
-        if not (gs and gs.allow_public_profiles):
+        if not (gs and gs.enable_logged_out_navigation):
             raise HTTPException(status_code=403, detail="This profile is private")
 
     return user, profile
@@ -396,7 +400,7 @@ async def search_users(
 ):
     """Unlike viewing a single profile/list by ID, this is a directory-style
     enumeration of every public/friends_only user matching a pattern, so it
-    stays behind real authentication regardless of the allow_public_profiles
+    stays behind real authentication regardless of the enable_logged_out_navigation
     toggle, there's no anonymous "browse all public users" use case to support."""
     if len(q.strip()) < 1:
         return {"results": []}

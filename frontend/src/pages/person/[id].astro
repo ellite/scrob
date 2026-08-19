@@ -8,7 +8,7 @@ import { api, type MediaItem } from "../../lib/api";
 export const prerender = false;
 
 const { id } = Astro.params;
-const { token } = Astro.locals;
+const { token, user } = Astro.locals;
 const collectionParam = Astro.url.searchParams.get("collection");
 const collection: "in" | "out" | "" = collectionParam === "in" || collectionParam === "out" ? collectionParam : "";
 const genre = Astro.url.searchParams.getAll("genre");
@@ -95,15 +95,17 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
     <div class="flex-1 min-w-0">
       <div class="flex flex-wrap items-center justify-between gap-4 mb-8">
         <h1 class="page-title">{person.name}</h1>
-        <ActionBar
-          tmdbId={person.tmdb_id}
-          mediaType="person"
-          watched={false}
-          inLists={person.in_lists ?? []}
-          inLibrary={false}
-          collectionPct={0}
-          listOnly={true}
-        />
+        {user && (
+          <ActionBar
+            tmdbId={person.tmdb_id}
+            mediaType="person"
+            watched={false}
+            inLists={person.in_lists ?? []}
+            inLibrary={false}
+            collectionPct={0}
+            listOnly={true}
+          />
+        )}
       </div>
 
       {person.biography && (
