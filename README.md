@@ -32,6 +32,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **A
   - [Synchronization Directions](#synchronization-directions)
   - [Scheduling and Limitations](#scheduling-and-limitations)
 - [Trakt Synchronization](#trakt-synchronization)
+- [Yamtrack / Floppy Import](#yamtrack--floppy-import)
 - [Stremio Synchronization](#stremio-synchronization)
   - [Connect Stremio](#connect-stremio)
   - [Stremio Synchronization Directions](#stremio-synchronization-directions)
@@ -62,21 +63,26 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **A
 - **Bingebase integration**: Push watch history and live scrobbles to your Bingebase account via personal Webhook URL.
 - **Watch history & ratings**: Track every movie and episode you've watched, including multiple plays with individual timestamps. Log plays manually with a custom date, or remove individual entries - all from the watched button on any movie or episode page. Rate them on a 10-point scale with optional reviews.
 - **Season ratings**: Rate individual seasons separately from the overall show.
+- **Rewatches**: Start a rewatch on any show and Scrob tracks progress for that cycle separately, without touching your original watch history.
 - **Personal lists**: Create and curate lists of movies and shows. Mark them public to share with other users on the same instance.
 - **Comments**: Leave comments on movies, shows, seasons, and episodes.
 - **Social**: Follow other users and see their activity.
 - **Release schedule**: Movie pages show the full release schedule - theatrical, digital, and physical dates - sourced from TMDB.
 - **TMDB integration**: Rich metadata for every title - posters, backdrops, cast, crew, trailers, collections, and more.
+- **Metadata language**: Set a preferred display language per profile - titles, overviews, and episode names show translated where available, independent of the rest of the UI's language.
 - **Search**: Search TMDB across movies, shows, people, and collections, merged with your local library data.
 - **Pick a Movie / Pick a Show**: Get a suggestion on what to watch next from your library or your streaming services based on your preferences.
 - **Trending & Airing Today**: Daily trending movies and shows from TMDB, plus episodes airing today filtered to your collection.
+- **Episode calendar**: A 15-day episode-by-episode schedule for shows you've collected or are watching.
 - **Continue Watching & Next Up**: Dashboard cards showing in-progress items and the next episode to watch in each series.
+- **Statistics**: A per-user stats page - watch time, activity charts, ratings breakdown, and most-watched people/networks - filterable by all-time, year, month, week, or a custom period.
 - **Season & episode tracking**: Detailed season views with per-episode watched state and progress.
 - **Cast & crew pages**: Full filmography for any person, linked to your library.
 - **Radarr & Sonarr integration**: Add movies and shows to Radarr/Sonarr directly from the Scrob UI.
 - **Plex watchlist automation**: Automatically send items from your Plex watchlist (and selected friends' watchlists) to Radarr or Sonarr.
 - **Two-Factor Authentication**: TOTP-based 2FA with backup codes, managed from the settings page.
 - **OIDC / SSO**: Authenticate with any OpenID Connect provider (Authelia, Authentik, Keycloak, etc.).
+- **Logged-out browsing (opt-in)**: Public profiles and lists require an account to view by default. An admin can enable **Allow browsing without an account** in the admin panel to let visitors browse without signing in.
 - **Progressive Web App**: Install Scrob on any device - Android, iOS, or desktop - for a native app feel.
 - **Single container**: Frontend and backend ship as one image on one port. No separate services to manage.
 - **API documentation**: Full interactive OpenAPI docs at `/docs` (Swagger UI) and `/redoc` (ReDoc), useful if you're scripting against Scrob directly.
@@ -400,6 +406,16 @@ Re-uploading a newer export is safe to do any time you want to catch up on new a
 
 **Auto Pull** and **Auto Push** apply only to the OAuth connection and can run independently every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours.
 
+## Yamtrack / Floppy Import
+
+Scrob can import a one-time CSV export from [Yamtrack](https://github.com/FuzzyGrim/Yamtrack) or its fork [Floppy](https://github.com/dannyvfilms/Floppy).
+
+1. Export your data from Yamtrack or Floppy (their respective **Export** page).
+2. In Scrob, open **Connections → Import**, select the **Yamtrack** tab, then drop the `.csv` file on the upload box.
+3. Choose what to import - watched history, ratings, and comments are always available. Collection and lists are only populated by a **Floppy** export; a vanilla Yamtrack export doesn't include them, so those options add nothing.
+
+This is a pull-only, one-shot import, like the Trakt export path above - there's no ongoing sync or connection left behind afterward. Re-uploading a newer export is safe; imported items are deduplicated. Requires a TMDB Read Access Token configured in Scrob.
+
 ## Stremio Synchronization
 
 Scrob uses Stremio's account datastore API at `https://api.strem.io`, the official Link flow at `https://link.stremio.com`, and Cinemeta episode metadata. Configure a TMDB Read Access Token in Scrob before synchronizing so Stremio IMDb identifiers can be mapped to Scrob media.
@@ -507,7 +523,9 @@ Plex webhooks require a **Plex Pass** subscription.
 
 1. In Emby, go to **Dashboard → Notifications → Add Notification → Webhook**.
 2. Paste your Scrob Emby webhook URL.
-3. Enable events: `Playback Start`, `Playback Progress`, `Playback Stop`, `Item Added`, `Item Deleted`.
+3. Enable events: `Playback Start`, `Playback Stop`, `Item Added`, `Item Deleted`.
+
+> Emby's webhook plugin has no separate "playback progress" event, so the Now Playing bar's live progress instead comes from Scrob polling Emby's own Sessions API in the background - no extra configuration needed.
 
 ### Kodi
 
@@ -530,6 +548,9 @@ OIDC_AUTH_URL: "https://auth.yourdomain.com/api/oidc/authorization"
 OIDC_TOKEN_URL: "https://auth.yourdomain.com/api/oidc/token"
 OIDC_USERINFO_URL: "https://auth.yourdomain.com/api/oidc/userinfo"
 OIDC_REDIRECT_URL: "https://scrob.yourdomain.com/oidc-callback"
+# OIDC_LOGOUT_URL: "https://auth.yourdomain.com/api/oidc/logout"  # your provider's logout endpoint
+# OIDC_SCOPES: "openid email profile"     # default shown - override only if your provider needs different scopes
+# OIDC_IDENTIFIER_FIELD: "email"          # userinfo field used to match/create the Scrob account - default shown
 OIDC_AUTO_CREATE_USERS: "true"
 # OIDC_DISABLE_PASSWORD_LOGIN: "true"  # uncomment to enforce SSO-only
 ```
