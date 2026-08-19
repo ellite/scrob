@@ -3,13 +3,27 @@ import Base from "../layouts/Base.astro";
 import { api, tmdbImageUrl } from "../lib/api";
 export const prerender = false;
 
-const { token } = Astro.locals;
+const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
-const [settings, profileData] = await Promise.all([
-  api.auth.getSettings(token!),
-  api.profile.get(token!).catch(() => null),
-]);
-const hasTmdbKey = !!settings?.has_effective_tmdb_key;
+
+let settings: Awaited<ReturnType<typeof api.auth.getSettings>> | null = null;
+let profileData: Awaited<ReturnType<typeof api.profile.get>> | null = null;
+let hasTmdbKey = false;
+if (token) {
+  [settings, profileData] = await Promise.all([
+    api.auth.getSettings(token),
+    api.profile.get(token).catch(() => null),
+  ]);
+  hasTmdbKey = !!settings?.has_effective_tmdb_key;
+} else {
+  // Anonymous visitor - only reachable at all when the admin enabled
+  // logged-out navigation, which already implies a global TMDB key. There's
+  // no profile to personalise with, so this page falls back to exactly the
+  // same generic sections a freshly-registered user with no profile data
+  // set yet would see.
+  const status = await api.profile.publicAccessStatus().catch(() => ({ enable_logged_out_navigation: false }));
+  hasTmdbKey = status.enable_logged_out_navigation;
+}
 const watchRegion: string = profileData?.country ?? 'US';
 const hasProfileData = !!(
   profileData?.country ||
@@ -269,7 +283,7 @@ function skeletonWide() {
         </div>
       </section>
 
-      {!hasProfileData && (
+      {user && !hasProfileData && (
         <section class="relative mb-16 rounded-3xl overflow-hidden flex items-center" id="profile-banner">
           <div class="absolute inset-0 bg-gradient-to-r from-zinc-950 via-zinc-950/95 to-zinc-900"></div>
           <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_left,_rgba(59,130,246,0.12)_0%,_transparent_50%)]"></div>
@@ -334,8 +348,20 @@ function skeletonWide() {
                 </div>
               </section>
               <section data-section class="mb-10">
-                <h2 class="section-headline mb-5">Disney+ Shows</h2>
+                <h2 class="section-headline mb-5">Prime Video Shows</h2>
                 <div id="fallback-show-1" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
+                  <Fragment set:html={skeletonWide()} />
+                </div>
+              </section>
+              <section data-section class="mb-6">
+                <h2 class="section-headline mb-5">On Disney+</h2>
+                <div id="fallback-movie-2" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
+                  <Fragment set:html={skeleton()} />
+                </div>
+              </section>
+              <section data-section class="mb-10">
+                <h2 class="section-headline mb-5">Disney+ Shows</h2>
+                <div id="fallback-show-2" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
                   <Fragment set:html={skeletonWide()} />
                 </div>
               </section>
@@ -481,7 +507,7 @@ function skeletonWide() {
     if (!container) return;
     try {
       const res = await fetch('/api/proxy/media/trending/trailers', {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error();
       const data = await res.json();
@@ -502,7 +528,7 @@ function skeletonWide() {
     if (!container) return;
     try {
       const res = await fetch(`/api/proxy${url}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error();
       const data = await res.json();
@@ -549,7 +575,9 @@ function skeletonWide() {
     loadSection('fallback-movie-0', `/media/streaming?provider_id=8&type=movie&watch_region=${encodeURIComponent(watchRegion)}`);
     loadSection('fallback-show-0',  `/media/streaming?provider_id=8&type=series&watch_region=${encodeURIComponent(watchRegion)}`, 'backdrop');
     loadSection('fallback-movie-1', `/media/streaming?provider_id=9&type=movie&watch_region=${encodeURIComponent(watchRegion)}`);
-    loadSection('fallback-show-1',  `/media/streaming?provider_id=337&type=series&watch_region=${encodeURIComponent(watchRegion)}`, 'backdrop');
+    loadSection('fallback-show-1',  `/media/streaming?provider_id=9&type=series&watch_region=${encodeURIComponent(watchRegion)}`, 'backdrop');
+    loadSection('fallback-movie-2', `/media/streaming?provider_id=337&type=movie&watch_region=${encodeURIComponent(watchRegion)}`);
+    loadSection('fallback-show-2',  `/media/streaming?provider_id=337&type=series&watch_region=${encodeURIComponent(watchRegion)}`, 'backdrop');
   }
 
   // ── Pick for me ──────────────────────────────────────────────────────────────
@@ -703,7 +731,7 @@ function skeletonWide() {
       showLoading();
       try {
         const res = await fetch(`/api/proxy/media/pick?type=${type}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (res.status === 404) {
           showError('No unwatched titles found. Watch something first, or adjust your profile.');

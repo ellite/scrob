@@ -2281,7 +2281,7 @@ async def sync_items(
                 if queued is None or added_at < queued:
                     collection_heals[heal_collection_id] = added_at
 
-            # Savepoint committed — update pre-loaded caches so duplicates within the
+            # Savepoint committed - update pre-loaded caches so duplicates within the
             # same sync batch reuse the newly created media instead of creating another.
             if new_media:
                 if media_type == MediaType.episode and new_media.show_id:

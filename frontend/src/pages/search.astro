@@ -15,8 +15,16 @@ const inLibrary = Astro.url.searchParams.get("in_library") === "true";
 const isUserSearch = type === "user";
 const showYearFilter = (type === "movie" || type === "series") && !inLibrary;
 
-const settings = await api.auth.getSettings(token!);
-const hasTmdbKey = !!settings?.has_effective_tmdb_key;
+let hasTmdbKey = false;
+if (token) {
+  const settings = await api.auth.getSettings(token);
+  hasTmdbKey = !!settings?.has_effective_tmdb_key;
+} else {
+  // Anonymous visitor - only reachable at all when the admin enabled
+  // logged-out navigation, which already implies a global TMDB key.
+  const status = await api.profile.publicAccessStatus().catch(() => ({ enable_logged_out_navigation: false }));
+  hasTmdbKey = status.enable_logged_out_navigation;
+}
 
 let results: MediaItem[] = [];
 let userResults: UserSearchResult[] = [];
@@ -27,9 +35,15 @@ let error = "";
 if (q.length >= 2) {
   try {
     if (isUserSearch) {
-      const data = await api.profile.searchUsers(q, token);
-      userResults = data.results;
-      totalResults = userResults.length;
+      // Searching for other users has no anonymous use case - keep it
+      // strictly behind a real session regardless of logged-out navigation.
+      if (!currentUser) {
+        error = "Log in to search for users.";
+      } else {
+        const data = await api.profile.searchUsers(q, token);
+        userResults = data.results;
+        totalResults = userResults.length;
+      }
     } else {
       const data = await api.media.search(q, type, page, showYearFilter ? year : undefined, token, inLibrary);
       results = data.results;
@@ -52,7 +66,8 @@ const tabs: [string | undefined, string][] = [
   ["episode",      "Episodes"],
   ["person",       "People"],
   ["collection",   "Collections"],
-  ["user",         "Users"],
+  // Searching for other users has no anonymous use case.
+  ...(currentUser ? ([["user", "Users"]] as [string, string][]) : []),
 ];
 ---
 
@@ -80,7 +95,7 @@ const tabs: [string | undefined, string][] = [
     </div>
 
     <div class="flex items-center gap-2">
-      {!isUserSearch && type !== "person" && type !== "collection" && (
+      {currentUser && !isUserSearch && type !== "person" && type !== "collection" && (
         <a
           href={`/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ""}${!inLibrary ? "&in_library=true" : ""}`}
           class={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition ${inLibrary ? 'bg-blue-600/20 border-blue-500/40 text-blue-400' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}`}

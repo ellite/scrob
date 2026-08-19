@@ -16,7 +16,7 @@ from dependencies import get_current_user, get_current_user_or_api_key, get_opti
 from models.users import User
 from models.follows import Follow
 from models.global_settings import GlobalSettings
-from routers.media import enrich_with_state
+from routers.media import enrich_with_state, require_anon_nav_allowed
 from core.enrichment import is_unmapped_tvdb_episode, create_media_safely
 from core.translations import (
     apply_media_translations,
@@ -60,7 +60,7 @@ async def _check_list_access(lst: ListModel, current_user: Optional[User], db: A
     if not current_user and lst.privacy_level == PrivacyLevel.public:
         gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
         gs = gs_result.scalar_one_or_none()
-        if not (gs and gs.allow_public_profiles):
+        if not (gs and gs.enable_logged_out_navigation):
             raise HTTPException(status_code=403, detail="This list is private")
 
 
@@ -162,8 +162,26 @@ async def _attach_season_show_info(db: AsyncSession, media: dict) -> None:
 @router.get("/public")
 async def get_public_lists(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
+    if current_user is None:
+        # Anonymous visitor: this becomes the whole /lists page rather than a
+        # "From the Community" teaser alongside their own lists, so it's a
+        # real (paginated-ish) browse of every public list, not a 3-item
+        # random sample - there's no "self" to exclude and no follows to
+        # union in either. Gated the same way as the other read-only pages.
+        await require_anon_nav_allowed(db)
+        result = await db.execute(
+            select(ListModel, User.username)
+            .join(User, User.id == ListModel.user_id)
+            .options(selectinload(ListModel.items).selectinload(ListItem.media).selectinload(Media.show))
+            .where(ListModel.privacy_level == PrivacyLevel.public)
+            .order_by(ListModel.updated_at.desc())
+            .limit(60)
+        )
+        rows = result.all()
+        return {"lists": [{**_format_list(lst), "username": username} for lst, username in rows]}
+
     # Friends-only lists of mutual follows belong in discovery too — they were
     # invisible to the very friends they're shared with (#210).
     FollowBack = aliased(Follow)

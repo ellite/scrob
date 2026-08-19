@@ -8,7 +8,7 @@ const token = Astro.cookies.get("token")?.value;
 const type = Astro.url.searchParams.get("type");
 const id = Astro.url.searchParams.get("id");
 
-if (!token || !type || !id) {
+if (!type || !id) {
   return new Response(null, { status: 400 });
 }
 
