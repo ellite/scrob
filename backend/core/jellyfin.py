@@ -64,7 +64,7 @@ async def get_movies(library_id: str, url: str, token: str, user_id: str) -> lis
             "ParentId": library_id,
             "IncludeItemTypes": "Movie",
             "Recursive": True,
-            "Fields": "ProviderIds,MediaStreams,Overview,Genres,CommunityRating,OfficialRating,RunTimeTicks,PremiereDate,UserData",
+            "Fields": "ProviderIds,MediaStreams,Overview,Genres,CommunityRating,OfficialRating,RunTimeTicks,PremiereDate,UserData,DateCreated",
             "Limit": page_size,
             "StartIndex": start,
         })
@@ -103,7 +103,7 @@ async def get_episodes(library_id: str, url: str, token: str, user_id: str) -> l
             # never be imported into a user's collection.
             "ExcludeLocationTypes": "Virtual",
             "IsMissing": False,
-            "Fields": "ProviderIds,MediaStreams,Overview,Genres,CommunityRating,RunTimeTicks,PremiereDate,UserData",
+            "Fields": "ProviderIds,MediaStreams,Overview,Genres,CommunityRating,RunTimeTicks,PremiereDate,UserData,DateCreated",
             "Limit": page_size,
             "StartIndex": start,
         })

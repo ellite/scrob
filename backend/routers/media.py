@@ -29,6 +29,7 @@ from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from core.episode_order import get_episode_orders_for_series, get_tmdb_to_tvdb_positions
 from models.profile import UserProfileData
 from core import tmdb
+from core.limiter import limiter
 from core.rewatch import get_active_rewatches_for_shows
 from models.rewatch import ShowRewatch, RewatchProgress
 from core.translations import (
@@ -37,7 +38,7 @@ from core.translations import (
     upsert_media_translation,
     apply_media_translations,
 )
-from dependencies import get_current_user, get_current_user_or_api_key
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, ANON_USER_ID
 from models.users import User, UserSettings
 from models.show import Show as ShowModel
 from models.global_settings import GlobalSettings
@@ -754,6 +755,17 @@ async def _get_global_settings(db: AsyncSession) -> GlobalSettings | None:
     return db.info["global_settings"]
 
 
+async def require_anon_nav_allowed(db: AsyncSession) -> None:
+    """Raise 401 unless the admin has enabled logged-out navigation and a
+    global TMDB key is set. Called by read-only detail/list endpoints when
+    their optional-auth dependency resolves to no user - re-checked here
+    since these endpoints are reachable directly, not just through a page
+    the frontend middleware already gated."""
+    gs = await _get_global_settings(db)
+    if not (gs and gs.enable_logged_out_navigation and gs.tmdb_api_key):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+
 async def get_user_tmdb_key(db: AsyncSession, user_id: int) -> str | None:
     cache_key = f"tmdb_key_{user_id}"
     if cache_key not in db.info:
@@ -920,6 +932,8 @@ async def list_media(
     total_pages = (total_count + page_size - 1) // page_size
 
     # Sort and Paginate
+    # Every sort here is paginated, so each one needs a unique final key or rows
+    # shift between pages and items get shown twice or skipped entirely.
     if sort == "last_watched":
         last_watched_sq = (
             select(WatchEvent.media_id, func.max(WatchEvent.watched_at).label("last_watched_at"))
@@ -930,7 +944,7 @@ async def list_media(
         query = (
             base_query
             .outerjoin(last_watched_sq, last_watched_sq.c.media_id == Media.id)
-            .order_by(last_watched_sq.c.last_watched_at.desc().nulls_last())
+            .order_by(last_watched_sq.c.last_watched_at.desc().nulls_last(), Media.id.desc())
             .offset(offset).limit(page_size)
         )
     else:
@@ -941,7 +955,7 @@ async def list_media(
             "created_at": Collection.added_at.desc(),
         }
         order = sort_map.get(sort, Collection.added_at.desc())
-        query = base_query.order_by(order).offset(offset).limit(page_size)
+        query = base_query.order_by(order, Media.id.desc()).offset(offset).limit(page_size)
     result = await db.execute(query)
     items = result.scalars().all()
 
@@ -1042,15 +1056,19 @@ async def search_media(
     page: int = Query(1, ge=1),
     in_library: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+
     valid_types = {m.value for m in MediaType} | {"person", "collection"}
     if type is not None and type not in valid_types:
         type = None
 
     # Collection search: TMDB only, no local DB
     if type == "collection":
-        tmdb_key = await get_user_tmdb_key(db, current_user.id)
+        tmdb_key = await get_user_tmdb_key(db, effective_user_id)
         if not check_tmdb_key(tmdb_key):
             return {"page": page, "total_pages": 1, "total_results": 0, "results": []}
         try:
@@ -1081,7 +1099,7 @@ async def search_media(
 
     # People search: TMDB only, no local DB
     if type == "person":
-        tmdb_key = await get_user_tmdb_key(db, current_user.id)
+        tmdb_key = await get_user_tmdb_key(db, effective_user_id)
         if not check_tmdb_key(tmdb_key):
             return {"page": page, "total_pages": 1, "total_results": 0, "results": []}
         try:
@@ -1133,7 +1151,7 @@ async def search_media(
             .options(joinedload(Media.show))
             .join(Collection, Collection.media_id == Media.id)
             .where(
-                Collection.user_id == current_user.id,
+                Collection.user_id == effective_user_id,
                 or_(Media.title.ilike(f"%{q}%"), Media.original_title.ilike(f"%{q}%")),
             )
         )
@@ -1156,7 +1174,7 @@ async def search_media(
             "results": formatted,
         }
 
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
 
     # No TMDB key: fall back to local title search
     if not check_tmdb_key(tmdb_key):
@@ -1325,7 +1343,7 @@ async def search_media(
             item["in_library"] = True
             enriched.append(item)
 
-    await enrich_with_state(db, current_user.id, enriched)
+    await enrich_with_state(db, effective_user_id, enriched)
     return {
         "page": page,
         "total_pages": total_pages,
@@ -1358,9 +1376,13 @@ async def _sync_trending(
 async def trending_movies(
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     data = await _sync_trending(MediaType.movie, page, api_key=tmdb_key)
     tmdb_results = data.get("results", [])
 
@@ -1395,7 +1417,7 @@ async def trending_movies(
                     "adult": res.get("adult", False),
                 }
             )
-    await enrich_with_state(db, current_user.id, enriched)
+    await enrich_with_state(db, effective_user_id, enriched)
     return {
         "page": data.get("page", 1),
         "total_pages": data.get("total_pages", 1),
@@ -1408,9 +1430,13 @@ async def trending_movies(
 async def trending_shows(
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     data = await _sync_trending(MediaType.series, page, api_key=tmdb_key)
     tmdb_results = data.get("results", [])
 
@@ -1424,7 +1450,7 @@ async def trending_shows(
         select(ShowModel.tmdb_id)
         .join(Media, Media.show_id == ShowModel.id)
         .join(Collection, Collection.media_id == Media.id)
-        .where(Collection.user_id == current_user.id, ShowModel.tmdb_id.in_(tmdb_ids))
+        .where(Collection.user_id == effective_user_id, ShowModel.tmdb_id.in_(tmdb_ids))
         .distinct()
     )
     in_library: set[int] = {row[0] for row in collected_q.all()}
@@ -1446,7 +1472,7 @@ async def trending_shows(
                 "adult": res.get("adult", False),
             }
         )
-    await enrich_with_state(db, current_user.id, enriched)
+    await enrich_with_state(db, effective_user_id, enriched)
     return {
         "page": data.get("page", 1),
         "total_pages": data.get("total_pages", 1),
@@ -1455,12 +1481,112 @@ async def trending_shows(
     }
 
 
+_poster_wall_cache: dict = {"data": None, "ts": 0.0}
+_POSTER_WALL_TTL = 3600
+
+# Point-in-time snapshot of trending titles, used as the poster-wall fallback
+# for instances with no TMDB key configured (or when a live fetch fails), so
+# the logged-out landing page still shows real posters instead of abstract
+# tiles. Will look dated over time - that's an acceptable tradeoff since it's
+# only ever a fallback.
+_FALLBACK_POSTERS: list[dict] = [
+    {"poster_path": "/iPOn6DinuVyLY17YM9mKuPofV08.jpg", "title": "Spider-Man: Brand New Day", "media_type": "movie"},
+    {"poster_path": "/4LwvU9SZc8QQzW1X1FAPhNbXnEU.jpg", "title": "Minions & Monsters", "media_type": "movie"},
+    {"poster_path": "/5rhTDKUhPYvpdQIijFIs5VoWsON.jpg", "title": "The Odyssey", "media_type": "movie"},
+    {"poster_path": "/sfQtVlIHljToOwYjhe21KPGzZWK.jpg", "title": "Toy Story 5", "media_type": "movie"},
+    {"poster_path": "/fYXqpgPmHMphSF2W30GbTeJVIa5.jpg", "title": "The End of Oak Street", "media_type": "movie"},
+    {"poster_path": "/b7Dr8Chzse8VagexAporUu2RtLx.jpg", "title": "The Invite", "media_type": "movie"},
+    {"poster_path": "/bRwnj8WEKBCvmfeUNOukJPwB43K.jpg", "title": "Obsession", "media_type": "movie"},
+    {"poster_path": "/6JU7E8Vv2M11egkctWVOScxWR75.jpg", "title": "The Last House", "media_type": "movie"},
+    {"poster_path": "/jzPwsojjFStf5lR5Nm07w2hH56G.jpg", "title": "Avengers: Doomsday", "media_type": "movie"},
+    {"poster_path": "/dgTKahWonzVLeN8Lm22WR2S7D0A.jpg", "title": "Don't Say Good Luck", "media_type": "movie"},
+    {"poster_path": "/rS7byWK9cfPfdLeFNlRIaJxH9mN.jpg", "title": "Camp Rock 3", "media_type": "movie"},
+    {"poster_path": "/rhGx6E3qRNMgj3i5su2oukNHwIQ.jpg", "title": "Backrooms", "media_type": "movie"},
+    {"poster_path": "/1QCWdqzTfh2x9UylVpspIU6QTuM.jpg", "title": "Supergirl", "media_type": "movie"},
+    {"poster_path": "/AnJ8IQJI23hNpYXVNaythu061Ru.jpg", "title": "Disclosure Day", "media_type": "movie"},
+    {"poster_path": "/6CdoTKnRQHJkjRGxTefFGkPQplB.jpg", "title": "Young Washington", "media_type": "movie"},
+    {"poster_path": "/yihdXomYb5kTeSivtFndMy5iDmf.jpg", "title": "Project Hail Mary", "media_type": "movie"},
+    {"poster_path": "/4tTrW9dXCByS5wt2pXVWb58zNjz.jpg", "title": "Insidious: Out of the Further", "media_type": "movie"},
+    {"poster_path": "/zP19YO60jwEsfKd5Qf1UvA5uJu8.jpg", "title": "The Furious", "media_type": "movie"},
+    {"poster_path": "/uRxrNXQWkHoENm3nwVOZDYSCx2F.jpg", "title": "Evil Dead Burn", "media_type": "movie"},
+    {"poster_path": "/3sgnSfNT27Bx5O5ukr7B26mhEQq.jpg", "title": "Avatar Aang: The Last Airbender", "media_type": "movie"},
+    {"poster_path": "/gpC7h43xPMEV3goYMQShfJbTtLq.jpg", "title": "Lanterns", "media_type": "series"},
+    {"poster_path": "/f1VCQIG2iCyOookdgOzwtUpwWC0.jpg", "title": "Reacher", "media_type": "series"},
+    {"poster_path": "/7V0Ebks0GgpKvQ7QbLAIdX5dos4.jpg", "title": "House of the Dragon", "media_type": "series"},
+    {"poster_path": "/dB4EDhre2dsC2kxYDavyKWqLQwi.jpg", "title": "One Piece", "media_type": "series"},
+    {"poster_path": "/gMYZZvnkVNTqSVnVCphWbPXwWwb.jpg", "title": "Silo", "media_type": "series"},
+    {"poster_path": "/rzpHPSEgPTpRs8EHbygwsOw7jC0.jpg", "title": "Lioness", "media_type": "series"},
+    {"poster_path": "/xsrkiXg8EuNNtbPtbmvCxg95gK7.jpg", "title": "Lucky", "media_type": "series"},
+    {"poster_path": "/uRHsiw1wLxPHFXkkv4Ix1s0O6f4.jpg", "title": "Ted Lasso", "media_type": "series"},
+    {"poster_path": "/2HKBc5UiFw8JrruHq8S1Y7TnlW0.jpg", "title": "X-Men '97", "media_type": "series"},
+    {"poster_path": "/2EewmxXe72ogD0EaWM8gqa0ccIw.jpg", "title": "Bleach", "media_type": "series"},
+    {"poster_path": "/7yUY1HUyQuybbvkAAhLzQ7x1l9g.jpg", "title": "A Shop for Killers", "media_type": "series"},
+    {"poster_path": "/eM8bbTn8C8vUwwS6upzzm7gX31u.jpg", "title": "Futurama", "media_type": "series"},
+    {"poster_path": "/43iXOUo8dw7KfllwOnuu8JSyqFt.jpg", "title": "Forging Justice", "media_type": "series"},
+    {"poster_path": "/oHqYrPAsIiTD5m4DuxumV4er8BU.jpg", "title": "Re:ZERO -Starting Life in Another World-", "media_type": "series"},
+    {"poster_path": "/fhpa8B6USatHybK04XBbPAB6Mlz.jpg", "title": "My Brilliant Career", "media_type": "series"},
+    {"poster_path": "/Q9u5ZSrthOuwkULV41VUqE8vRV.jpg", "title": "Mystic Nine", "media_type": "series"},
+    {"poster_path": "/cThLWEGs6BEqY0QZMbU4FAeWwPT.jpg", "title": "Sterling Point", "media_type": "series"},
+    {"poster_path": "/in1R2dDc421JxsoRWaIIAqVI2KE.jpg", "title": "The Boys", "media_type": "series"},
+    {"poster_path": "/WGyAyBPncfuu8MZhLY9RtfZPM0.jpg", "title": "VisionQuest", "media_type": "series"},
+    {"poster_path": "/wP0GdqwVu2g1y3q1KzBXuSrdTvX.jpg", "title": "The Shards", "media_type": "series"},
+]
+
+
+@router.get("/public/poster-wall")
+@limiter.limit("20/minute")
+async def public_poster_wall(request: Request, db: AsyncSession = Depends(get_db)):
+    """Decorative trending posters for the logged-out landing page.
+
+    Unauthenticated by design - only ever returns bare TMDB poster paths and
+    titles, never library or user data, so it's safe regardless of the
+    instance's public-profile setting.
+    """
+    now = _time.monotonic()
+    if _poster_wall_cache["data"] is not None and now - _poster_wall_cache["ts"] < _POSTER_WALL_TTL:
+        return _poster_wall_cache["data"]
+
+    gs = await _get_global_settings(db)
+    api_key = gs.tmdb_api_key if gs else None
+    if not check_tmdb_key(api_key):
+        return {"posters": _FALLBACK_POSTERS}
+
+    posters: list[dict] = []
+    try:
+        movies, shows = await asyncio.gather(
+            tmdb.get_trending_movies(time_window="week", api_key=api_key),
+            tmdb.get_trending_shows(time_window="week", api_key=api_key),
+        )
+        for res in movies.get("results", []):
+            if res.get("poster_path") and not res.get("adult"):
+                posters.append({"poster_path": res["poster_path"], "title": res.get("title"), "media_type": "movie"})
+        for res in shows.get("results", []):
+            if res.get("poster_path") and not res.get("adult"):
+                posters.append({"poster_path": res["poster_path"], "title": res.get("name"), "media_type": "series"})
+    except Exception as e:
+        print(f"Error fetching poster wall from TMDB: {e}")
+        return {"posters": _FALLBACK_POSTERS}
+
+    if not posters:
+        posters = _FALLBACK_POSTERS
+
+    data = {"posters": posters}
+    _poster_wall_cache["data"] = data
+    _poster_wall_cache["ts"] = now
+    return data
+
+
 @router.get("/on-air-today")
 async def on_air_today(
     page: int = Query(default=1, ge=1),
-    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user_or_api_key)
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": [], "page": 1, "total_pages": 1, "total_results": 0}
     data = await tmdb.get_on_air_today(page=page, api_key=tmdb_key)
@@ -1477,7 +1603,7 @@ async def on_air_today(
         }
         for s in data.get("results", [])
     ]
-    await enrich_with_state(db, current_user.id, results)
+    await enrich_with_state(db, effective_user_id, results)
     return {
         "results": results,
         "page": data.get("page", page),
@@ -1490,10 +1616,14 @@ async def on_air_today(
 async def airing_today_collected(
     timezone: str = Query(default="UTC"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     """Return shows airing today on TMDB that the user has in their collection."""
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
 
@@ -1512,7 +1642,7 @@ async def airing_today_collected(
         select(ShowModel.tmdb_id)
         .join(Media, Media.show_id == ShowModel.id)
         .join(Collection, Collection.media_id == Media.id)
-        .where(Collection.user_id == current_user.id)
+        .where(Collection.user_id == effective_user_id)
         .distinct()
     )
     collected_tmdb_ids: set[int] = {row[0] for row in collected_q.all()}
@@ -1594,6 +1724,25 @@ async def airing_today_collected(
     return {"results": results}
 
 
+def recently_added_order(max_added):
+    """Ordering for the Recently Added rail.
+
+    The add-date leads, but media servers stamp a batch of files with the same
+    second, so without the rest of these keys Postgres is free to return a
+    different arrangement every time and a season comes back shuffled. Grouping
+    on show_id keeps one show's episodes together inside a shared timestamp,
+    season and episode descending put the newest one first, and the id makes
+    the result fully deterministic. Movies have no season/episode, hence
+    nulls_last: a DESC sort in Postgres puts NULLs first otherwise."""
+    return [
+        max_added.desc(),
+        Media.show_id.desc().nulls_last(),
+        Media.season_number.desc().nulls_last(),
+        Media.episode_number.desc().nulls_last(),
+        Media.id.desc(),
+    ]
+
+
 @router.get("/recently-added")
 async def recently_added(
     type: MediaType | None = Query(None),
@@ -1632,7 +1781,7 @@ async def recently_added(
         .join(coll_subq, coll_subq.c.media_id == Media.id)
         .options(joinedload(Media.show))
         .where(*media_filters)
-        .order_by(coll_subq.c.max_added.desc())
+        .order_by(*recently_added_order(coll_subq.c.max_added))
         .limit(limit)
     )
     result = await db.execute(query)
@@ -1657,10 +1806,14 @@ async def get_person_details(
     year: list[int] = Query(default=[]),  # OR'd together — any selected year matches
     min_rating: str | None = Query(None),  # "9".."5" (N+ stars) or "lt5" (under 5 stars)
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+
     try:
-        tmdb_key = await get_user_tmdb_key(db, current_user.id)
+        tmdb_key = await get_user_tmdb_key(db, effective_user_id)
         if not check_tmdb_key(tmdb_key):
             raise HTTPException(status_code=404, detail="TMDB API Key not configured")
         data = await tmdb.get_person(person_id, api_key=tmdb_key)
@@ -1754,7 +1907,7 @@ async def get_person_details(
             # filtered set, not the full filmography (enrich_with_state is a
             # handful of batched queries regardless of list size, same as any
             # other listing endpoint here).
-            await enrich_with_state(db, current_user.id, deduped)
+            await enrich_with_state(db, effective_user_id, deduped)
             wants_in_library = collection == "in"
             deduped = [c for c in deduped if bool(c.get("in_library")) == wants_in_library]
 
@@ -1762,10 +1915,10 @@ async def get_person_details(
         start = (page - 1) * _PERSON_PAGE_SIZE
         top_credits = deduped[start:start + _PERSON_PAGE_SIZE]
         if collection not in ("in", "out"):
-            await enrich_with_state(db, current_user.id, top_credits)
+            await enrich_with_state(db, effective_user_id, top_credits)
 
         # Which of the user's lists contain this person?
-        user_list_ids_q = await db.execute(select(UserList.id).where(UserList.user_id == current_user.id))
+        user_list_ids_q = await db.execute(select(UserList.id).where(UserList.user_id == effective_user_id))
         user_list_ids = [r[0] for r in user_list_ids_q.all()]
         person_in_lists: list[int] = []
         if user_list_ids:
@@ -1961,10 +2114,24 @@ async def get_tmdb_list(
     watch: list[str] = Query(default=[]),
     arr: list[str] = Query(default=[]),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    try:
+    if current_user is None:
+        # Anonymous browsing is only allowed when the admin has opted in and a
+        # global TMDB key is actually set - mirrors the check in
+        # /profile/public-access-status, which the frontend middleware gates
+        # page access on. Re-checked here since this endpoint is reachable
+        # directly, not just through the page.
+        gs = await _get_global_settings(db)
+        if not (gs and gs.enable_logged_out_navigation and gs.tmdb_api_key):
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        tmdb_key = gs.tmdb_api_key
+        # No personal library/watch history to filter on without a user.
+        collection, watch, arr = [], [], []
+    else:
         tmdb_key = await get_user_tmdb_key(db, current_user.id)
+
+    try:
         if not check_tmdb_key(tmdb_key):
             return {"page": page, "total_pages": 1, "total_results": 0, "results": []}
 
@@ -1978,8 +2145,9 @@ async def get_tmdb_list(
         # Explore cards render straight from these TMDB responses, so ask TMDB
         # for the user's Metadata Language directly - detail pages and list
         # cards already translate, Explore was the one place still hardcoded
-        # to TMDB's default English (#235 follow-up).
-        metadata_lang = await get_user_metadata_language(db, current_user.id)
+        # to TMDB's default English (#235 follow-up). No profile to read a
+        # language from when browsing anonymously.
+        metadata_lang = await get_user_metadata_language(db, current_user.id) if current_user else None
 
         async def _fetch_tmdb_page(fetch_page: int) -> dict:
             if has_filters:
@@ -2016,8 +2184,11 @@ async def get_tmdb_list(
         async def _build_enriched(results: list[dict]) -> list[dict]:
             tmdb_ids = [res["id"] for res in results]
 
-            # Check local library
-            if type == MediaType.series:
+            # Check local library. Anonymous visitors have no personal
+            # collection to match against, so shows never come back "in
+            # library" for them (movies below aren't user-scoped, so those
+            # are unaffected).
+            if type == MediaType.series and current_user is not None:
                 # Match against Show.tmdb_id — never use episode tmdb_ids here,
                 # as TMDB IDs across shows and episodes share the same number space
                 # and collide (causing episodes to appear in show listings).
@@ -2033,6 +2204,8 @@ async def get_tmdb_list(
                 )
                 show_result = await db.execute(show_q)
                 library_tmdb_ids = {row[0] for row in show_result.all()}
+            elif type == MediaType.series:
+                library_tmdb_ids = set()
             else:
                 query = (
                     select(Media)
@@ -2057,7 +2230,8 @@ async def get_tmdb_list(
                         "adult": res.get("adult", False),
                     }
                 )
-            await enrich_with_state(db, current_user.id, enriched)
+            if current_user is not None:
+                await enrich_with_state(db, current_user.id, enriched)
             return enriched
 
         if not (collection or watch or arr or year):
@@ -2195,18 +2369,21 @@ async def _show_library_ids(db: AsyncSession, user_id: int, tmdb_ids: list[int])
 @router.get("/now-playing")
 async def now_playing(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_now_playing(api_key=tmdb_key)
         results = data.get("results", [])
         ids = [r["id"] for r in results if r.get("id")]
-        lib = await _movie_library_ids(db, current_user.id, ids)
+        lib = await _movie_library_ids(db, effective_user_id, ids)
         items = _enrich_movie_list(results, lib)
-        await enrich_with_state(db, current_user.id, items)
+        await enrich_with_state(db, effective_user_id, items)
         return {"results": items}
     except Exception:
         return {"results": []}
@@ -2215,9 +2392,12 @@ async def now_playing(
 @router.get("/trending/trailers")
 async def trending_trailers(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
@@ -2256,18 +2436,21 @@ async def trending_trailers(
 @router.get("/upcoming")
 async def upcoming_movies(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_upcoming_movies(api_key=tmdb_key)
         results = data.get("results", [])
         ids = [r["id"] for r in results if r.get("id")]
-        lib = await _movie_library_ids(db, current_user.id, ids)
+        lib = await _movie_library_ids(db, effective_user_id, ids)
         items = _enrich_movie_list(results, lib)
-        await enrich_with_state(db, current_user.id, items)
+        await enrich_with_state(db, effective_user_id, items)
         return {"results": items}
     except Exception:
         return {"results": []}
@@ -2276,18 +2459,21 @@ async def upcoming_movies(
 @router.get("/on-air-this-week")
 async def on_air_this_week(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_on_air_this_week(api_key=tmdb_key)
         results = data.get("results", [])
         ids = [r["id"] for r in results if r.get("id")]
-        lib = await _show_library_ids(db, current_user.id, ids)
+        lib = await _show_library_ids(db, effective_user_id, ids)
         items = _enrich_show_list(results, lib)
-        await enrich_with_state(db, current_user.id, items)
+        await enrich_with_state(db, effective_user_id, items)
         return {"results": items}
     except Exception:
         return {"results": []}
@@ -2297,10 +2483,13 @@ async def on_air_this_week(
 async def hidden_gems(
     type: MediaType = Query(MediaType.movie),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
     import random
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
@@ -2313,9 +2502,9 @@ async def hidden_gems(
             )
             results = data.get("results", [])
             ids = [r["id"] for r in results if r.get("id")]
-            lib = await _movie_library_ids(db, current_user.id, ids)
+            lib = await _movie_library_ids(db, effective_user_id, ids)
             items = _enrich_movie_list(results, lib)
-            await enrich_with_state(db, current_user.id, items)
+            await enrich_with_state(db, effective_user_id, items)
             return {"results": items}
         else:
             data = await tmdb.discover_shows(
@@ -2325,9 +2514,9 @@ async def hidden_gems(
             )
             results = data.get("results", [])
             ids = [r["id"] for r in results if r.get("id")]
-            lib = await _show_library_ids(db, current_user.id, ids)
+            lib = await _show_library_ids(db, effective_user_id, ids)
             items = _enrich_show_list(results, lib)
-            await enrich_with_state(db, current_user.id, items)
+            await enrich_with_state(db, effective_user_id, items)
             return {"results": items}
     except Exception:
         return {"results": []}
@@ -2336,18 +2525,21 @@ async def hidden_gems(
 @router.get("/top-rated-movies")
 async def top_rated_movies(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_top_rated_movies(api_key=tmdb_key)
         results = data.get("results", [])
         ids = [r["id"] for r in results if r.get("id")]
-        lib = await _movie_library_ids(db, current_user.id, ids)
+        lib = await _movie_library_ids(db, effective_user_id, ids)
         items = _enrich_movie_list(results, lib)
-        await enrich_with_state(db, current_user.id, items)
+        await enrich_with_state(db, effective_user_id, items)
         return {"results": items}
     except Exception:
         return {"results": []}
@@ -2356,18 +2548,21 @@ async def top_rated_movies(
 @router.get("/top-rated-shows")
 async def top_rated_shows(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_top_rated_shows(api_key=tmdb_key)
         results = data.get("results", [])
         ids = [r["id"] for r in results if r.get("id")]
-        lib = await _show_library_ids(db, current_user.id, ids)
+        lib = await _show_library_ids(db, effective_user_id, ids)
         items = _enrich_show_list(results, lib)
-        await enrich_with_state(db, current_user.id, items)
+        await enrich_with_state(db, effective_user_id, items)
         return {"results": items}
     except Exception:
         return {"results": []}
@@ -2495,9 +2690,12 @@ async def streaming(
     type: MediaType = Query(MediaType.movie),
     watch_region: str = Query("US"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
@@ -2509,7 +2707,7 @@ async def streaming(
             )
             results = data.get("results", [])
             ids = [r["id"] for r in results if r.get("id")]
-            lib = await _movie_library_ids(db, current_user.id, ids)
+            lib = await _movie_library_ids(db, effective_user_id, ids)
             items = _enrich_movie_list(results, lib)
         else:
             data = await tmdb.discover_shows(
@@ -2519,9 +2717,9 @@ async def streaming(
             )
             results = data.get("results", [])
             ids = [r["id"] for r in results if r.get("id")]
-            lib = await _show_library_ids(db, current_user.id, ids)
+            lib = await _show_library_ids(db, effective_user_id, ids)
             items = _enrich_show_list(results, lib)
-        await enrich_with_state(db, current_user.id, items)
+        await enrich_with_state(db, effective_user_id, items)
         return {"results": items}
     except Exception:
         return {"results": []}
@@ -4704,13 +4902,17 @@ async def get_media_details(
     type: MediaType,
     tmdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     """Unified endpoint for Movies and Episodes details."""
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         raise HTTPException(status_code=404, detail="TMDB API Key not configured")
-    metadata_lang = await get_user_metadata_language(db, current_user.id)
+    metadata_lang = await get_user_metadata_language(db, effective_user_id)
 
     try:
         # 1. Fetch from TMDB
@@ -4745,7 +4947,7 @@ async def get_media_details(
                 api_key=tmdb_key, language=metadata_lang,
             )
             ep_state: dict = {"tmdb_id": tmdb_id, "type": "episode"}
-            await enrich_with_state(db, current_user.id, [ep_state])
+            await enrich_with_state(db, effective_user_id, [ep_state])
             # Store translation for library browsing
             if metadata_lang:
                 await upsert_media_translation(
@@ -4763,8 +4965,10 @@ async def get_media_details(
                 coll_q = (
                     select(CollectionFile)
                     .join(Collection, Collection.id == CollectionFile.collection_id)
-                    .where(Collection.media_id == local_ep.id, Collection.user_id == current_user.id)
-                    .order_by(CollectionFile.added_at.desc())
+                    .where(Collection.media_id == local_ep.id, Collection.user_id == effective_user_id)
+                    # Rows from sources with no file details (Nuvio, Stremio) carry no
+                    # quality at all, so keep them behind real files or the badge blanks out.
+                    .order_by(CollectionFile.resolution.is_(None).asc(), CollectionFile.added_at.desc())
                 )
                 coll_res = await db.execute(coll_q)
                 coll_files = coll_res.scalars().all()
@@ -4854,8 +5058,10 @@ async def get_media_details(
             coll_q = (
                 select(CollectionFile)
                 .join(Collection, Collection.id == CollectionFile.collection_id)
-                .where(Collection.media_id.in_(all_media_ids), Collection.user_id == current_user.id)
-                .order_by(CollectionFile.added_at.desc())
+                .where(Collection.media_id.in_(all_media_ids), Collection.user_id == effective_user_id)
+                # Rows from sources with no file details (Nuvio, Stremio) carry no
+                # quality at all, so keep them behind real files or the badge blanks out.
+                .order_by(CollectionFile.resolution.is_(None).asc(), CollectionFile.added_at.desc())
             )
             coll_res = await db.execute(coll_q)
             coll_files = coll_res.scalars().all()
@@ -4904,8 +5110,8 @@ async def get_media_details(
         raw_coll = data.get("belongs_to_collection") if type == MediaType.movie else None
 
         # DB operations must run sequentially — async session doesn't support concurrent use
-        await enrich_with_state(db, current_user.id, [state_item])
-        where_to_watch = await get_where_to_watch(db, current_user.id, tmdb_id, MediaType.movie, media=media, tmdb_key=tmdb_key)
+        await enrich_with_state(db, effective_user_id, [state_item])
+        where_to_watch = await get_where_to_watch(db, effective_user_id, tmdb_id, MediaType.movie, media=media, tmdb_key=tmdb_key)
         coll_data = await tmdb.get_collection(raw_coll["id"], api_key=tmdb_key) if raw_coll else None
 
         collection = None
@@ -4932,7 +5138,7 @@ async def get_media_details(
             }
 
         if collection and collection.get("parts"):
-            await enrich_with_state(db, current_user.id, collection["parts"])
+            await enrich_with_state(db, effective_user_id, collection["parts"])
 
         return {
             **local_info,
@@ -4994,10 +5200,14 @@ async def get_media_recommendations(
     type: MediaType,
     tmdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     """Fetch movie/series recommendations from TMDB and enrich with state."""
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
 
@@ -5024,7 +5234,7 @@ async def get_media_recommendations(
             }
             for r in recs_raw
         ]
-        await enrich_with_state(db, current_user.id, recommendations)
+        await enrich_with_state(db, effective_user_id, recommendations)
         return {"results": recommendations}
     except Exception:
         return {"results": []}
@@ -5327,10 +5537,10 @@ async def verify_image_token(request: Request, db: AsyncSession = Depends(get_db
 
     if not token:
         # Poster/backdrop images carry no per-user data (just a TMDB path), so
-        # once the admin opts into anonymous profile viewing, letting those
-        # pages load images without a session is safe too.
+        # once the admin opts into anonymous browsing, letting those pages
+        # load images without a session is safe too.
         gs = await _get_global_settings(db)
-        if gs and gs.allow_public_profiles:
+        if gs and gs.enable_logged_out_navigation:
             return None
         raise credentials_exception
 

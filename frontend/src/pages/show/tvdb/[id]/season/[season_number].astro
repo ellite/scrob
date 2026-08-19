@@ -7,7 +7,7 @@ import { formatSeasonTitle } from "../../../../../lib/media-format";
 export const prerender = false;
 
 const { id, season_number } = Astro.params;
-const { token } = Astro.locals;
+const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 
 let season: TvdbSeason | null = null;
@@ -29,7 +29,7 @@ const seasonTitle = season
   : "Season Details";
 ---
 
-<Base title={season ? `${show?.title} — ${seasonTitle}` : "Season Details"}>
+<Base title={season ? `${show?.title} - ${seasonTitle}` : "Season Details"}>
   {error && !season && (
     <div class="max-w-md mx-auto mt-20 text-center">
       <div class="bg-red-500/10 border border-red-500/20 text-red-500 p-6 rounded-2xl mb-6">
@@ -138,27 +138,29 @@ const seasonTitle = season
               )}
             </div>
 
-            <div class="mb-6">
-              <ActionBar
-                tmdbId={season.show.tmdb_id ?? Number(id)}
-                mediaType="series"
-                watched={season.season_watched}
-                inLists={season.season_in_lists ?? []}
-                inLibrary={season.season_in_library}
-                collectionPct={season.season_collection_pct}
-                watchPct={season.season_watch_pct ?? 0}
-                watchStarted={season.season_watch_started ?? false}
-                seasonNumber={Number(season_number)}
-                showTmdbId={season.show.tmdb_id ?? undefined}
-                episodeOrder="tvdb"
-                tvdbId={Number(id)}
-                requestEnabled={false}
-                hideLists={false}
-                userRating={season.season_user_rating}
-              />
-            </div>
+            {user && (
+              <div class="mb-6">
+                <ActionBar
+                  tmdbId={season.show.tmdb_id ?? Number(id)}
+                  mediaType="series"
+                  watched={season.season_watched}
+                  inLists={season.season_in_lists ?? []}
+                  inLibrary={season.season_in_library}
+                  collectionPct={season.season_collection_pct}
+                  watchPct={season.season_watch_pct ?? 0}
+                  watchStarted={season.season_watch_started ?? false}
+                  seasonNumber={Number(season_number)}
+                  showTmdbId={season.show.tmdb_id ?? undefined}
+                  episodeOrder="tvdb"
+                  tvdbId={Number(id)}
+                  requestEnabled={false}
+                  hideLists={false}
+                  userRating={season.season_user_rating}
+                />
+              </div>
+            )}
 
-            {season.show_in_library && (
+            {user && season.show_in_library && (
               <div class="mb-6">
                 <button
                   id="refresh-metadata-btn"
@@ -248,30 +250,32 @@ const seasonTitle = season
                     </div>
                   </div>
                 </a>
-                <div class="px-5 pb-5">
-                  {ep.unmatched ? (
-                    <p class="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                      Not tracked yet — this episode might exist on TMDB too, but hasn't been matched. Try "Refresh Metadata" above.
-                    </p>
-                  ) : (
-                    <ActionBar
-                      tmdbId={ep.tmdb_id}
-                      mediaType="episode"
-                      watched={ep.watched}
-                      inLists={ep.in_lists}
-                      inLibrary={ep.in_library}
-                      collectionPct={ep.in_library ? 100 : 0}
-                      showTmdbId={ep.show_tmdb_id ?? season.show.tmdb_id ?? undefined}
-                      seasonNumber={ep.tmdb_season_number}
-                      episodeNumber={ep.tmdb_episode_number}
-                      displaySeasonNumber={Number(season_number)}
-                      episodeOrder="tvdb"
-                      tvdbId={Number(id)}
-                      hideRequest={true}
-                      userRating={ep.user_rating}
-                    />
-                  )}
-                </div>
+                {user && (
+                  <div class="px-5 pb-5">
+                    {ep.unmatched ? (
+                      <p class="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                        Not tracked yet - this episode might exist on TMDB too, but hasn't been matched. Try "Refresh Metadata" above.
+                      </p>
+                    ) : (
+                      <ActionBar
+                        tmdbId={ep.tmdb_id}
+                        mediaType="episode"
+                        watched={ep.watched}
+                        inLists={ep.in_lists}
+                        inLibrary={ep.in_library}
+                        collectionPct={ep.in_library ? 100 : 0}
+                        showTmdbId={ep.show_tmdb_id ?? season.show.tmdb_id ?? undefined}
+                        seasonNumber={ep.tmdb_season_number}
+                        episodeNumber={ep.tmdb_episode_number}
+                        displaySeasonNumber={Number(season_number)}
+                        episodeOrder="tvdb"
+                        tvdbId={Number(id)}
+                        hideRequest={true}
+                        userRating={ep.user_rating}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>

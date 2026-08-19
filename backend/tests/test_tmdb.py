@@ -127,5 +127,62 @@ class DiscoverGenreIdsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured[0]["with_genres"], "28")
 
 
+class MetadataLanguageParamTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for #235: Explore cards showed TMDB's default English
+    title/poster because the list/discover wrappers never forwarded the
+    user's Metadata Language. language must be omitted (not sent as empty)
+    when unset, so those requests stay byte-identical to before and keep
+    sharing the same response cache entries."""
+
+    def setUp(self) -> None:
+        tmdb._cache._store.clear()
+
+    def _capturing_handler(self, captured: list[dict]):
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(dict(request.url.params))
+            return httpx.Response(200, json={"results": [], "page": 1, "total_pages": 1})
+        return handler
+
+    async def _assert_language_param(self, coro_factory):
+        captured: list[dict] = []
+        transport = httpx.MockTransport(self._capturing_handler(captured))
+        with patch.object(
+            tmdb.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
+        ):
+            await coro_factory(None)
+        self.assertNotIn("language", captured[0])
+
+        captured.clear()
+        with patch.object(
+            tmdb.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
+        ):
+            await coro_factory("pt-PT")
+        self.assertEqual(captured[0]["language"], "pt-PT")
+
+    async def test_get_trending_movies(self) -> None:
+        await self._assert_language_param(lambda lang: tmdb.get_trending_movies(api_key="key", language=lang))
+
+    async def test_get_trending_shows(self) -> None:
+        await self._assert_language_param(lambda lang: tmdb.get_trending_shows(api_key="key", language=lang))
+
+    async def test_get_popular_movies(self) -> None:
+        await self._assert_language_param(lambda lang: tmdb.get_popular_movies(api_key="key", language=lang))
+
+    async def test_get_top_rated_movies(self) -> None:
+        await self._assert_language_param(lambda lang: tmdb.get_top_rated_movies(api_key="key", language=lang))
+
+    async def test_get_popular_shows(self) -> None:
+        await self._assert_language_param(lambda lang: tmdb.get_popular_shows(api_key="key", language=lang))
+
+    async def test_get_top_rated_shows(self) -> None:
+        await self._assert_language_param(lambda lang: tmdb.get_top_rated_shows(api_key="key", language=lang))
+
+    async def test_discover_movies(self) -> None:
+        await self._assert_language_param(lambda lang: tmdb.discover_movies(api_key="key", language=lang))
+
+    async def test_discover_shows(self) -> None:
+        await self._assert_language_param(lambda lang: tmdb.discover_shows(api_key="key", language=lang))
+
+
 if __name__ == "__main__":
     unittest.main()

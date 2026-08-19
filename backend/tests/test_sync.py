@@ -679,5 +679,61 @@ class ConnectionUpdateBaselineResetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(conn.plex_watchlist_synced_keys, ["movie:1"])
 
 
+class ProviderAddedAtTests(unittest.TestCase):
+    """The library add-date each media server reports, normalised to naive UTC
+    like every other timestamp Scrob stores."""
+
+    def test_plex_epoch_seconds(self):
+        got = sync.provider_added_at({"addedAt": 1754179200}, sync.CollectionSource.plex)
+        self.assertEqual(got, datetime(2025, 8, 3, 0, 0, 0))
+
+    def test_plex_accepts_the_value_as_a_string(self):
+        got = sync.provider_added_at({"addedAt": "1754179200"}, sync.CollectionSource.plex)
+        self.assertEqual(got, datetime(2025, 8, 3, 0, 0, 0))
+
+    def test_jellyfin_iso_with_dotnet_fractional_seconds(self):
+        got = sync.provider_added_at(
+            {"DateCreated": "2026-08-01T09:30:00.0000000Z"}, sync.CollectionSource.jellyfin
+        )
+        self.assertEqual(got, datetime(2026, 8, 1, 9, 30, 0))
+        self.assertIsNone(got.tzinfo)
+
+    def test_emby_iso_is_converted_to_utc(self):
+        got = sync.provider_added_at(
+            {"DateCreated": "2026-08-01T11:30:00+02:00"}, sync.CollectionSource.emby
+        )
+        self.assertEqual(got, datetime(2026, 8, 1, 9, 30, 0))
+
+    def test_sources_without_a_library_date_return_none(self):
+        # Nuvio and Stremio items are synthesized with a fixed key set, so they
+        # must never be read as if they were a media browser payload.
+        for source in (sync.CollectionSource.nuvio, sync.CollectionSource.stremio):
+            self.assertIsNone(
+                sync.provider_added_at({"DateCreated": "2026-08-01T09:30:00Z"}, source)
+            )
+
+    def test_missing_or_unusable_values_return_none(self):
+        cases = [
+            ({}, sync.CollectionSource.plex),
+            ({"addedAt": None}, sync.CollectionSource.plex),
+            ({"addedAt": "not-a-number"}, sync.CollectionSource.plex),
+            ({}, sync.CollectionSource.jellyfin),
+            ({"DateCreated": ""}, sync.CollectionSource.jellyfin),
+            ({"DateCreated": "yesterday"}, sync.CollectionSource.jellyfin),
+        ]
+        for item, source in cases:
+            self.assertIsNone(sync.provider_added_at(item, source), (item, source))
+
+
+class CollectionAddedAtHealTests(unittest.TestCase):
+    """The heal has to lower Collection.added_at without ever raising it, which
+    is why the comparison happens in SQL rather than in Python."""
+
+    def test_statement_takes_the_lesser_of_stored_and_provider_dates(self):
+        rendered = str(sync.collection_added_at_heal_stmt().compile(dialect=_pg.dialect()))
+        self.assertIn("UPDATE collections SET added_at=least(collections.added_at,", rendered)
+        self.assertIn("WHERE collections.id =", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()
