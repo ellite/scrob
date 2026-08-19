@@ -644,16 +644,30 @@ async def get_public_profile(
     ]
 
     # --- Recently Watched Shows (episodes) ---
-    rw_shows_q = await db.execute(
-        select(WatchEvent, Media, ShowModel)
+    # One card per show, not per episode - a binge session shouldn't fill the
+    # whole rail with the same show. DISTINCT ON (show_id) picks each show's
+    # single most-recent episode (Postgres requires the leading ORDER BY to
+    # match the DISTINCT ON expression), then the outer query re-sorts those
+    # per-show rows by watched_at and takes the 12 most recent shows.
+    latest_episode_per_show = (
+        select(WatchEvent.id.label("we_id"))
+        .distinct(Media.show_id)
         .join(Media, WatchEvent.media_id == Media.id)
-        .outerjoin(ShowModel, Media.show_id == ShowModel.id)
         .where(
             WatchEvent.user_id == user_id,
             WatchEvent.completed == True,
             Media.media_type == "episode",
             WatchEvent.watched_at.isnot(None),
+            Media.show_id.isnot(None),
         )
+        .order_by(Media.show_id, WatchEvent.watched_at.desc())
+    ).subquery()
+
+    rw_shows_q = await db.execute(
+        select(WatchEvent, Media, ShowModel)
+        .join(latest_episode_per_show, WatchEvent.id == latest_episode_per_show.c.we_id)
+        .join(Media, WatchEvent.media_id == Media.id)
+        .outerjoin(ShowModel, Media.show_id == ShowModel.id)
         .order_by(WatchEvent.watched_at.desc())
         .limit(12)
     )
