@@ -375,23 +375,32 @@ Recent Comments
                     const label = commentLabel(comment);
                     const thumb = posterUrl(comment.poster_path, "w92");
                     return (
-                      <a
-                        href={href}
+                      <div
                         class="flex gap-4 bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 hover:border-zinc-600 transition-all group"
+                        data-comment-id={comment.id}
                       >
                         {thumb && (
-                          <div class="w-10 h-14 rounded-lg overflow-hidden bg-zinc-800 shrink-0">
+                          <a href={href} class="w-10 h-14 rounded-lg overflow-hidden bg-zinc-800 shrink-0 block">
                             <img src={thumb} alt={label} class="w-full h-full object-cover" loading="lazy" />
-                          </div>
+                          </a>
                         )}
-                        <div class="flex-1 min-w-0">
-                          <div class="flex items-center justify-between gap-2 mb-1.5">
-                            <p class="text-xs font-bold text-zinc-400 group-hover:text-zinc-200 transition-colors truncate">{label}</p>
-                            <span class="text-[10px] text-zinc-400 font-medium shrink-0">{timeAgo(comment.created_at)}</span>
-                          </div>
+                        <a href={href} class="flex-1 min-w-0">
+                          <p class="text-xs font-bold text-zinc-400 group-hover:text-zinc-200 transition-colors truncate mb-1.5">{label}</p>
                           <p class="text-sm text-zinc-300 leading-relaxed line-clamp-2">{comment.content}</p>
+                        </a>
+                        <div class="flex flex-col items-end justify-between shrink-0 gap-2">
+                          <span class="text-[10px] text-zinc-400 font-medium">{timeAgo(comment.created_at)}</span>
+                          {isOwner && (
+                            <button
+                              class="delete-recent-comment cursor-pointer p-1 text-zinc-500 hover:text-red-400 transition-colors rounded-lg hover:bg-zinc-800"
+                              data-id={comment.id}
+                              title="Delete Comment"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                            </button>
+                          )}
                         </div>
-                      </a>
+                      </div>
                     );
                   })}
                 </div>
@@ -545,10 +554,15 @@ Lists
 
 <script>
   function setup() {
+    const token = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
+
+    setupFollowButton(token);
+    setupDeleteCommentButtons(token);
+  }
+
+  function setupFollowButton(token: string) {
     const btn = document.getElementById('follow-btn') as HTMLButtonElement | null;
     if (!btn) return;
-
-    const token = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
 
     btn.addEventListener('click', async () => {
       const userId = Number(btn.dataset.userId);
@@ -581,6 +595,36 @@ Lists
       } finally {
         btn.disabled = false;
       }
+    });
+  }
+
+  function setupDeleteCommentButtons(token: string) {
+    document.querySelectorAll('.delete-recent-comment').forEach((delBtn) => {
+      const clone = delBtn.cloneNode(true);
+      delBtn.parentNode?.replaceChild(clone, delBtn);
+      clone.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const ok = await window.showConfirm('Delete comment?', 'This cannot be undone.');
+        if (!ok) return;
+
+        const commentId = (clone as HTMLElement).dataset.id;
+        try {
+          const res = await fetch(`/api/proxy/comments/${commentId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          if (!res.ok) throw new Error('Request failed');
+
+          const card = document.querySelector(`[data-comment-id="${commentId}"]`) as HTMLElement | null;
+          if (card) {
+            card.style.opacity = '0';
+            card.style.transition = 'opacity 0.3s';
+            setTimeout(() => card.remove(), 300);
+          }
+        } catch {
+          alert('Failed to delete comment');
+        }
+      });
     });
   }
 
