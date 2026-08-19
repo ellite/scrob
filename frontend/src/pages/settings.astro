@@ -346,6 +346,22 @@ if (me.totp_enabled) {
           <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
             <div class="flex items-center justify-between px-5 py-4">
               <div>
+                <p class="text-sm font-medium text-zinc-200">Heal items stuck as unwatched from Jellyfin/Emby</p>
+                <p class="text-xs text-zinc-500 mt-0.5">Removes history entries stuck as unwatched from a fixed sync bug, so the next sync can record their real status.</p>
+              </div>
+              <button
+                id="heal-stuck-unwatched-btn"
+                type="button"
+                class="ml-4 shrink-0 text-sm px-4 py-2 rounded-lg transition-colors cursor-pointer bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30"
+              >
+                Heal
+              </button>
+            </div>
+          </div>
+
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+            <div class="flex items-center justify-between px-5 py-4">
+              <div>
                 <p class="text-sm font-medium text-zinc-200">Clear now playing</p>
                 <p class="text-xs text-zinc-500 mt-0.5">Removes all active now playing sessions. Use this if a ghost session is stuck in the bar after a restart or network interruption.</p>
               </div>
@@ -1525,6 +1541,29 @@ if (me.totp_enabled) {
         } catch {
           healPushEchoBtn.textContent = 'Error';
           setTimeout(() => { healPushEchoBtn.textContent = original; (healPushEchoBtn as HTMLButtonElement).disabled = false; }, 2000);
+        }
+      });
+    }
+
+    const healStuckUnwatchedBtn = document.getElementById('heal-stuck-unwatched-btn');
+    if (healStuckUnwatchedBtn) {
+      healStuckUnwatchedBtn.addEventListener('click', async () => {
+        const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
+        const original = healStuckUnwatchedBtn.textContent;
+        healStuckUnwatchedBtn.textContent = 'Healing…';
+        (healStuckUnwatchedBtn as HTMLButtonElement).disabled = true;
+        try {
+          const res = await fetch('/api/proxy/sync/heal-stuck-unwatched', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${tok}` },
+          });
+          if (!res.ok) throw new Error('Failed');
+          const data = await res.json();
+          healStuckUnwatchedBtn.textContent = data.healed > 0 ? `Healed ${data.healed}` : 'Nothing to heal';
+          setTimeout(() => { healStuckUnwatchedBtn.textContent = original; (healStuckUnwatchedBtn as HTMLButtonElement).disabled = false; }, 3000);
+        } catch {
+          healStuckUnwatchedBtn.textContent = 'Error';
+          setTimeout(() => { healStuckUnwatchedBtn.textContent = original; (healStuckUnwatchedBtn as HTMLButtonElement).disabled = false; }, 2000);
         }
       });
     }

@@ -1871,9 +1871,16 @@ async def sync_items(
     for m in list(media_by_episode.values()) + list(media_by_tmdb.values()):
         media_by_id[m.id] = m
 
-    # Existing watch event media_ids (only need the int, not the ORM object)
-    we_res = await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == user_id))
-    existing_watched: set[int] = {row[0] for row in we_res}
+    # Existing watch event media_ids (only need the int, not the ORM object).
+    # existing_completed is the narrower set that actually finished (#253) -
+    # Jellyfin/Emby can report PlayCount > 0 with Played still False (started
+    # but not yet past their own played-threshold), which already_recorded
+    # alone would treat as "nothing to do" forever, even once the server
+    # later reports the real completion.
+    we_res = await db.execute(select(WatchEvent.media_id, WatchEvent.completed).where(WatchEvent.user_id == user_id))
+    we_rows = we_res.all()
+    existing_watched: set[int] = {row[0] for row in we_rows}
+    existing_completed: set[int] = {row[0] for row in we_rows if row[1]}
 
     # Rewatch-aware watched dedup: a show mid-rewatch must not skip an episode
     # just because raw history already has it (it always will - that's the
@@ -2250,7 +2257,14 @@ async def sync_items(
                             rewatch_progressed_media_ids,
                             watch_state["last_played"],
                         )
-                        if not already_recorded or rewatch_eligible:
+                        # An existing record that never actually completed (#253 -
+                        # e.g. Jellyfin/Emby reporting PlayCount > 0 while Played is
+                        # still False, a partial watch under their own played
+                        # threshold) must not block recording the real completion
+                        # once the server later reports it - only a record that's
+                        # ALREADY completed counts as nothing new to do here.
+                        needs_completion = watch_state["completed"] and media_id_for_watch not in existing_completed
+                        if not already_recorded or rewatch_eligible or needs_completion:
                             watch_event = WatchEvent(
                                 user_id=user_id,
                                 media_id=media_id_for_watch,
@@ -2263,6 +2277,7 @@ async def sync_items(
                             if watch_state["completed"]:
                                 await db.flush()
                                 await record_rewatch_progress(db, user_id, media_id_for_watch, watch_event.id)
+                                existing_completed.add(media_id_for_watch)
                             existing_watched.add(media_id_for_watch)
                             if rewatch_eligible:
                                 rewatch_progressed_media_ids.add(media_id_for_watch)
@@ -7621,6 +7636,49 @@ async def heal_push_echo_duplicates(
     await db.execute(delete(WatchEvent).where(WatchEvent.id.in_(to_delete)))
     await db.commit()
     return {"status": "ok", "healed": len(to_delete)}
+
+
+@router.post("/heal-stuck-unwatched")
+async def heal_stuck_unwatched(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Removes WatchEvent rows stuck as completed=False from the #253 sync bug -
+    Jellyfin/Emby can report PlayCount > 0 while Played is still False (a
+    partial watch that never crossed their own played threshold), and before
+    the fix that row blocked every later sync from ever recording the real
+    completion once it happened - "Next Up" in particular kept resurfacing an
+    episode the user had actually already finished.
+
+    Deletes the stale row rather than assuming it's now complete - that lets
+    the next sync (now fixed) re-record the item's real current state,
+    whether that's now finished or still genuinely in progress.
+
+    Scoped to items actually collected from Jellyfin/Emby: completed=False
+    can also come from a deliberate manual "log a partial watch" entry (see
+    the manual-add endpoint in routers/history.py), which this must leave
+    alone entirely.
+    """
+    ids_res = await db.execute(
+        select(WatchEvent.id)
+        .join(Media, Media.id == WatchEvent.media_id)
+        .join(Collection, Collection.media_id == Media.id)
+        .join(CollectionFile, CollectionFile.collection_id == Collection.id)
+        .where(
+            WatchEvent.user_id == current_user.id,
+            WatchEvent.completed == False,
+            Collection.user_id == current_user.id,
+            CollectionFile.source.in_([CollectionSource.jellyfin, CollectionSource.emby]),
+        )
+        .distinct()
+    )
+    ids = [row[0] for row in ids_res.all()]
+    if not ids:
+        return {"status": "ok", "healed": 0}
+
+    await db.execute(delete(WatchEvent).where(WatchEvent.id.in_(ids)))
+    await db.commit()
+    return {"status": "ok", "healed": len(ids)}
 
 
 class UnmatchShowBody(BaseModel):

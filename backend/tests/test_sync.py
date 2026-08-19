@@ -841,5 +841,38 @@ class HealPushEchoDuplicatesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(db.executed_statements), 1)
 
 
+class _HealStuckUnwatchedDB:
+    def __init__(self, ids):
+        self._results = [_HealPushEchoResult([(i,) for i in ids])]
+        self.executed_statements = []
+        self.commit = AsyncMock()
+
+    async def execute(self, stmt):
+        self.executed_statements.append(stmt)
+        if self._results:
+            return self._results.pop(0)
+        return _HealPushEchoResult([])
+
+
+class HealStuckUnwatchedTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for the #253 cleanup heal: a WatchEvent stuck as
+    completed=False (Jellyfin/Emby reporting PlayCount > 0 with Played still
+    False) used to block every later sync from ever recording the real
+    completion once it happened."""
+
+    async def test_matching_rows_are_healed(self):
+        db = _HealStuckUnwatchedDB([10, 11, 12])
+        result = await sync.heal_stuck_unwatched(db=db, current_user=SimpleNamespace(id=1))
+        self.assertEqual(result, {"status": "ok", "healed": 3})
+        db.commit.assert_awaited_once()
+
+    async def test_no_matches_short_circuits_without_delete_or_commit(self):
+        db = _HealStuckUnwatchedDB([])
+        result = await sync.heal_stuck_unwatched(db=db, current_user=SimpleNamespace(id=1))
+        self.assertEqual(result, {"status": "ok", "healed": 0})
+        self.assertEqual(len(db.executed_statements), 1)
+        db.commit.assert_not_awaited()
+
+
 if __name__ == "__main__":
     unittest.main()
