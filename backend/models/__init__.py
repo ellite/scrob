@@ -27,6 +27,7 @@ from .show_translation import ShowTranslation
 from .episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from .rewatch import ShowRewatch, RewatchProgress
 from .title_credits import TitleCredits
+from .calendar_cache import UserCalendarCache
 
 __all__ = [
     "Base",
