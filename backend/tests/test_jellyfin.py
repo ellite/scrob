@@ -140,7 +140,7 @@ class JellyfinFindByIdsUserScopedTests(unittest.IsolatedAsyncioTestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             requested_paths.append(request.url.path)
             if request.url.path == "/Items":
-                return httpx.Response(200, json={"Items": [{"Id": "movie-item-id"}]})
+                return httpx.Response(200, json={"Items": [{"Id": "movie-item-id", "ProviderIds": {"Tmdb": "550"}}]})
             return httpx.Response(200, json={"Id": "movie-item-id", "Type": "Movie"})
 
         transport = httpx.MockTransport(handler)
@@ -163,9 +163,9 @@ class JellyfinFindByIdsUserScopedTests(unittest.IsolatedAsyncioTestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             requested_paths.append(request.url.path)
             if request.url.path == "/Items" and request.url.params.get("IncludeItemTypes") == "Series":
-                return httpx.Response(200, json={"Items": [{"Id": "series-item-id"}]})
+                return httpx.Response(200, json={"Items": [{"Id": "series-item-id", "ProviderIds": {"Tmdb": "1399"}}]})
             if request.url.path == "/Items":
-                return httpx.Response(200, json={"Items": [{"Id": "episode-item-id"}]})
+                return httpx.Response(200, json={"Items": [{"Id": "episode-item-id", "SeriesId": "series-item-id"}]})
             return httpx.Response(200, json={"Id": "episode-item-id", "Type": "Episode"})
 
         transport = httpx.MockTransport(handler)
@@ -192,7 +192,7 @@ class JellyfinFindByIdsUserScopedTests(unittest.IsolatedAsyncioTestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             requested_paths.append(request.url.path)
             if request.url.path == "/Items":
-                return httpx.Response(200, json={"Items": [{"Id": "movie-item-id"}]})
+                return httpx.Response(200, json={"Items": [{"Id": "movie-item-id", "ProviderIds": {"Tmdb": "550"}}]})
             return httpx.Response(200, json={"Id": "movie-item-id"})
 
         transport = httpx.MockTransport(handler)
@@ -204,6 +204,89 @@ class JellyfinFindByIdsUserScopedTests(unittest.IsolatedAsyncioTestCase):
             await jellyfin.find_movie_by_tmdb_id("http://jellyfin.local", "token", 550)
 
         self.assertIn("/Items/movie-item-id", requested_paths)
+
+
+class JellyfinFindByIdsProviderFilterMismatchTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for #247: AnyProviderIdEquals doesn't reliably bind on
+    every Jellyfin version, so Items[0] can be an unrelated title. These
+    functions must confirm the match against ProviderIds themselves instead
+    of trusting the filter, so a push doesn't mark the wrong show/movie
+    watched on Jellyfin."""
+
+    async def test_find_movie_by_tmdb_id_skips_a_wrong_first_result(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/Items":
+                return httpx.Response(200, json={"Items": [
+                    {"Id": "wrong-movie-id", "ProviderIds": {"Tmdb": "9999"}},
+                    {"Id": "right-movie-id", "ProviderIds": {"Tmdb": "550"}},
+                ]})
+            return httpx.Response(200, json={"Id": request.url.path.rsplit("/", 1)[-1]})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            jellyfin.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            item = await jellyfin.find_movie_by_tmdb_id("http://jellyfin.local", "token", 550)
+
+        self.assertEqual(item["Id"], "right-movie-id")
+
+    async def test_find_movie_by_tmdb_id_returns_none_when_no_result_matches(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"Items": [{"Id": "wrong-movie-id", "ProviderIds": {"Tmdb": "9999"}}]})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            jellyfin.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            item = await jellyfin.find_movie_by_tmdb_id("http://jellyfin.local", "token", 550)
+
+        self.assertIsNone(item)
+
+    async def test_find_episode_by_ids_skips_a_wrong_first_series_result(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/Items" and request.url.params.get("IncludeItemTypes") == "Series":
+                return httpx.Response(200, json={"Items": [
+                    {"Id": "wrong-series-id", "ProviderIds": {"Tmdb": "9999"}},
+                    {"Id": "right-series-id", "ProviderIds": {"Tmdb": "1399"}},
+                ]})
+            if request.url.path == "/Items":
+                self.assertEqual(request.url.params.get("SeriesId"), "right-series-id")
+                return httpx.Response(200, json={"Items": [{"Id": "episode-id", "SeriesId": "right-series-id"}]})
+            return httpx.Response(200, json={"Id": "episode-id"})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            jellyfin.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            item = await jellyfin.find_episode_by_ids("http://jellyfin.local", "token", 1399, 1, 1)
+
+        self.assertEqual(item["Id"], "episode-id")
+
+    async def test_find_episode_by_ids_rejects_an_episode_from_the_wrong_series(self) -> None:
+        # Belt-and-braces: even if the series step is confirmed correct, the
+        # episode search result must actually belong to that series.
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/Items" and request.url.params.get("IncludeItemTypes") == "Series":
+                return httpx.Response(200, json={"Items": [{"Id": "right-series-id", "ProviderIds": {"Tmdb": "1399"}}]})
+            if request.url.path == "/Items":
+                return httpx.Response(200, json={"Items": [{"Id": "episode-id", "SeriesId": "some-other-series-id"}]})
+            return httpx.Response(200, json={"Id": "episode-id"})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            jellyfin.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            item = await jellyfin.find_episode_by_ids("http://jellyfin.local", "token", 1399, 1, 1)
+
+        self.assertIsNone(item)
 
 
 if __name__ == "__main__":

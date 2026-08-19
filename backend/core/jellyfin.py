@@ -1,7 +1,27 @@
+import re
 import httpx
 from typing import Optional, List, Dict
 
 TIMEOUT = httpx.Timeout(120.0)  # 120 second timeout
+
+_TMDB_PROVIDER_PATH_RE = re.compile(r"/(?:movie|tv)/(\d+)")
+
+
+def get_jellyfin_tmdb_id(provider_ids: dict) -> int | None:
+    tid = provider_ids.get("Tmdb") or provider_ids.get("tmdb")
+    if not tid:
+        return None
+    tid = str(tid)
+    if tid.isdigit():
+        return int(tid)
+    # Some Emby TMDB metadata plugins encode an episode's provider id as a
+    # relative path to its parent show/movie (e.g. "../tv/203124/season/1/episode/1")
+    # instead of a plain numeric id (see GitHub #125) - pull the id out of that
+    # instead of crashing the whole sync on int().
+    m = _TMDB_PROVIDER_PATH_RE.search(tid)
+    if m:
+        return int(m.group(1))
+    return None
 
 
 def _auth_headers(token: str) -> Dict[str, str]:
@@ -174,15 +194,20 @@ async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int, user_id: Opt
             "IncludeItemTypes": "Movie",
             "AnyProviderIdEquals": f"Tmdb.{tmdb_id}",
             "Fields": "MediaStreams,Path,ProviderIds",
-            "Limit": 1,
+            "Limit": 25,
         })
         items = data.get("Items", [])
-        if not items:
+        # AnyProviderIdEquals doesn't reliably bind on every Jellyfin version - it
+        # can return an unrelated item as Items[0], which would then get marked
+        # watched/unwatched in this movie's place (see GitHub #247). Confirm the
+        # match against the item's own ProviderIds instead of trusting the filter.
+        match = next((i for i in items if get_jellyfin_tmdb_id(i.get("ProviderIds", {})) == tmdb_id), None)
+        if not match:
             return None
         # Fetch full detail with MediaStreams - user_id is required here, the
         # admin-only Items/{id} endpoint (no Users/ prefix) throws server-side
         # for a non-admin token (see #153).
-        return await get_item(url, token, items[0]["Id"], user_id=user_id)
+        return await get_item(url, token, match["Id"], user_id=user_id)
     except Exception:
         return None
 
@@ -196,12 +221,18 @@ async def find_episode_by_ids(url: str, token: str, series_tmdb_id: int, season:
             "IncludeItemTypes": "Series",
             "AnyProviderIdEquals": f"Tmdb.{series_tmdb_id}",
             "Fields": "ProviderIds",
-            "Limit": 1,
+            "Limit": 25,
         })
         series_items = series_data.get("Items", [])
-        if not series_items:
+        # Same AnyProviderIdEquals unreliability as find_movie_by_tmdb_id (#247) -
+        # confirm the series match ourselves before searching inside it, since an
+        # unrelated series here would misattribute the episode lookup below too.
+        series_match = next(
+            (s for s in series_items if get_jellyfin_tmdb_id(s.get("ProviderIds", {})) == series_tmdb_id), None
+        )
+        if not series_match:
             return None
-        series_id = series_items[0]["Id"]
+        series_id = series_match["Id"]
 
         # Then find the episode within that series
         ep_data = await _get(url, token, "Items", params={
@@ -214,7 +245,7 @@ async def find_episode_by_ids(url: str, token: str, series_tmdb_id: int, season:
             "Limit": 1,
         })
         ep_items = ep_data.get("Items", [])
-        if not ep_items:
+        if not ep_items or ep_items[0].get("SeriesId") != series_id:
             return None
         # user_id required - see #153.
         return await get_item(url, token, ep_items[0]["Id"], user_id=user_id)
