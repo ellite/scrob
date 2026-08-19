@@ -8,7 +8,7 @@ import { api, type TvdbEpisodeDetail } from "../../../../../../lib/api";
 export const prerender = false;
 
 const { id, season_number, episode_number } = Astro.params;
-const { token } = Astro.locals;
+const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 
 let episode: TvdbEpisodeDetail | null = null;
@@ -29,7 +29,7 @@ const season = episode?.season;
 const thumbnail = episode?.image_url || show?.poster_path || null;
 ---
 
-<Base title={episode ? `${show?.title} — ${episode.name ?? `Episode ${episode_number}`}` : "Episode Details"}>
+<Base title={episode ? `${show?.title} - ${episode.name ?? `Episode ${episode_number}`}` : "Episode Details"}>
   {error && !episode && (
     <div class="max-w-md mx-auto mt-20 text-center">
       <div class="bg-red-500/10 border border-red-500/20 text-red-500 p-6 rounded-2xl mb-6">
@@ -155,7 +155,7 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
               )}
             </div>
 
-            {episode.unmatched ? (
+            {user && (episode.unmatched ? (
               <div class="mb-4 p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl text-sm">
                 <p class="font-bold text-amber-200 mb-1">Not tracked yet</p>
                 <p class="text-zinc-300 opacity-90">
@@ -182,9 +182,9 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
                   userRating={episode.user_rating}
                 />
               </div>
-            )}
+            ))}
 
-            {!episode.unmatched && (
+            {user && !episode.unmatched && (
               <ManualScrobble
                 tmdbId={episode.tmdb_id}
                 mediaId={episode.id}
@@ -228,7 +228,7 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
               </div>
             )}
 
-            {(episode.in_library || episode.unmatched) && (
+            {user && (episode.in_library || episode.unmatched) && (
               <div class="mb-8 flex flex-wrap gap-3 items-start">
                 <button
                   id="refresh-metadata-btn"
@@ -248,7 +248,7 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
                     mediaId={episode.id}
                     mediaType="episode"
                     inLibrary={episode.in_library}
-                    title={`${show?.title} — ${episode.name ?? `Episode ${episode_number}`}`}
+                    title={`${show?.title} - ${episode.name ?? `Episode ${episode_number}`}`}
                     token={token}
                     secondary
                   />

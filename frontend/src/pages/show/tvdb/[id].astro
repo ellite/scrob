@@ -8,7 +8,7 @@ import { formatSeasonTitle } from "../../../lib/media-format";
 export const prerender = false;
 
 const { id } = Astro.params;
-const { token } = Astro.locals;
+const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 
 let show: TvdbShow | null = null;
@@ -135,26 +135,28 @@ const originalLanguage = show?.original_language
               )}
             </div>
 
-            <div class="mb-6">
-              <ActionBar
-                tmdbId={show.tmdb_id_cross ?? show.tvdb_id}
-                mediaType="series"
-                watched={show.watched}
-                inLists={show.in_lists}
-                inLibrary={show.in_library}
-                collectionPct={show.collection_pct}
-                watchPct={show.watch_pct ?? 0}
-                watchStarted={show.watch_started ?? false}
-                showTmdbId={show.tmdb_id_cross ?? undefined}
-                isMonitored={show.is_monitored}
-                requestEnabled={show.request_enabled}
-                requestStatus={show.request_status}
-                userRating={show.user_rating}
-                showRewatch={true}
-                rewatch={show.rewatch ?? null}
-              />
-            </div>
-            {show.tmdb_id_cross && (
+            {user && (
+              <div class="mb-6">
+                <ActionBar
+                  tmdbId={show.tmdb_id_cross ?? show.tvdb_id}
+                  mediaType="series"
+                  watched={show.watched}
+                  inLists={show.in_lists}
+                  inLibrary={show.in_library}
+                  collectionPct={show.collection_pct}
+                  watchPct={show.watch_pct ?? 0}
+                  watchStarted={show.watch_started ?? false}
+                  showTmdbId={show.tmdb_id_cross ?? undefined}
+                  isMonitored={show.is_monitored}
+                  requestEnabled={show.request_enabled}
+                  requestStatus={show.request_status}
+                  userRating={show.user_rating}
+                  showRewatch={true}
+                  rewatch={show.rewatch ?? null}
+                />
+              </div>
+            )}
+            {user && show.tmdb_id_cross && (
               <div class="mb-6">
                 <EpisodeOrderSelector
                   tmdbId={show.tmdb_id_cross}
@@ -165,7 +167,7 @@ const originalLanguage = show?.original_language
               </div>
             )}
 
-            {show.id && (
+            {user && show.id && (
               <div class="mb-8">
                 <button
                   id="refresh-metadata-btn"
@@ -271,23 +273,25 @@ const originalLanguage = show?.original_language
                       <p class="text-xs text-zinc-400 line-clamp-3 leading-relaxed opacity-80">{s.overview || "No overview available."}</p>
                     </div>
                   </a>
-                  <ActionBar
-                    tmdbId={show!.tmdb_id_cross ?? show!.tvdb_id}
-                    mediaType="series"
-                    watched={seasonState.watched}
-                    inLists={seasonState.in_lists ?? []}
-                    inLibrary={seasonState.in_library}
-                    collectionPct={seasonState.collection_pct}
-                    watchPct={seasonState.watch_pct ?? 0}
-                    watchStarted={seasonState.watch_started ?? false}
-                    seasonNumber={seasonNum}
-                    showTmdbId={show!.tmdb_id_cross ?? undefined}
-                    episodeOrder="tvdb"
-                    tvdbId={show!.tvdb_id}
-                    hideRequest={true}
-                    hideLists={false}
-                    userRating={seasonState.user_rating ?? null}
-                  />
+                  {user && (
+                    <ActionBar
+                      tmdbId={show!.tmdb_id_cross ?? show!.tvdb_id}
+                      mediaType="series"
+                      watched={seasonState.watched}
+                      inLists={seasonState.in_lists ?? []}
+                      inLibrary={seasonState.in_library}
+                      collectionPct={seasonState.collection_pct}
+                      watchPct={seasonState.watch_pct ?? 0}
+                      watchStarted={seasonState.watch_started ?? false}
+                      seasonNumber={seasonNum}
+                      showTmdbId={show!.tmdb_id_cross ?? undefined}
+                      episodeOrder="tvdb"
+                      tvdbId={show!.tvdb_id}
+                      hideRequest={true}
+                      hideLists={false}
+                      userRating={seasonState.user_rating ?? null}
+                    />
+                  )}
                 </div>
               );
             })}

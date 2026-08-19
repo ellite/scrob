@@ -412,7 +412,7 @@ class GlobalSettings(BaseModel):
     sonarr_require_approval     : bool = False
     image_cache_enabled         : bool = False
     image_cache_limit_gb        : Optional[int] = None
-    allow_public_profiles       : bool = False
+    enable_logged_out_navigation: bool = False
 
     class Config:
         from_attributes = True

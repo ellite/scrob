@@ -9,7 +9,7 @@ import { api, type EpisodeDetail } from "../../../../../lib/api";
 export const prerender = false;
 
 const { id, season_number, episode_number } = Astro.params;
-const { token } = Astro.locals;
+const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 
 let episode: EpisodeDetail | null = null;
@@ -30,7 +30,7 @@ const rating = episode?.tmdb_rating ? episode.tmdb_rating.toFixed(1) : null;
 const thumbnail = episode?.still_path || show?.poster_path || null;
 ---
 
-<Base title={episode ? `${show?.title} — ${episode.title}` : "Episode Details"}>
+<Base title={episode ? `${show?.title} - ${episode.title}` : "Episode Details"}>
   {error && !episode && (
     <div class="max-w-md mx-auto mt-20 text-center">
       <div class="bg-red-500/10 border border-red-500/20 text-red-500 p-6 rounded-2xl mb-6">
@@ -165,31 +165,35 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
               )}
             </div>
 
-            <div class="mb-4">
-              <ActionBar
+            {user && (
+              <div class="mb-4">
+                <ActionBar
+                  tmdbId={episode.tmdb_id}
+                  mediaType="episode"
+                  watched={episode.watched ?? false}
+                  inLists={episode.in_lists ?? []}
+                  inLibrary={episode.in_library ?? false}
+                  collectionPct={episode.collection_pct ?? (episode.in_library ? 100 : 0)}
+                  showTmdbId={Number(id)}
+                  seasonNumber={Number(season_number)}
+                  episodeNumber={Number(episode_number)}
+                  mediaId={episode.id ?? null}
+                  userRating={episode.user_rating ?? null}
+                />
+              </div>
+            )}
+
+            {user && (
+              <ManualScrobble
                 tmdbId={episode.tmdb_id}
                 mediaType="episode"
-                watched={episode.watched ?? false}
-                inLists={episode.in_lists ?? []}
-                inLibrary={episode.in_library ?? false}
-                collectionPct={episode.collection_pct ?? (episode.in_library ? 100 : 0)}
+                runtime={episode.runtime}
+                title={episode.title}
                 showTmdbId={Number(id)}
                 seasonNumber={Number(season_number)}
                 episodeNumber={Number(episode_number)}
-                mediaId={episode.id ?? null}
-                userRating={episode.user_rating ?? null}
               />
-            </div>
-
-            <ManualScrobble
-              tmdbId={episode.tmdb_id}
-              mediaType="episode"
-              runtime={episode.runtime}
-              title={episode.title}
-              showTmdbId={Number(id)}
-              seasonNumber={Number(season_number)}
-              episodeNumber={Number(episode_number)}
-            />
+            )}
 
             <!-- Library info -->
             {episode.library && (
@@ -222,7 +226,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
               </div>
             )}
 
-            {episode.in_library && (
+            {user && episode.in_library && (
               <div class="mb-8 flex flex-wrap gap-3 items-start">
                 <button
                   id="refresh-metadata-btn"
@@ -240,7 +244,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
                   tmdbId={episode.tmdb_id}
                   mediaType="episode"
                   inLibrary={episode.in_library ?? false}
-                  title={`${show?.title} — ${episode.title}`}
+                  title={`${show?.title} - ${episode.title}`}
                   token={token}
                   secondary
                 />

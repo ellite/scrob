@@ -33,6 +33,32 @@ class JellyfinEpisodeQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(requested_params["IncludeItemTypes"], "Episode")
         self.assertEqual(requested_params["ExcludeLocationTypes"], "Virtual")
         self.assertEqual(requested_params["IsMissing"], "false")
+        # Jellyfin omits DateCreated unless it is asked for, and without it
+        # every collected episode falls back to its Scrob insert time.
+        self.assertIn("DateCreated", requested_params["Fields"])
+
+
+class JellyfinMovieQueryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_movies_requests_the_library_add_date(self) -> None:
+        requested_params: dict[str, str] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_params.update(request.url.params)
+            return httpx.Response(200, json={"Items": [], "TotalRecordCount": 0})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            jellyfin.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            movies = await jellyfin.get_movies(
+                "library-id", "http://jellyfin.local", "token", "user-id"
+            )
+
+        self.assertEqual(movies, [])
+        self.assertEqual(requested_params["IncludeItemTypes"], "Movie")
+        self.assertIn("DateCreated", requested_params["Fields"])
 
 
 class JellyfinSetRatingTests(unittest.IsolatedAsyncioTestCase):

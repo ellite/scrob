@@ -13,7 +13,7 @@ const genre = Astro.url.searchParams.getAll("genre");
 const year = Astro.url.searchParams.getAll("year").map(Number).filter((y) => !Number.isNaN(y));
 const minRating = Astro.url.searchParams.get("min_rating") ?? "";
 
-if (!token || !personId) {
+if (!personId) {
   return new Response(null, { status: 400 });
 }
 
