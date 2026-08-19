@@ -24,6 +24,11 @@ from models.playback_session import PlaybackSession
 from models.playback_progress import PlaybackProgress
 from models.library_selections import PlexLibrarySelection, JellyfinLibrarySelection, EmbyLibrarySelection
 from core.enrichment import create_media_safely, enrich_media, enrich_media_safely
+from core.episode_order import (
+    ensure_episode_order_mapping_for_season,
+    get_mapping_by_tvdb_position,
+    reconcile_divergent_episode_media,
+)
 from core.rewatch import record_rewatch_progress, get_active_rewatch
 from models.rewatch import RewatchProgress
 from core import tmdb
@@ -719,6 +724,71 @@ async def _resolve_tvdb_fallback(
         return None, None, None
 
 
+async def _resolve_tvdb_episode_to_tmdb_position(
+    db: AsyncSession, show: Show, season_number: int, episode_number: int,
+    tmdb_api_key: str | None, tvdb_api_key: str | None,
+) -> tuple[int, int] | None:
+    """(tmdb_season_number, tmdb_episode_number) for a TVDB-native (season,
+    episode) position reported by a Jellyfin/Emby webhook (#162).
+
+    Jellyfin's own SeasonNumber/EpisodeNumber are whatever its metadata
+    provider assigns (TheTVDB, for most anime libraries), not necessarily
+    TMDB's numbering - for a show where the two disagree, matching/creating
+    a Media row directly off these raw numbers produces a second, divergent
+    row for an episode that already has a canonical TMDB-numbered one (from
+    Trakt import, or any other TMDB-native tracking path).
+
+    Checks the existing mapping first (the common case, a cheap indexed
+    lookup); only falls back to computing it on demand (one extra TMDB+TVDB
+    season fetch, cached in EpisodeOrderMapping from then on) the first time
+    this show/season combination is seen. Returns None - the caller falls
+    through to the existing raw-number behavior unchanged - if there's no
+    TVDB id, no TVDB key configured, or the position genuinely doesn't exist
+    on TMDB's side (real TVDB-only content, #101).
+
+    Never raises - same contract as _resolve_tvdb_fallback: an enrichment/
+    identity nicety failing must not fail the webhook.
+    """
+    if not (show.tvdb_id and tmdb_api_key and tvdb_api_key):
+        return None
+    try:
+        mapping = await get_mapping_by_tvdb_position(db, show.tmdb_id, season_number, episode_number)
+        if mapping:
+            return mapping.tmdb_season_number, mapping.tmdb_episode_number
+
+        new_mappings = await ensure_episode_order_mapping_for_season(
+            db, show, season_number, tmdb_api_key, tvdb_api_key
+        )
+        if not new_mappings:
+            return None
+
+        # A show's next scrobble after this resolves the mapping is exactly
+        # when a previously-mistracked episode (recorded under the old raw-
+        # number behavior, before this show's mapping was ever computed) can
+        # finally be detected and merged - not just future episodes going
+        # forward from here.
+        try:
+            await reconcile_divergent_episode_media(db, show, season_number=season_number)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "Reconciliation failed for show=%s season=%s", show.id, season_number
+            )
+
+        match = next(
+            (m for m in new_mappings if m.tvdb_season_number == season_number and m.tvdb_episode_number == episode_number),
+            None,
+        )
+        return (match.tmdb_season_number, match.tmdb_episode_number) if match else None
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            "TVDB episode position resolution failed for show=%s season=%s episode=%s",
+            show.id, season_number, episode_number,
+        )
+        return None
+
+
 async def _resolve_show_for_episode(
     data: dict, db: AsyncSession, api_key: str = None
 ) -> tuple[Show | None, int | None]:
@@ -852,6 +922,22 @@ async def find_or_create_media_jellyfin(
                     return media
         except Exception:
             pass
+
+    # 2c. Translate a TVDB-native (season, episode) position to the canonical
+    #     TMDB one before the raw-number match below (#162) - Jellyfin's own
+    #     SeasonNumber/EpisodeNumber follow whatever metadata provider it's
+    #     using (TheTVDB, for most anime libraries), which can diverge
+    #     entirely from TMDB's structure for the same show. Matching/creating
+    #     directly off the raw numbers would produce a second Media row for
+    #     an episode that already has a canonical TMDB-numbered one from
+    #     Trakt import or any other TMDB-native tracking path.
+    if show and data["media_type"] == "episode" and data["season_number"] is not None and data["episode_number"] is not None:
+        _, tvdb_api_key, _ = await _resolve_tvdb_fallback(db, show, user_id)
+        canonical_position = await _resolve_tvdb_episode_to_tmdb_position(
+            db, show, data["season_number"], data["episode_number"], api_key, tvdb_api_key,
+        )
+        if canonical_position:
+            data["season_number"], data["episode_number"] = canonical_position
 
     # 3. Match by (show_id, season_number, episode_number) — catches sync-created rows
     #    when the Jellyfin item's TMDB ID is missing or doesn't match

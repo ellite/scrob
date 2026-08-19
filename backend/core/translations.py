@@ -134,6 +134,18 @@ async def upsert_show_translation(
     await db.execute(stmt)
 
 
+def _translated_poster(raw: str | None) -> str | None:
+    """Translations store a raw TMDB poster path (`/xxx.jpg`), but every
+    endpoint that consumes these dicts returns full image URLs (media rows
+    store the full URL). Expand the raw path so translated items don't come
+    back with a bare path that breaks images."""
+    from core import tmdb
+
+    if raw and raw.startswith("/"):
+        return tmdb.poster_url(raw)
+    return raw
+
+
 def apply_media_translations(items: list[dict], translations: dict[int, dict]) -> list[dict]:
     """Overlay stored translations onto format_media() / _format_media_item() dicts."""
     for item in items:
@@ -147,7 +159,7 @@ def apply_media_translations(items: list[dict], translations: dict[int, dict]) -
         if t.get("tagline"):
             item["tagline"] = t["tagline"]
         if t.get("poster_path"):
-            item["poster_path"] = t["poster_path"]
+            item["poster_path"] = _translated_poster(t["poster_path"])
     return items
 
 
@@ -164,5 +176,5 @@ def apply_show_translations(items: list[dict], translations: dict[int, dict]) ->
         if t.get("tagline"):
             item["tagline"] = t["tagline"]
         if t.get("poster_path"):
-            item["poster_path"] = t["poster_path"]
+            item["poster_path"] = _translated_poster(t["poster_path"])
     return items

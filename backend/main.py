@@ -329,7 +329,6 @@ async def _emby_progress_poller():
                         MediaServerConnection.sync_playback.is_(True),
                     )
                 )).scalars().all()
-                changed = False
                 for conn in conns:
                     try:
                         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -358,9 +357,14 @@ async def _emby_progress_poller():
                         row.progress_seconds = int(position / 10_000_000)
                         row.state = "paused" if play_state.get("IsPaused") else "playing"
                         row.updated_at = datetime.utcnow()
-                        changed = True
-                if changed:
-                    await db.commit()
+                        # Commit per-row via the shared helper (routers/webhooks.py):
+                        # a PlaybackStop webhook can delete this same session between
+                        # the select above and this write, which SQLAlchemy surfaces
+                        # as a StaleDataError. Batching every session into one final
+                        # commit would let that one race discard every other Emby
+                        # session's progress for this whole poll cycle - tolerating
+                        # it per-row keeps the blast radius to just that session.
+                        await webhooks._commit_playback_session_update(db)
         except Exception as e:
             log.error(f"Emby progress poller: {e}")
 

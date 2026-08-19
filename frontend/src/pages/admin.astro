@@ -268,12 +268,18 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
         <!-- Privacy -->
         <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-          <label class="flex items-center justify-between gap-3 cursor-pointer">
+          <label class="flex items-center justify-between gap-3 has-[:disabled]:opacity-50 has-[:disabled]:cursor-not-allowed cursor-pointer">
             <div>
-              <span class="block text-sm font-semibold text-zinc-200">Allow public profiles &amp; lists without login</span>
-              <span class="block text-xs text-zinc-500 mt-0.5">Lets anyone view a user's profile page or an individual list without signing in, as long as its privacy is set to Public.</span>
+              <span class="block text-sm font-semibold text-zinc-200">Allow browsing without an account</span>
+              <span class="block text-xs text-zinc-500 mt-0.5">
+                {globalSettings.tmdb_api_key
+                  ? "Lets visitors navigate the app, and view public profiles and lists, without signing in."
+                  : "Requires a TMDB read access token (above) before this can be enabled."}
+              </span>
             </div>
-            <input type="checkbox" name="allow_public_profiles" id="allow_public_profiles" value="true" class="sr-only peer" checked={globalSettings.allow_public_profiles ?? false} />
+            <input type="checkbox" name="enable_logged_out_navigation" id="enable_logged_out_navigation" value="true" class="sr-only peer"
+              checked={globalSettings.enable_logged_out_navigation ?? false}
+              disabled={!globalSettings.tmdb_api_key} />
             <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
           </label>
         </div>
@@ -839,7 +845,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     body['sonarr_season_folder']      = fd.get('sonarr_season_folder') === 'true';
     body['radarr_require_approval']   = fd.get('radarr_require_approval') === 'true';
     body['sonarr_require_approval']   = fd.get('sonarr_require_approval') === 'true';
-    body['allow_public_profiles']     = fd.get('allow_public_profiles') === 'true';
+    body['enable_logged_out_navigation'] = fd.get('enable_logged_out_navigation') === 'true';
     const radarrTags = fd.getAll('radarr_tags').map(v => parseInt(v as string)).filter(n => !isNaN(n));
     body['radarr_tags'] = radarrTags.length ? radarrTags : null;
     const sonarrTags = fd.getAll('sonarr_tags').map(v => parseInt(v as string)).filter(n => !isNaN(n));

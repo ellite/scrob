@@ -12,6 +12,7 @@ from typing import Optional
 
 from db import get_db, AsyncSessionLocal
 from core import tmdb as tmdb_client
+from core.credits import credits_stats, maybe_backfill_credits
 from core.translations import upsert_media_translation, upsert_show_translation
 
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
@@ -34,12 +35,16 @@ router = APIRouter()
 
 @router.get("/public-access-status")
 async def get_public_access_status(db: AsyncSession = Depends(get_db)):
-    """Unauthenticated: whether the admin allows viewing public profiles without
-    being logged in. Read by the frontend's auth middleware to decide whether an
-    anonymous request to a profile page should be let through."""
+    """Unauthenticated: whether the admin allows anonymous browsing/viewing.
+    Read by the frontend's auth middleware to decide whether an anonymous
+    request to a gated page should be let through."""
     result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
     gs = result.scalar_one_or_none()
-    return {"allow_public_profiles": bool(gs and gs.allow_public_profiles)}
+    return {
+        # Requires a global TMDB key even if the toggle is on, in case the key
+        # was removed after the admin enabled it.
+        "enable_logged_out_navigation": bool(gs and gs.enable_logged_out_navigation and gs.tmdb_api_key),
+    }
 
 
 async def _check_profile_access(user_id: int, current_user, db: AsyncSession):
@@ -83,7 +88,7 @@ async def _check_profile_access(user_id: int, current_user, db: AsyncSession):
     if not current_user and privacy == PrivacyLevel.public:
         gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
         gs = gs_result.scalar_one_or_none()
-        if not (gs and gs.allow_public_profiles):
+        if not (gs and gs.enable_logged_out_navigation):
             raise HTTPException(status_code=403, detail="This profile is private")
 
     return user, profile
@@ -247,6 +252,14 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
                         WatchEvent.user_id == user_id, WatchEvent.completed == True
                     )
                 ),
+                # Items that only live in one of the user's lists (never
+                # collected or watched) render on the list pages too, so they
+                # need translations as well (#235 follow-up).
+                Media.id.in_(
+                    select(ListItem.media_id)
+                    .join(ListModel, ListModel.id == ListItem.list_id)
+                    .where(ListModel.user_id == user_id)
+                ),
             )
 
             movie_q = await db.execute(
@@ -278,11 +291,31 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
             )
             eps = ep_q.all()
 
+            # Series-type media (a show sitting in a list as a whole, #235):
+            # the list cards read MediaTranslation on the Media row itself,
+            # plus ShowTranslation on the linked Show row when one exists -
+            # cover both. The episode-based show query above misses these
+            # when the user never collected/watched an episode.
+            series_q = await db.execute(
+                select(Media.id, Media.tmdb_id)
+                .where(Media.media_type == "series", Media.tmdb_id.isnot(None), has_items_filter)
+                .distinct()
+            )
+            series_rows = series_q.all()
+
+            series_show_q = await db.execute(
+                select(ShowModel.id, ShowModel.tmdb_id)
+                .join(Media, or_(Media.show_id == ShowModel.id, Media.tmdb_id == ShowModel.tmdb_id))
+                .where(Media.media_type == "series", ShowModel.tmdb_id.isnot(None), has_items_filter)
+                .distinct()
+            )
+            shows = list({tuple(r) for r in [*shows, *series_show_q.all()]})
+
         season_map: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
         for media_id, ep_num, season_num, show_tmdb_id in eps:
             season_map[(show_tmdb_id, season_num)].append((media_id, ep_num))
 
-        total = len(movies) + len(shows) + len(season_map)
+        total = len(movies) + len(shows) + len(season_map) + len(series_rows)
         state["total"] = total
         if total == 0:
             return
@@ -293,6 +326,7 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
         # Collected results written to DB after all fetches complete
         movie_results: list[tuple[int, dict]] = []   # (media_id, data)
         show_results: list[tuple[int, dict]] = []    # (show_id, data)
+        series_results: list[tuple[int, dict]] = []  # (media_id, show data)
         season_results: list[tuple[list[tuple[int, int]], dict]] = []  # (ep_list, season_data)
 
         async def fetch_movie(media_id: int, tmdb_id: int) -> None:
@@ -315,6 +349,16 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
                         pass
             state["progress"] += 1
 
+        async def fetch_series_media(media_id: int, tmdb_id: int) -> None:
+            async with sem:
+                if not state.get("abort"):
+                    try:
+                        data = await tmdb_client.get_show_light(tmdb_id, api_key=tmdb_key, language=language)
+                        series_results.append((media_id, data))
+                    except Exception:
+                        pass
+            state["progress"] += 1
+
         async def fetch_season(show_tmdb_id: int, season_num: int, ep_list: list[tuple[int, int]]) -> None:
             async with sem:
                 if not state.get("abort"):
@@ -328,6 +372,7 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
         await asyncio.gather(
             *[fetch_movie(mid, tid) for mid, tid in movies],
             *[fetch_show(sid, stid) for sid, stid in shows],
+            *[fetch_series_media(mid, tid) for mid, tid in series_rows],
             *[fetch_season(stid, snum, ep_list) for (stid, snum), ep_list in season_map.items()],
         )
 
@@ -342,6 +387,12 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
             for show_id, data in show_results:
                 await upsert_show_translation(
                     db, show_id, language,
+                    data.get("name"), data.get("overview"),
+                    data.get("tagline"), data.get("poster_path"),
+                )
+            for media_id, data in series_results:
+                await upsert_media_translation(
+                    db, media_id, language,
                     data.get("name"), data.get("overview"),
                     data.get("tagline"), data.get("poster_path"),
                 )
@@ -396,7 +447,7 @@ async def search_users(
 ):
     """Unlike viewing a single profile/list by ID, this is a directory-style
     enumeration of every public/friends_only user matching a pattern, so it
-    stays behind real authentication regardless of the allow_public_profiles
+    stays behind real authentication regardless of the enable_logged_out_navigation
     toggle, there's no anonymous "browse all public users" use case to support."""
     if len(q.strip()) < 1:
         return {"results": []}
@@ -1168,6 +1219,83 @@ async def get_user_stats(
     )
     shows_watched_collected = watched_shows_collected_q.scalar_one()
 
+    # ── Top titles, networks and people (#124) ──────────────────────────────
+    # Own-profile views kick the TMDB credits backfill (background, throttled
+    # by a TTL in core/credits.py); the people/studio groups on the page stay
+    # hidden until credits data exists.
+    if current_user and current_user.id == user_id:
+        await maybe_backfill_credits(db, user_id)
+
+    top_rows = (await db.execute(
+        select(
+            Media.media_type, Media.id, Media.title, Media.poster_path,
+            Media.tmdb_id, Media.show_id, effective_runtime.label("runtime"),
+        )
+        .join(WatchEvent, WatchEvent.media_id == Media.id)
+        .where(
+            WatchEvent.user_id == user_id,
+            Media.media_type.in_(["movie", "episode"]),
+            *date_filters,
+        )
+    )).all()
+
+    per_show: dict[int, dict] = defaultdict(lambda: {"plays": 0, "minutes": 0, "episodes": set()})
+    per_movie: dict[int, dict] = {}
+    for media_type, mid, m_title, m_poster, m_tmdb_id, show_id, runtime in top_rows:
+        minutes = runtime or 0
+        if media_type == "episode" and show_id:
+            s = per_show[show_id]
+            s["plays"] += 1
+            s["minutes"] += minutes
+            s["episodes"].add(mid)
+        elif media_type == "movie":
+            m = per_movie.setdefault(mid, {
+                "title": m_title, "poster_path": m_poster, "tmdb_id": m_tmdb_id,
+                "plays": 0, "minutes": 0,
+            })
+            m["plays"] += 1
+            m["minutes"] += minutes
+
+    show_meta: dict[int, dict] = {}
+    network_stats: dict[str, dict] = defaultdict(lambda: {"plays": 0, "minutes": 0, "titles": set()})
+    network_logos: dict[str, str] = {}
+    if per_show:
+        top_show_rows = (await db.execute(
+            select(ShowModel).where(ShowModel.id.in_(per_show.keys()))
+        )).scalars().all()
+        for sh in top_show_rows:
+            show_meta[sh.id] = {
+                "title": sh.title, "poster_path": sh.poster_path,
+                "tmdb_id": sh.tmdb_id, "tvdb_id": sh.tvdb_id,
+            }
+            for net in (sh.tmdb_data or {}).get("networks") or []:
+                # Networks appear in tmdb_data both as TMDB's {"name", "logo_path"}
+                # dicts and as plain strings, depending on which sync path stored it.
+                name = net.get("name") if isinstance(net, dict) else (net if isinstance(net, str) else None)
+                if not name:
+                    continue
+                st = network_stats[name]
+                st["plays"] += per_show[sh.id]["plays"]
+                st["minutes"] += per_show[sh.id]["minutes"]
+                st["titles"].add(sh.id)
+                if isinstance(net, dict) and net.get("logo_path"):
+                    network_logos[name] = net["logo_path"]
+
+    top_shows = sorted(
+        ({**show_meta.get(sid, {"title": None, "poster_path": None, "tmdb_id": None, "tvdb_id": None}),
+          "plays": s["plays"], "minutes": s["minutes"], "episodes": len(s["episodes"])}
+         for sid, s in per_show.items()),
+        key=lambda x: x["minutes"], reverse=True,
+    )[:12]
+    top_movies = sorted(per_movie.values(), key=lambda x: (x["plays"], x["minutes"]), reverse=True)[:12]
+    top_networks = sorted(
+        ({"name": name, "plays": v["plays"], "minutes": v["minutes"],
+          "titles": len(v["titles"]), "logo_path": network_logos.get(name)}
+         for name, v in network_stats.items()),
+        key=lambda x: (x["plays"], x["titles"]), reverse=True,
+    )[:15]
+    top_people = await credits_stats(db, user_id, date_filters)
+
     return {
         # Watching
         "granularity": "day" if use_daily else "month",
@@ -1193,4 +1321,9 @@ async def get_user_stats(
         "movies_unwatched_collected": unwatched_movies,
         "shows_watched_collected": shows_watched_collected,
         "shows_unwatched_collected": max(shows_collected - shows_watched_collected, 0),
+        # Top titles & people (#124)
+        "top_shows": top_shows,
+        "top_movies": top_movies,
+        "top_networks": top_networks,
+        "top_people": top_people,
     }

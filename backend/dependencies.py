@@ -15,6 +15,17 @@ import schemas
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
+# Never assigned to a real row (Postgres identity columns start at 1) - read
+# endpoints that accept an anonymous caller (logged-out navigation) pass this
+# in place of a real user id to every existing user-scoped helper/query
+# (enrich_with_state, get_user_tmdb_key, get_where_to_watch, ...) instead of
+# threading `if current_user is not None` through each one individually.
+# Every such query is a `WHERE user_id = :id` filter or an outer join keyed
+# on it, so this id simply never matches anything and all personal state
+# (watched, ratings, lists, collection) comes back empty/false, which is
+# exactly the anonymous-safe result.
+ANON_USER_ID = -1
+
 async def get_current_user(
     db: AsyncSession = Depends(get_db),
     token: str = Depends(oauth2_scheme)

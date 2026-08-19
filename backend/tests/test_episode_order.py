@@ -4,18 +4,27 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
 
 from core.episode_order import (
+    _merge_episode_media,
     ensure_episode_order_mapping,
+    ensure_episode_order_mapping_for_season,
     get_episode_orders_for_series,
     get_tmdb_to_tvdb_positions,
+    reconcile_divergent_episode_media,
     validate_episode_order,
 )
 from models.base import MediaType
+from models.collection import Collection
+from models.comments import Comment
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
+from models.events import WatchEvent
+from models.lists import ListItem
 from models.media import Media
+from models.playback_progress import PlaybackProgress
 from models.ratings import Rating
+from models.rewatch import RewatchProgress
 from models.show import Show as ShowModel
 from routers.ratings import RatingIn, submit_rating
-from routers.shows import _enrich_tvdb_seasons, get_tvdb_season
+from routers.shows import _enrich_tvdb_seasons, _run_episode_order_mapping, get_tvdb_season
 
 
 class _EmptyResult:
@@ -46,6 +55,14 @@ class _ScalarOneResult:
 
     def first(self):
         return self.item
+
+
+class _NestedTxn:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False  # let exceptions propagate, like a real SAVEPOINT rollback
 
 
 class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
@@ -366,6 +383,7 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
                     _ExistingResult([(201,)]),                          # collected_q — only 201 collected
                     _ExistingResult([]),                                # episode_ratings_q
                     _ScalarOneResult(None),                             # show_media_result
+                    _ExistingResult([]),                                # user_lists_q — no lists for this user
                 ]
             ),
         )
@@ -403,6 +421,372 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(validate_episode_order("tvdb"), "tvdb")
         with self.assertRaisesRegex(ValueError, "Unsupported episode order"):
             validate_episode_order("absolute")
+
+
+class EnsureEpisodeOrderMappingForSeasonTests(unittest.IsolatedAsyncioTestCase):
+    """#162: on-demand, per-season mapping resolution for webhook ingest -
+    additive (never deletes existing rows for other seasons) and cheap
+    (skips per-episode external-id lookups for episodes already mapped)."""
+
+    def _show(self):
+        return SimpleNamespace(tmdb_id=127532, tvdb_id=389597)
+
+    async def test_returns_empty_without_tvdb_id_or_api_keys(self) -> None:
+        db = AsyncMock()
+        show_no_tvdb = SimpleNamespace(tmdb_id=127532, tvdb_id=None)
+        self.assertEqual(
+            await ensure_episode_order_mapping_for_season(db, show_no_tvdb, 2, "tmdb-key", "tvdb-key"),
+            [],
+        )
+        self.assertEqual(
+            await ensure_episode_order_mapping_for_season(db, self._show(), 2, None, "tvdb-key"),
+            [],
+        )
+        self.assertEqual(
+            await ensure_episode_order_mapping_for_season(db, self._show(), 2, "tmdb-key", None),
+            [],
+        )
+        db.execute.assert_not_awaited()
+
+    async def test_returns_empty_when_season_already_has_a_mapping(self) -> None:
+        db = AsyncMock()
+        db.execute.return_value = _ExistingResult([
+            SimpleNamespace(tmdb_season_number=1, tmdb_episode_number=13, tvdb_season_number=2, tvdb_id=999),
+        ])
+        result = await ensure_episode_order_mapping_for_season(db, self._show(), 2, "tmdb-key", "tvdb-key")
+        self.assertEqual(result, [])
+
+    async def test_additively_inserts_only_unmapped_episodes_for_a_new_season(self) -> None:
+        # Season 1 (TMDB) already mapped to TVDB season 1 - a webhook now
+        # reports TVDB season 2, which must be resolved without touching the
+        # existing season 1 mapping.
+        db = AsyncMock()
+        existing_mapping = SimpleNamespace(
+            tmdb_season_number=1, tmdb_episode_number=1, tvdb_season_number=1, tvdb_id=500,
+        )
+        db.execute.return_value = _ExistingResult([existing_mapping])
+        db.add_all = MagicMock()
+
+        tmdb_show = {"seasons": [{"season_number": 1}, {"season_number": 2}]}
+        tmdb_season_1 = {"episodes": [
+            {"id": 1, "season_number": 1, "episode_number": 1, "name": "Ep1", "air_date": "2025-01-01"},
+        ]}
+        tmdb_season_2 = {"episodes": [
+            {"id": 2, "season_number": 2, "episode_number": 1, "name": "Ep2", "air_date": "2025-02-01"},
+        ]}
+
+        def _get_season(series_tmdb_id, number, **kwargs):
+            return {1: tmdb_season_1, 2: tmdb_season_2}[number]
+
+        tvdb_show = {"seasons": [{"number": 3, "type": {"type": "official"}}]}
+        tvdb_episodes = [
+            {"id": 700, "seasonNumber": 3, "number": 1, "name": "Ep2", "aired": "2025-02-02"},
+        ]
+
+        with (
+            patch("core.episode_order.tmdb.get_show", AsyncMock(return_value=tmdb_show)),
+            patch("core.episode_order.tmdb.get_season", AsyncMock(side_effect=_get_season)),
+            patch(
+                "core.episode_order.tmdb.get_episode_external_ids",
+                AsyncMock(return_value={"tvdb_id": None}),
+            ),
+            patch("core.episode_order.tvdb.get_series", AsyncMock(return_value=tvdb_show)),
+            patch(
+                "core.episode_order.tvdb.get_series_episodes",
+                AsyncMock(return_value=tvdb_episodes),
+            ),
+        ):
+            result = await ensure_episode_order_mapping_for_season(
+                db, self._show(), 3, "tmdb-key", "tvdb-key"
+            )
+
+        # Only the season-2/season-3 pair was newly matched - season 1 was
+        # never re-matched (no external-id lookup would have found season 1
+        # a candidate here anyway, since it's excluded from the input set).
+        self.assertEqual(len(result), 1)
+        self.assertEqual(
+            (result[0].tmdb_season_number, result[0].tmdb_episode_number,
+             result[0].tvdb_season_number, result[0].tvdb_episode_number),
+            (2, 1, 3, 1),
+        )
+        # Additive: no delete() of existing rows, just an insert of the new one.
+        db.add_all.assert_called_once()
+
+    async def test_fetch_failure_returns_empty_instead_of_raising(self) -> None:
+        db = AsyncMock()
+        db.execute.return_value = _EmptyResult()
+        with patch("core.episode_order.tmdb.get_show", AsyncMock(side_effect=RuntimeError("boom"))):
+            result = await ensure_episode_order_mapping_for_season(
+                db, self._show(), 2, "tmdb-key", "tvdb-key"
+            )
+        self.assertEqual(result, [])
+
+
+class MergeEpisodeMediaTests(unittest.IsolatedAsyncioTestCase):
+    """#162: _merge_episode_media moves every reference from a divergent
+    (TVDB-numbered) episode Media row onto the canonical (TMDB-numbered) one,
+    deduplicating instead of moving wherever that would violate a table's
+    real uniqueness (one row per user/list/rewatch-cycle)."""
+
+    def setUp(self):
+        self.canonical = Media(id=1, tmdb_id=100, media_type=MediaType.episode, title="Ep", season_number=1, episode_number=25, show_id=9)
+        self.divergent = Media(id=2, tmdb_id=200, media_type=MediaType.episode, title="Ep", season_number=2, episode_number=1, show_id=9)
+
+    def _db(self, side_effect):
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=side_effect)
+        db.delete = AsyncMock()
+        db.flush = AsyncMock()
+        return db
+
+    async def test_watch_events_are_bulk_reassigned_and_divergent_row_deleted(self) -> None:
+        db = self._db([
+            None,  # update(WatchEvent)
+            _ExistingResult([]),  # RewatchProgress divergent
+            _ExistingResult([]),  # PlaybackProgress divergent
+            _ExistingResult([]),  # Rating divergent
+            _ExistingResult([]),  # ListItem divergent
+            _ExistingResult([]),  # Collection divergent
+            None,  # update(Comment)
+        ])
+        await _merge_episode_media(db, self.canonical, self.divergent)
+        db.delete.assert_awaited_once_with(self.divergent)
+        db.flush.assert_awaited()
+
+    async def test_rewatch_progress_moves_or_dedupes_per_rewatch_cycle(self) -> None:
+        moves = RewatchProgress(id=10, rewatch_id=1, media_id=self.divergent.id)
+        clashes = RewatchProgress(id=11, rewatch_id=2, media_id=self.divergent.id)
+        db = self._db([
+            None,
+            _ExistingResult([moves, clashes]),
+            _ScalarOneResult(None),  # no canonical row for rewatch_id=1 - moves
+            _ScalarOneResult(RewatchProgress(id=99, rewatch_id=2, media_id=self.canonical.id)),  # clash
+            _ExistingResult([]), _ExistingResult([]), _ExistingResult([]), _ExistingResult([]),
+            None,
+        ])
+        await _merge_episode_media(db, self.canonical, self.divergent)
+        self.assertEqual(moves.media_id, self.canonical.id)
+        db.delete.assert_any_call(clashes)
+
+    async def test_playback_progress_moves_or_dedupes_per_user(self) -> None:
+        moves = PlaybackProgress(id=10, user_id=1, media_id=self.divergent.id)
+        clashes = PlaybackProgress(id=11, user_id=2, media_id=self.divergent.id)
+        db = self._db([
+            None,
+            _ExistingResult([]),
+            _ExistingResult([moves, clashes]),
+            _ScalarOneResult(None),  # user 1 has no canonical progress - moves
+            _ScalarOneResult(PlaybackProgress(id=99, user_id=2, media_id=self.canonical.id)),  # clash
+            _ExistingResult([]), _ExistingResult([]), _ExistingResult([]),
+            None,
+        ])
+        await _merge_episode_media(db, self.canonical, self.divergent)
+        self.assertEqual(moves.media_id, self.canonical.id)
+        db.delete.assert_any_call(clashes)
+
+    async def test_rating_moves_or_dedupes_per_user(self) -> None:
+        moves = Rating(id=10, user_id=1, media_id=self.divergent.id, rating=8.0)
+        clashes = Rating(id=11, user_id=2, media_id=self.divergent.id, rating=6.0)
+        db = self._db([
+            None,
+            _ExistingResult([]), _ExistingResult([]),
+            _ExistingResult([moves, clashes]),
+            _ScalarOneResult(None),  # user 1 has no canonical rating - moves
+            _ScalarOneResult(Rating(id=99, user_id=2, media_id=self.canonical.id, rating=9.0)),  # clash
+            _ExistingResult([]), _ExistingResult([]),
+            None,
+        ])
+        await _merge_episode_media(db, self.canonical, self.divergent)
+        self.assertEqual(moves.media_id, self.canonical.id)
+        db.delete.assert_any_call(clashes)
+
+    async def test_list_item_moves_or_dedupes_per_list(self) -> None:
+        moves = ListItem(id=10, list_id=1, media_id=self.divergent.id)
+        clashes = ListItem(id=11, list_id=2, media_id=self.divergent.id)
+        db = self._db([
+            None,
+            _ExistingResult([]), _ExistingResult([]), _ExistingResult([]),
+            _ExistingResult([moves, clashes]),
+            _ScalarOneResult(None),  # list 1 has no canonical item - moves
+            _ScalarOneResult(ListItem(id=99, list_id=2, media_id=self.canonical.id)),  # clash
+            _ExistingResult([]),
+            None,
+        ])
+        await _merge_episode_media(db, self.canonical, self.divergent)
+        self.assertEqual(moves.media_id, self.canonical.id)
+        db.delete.assert_any_call(clashes)
+
+    async def test_collection_moves_or_dedupes_per_user(self) -> None:
+        moves = Collection(id=10, user_id=1, media_id=self.divergent.id)
+        clashes = Collection(id=11, user_id=2, media_id=self.divergent.id)
+        db = self._db([
+            None,
+            _ExistingResult([]), _ExistingResult([]), _ExistingResult([]), _ExistingResult([]),
+            _ExistingResult([moves, clashes]),
+            _ScalarOneResult(None),  # user 1 has no canonical collection entry - moves
+            _ScalarOneResult(Collection(id=99, user_id=2, media_id=self.canonical.id)),  # clash
+            None,
+        ])
+        await _merge_episode_media(db, self.canonical, self.divergent)
+        self.assertEqual(moves.media_id, self.canonical.id)
+        db.delete.assert_any_call(clashes)
+
+
+class ReconcileDivergentEpisodeMediaTests(unittest.IsolatedAsyncioTestCase):
+    def _show(self):
+        return SimpleNamespace(id=9, tmdb_id=100, tvdb_id=389597)
+
+    async def test_no_op_when_positions_already_match(self) -> None:
+        db = AsyncMock()
+        db.execute.return_value = _ExistingResult([
+            SimpleNamespace(tmdb_season_number=1, tmdb_episode_number=1, tvdb_season_number=1, tvdb_episode_number=1),
+        ])
+        stats = await reconcile_divergent_episode_media(db, self._show())
+        self.assertEqual(stats, {"merged": 0, "checked": 0})
+
+    async def test_no_op_when_only_one_side_of_the_pair_exists(self) -> None:
+        canonical = Media(id=1, tmdb_id=100, media_type=MediaType.episode, show_id=9, season_number=1, episode_number=25)
+        db = AsyncMock()
+        db.execute.side_effect = [
+            _ExistingResult([SimpleNamespace(tmdb_season_number=1, tmdb_episode_number=25, tvdb_season_number=2, tvdb_episode_number=1)]),
+            _ScalarOneResult(canonical),  # canonical found
+            _ScalarOneResult(None),  # divergent not found - nothing to merge
+        ]
+        stats = await reconcile_divergent_episode_media(db, self._show())
+        self.assertEqual(stats["merged"], 0)
+
+    async def test_merges_a_genuinely_divergent_pair(self) -> None:
+        canonical = Media(id=1, tmdb_id=100, media_type=MediaType.episode, show_id=9, season_number=1, episode_number=25)
+        # tmdb_id=700 matches the mapping's tvdb_id below - this is exactly
+        # what enrich_episode_from_tvdb stores for the TVDB-fallback-created
+        # artifact of this mapped episode (core/enrichment.py).
+        divergent = Media(id=2, tmdb_id=700, media_type=MediaType.episode, show_id=9, season_number=2, episode_number=1)
+        db = AsyncMock()
+        db.begin_nested = MagicMock(return_value=_NestedTxn())
+        db.delete = AsyncMock()
+        db.flush = AsyncMock()
+        db.execute.side_effect = [
+            _ExistingResult([SimpleNamespace(tmdb_season_number=1, tmdb_episode_number=25, tvdb_season_number=2, tvdb_episode_number=1, tvdb_id=700)]),
+            _ScalarOneResult(canonical),
+            _ScalarOneResult(divergent),
+            None,  # update(WatchEvent)
+            _ExistingResult([]), _ExistingResult([]), _ExistingResult([]), _ExistingResult([]), _ExistingResult([]),
+            None,  # update(Comment)
+        ]
+        stats = await reconcile_divergent_episode_media(db, self._show())
+        self.assertEqual(stats, {"merged": 1, "checked": 1})
+        db.delete.assert_awaited_once_with(divergent)
+
+    async def test_does_not_merge_an_unrelated_episode_at_the_same_raw_position(self) -> None:
+        # Regression: TVDB and TMDB can assign different, unrelated episodes
+        # to the same numeric (season, episode) slot. A Media row sitting at
+        # the mapping's raw TVDB position is only safe to merge if it's
+        # provably the TVDB-fallback artifact for THIS episode (tmdb_id ==
+        # mapping.tvdb_id) - otherwise it's a real, different episode that
+        # happens to share the same numbers, and merging it would corrupt
+        # both episodes' watch history/ratings/etc.
+        canonical = Media(id=1, tmdb_id=100, media_type=MediaType.episode, show_id=9, season_number=1, episode_number=25)
+        unrelated_real_episode = Media(id=3, tmdb_id=999, media_type=MediaType.episode, show_id=9, season_number=2, episode_number=1)
+        db = AsyncMock()
+        db.begin_nested = MagicMock(return_value=_NestedTxn())
+        db.delete = AsyncMock()
+        db.execute.side_effect = [
+            _ExistingResult([SimpleNamespace(tmdb_season_number=1, tmdb_episode_number=25, tvdb_season_number=2, tvdb_episode_number=1, tvdb_id=700)]),
+            _ScalarOneResult(canonical),
+            _ScalarOneResult(unrelated_real_episode),
+        ]
+        stats = await reconcile_divergent_episode_media(db, self._show())
+        self.assertEqual(stats["merged"], 0)
+        db.begin_nested.assert_not_called()
+        db.delete.assert_not_awaited()
+
+    async def test_scoped_to_one_tvdb_season_when_given(self) -> None:
+        db = AsyncMock()
+        db.execute.return_value = _ExistingResult([])
+        await reconcile_divergent_episode_media(db, self._show(), season_number=3)
+        stmt = db.execute.call_args.args[0]
+        self.assertIn("tvdb_season_number", str(stmt))
+
+    async def test_one_bad_pair_does_not_abort_the_rest(self) -> None:
+        # begin_nested raising must be caught and logged, not propagated -
+        # this always runs as a side effect of a webhook or mapping job.
+        db = AsyncMock()
+        db.begin_nested = MagicMock(side_effect=RuntimeError("boom"))
+        db.execute.side_effect = [
+            _ExistingResult([SimpleNamespace(tmdb_season_number=1, tmdb_episode_number=25, tvdb_season_number=2, tvdb_episode_number=1, tvdb_id=700)]),
+            _ScalarOneResult(Media(id=1, tmdb_id=100, media_type=MediaType.episode, show_id=9, season_number=1, episode_number=25)),
+            _ScalarOneResult(Media(id=2, tmdb_id=700, media_type=MediaType.episode, show_id=9, season_number=2, episode_number=1)),
+        ]
+        stats = await reconcile_divergent_episode_media(db, self._show())
+        self.assertEqual(stats, {"merged": 0, "checked": 1})
+
+
+class RunEpisodeOrderMappingReconciliationTests(unittest.IsolatedAsyncioTestCase):
+    """#162: after a full mapping recompute (switching a show to TVDB
+    ordering, or Refresh Metadata), the show's divergent episode Media rows
+    must get reconciled too - not just newly-mapped episodes going forward."""
+
+    async def test_reconcile_called_with_local_show_after_mapping_succeeds(self) -> None:
+        local_show = SimpleNamespace(id=9, tmdb_id=127532, tvdb_id=None)
+
+        fake_db = SimpleNamespace(
+            execute=AsyncMock(return_value=_ScalarOneResult(local_show)),
+            commit=AsyncMock(),
+            add=MagicMock(),
+        )
+
+        class _FakeSessionCtx:
+            async def __aenter__(self):
+                return fake_db
+
+            async def __aexit__(self, *exc):
+                return False
+
+        reconcile_mock = AsyncMock()
+        with (
+            patch("routers.shows.async_sessionmaker", MagicMock(return_value=lambda: _FakeSessionCtx())),
+            patch(
+                "routers.shows.ensure_episode_order_mapping",
+                AsyncMock(return_value={"tvdb_id": 389597, "matched": 1, "tmdb_episodes": 1, "unmatched": 0}),
+            ),
+            patch("routers.shows.get_episode_order", AsyncMock(return_value=None)),
+            patch("routers.shows.reconcile_divergent_episode_media", reconcile_mock),
+        ):
+            await _run_episode_order_mapping(1, 55, 127532, "tmdb-key", "tvdb-key", False)
+
+        reconcile_mock.assert_awaited_once_with(fake_db, local_show)
+        # local_show.tvdb_id must already be set to the resolved value by
+        # the time reconciliation runs, since it's needed to find the
+        # canonical/divergent Media pairs.
+        self.assertEqual(local_show.tvdb_id, 389597)
+
+    async def test_reconcile_skipped_when_show_not_found_locally(self) -> None:
+        fake_db = SimpleNamespace(
+            execute=AsyncMock(return_value=_ScalarOneResult(None)),
+            commit=AsyncMock(),
+            add=MagicMock(),
+        )
+
+        class _FakeSessionCtx:
+            async def __aenter__(self):
+                return fake_db
+
+            async def __aexit__(self, *exc):
+                return False
+
+        reconcile_mock = AsyncMock()
+        with (
+            patch("routers.shows.async_sessionmaker", MagicMock(return_value=lambda: _FakeSessionCtx())),
+            patch(
+                "routers.shows.ensure_episode_order_mapping",
+                AsyncMock(return_value={"tvdb_id": 389597, "matched": 1, "tmdb_episodes": 1, "unmatched": 0}),
+            ),
+            patch("routers.shows.get_episode_order", AsyncMock(return_value=None)),
+            patch("routers.shows.reconcile_divergent_episode_media", reconcile_mock),
+        ):
+            await _run_episode_order_mapping(1, 55, 127532, "tmdb-key", "tvdb-key", False)
+
+        reconcile_mock.assert_not_awaited()
 
 
 class BatchedLookupTests(unittest.IsolatedAsyncioTestCase):
