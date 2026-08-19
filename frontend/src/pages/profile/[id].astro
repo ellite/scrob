@@ -231,9 +231,14 @@ function starFill(rating: number, star: number): "full" | "half" | "empty" {
             <!-- Recently Watched Movies -->
             {profile.recently_watched_movies.length > 0 && (
               <section>
-                <h2 class="section-headline mb-4">
+                <div class="flex items-center justify-between mb-4">
+                  <h2 class="section-headline">
 Recently Watched Movies
-                </h2>
+                  </h2>
+                  <a href={`/recently-watched-movies/${id}`} class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
+                    See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+                  </a>
+                </div>
                 <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none">
                   {profile.recently_watched_movies.map((item) => {
                     const thumb = posterUrl(item.poster_path);
@@ -259,9 +264,14 @@ Recently Watched Movies
             <!-- Recently Watched Shows -->
             {profile.recently_watched_shows.length > 0 && (
               <section>
-                <h2 class="section-headline mb-4">
+                <div class="flex items-center justify-between mb-4">
+                  <h2 class="section-headline">
 Recently Watched Shows
-                </h2>
+                  </h2>
+                  <a href={`/recently-watched-shows/${id}`} class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
+                    See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+                  </a>
+                </div>
                 <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none">
                   {profile.recently_watched_shows.map((item) => {
                     const thumb = posterUrl(item.backdrop_path ?? item.poster_path, "w500");
@@ -304,9 +314,14 @@ Recently Watched Shows
             <!-- Top Rated Movies -->
             {profile.top_rated_movies.length > 0 && (
               <section>
-                <h2 class="section-headline mb-4">
+                <div class="flex items-center justify-between mb-4">
+                  <h2 class="section-headline">
 Top Rated Movies
-                </h2>
+                  </h2>
+                  <a href={`/top-rated-movies/${id}`} class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
+                    See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+                  </a>
+                </div>
                 <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none">
                   {profile.top_rated_movies.map((item) => {
                     const thumb = posterUrl(item.poster_path);
@@ -335,9 +350,14 @@ Top Rated Movies
             <!-- Top Rated Shows -->
             {profile.top_rated_shows.length > 0 && (
               <section>
-                <h2 class="section-headline mb-4">
+                <div class="flex items-center justify-between mb-4">
+                  <h2 class="section-headline">
 Top Rated Shows
-                </h2>
+                  </h2>
+                  <a href={`/top-rated-shows/${id}`} class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
+                    See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+                  </a>
+                </div>
                 <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none">
                   {profile.top_rated_shows.map((item) => {
                     const thumb = posterUrl(item.poster_path);

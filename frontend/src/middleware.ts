@@ -14,6 +14,11 @@ const PUBLIC_AVATAR_PROXY_RE = /^\/api\/proxy\/profile\/avatar\/\d+$/;
 // itself still enforces its own privacy_level server-side; this only decides
 // whether a logged-out visitor gets past the gate at all.
 const PUBLIC_LIST_PAGE_RE = /^\/list\/\d+\/?$/;
+// The profile page's "See All" links for Top Rated Movies/Shows and Recently
+// Watched Movies/Shows - same privacy model as PUBLIC_PROFILE_PAGE_RE above
+// (the endpoint re-checks privacy itself).
+const PUBLIC_TOP_RATED_PAGE_RE = /^\/top-rated-(?:movies|shows)\/\d+\/?$/;
+const PUBLIC_RECENTLY_WATCHED_PAGE_RE = /^\/recently-watched-(?:movies|shows)\/\d+\/?$/;
 // The read-only browse pages, allowed anonymously only when the admin has
 // enabled logged-out navigation (Admin Settings) and a global TMDB key is set.
 const PUBLIC_EXPLORE_PAGE_RE = /^\/(?:(?:movies|shows|search|lists|airing-today|discover)?|trending\/(?:movies|shows))\/?$/;
@@ -80,6 +85,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
       PUBLIC_PROFILE_PAGE_RE.test(pathname) ||
       PUBLIC_AVATAR_PROXY_RE.test(pathname) ||
       PUBLIC_LIST_PAGE_RE.test(pathname) ||
+      PUBLIC_TOP_RATED_PAGE_RE.test(pathname) ||
+      PUBLIC_RECENTLY_WATCHED_PAGE_RE.test(pathname) ||
       PUBLIC_EXPLORE_PAGE_RE.test(pathname) ||
       PUBLIC_MEDIA_DETAIL_PAGE_RE.test(pathname) ||
       PUBLIC_RECOMMENDATIONS_PARTIAL_RE.test(pathname) ||

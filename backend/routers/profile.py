@@ -1,7 +1,7 @@
 import asyncio
 from collections import defaultdict
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -92,6 +92,26 @@ async def _check_profile_access(user_id: int, current_user, db: AsyncSession):
             raise HTTPException(status_code=403, detail="This profile is private")
 
     return user, profile
+
+
+def _latest_episode_per_show_subquery(user_id: int):
+    """One row per show: the id of that show's single most-recently-watched
+    episode. DISTINCT ON (show_id) picks it (Postgres requires the leading
+    ORDER BY to match the DISTINCT ON expression); callers re-sort the joined
+    rows by watched_at themselves to rank shows by recency."""
+    return (
+        select(WatchEvent.id.label("we_id"))
+        .distinct(Media.show_id)
+        .join(Media, WatchEvent.media_id == Media.id)
+        .where(
+            WatchEvent.user_id == user_id,
+            WatchEvent.completed == True,
+            Media.media_type == "episode",
+            WatchEvent.watched_at.isnot(None),
+            Media.show_id.isnot(None),
+        )
+        .order_by(Media.show_id, WatchEvent.watched_at.desc())
+    ).subquery()
 
 
 @router.get("/me", response_model=schemas.UserProfileResponse)
@@ -645,23 +665,8 @@ async def get_public_profile(
 
     # --- Recently Watched Shows (episodes) ---
     # One card per show, not per episode - a binge session shouldn't fill the
-    # whole rail with the same show. DISTINCT ON (show_id) picks each show's
-    # single most-recent episode (Postgres requires the leading ORDER BY to
-    # match the DISTINCT ON expression), then the outer query re-sorts those
-    # per-show rows by watched_at and takes the 12 most recent shows.
-    latest_episode_per_show = (
-        select(WatchEvent.id.label("we_id"))
-        .distinct(Media.show_id)
-        .join(Media, WatchEvent.media_id == Media.id)
-        .where(
-            WatchEvent.user_id == user_id,
-            WatchEvent.completed == True,
-            Media.media_type == "episode",
-            WatchEvent.watched_at.isnot(None),
-            Media.show_id.isnot(None),
-        )
-        .order_by(Media.show_id, WatchEvent.watched_at.desc())
-    ).subquery()
+    # whole rail with the same show.
+    latest_episode_per_show = _latest_episode_per_show_subquery(user_id)
 
     rw_shows_q = await db.execute(
         select(WatchEvent, Media, ShowModel)
@@ -941,6 +946,195 @@ async def get_public_profile(
         "followers": followers_preview,
         "following": following_preview,
         "is_following": is_following,
+    }
+
+
+_TOP_RATED_PAGE_SIZE = 24
+
+
+@router.get("/{user_id}/top-rated-movies")
+async def get_top_rated_movies(
+    user_id: int,
+    page: int = Query(1, ge=1),
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
+):
+    await _check_profile_access(user_id, current_user, db)
+
+    base_q = (
+        select(Rating, Media)
+        .join(Media, Rating.media_id == Media.id)
+        .where(
+            Rating.user_id == user_id,
+            Rating.season_number.is_(None),
+            Media.media_type == "movie",
+            Rating.rating.isnot(None),
+        )
+    )
+    total = (await db.execute(select(func.count()).select_from(base_q.subquery()))).scalar_one()
+
+    rows = (await db.execute(
+        base_q.order_by(Rating.rating.desc(), Rating.rated_at.desc())
+        .offset((page - 1) * _TOP_RATED_PAGE_SIZE)
+        .limit(_TOP_RATED_PAGE_SIZE)
+    )).all()
+
+    results = [
+        {
+            "tmdb_id": media.tmdb_id,
+            "media_type": "movie",
+            "title": media.title,
+            "poster_path": media.poster_path,
+            "user_rating": rating.rating,
+        }
+        for rating, media in rows
+    ]
+    return {
+        "page": page,
+        "total_pages": max(1, (total + _TOP_RATED_PAGE_SIZE - 1) // _TOP_RATED_PAGE_SIZE),
+        "total_results": total,
+        "results": results,
+    }
+
+
+@router.get("/{user_id}/top-rated-shows")
+async def get_top_rated_shows(
+    user_id: int,
+    page: int = Query(1, ge=1),
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
+):
+    await _check_profile_access(user_id, current_user, db)
+
+    base_q = (
+        select(Rating, Media, ShowModel)
+        .join(Media, Rating.media_id == Media.id)
+        .outerjoin(ShowModel, (Media.media_type == "series") & (Media.tmdb_id == ShowModel.tmdb_id))
+        .where(
+            Rating.user_id == user_id,
+            Rating.season_number.is_(None),
+            Media.media_type == "series",
+            Rating.rating.isnot(None),
+        )
+    )
+    total = (await db.execute(select(func.count()).select_from(base_q.subquery()))).scalar_one()
+
+    rows = (await db.execute(
+        base_q.order_by(Rating.rating.desc(), Rating.rated_at.desc())
+        .offset((page - 1) * _TOP_RATED_PAGE_SIZE)
+        .limit(_TOP_RATED_PAGE_SIZE)
+    )).all()
+
+    results = [
+        {
+            "tmdb_id": media.tmdb_id,
+            "media_type": "series",
+            "title": media.title,
+            "poster_path": show.poster_path if show else media.poster_path,
+            "user_rating": rating.rating,
+        }
+        for rating, media, show in rows
+    ]
+    return {
+        "page": page,
+        "total_pages": max(1, (total + _TOP_RATED_PAGE_SIZE - 1) // _TOP_RATED_PAGE_SIZE),
+        "total_results": total,
+        "results": results,
+    }
+
+
+_RECENTLY_WATCHED_PAGE_SIZE = 24
+
+
+@router.get("/{user_id}/recently-watched-movies")
+async def get_recently_watched_movies(
+    user_id: int,
+    page: int = Query(1, ge=1),
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
+):
+    await _check_profile_access(user_id, current_user, db)
+
+    base_q = (
+        select(WatchEvent, Media)
+        .join(Media, WatchEvent.media_id == Media.id)
+        .where(
+            WatchEvent.user_id == user_id,
+            WatchEvent.completed == True,
+            Media.media_type == "movie",
+            WatchEvent.watched_at.isnot(None),
+        )
+    )
+    total = (await db.execute(select(func.count()).select_from(base_q.subquery()))).scalar_one()
+
+    rows = (await db.execute(
+        base_q.order_by(WatchEvent.watched_at.desc())
+        .offset((page - 1) * _RECENTLY_WATCHED_PAGE_SIZE)
+        .limit(_RECENTLY_WATCHED_PAGE_SIZE)
+    )).all()
+
+    results = [
+        {
+            "tmdb_id": media.tmdb_id,
+            "media_type": "movie",
+            "title": media.title,
+            "poster_path": media.poster_path,
+            "watched_at": we.watched_at.isoformat(),
+        }
+        for we, media in rows
+    ]
+    return {
+        "page": page,
+        "total_pages": max(1, (total + _RECENTLY_WATCHED_PAGE_SIZE - 1) // _RECENTLY_WATCHED_PAGE_SIZE),
+        "total_results": total,
+        "results": results,
+    }
+
+
+@router.get("/{user_id}/recently-watched-shows")
+async def get_recently_watched_shows(
+    user_id: int,
+    page: int = Query(1, ge=1),
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
+):
+    await _check_profile_access(user_id, current_user, db)
+
+    latest_episode_per_show = _latest_episode_per_show_subquery(user_id)
+    base_q = (
+        select(WatchEvent, Media, ShowModel)
+        .join(latest_episode_per_show, WatchEvent.id == latest_episode_per_show.c.we_id)
+        .join(Media, WatchEvent.media_id == Media.id)
+        .outerjoin(ShowModel, Media.show_id == ShowModel.id)
+    )
+    total = (await db.execute(select(func.count()).select_from(base_q.subquery()))).scalar_one()
+
+    rows = (await db.execute(
+        base_q.order_by(WatchEvent.watched_at.desc())
+        .offset((page - 1) * _RECENTLY_WATCHED_PAGE_SIZE)
+        .limit(_RECENTLY_WATCHED_PAGE_SIZE)
+    )).all()
+
+    results = [
+        {
+            "tmdb_id": media.tmdb_id,
+            "media_type": "episode",
+            "title": media.title,
+            "poster_path": show.poster_path if show else media.poster_path,
+            "watched_at": we.watched_at.isoformat(),
+            "show_title": show.title if show else None,
+            "show_tmdb_id": show.tmdb_id if show else None,
+            "show_tvdb_id": show.tvdb_id if show else None,
+            "season_number": media.season_number,
+            "episode_number": media.episode_number,
+        }
+        for we, media, show in rows
+    ]
+    return {
+        "page": page,
+        "total_pages": max(1, (total + _RECENTLY_WATCHED_PAGE_SIZE - 1) // _RECENTLY_WATCHED_PAGE_SIZE),
+        "total_results": total,
+        "results": results,
     }
 
 

@@ -1344,6 +1344,14 @@ export const api = {
       get<{ results: UserSearchResult[] }>("/profile/search", { q }, token),
     getStats: (userId: number, token?: string) =>
       get<UserStats>(`/profile/${userId}/stats`, undefined, token),
+    topRatedMovies: (userId: number, page: number = 1, token?: string) =>
+      get<{ results: ProfileRatedItem[]; page: number; total_pages: number; total_results: number }>(`/profile/${userId}/top-rated-movies`, { page }, token),
+    topRatedShows: (userId: number, page: number = 1, token?: string) =>
+      get<{ results: ProfileRatedItem[]; page: number; total_pages: number; total_results: number }>(`/profile/${userId}/top-rated-shows`, { page }, token),
+    recentlyWatchedMovies: (userId: number, page: number = 1, token?: string) =>
+      get<{ results: ProfileWatchedItem[]; page: number; total_pages: number; total_results: number }>(`/profile/${userId}/recently-watched-movies`, { page }, token),
+    recentlyWatchedShows: (userId: number, page: number = 1, token?: string) =>
+      get<{ results: ProfileWatchedItem[]; page: number; total_pages: number; total_results: number }>(`/profile/${userId}/recently-watched-shows`, { page }, token),
   },
 
   comments: {
