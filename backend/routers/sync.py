@@ -2288,41 +2288,6 @@ async def sync_items(
                                 rewatch_progressed_media_ids.add(media_id_for_watch)
                             if new_watched_ids is not None:
                                 new_watched_ids.add(media_id_for_watch)
-                    elif (
-                        sync_watched
-                        and source is CollectionSource.plex
-                        and media_id_for_watch in existing_completed
-                    ):
-                        # Plex has no "unplay" webhook event, so this periodic pull is
-                        # the only way Scrob ever learns an item was marked unwatched
-                        # there (#222) - Jellyfin/Emby get this in real time instead,
-                        # via the UserDataSaved/TogglePlayed webhook (see
-                        # _handle_unwatch_toggle, whose deletion semantics this mirrors).
-                        # An active rewatch only loses that one cycle's progress on
-                        # this episode; real watch history is left untouched either way.
-                        active_rewatch = (
-                            active_rewatches_by_show_id.get(show_id)
-                            if media_type == MediaType.episode and show_id
-                            else None
-                        )
-                        if active_rewatch:
-                            await db.execute(
-                                delete(RewatchProgress).where(
-                                    RewatchProgress.rewatch_id == active_rewatch.id,
-                                    RewatchProgress.media_id == media_id_for_watch,
-                                )
-                            )
-                            rewatch_progressed_media_ids.discard(media_id_for_watch)
-                        else:
-                            await db.execute(
-                                delete(WatchEvent).where(
-                                    WatchEvent.user_id == user_id,
-                                    WatchEvent.media_id == media_id_for_watch,
-                                )
-                            )
-                            existing_watched.discard(media_id_for_watch)
-                        existing_completed.discard(media_id_for_watch)
-                        stats["unwatched"] = stats.get("unwatched", 0) + 1
 
                     if sync_ratings and watch_state["user_rating"] is not None:
                         existing_r = existing_ratings.get(media_id_for_watch)
