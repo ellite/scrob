@@ -3535,6 +3535,55 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                                 )
                                 stats["errors"] += 1
 
+                        # Whole-show ratings (Plex lets you rate a series itself, not
+                        # just its seasons/episodes) - same shape as a season rating
+                        # but with season_number=None, matching how the app's own
+                        # "rate this show" action on the show's main page stores it.
+                        rated_shows = [show for show in shows if show.get("userRating") is not None]
+                        total_discovered += len(rated_shows)
+                        for show in rated_shows:
+                            show_key = str(show.get("ratingKey") or "")
+                            show_id = show_map.get(show_key)
+                            show_tmdb_id = show_id_to_tmdb.get(show_id) if show_id else None
+                            if show_tmdb_id is None:
+                                stats["skipped"] += 1
+                                continue
+                            try:
+                                async with db.begin_nested():
+                                    media = await _get_or_create_series_rating_media(
+                                        db,
+                                        show_tmdb_id,
+                                        show_titles.get(show_key, ""),
+                                        tmdb_api_key,
+                                    )
+                                    key = (media.id, None)
+                                    rating_value = float(show["userRating"])
+                                    current = existing_ratings.get(key)
+                                    if current and current.rating == rating_value:
+                                        stats["skipped"] += 1
+                                        continue
+                                    if current:
+                                        current.rating = rating_value
+                                        current.rated_at = datetime.utcnow()
+                                    else:
+                                        current = Rating(
+                                            user_id=user_id,
+                                            media_id=media.id,
+                                            season_number=None,
+                                            rating=rating_value,
+                                        )
+                                        db.add(current)
+                                        existing_ratings[key] = current
+                                    _new_ratings[key] = rating_value
+                                    stats["ratings"] += 1
+                            except Exception as exc:
+                                logger.warning(
+                                    "Error importing Plex show rating show=%s: %s",
+                                    show_tmdb_id,
+                                    exc,
+                                )
+                                stats["errors"] += 1
+
                     unmatched_shows = [s for s in shows if str(s.get("ratingKey")) not in show_map]
                     for s in unmatched_shows:
                         all_warnings.append({
