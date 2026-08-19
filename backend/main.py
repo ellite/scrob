@@ -316,7 +316,7 @@ async def _emby_progress_poller():
         log.error(f"Emby progress poller: failed to import dependencies: {e}")
         return
 
-    POLL_INTERVAL = 30
+    POLL_INTERVAL = 60
     log.info("Emby progress poller: started")
 
     while True:
