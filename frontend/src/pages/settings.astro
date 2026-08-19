@@ -330,6 +330,22 @@ if (me.totp_enabled) {
           <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
             <div class="flex items-center justify-between px-5 py-4">
               <div>
+                <p class="text-sm font-medium text-zinc-200">Heal duplicate watch history from Jellyfin/Emby pushes</p>
+                <p class="text-xs text-zinc-500 mt-0.5">Removes duplicate history entries created by buggy sync.</p>
+              </div>
+              <button
+                id="heal-push-echo-btn"
+                type="button"
+                class="ml-4 shrink-0 text-sm px-4 py-2 rounded-lg transition-colors cursor-pointer bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30"
+              >
+                Heal
+              </button>
+            </div>
+          </div>
+
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+            <div class="flex items-center justify-between px-5 py-4">
+              <div>
                 <p class="text-sm font-medium text-zinc-200">Clear now playing</p>
                 <p class="text-xs text-zinc-500 mt-0.5">Removes all active now playing sessions. Use this if a ghost session is stuck in the bar after a restart or network interruption.</p>
               </div>
@@ -1486,6 +1502,29 @@ if (me.totp_enabled) {
         } catch {
           healStubBtn.textContent = 'Error';
           setTimeout(() => { healStubBtn.textContent = original; (healStubBtn as HTMLButtonElement).disabled = false; }, 2000);
+        }
+      });
+    }
+
+    const healPushEchoBtn = document.getElementById('heal-push-echo-btn');
+    if (healPushEchoBtn) {
+      healPushEchoBtn.addEventListener('click', async () => {
+        const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
+        const original = healPushEchoBtn.textContent;
+        healPushEchoBtn.textContent = 'Healing…';
+        (healPushEchoBtn as HTMLButtonElement).disabled = true;
+        try {
+          const res = await fetch('/api/proxy/sync/heal-push-echo-duplicates', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${tok}` },
+          });
+          if (!res.ok) throw new Error('Failed');
+          const data = await res.json();
+          healPushEchoBtn.textContent = data.healed > 0 ? `Healed ${data.healed}` : 'Nothing to heal';
+          setTimeout(() => { healPushEchoBtn.textContent = original; (healPushEchoBtn as HTMLButtonElement).disabled = false; }, 3000);
+        } catch {
+          healPushEchoBtn.textContent = 'Error';
+          setTimeout(() => { healPushEchoBtn.textContent = original; (healPushEchoBtn as HTMLButtonElement).disabled = false; }, 2000);
         }
       });
     }

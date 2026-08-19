@@ -7550,6 +7550,79 @@ async def heal_stub_show_titles(
     return {"status": "ok", "healed": healed}
 
 
+@router.post("/heal-push-echo-duplicates")
+async def heal_push_echo_duplicates(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Removes duplicate WatchEvents created by a Jellyfin/Emby mark-watched
+    push echoing straight back as a UserDataSaved webhook, before the fix in
+    #247/#251 - every pushed item got a brand new WatchEvent stamped at push
+    time, on top of whatever real watch record it already had (that's the
+    only reason it was being pushed in the first place).
+
+    Only removes a provisional watch event when both hold:
+    - it's NOT the earliest recorded watch for that item (so the item was
+      already known-watched before this one was created - never true for a
+      genuinely new watch, which this must not touch), and
+    - it landed inside a burst of BURST_MIN_SIZE+ other provisional
+      completions within BURST_GAP of each other for this user - the push's
+      bulk-timing signature, not an isolated real completion, and not a
+      legitimate bulk "mark season watched" from the media server's own UI
+      (which only ever produces genuinely-first watch events, excluded by
+      the first condition above regardless of burst size).
+    """
+    BURST_GAP = timedelta(minutes=2)
+    BURST_MIN_SIZE = 5
+
+    rows = (await db.execute(
+        select(WatchEvent.id, WatchEvent.media_id, WatchEvent.watched_at)
+        .where(
+            WatchEvent.user_id == current_user.id,
+            WatchEvent.provisional == True,
+            WatchEvent.completed == True,
+            WatchEvent.watched_at.isnot(None),
+        )
+        .order_by(WatchEvent.watched_at)
+    )).all()
+
+    if not rows:
+        return {"status": "ok", "healed": 0}
+
+    media_ids = {r.media_id for r in rows}
+    earliest_res = await db.execute(
+        select(WatchEvent.media_id, func.min(WatchEvent.id))
+        .where(WatchEvent.user_id == current_user.id, WatchEvent.media_id.in_(media_ids))
+        .group_by(WatchEvent.media_id)
+    )
+    earliest_id_by_media: dict[int, int] = dict(earliest_res.all())
+
+    to_delete: list[int] = []
+    burst: list = []
+
+    def _flush_burst():
+        if len(burst) >= BURST_MIN_SIZE:
+            for row in burst:
+                if row.id != earliest_id_by_media.get(row.media_id):
+                    to_delete.append(row.id)
+
+    prev_at = None
+    for row in rows:
+        if prev_at is not None and (row.watched_at - prev_at) > BURST_GAP:
+            _flush_burst()
+            burst = []
+        burst.append(row)
+        prev_at = row.watched_at
+    _flush_burst()
+
+    if not to_delete:
+        return {"status": "ok", "healed": 0}
+
+    await db.execute(delete(WatchEvent).where(WatchEvent.id.in_(to_delete)))
+    await db.commit()
+    return {"status": "ok", "healed": len(to_delete)}
+
+
 class UnmatchShowBody(BaseModel):
     show_title: str
 

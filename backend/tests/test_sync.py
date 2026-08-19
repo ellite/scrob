@@ -735,5 +735,111 @@ class CollectionAddedAtHealTests(unittest.TestCase):
         self.assertIn("WHERE collections.id =", rendered)
 
 
+class _HealPushEchoRow:
+    def __init__(self, id, media_id, watched_at):
+        self.id = id
+        self.media_id = media_id
+        self.watched_at = watched_at
+
+
+class _HealPushEchoResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _HealPushEchoDB:
+    """First execute() returns the ordered provisional-events query, second
+    returns the (media_id, earliest_id) grouping, any further ones (the
+    DELETE) are just recorded as no-ops."""
+
+    def __init__(self, rows, earliest_by_media):
+        self._results = [
+            _HealPushEchoResult(rows),
+            _HealPushEchoResult(list(earliest_by_media.items())),
+        ]
+        self.executed_statements = []
+        self.commit = AsyncMock()
+
+    async def execute(self, stmt):
+        self.executed_statements.append(stmt)
+        if self._results:
+            return self._results.pop(0)
+        return _HealPushEchoResult([])
+
+
+class HealPushEchoDuplicatesTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for the #247/#251 cleanup heal: a burst of provisional
+    watch events created by a Jellyfin/Emby mark-watched push echoing back as
+    a webhook, on top of whatever real watch record already existed (that's
+    the only reason the item was being pushed at all)."""
+
+    async def test_burst_of_duplicates_for_already_watched_items_is_healed(self):
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        # 5 provisional completions 10s apart, media 101..105 - each already
+        # has an earlier (non-burst) watch event, i.e. a lower id than these.
+        rows = [_HealPushEchoRow(id=1000 + i, media_id=101 + i, watched_at=base + timedelta(seconds=10 * i)) for i in range(5)]
+        earliest_by_media = {101 + i: 1 + i for i in range(5)}  # all pre-date the burst ids
+        db = _HealPushEchoDB(rows, earliest_by_media)
+
+        result = await sync.heal_push_echo_duplicates(db=db, current_user=SimpleNamespace(id=1))
+
+        self.assertEqual(result["healed"], 5)
+        db.commit.assert_awaited_once()
+
+    async def test_burst_below_the_size_threshold_is_left_alone(self):
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        rows = [_HealPushEchoRow(id=1000 + i, media_id=101 + i, watched_at=base + timedelta(seconds=10 * i)) for i in range(3)]
+        earliest_by_media = {101 + i: 1 + i for i in range(3)}
+        db = _HealPushEchoDB(rows, earliest_by_media)
+
+        result = await sync.heal_push_echo_duplicates(db=db, current_user=SimpleNamespace(id=1))
+
+        self.assertEqual(result["healed"], 0)
+
+    async def test_a_titles_only_ever_recorded_watch_is_never_deleted_even_in_a_large_burst(self):
+        # Simulates marking a whole season watched from Jellyfin's own UI -
+        # also produces a burst of provisional TogglePlayed webhooks, but each
+        # one is a genuinely first-time watch and must survive the heal.
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        rows = [_HealPushEchoRow(id=1000 + i, media_id=101 + i, watched_at=base + timedelta(seconds=10 * i)) for i in range(6)]
+        earliest_by_media = {101 + i: 1000 + i for i in range(6)}  # each IS its own earliest record
+        db = _HealPushEchoDB(rows, earliest_by_media)
+
+        result = await sync.heal_push_echo_duplicates(db=db, current_user=SimpleNamespace(id=1))
+
+        self.assertEqual(result["healed"], 0)
+
+    async def test_a_mixed_burst_only_removes_the_actual_duplicates(self):
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        rows = [_HealPushEchoRow(id=1000 + i, media_id=101 + i, watched_at=base + timedelta(seconds=10 * i)) for i in range(5)]
+        earliest_by_media = {101: 1000, 102: 5, 103: 1002, 104: 8, 105: 1004}  # 101, 103, 105 are their own earliest
+        db = _HealPushEchoDB(rows, earliest_by_media)
+
+        result = await sync.heal_push_echo_duplicates(db=db, current_user=SimpleNamespace(id=1))
+
+        self.assertEqual(result["healed"], 2)  # only media 102 and 104
+
+    async def test_events_far_apart_never_cluster_into_a_burst(self):
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        # 6 events, each an hour apart - well past BURST_GAP, so no cluster
+        # ever reaches BURST_MIN_SIZE even though the total count would.
+        rows = [_HealPushEchoRow(id=1000 + i, media_id=101 + i, watched_at=base + timedelta(hours=i)) for i in range(6)]
+        earliest_by_media = {101 + i: 1 + i for i in range(6)}
+        db = _HealPushEchoDB(rows, earliest_by_media)
+
+        result = await sync.heal_push_echo_duplicates(db=db, current_user=SimpleNamespace(id=1))
+
+        self.assertEqual(result["healed"], 0)
+
+    async def test_no_provisional_events_short_circuits_without_further_queries(self):
+        db = _HealPushEchoDB([], {})
+        result = await sync.heal_push_echo_duplicates(db=db, current_user=SimpleNamespace(id=1))
+        self.assertEqual(result, {"status": "ok", "healed": 0})
+        self.assertEqual(len(db.executed_statements), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
