@@ -1589,7 +1589,9 @@ async def on_air_today(
     tmdb_key = await get_user_tmdb_key(db, effective_user_id)
     if not check_tmdb_key(tmdb_key):
         return {"results": [], "page": 1, "total_pages": 1, "total_results": 0}
-    data = await tmdb.get_on_air_today(page=page, api_key=tmdb_key)
+    # No browser timezone to go on here (plain SSR fetch, unlike the homepage
+    # widget) - use the server's configured TZ instead of defaulting to UTC.
+    data = await tmdb.get_on_air_today(page=page, api_key=tmdb_key, timezone=settings.tz)
     results = [
         {
             "id": None,
@@ -1650,9 +1652,12 @@ async def airing_today_collected(
     if not collected_tmdb_ids:
         return {"results": []}
 
-    # Fetch page 1 to discover total_pages, then fetch remaining pages concurrently
+    # Fetch page 1 to discover total_pages, then fetch remaining pages concurrently.
+    # timezone forwarded to TMDB itself, not just the local air_date check below -
+    # otherwise TMDB pre-filters "airing today" against its own default timezone,
+    # which can miss (or wrongly include) shows relative to the user's real today.
     try:
-        first = await tmdb.get_on_air_today(page=1, api_key=tmdb_key)
+        first = await tmdb.get_on_air_today(page=1, api_key=tmdb_key, timezone=timezone)
     except Exception as e:
         print(f"Error fetching airing-today from TMDB: {e}")
         return {"results": []}
@@ -1661,7 +1666,7 @@ async def airing_today_collected(
 
     if total_pages > 1:
         pages = await asyncio.gather(
-            *[tmdb.get_on_air_today(page=p, api_key=tmdb_key) for p in range(2, total_pages + 1)],
+            *[tmdb.get_on_air_today(page=p, api_key=tmdb_key, timezone=timezone) for p in range(2, total_pages + 1)],
             return_exceptions=True,
         )
         for page_data in pages:
@@ -1689,37 +1694,35 @@ async def airing_today_collected(
                 episode = candidate
                 break
 
+        # TMDB's own /tv/airing_today list is a looser "has something airing
+        # around today" signal than an exact per-episode date match - a show
+        # can appear on it while its actual next/last episode is tomorrow (or
+        # yesterday). Without this check, that mismatch used to be masked by
+        # falling back to a generic "still airing" entry instead of excluding
+        # the show, which is how a show could show up here a day early/late.
+        if not episode:
+            return None
+
         show_name = show.get("name")
-        if episode:
-            return {
-                "id": None,
-                "tmdb_id": show["id"],
-                "type": "episode",
-                "title": episode.get("name") or show_name,
-                "show_title": show_name,
-                "show_tmdb_id": show["id"],
-                "season_number": episode.get("season_number"),
-                "episode_number": episode.get("episode_number"),
-                "poster_path": tmdb.poster_url(episode.get("still_path"), size="w780")
-                    or tmdb.poster_url(show.get("backdrop_path"), size="w780"),
-                "backdrop_path": tmdb.poster_url(show.get("backdrop_path"), size="w780"),
-                "tmdb_rating": show.get("vote_average"),
-                "release_date": episode.get("air_date"),
-                "adult": show.get("adult", False),
-            }
         return {
             "id": None,
             "tmdb_id": show["id"],
-            "type": "series",
-            "title": show_name,
-            "poster_path": tmdb.poster_url(show.get("poster_path")),
+            "type": "episode",
+            "title": episode.get("name") or show_name,
+            "show_title": show_name,
+            "show_tmdb_id": show["id"],
+            "season_number": episode.get("season_number"),
+            "episode_number": episode.get("episode_number"),
+            "poster_path": tmdb.poster_url(episode.get("still_path"), size="w780")
+                or tmdb.poster_url(show.get("backdrop_path"), size="w780"),
             "backdrop_path": tmdb.poster_url(show.get("backdrop_path"), size="w780"),
             "tmdb_rating": show.get("vote_average"),
-            "release_date": show.get("first_air_date"),
+            "release_date": episode.get("air_date"),
             "adult": show.get("adult", False),
         }
 
-    results = list(await asyncio.gather(*[fetch_episode(s) for s in collected_shows]))
+    fetched = await asyncio.gather(*[fetch_episode(s) for s in collected_shows])
+    results = [r for r in fetched if r is not None]
     await enrich_with_state(db, current_user.id, results)
     return {"results": results}
 

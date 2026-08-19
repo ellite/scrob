@@ -16,6 +16,13 @@ class Settings(BaseSettings):
 
     server_url: str = "http://localhost:7330"
 
+    # Already set to UTC in the Dockerfiles (ENV TZ=UTC) for the container's own
+    # system clock; reused here as the server-side "today" for pages that have
+    # no per-request browser timezone to go on (e.g. /airing-today's plain SSR
+    # fetch, unlike the homepage widget which fetches client-side and can send
+    # the visitor's real one).
+    tz: str = "UTC"
+
     # Set at image build time (see Dockerfile / release workflow) to the actual
     # release version; falls back to "dev" for local/non-release builds.
     app_version: str = "dev"
