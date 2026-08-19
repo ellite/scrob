@@ -974,7 +974,7 @@ async def get_top_rated_movies(
     total = (await db.execute(select(func.count()).select_from(base_q.subquery()))).scalar_one()
 
     rows = (await db.execute(
-        base_q.order_by(Rating.rating.desc(), Rating.rated_at.desc())
+        base_q.order_by(Rating.rating.desc(), Rating.rated_at.desc(), Rating.id.desc())
         .offset((page - 1) * _TOP_RATED_PAGE_SIZE)
         .limit(_TOP_RATED_PAGE_SIZE)
     )).all()
@@ -1020,7 +1020,7 @@ async def get_top_rated_shows(
     total = (await db.execute(select(func.count()).select_from(base_q.subquery()))).scalar_one()
 
     rows = (await db.execute(
-        base_q.order_by(Rating.rating.desc(), Rating.rated_at.desc())
+        base_q.order_by(Rating.rating.desc(), Rating.rated_at.desc(), Rating.id.desc())
         .offset((page - 1) * _TOP_RATED_PAGE_SIZE)
         .limit(_TOP_RATED_PAGE_SIZE)
     )).all()
@@ -1068,7 +1068,7 @@ async def get_recently_watched_movies(
     total = (await db.execute(select(func.count()).select_from(base_q.subquery()))).scalar_one()
 
     rows = (await db.execute(
-        base_q.order_by(WatchEvent.watched_at.desc())
+        base_q.order_by(WatchEvent.watched_at.desc(), WatchEvent.id.desc())
         .offset((page - 1) * _RECENTLY_WATCHED_PAGE_SIZE)
         .limit(_RECENTLY_WATCHED_PAGE_SIZE)
     )).all()
@@ -1110,7 +1110,7 @@ async def get_recently_watched_shows(
     total = (await db.execute(select(func.count()).select_from(base_q.subquery()))).scalar_one()
 
     rows = (await db.execute(
-        base_q.order_by(WatchEvent.watched_at.desc())
+        base_q.order_by(WatchEvent.watched_at.desc(), WatchEvent.id.desc())
         .offset((page - 1) * _RECENTLY_WATCHED_PAGE_SIZE)
         .limit(_RECENTLY_WATCHED_PAGE_SIZE)
     )).all()
