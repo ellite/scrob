@@ -2265,10 +2265,15 @@ async def sync_items(
                         # ALREADY completed counts as nothing new to do here.
                         needs_completion = watch_state["completed"] and media_id_for_watch not in existing_completed
                         if not already_recorded or rewatch_eligible or needs_completion:
+                            # Falling back to "now" here (#238) misrepresents every title
+                            # the source has no last-played date for as watched at sync
+                            # time, flooding the activity feed with false "just watched"
+                            # entries. None (unknown date) is an established, already
+                            # -supported state for this column - see Simkl's import path.
                             watch_event = WatchEvent(
                                 user_id=user_id,
                                 media_id=media_id_for_watch,
-                                watched_at=watch_state["last_played"] or datetime.now(timezone.utc).replace(tzinfo=None),
+                                watched_at=watch_state["last_played"],
                                 completed=watch_state["completed"],
                                 play_count=max(1, watch_state["play_count"]),
                                 progress_percent=1.0 if watch_state["completed"] else 0.0,
