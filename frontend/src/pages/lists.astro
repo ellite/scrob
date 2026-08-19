@@ -12,12 +12,19 @@ let publicLists: PublicList[] = [];
 let error = "";
 
 try {
-  const [myData, pubData] = await Promise.all([
-    api.lists.getAll(token!),
-    api.lists.getPublic(token!),
-  ]);
-  lists = myData.lists;
-  publicLists = pubData.lists.filter((l) => l.username !== user?.username);
+  if (token) {
+    const [myData, pubData] = await Promise.all([
+      api.lists.getAll(token),
+      api.lists.getPublic(token),
+    ]);
+    lists = myData.lists;
+    publicLists = pubData.lists.filter((l) => l.username !== user?.username);
+  } else {
+    // Anonymous visitor - no "My Lists" to show, and the public listing
+    // becomes the whole page rather than a small "From the Community" teaser.
+    const pubData = await api.lists.getPublic();
+    publicLists = pubData.lists;
+  }
 } catch (e: unknown) {
   error = e instanceof Error ? e.message : String(e);
 }
@@ -27,18 +34,20 @@ try {
   <div>
     <h1 class="page-title mb-10">Lists</h1>
 
-    <div class="flex items-center justify-between mb-6">
-      <h2 class="section-headline">My Lists</h2>
-      <button
-        id="new-list-btn"
-        class="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/20 active:scale-95 text-sm cursor-pointer"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-        </svg>
-        New List
-      </button>
-    </div>
+    {user && (
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="section-headline">My Lists</h2>
+        <button
+          id="new-list-btn"
+          class="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/20 active:scale-95 text-sm cursor-pointer"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          </svg>
+          New List
+        </button>
+      </div>
+    )}
 
     {error && (
       <div class="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-2xl mb-8 text-sm">
@@ -47,6 +56,7 @@ try {
     )}
 
     <!-- Create List Modal -->
+    {user && (
     <div id="create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
       <div id="modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
       <div class="relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
@@ -121,9 +131,10 @@ try {
         </form>
       </div>
     </div>
+    )}
 
     <!-- Lists Grid -->
-    {lists.length === 0 && !error ? (
+    {user && (lists.length === 0 && !error ? (
       <div class="text-center py-24 bg-zinc-900/20 border border-zinc-800/50 border-dashed rounded-3xl">
         <div class="text-5xl mb-4">📋</div>
         <h2 class="text-xl font-bold text-zinc-100 mb-2">No lists yet</h2>
@@ -160,11 +171,11 @@ try {
           </div>
         ))}
       </div>
-    )}
+    ))}
 
     {publicLists.length > 0 && (
-      <div class="mt-16 pt-10 border-t border-zinc-800/50">
-        <h2 class="section-headline mb-6">From the Community</h2>
+      <div class={user ? "mt-16 pt-10 border-t border-zinc-800/50" : ""}>
+        <h2 class="section-headline mb-6">{user ? "From the Community" : "Public Lists"}</h2>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {publicLists.map((list) => (
             <ListCard
@@ -178,6 +189,14 @@ try {
             />
           ))}
         </div>
+      </div>
+    )}
+
+    {!user && publicLists.length === 0 && !error && (
+      <div class="text-center py-24 bg-zinc-900/20 border border-zinc-800/50 border-dashed rounded-3xl">
+        <div class="text-5xl mb-4">📋</div>
+        <h2 class="text-xl font-bold text-zinc-100 mb-2">No public lists yet</h2>
+        <p class="text-zinc-500">Check back later, or sign in to see your own.</p>
       </div>
     )}
   </div>

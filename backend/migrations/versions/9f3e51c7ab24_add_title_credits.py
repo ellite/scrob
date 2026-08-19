@@ -1,7 +1,7 @@
 """add title_credits for people/studio stats
 
 Revision ID: 9f3e51c7ab24
-Revises: b2c3d4e5f6a8
+Revises: abbf61c1c534
 Create Date: 2026-08-16
 """
 
@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 
 revision = "9f3e51c7ab24"
-down_revision = "b2c3d4e5f6a8"
+down_revision = "abbf61c1c534"
 branch_labels = None
 depends_on = None
 

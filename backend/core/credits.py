@@ -119,10 +119,9 @@ async def _import_credits(api_key: str) -> None:
 
 
 async def _background_import(api_key: str) -> None:
+    # _importing is claimed by the caller (maybe_backfill_credits) before this
+    # is scheduled, so ownership of clearing it belongs here regardless of outcome.
     global _importing
-    if _importing:
-        return
-    _importing = True
     try:
         await _import_credits(api_key)
     except Exception as e:
@@ -135,6 +134,7 @@ async def maybe_backfill_credits(db: AsyncSession, user_id: int) -> None:
     """Kick off the credits backfill in the background when the table is empty
     or stale. Non-blocking: the stats page fills the people/studio groups on
     the next load once the import finishes."""
+    global _importing
     if _importing:
         return
     newest = (await db.execute(select(func.max(TitleCredits.fetched_at)))).scalar_one_or_none()
@@ -143,8 +143,15 @@ async def maybe_backfill_credits(db: AsyncSession, user_id: int) -> None:
     from routers.media import check_tmdb_key, get_user_tmdb_key
 
     api_key = await get_user_tmdb_key(db, user_id)
-    if check_tmdb_key(api_key):
-        asyncio.create_task(_background_import(api_key))
+    if not check_tmdb_key(api_key):
+        return
+    # Re-check right before claiming: two concurrent callers can both pass the
+    # checks above (each awaits a query in between), so the actual claim has to
+    # happen in this uninterrupted, awaitless stretch to stay race-free.
+    if _importing:
+        return
+    _importing = True
+    asyncio.create_task(_background_import(api_key))
 
 
 async def credits_stats(db: AsyncSession, user_id: int, date_filters: list) -> dict:

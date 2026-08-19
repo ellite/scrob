@@ -6,7 +6,7 @@ import { api, type Season } from "../../../../lib/api";
 export const prerender = false;
 
 const { id, season_number } = Astro.params;
-const { token } = Astro.locals;
+const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 
 let season: Season | null = null;
@@ -25,7 +25,7 @@ if (!season && !error) {
 const show = season?.show;
 ---
 
-<Base title={season ? `${show?.title} — ${season.name}` : "Season Details"}>
+<Base title={season ? `${show?.title} - ${season.name}` : "Season Details"}>
   {error && !season && (
     <div class="max-w-md mx-auto mt-20 text-center">
       <div class="bg-red-500/10 border border-red-500/20 text-red-500 p-6 rounded-2xl mb-6">
@@ -137,25 +137,27 @@ const show = season?.show;
               )}
             </div>
 
-            <div class="mb-6">
-              <ActionBar
-                tmdbId={Number(id)}
-                mediaType="series"
-                watched={season.season_watched ?? false}
-                inLists={season.season_in_lists ?? []}
-                inLibrary={season.season_in_library ?? season.show_in_library ?? false}
-                collectionPct={season.season_collection_pct ?? season.show_collection_pct ?? 0}
-                watchPct={season.season_watch_pct ?? 0}
-                watchStarted={season.season_watch_started ?? false}
-                seasonNumber={Number(season_number)}
-                isMonitored={season.show_is_monitored ?? false}
-                requestEnabled={false}
-                hideLists={false}
-                userRating={season.season_user_rating ?? null}
-              />
-            </div>
+            {user && (
+              <div class="mb-6">
+                <ActionBar
+                  tmdbId={Number(id)}
+                  mediaType="series"
+                  watched={season.season_watched ?? false}
+                  inLists={season.season_in_lists ?? []}
+                  inLibrary={season.season_in_library ?? season.show_in_library ?? false}
+                  collectionPct={season.season_collection_pct ?? season.show_collection_pct ?? 0}
+                  watchPct={season.season_watch_pct ?? 0}
+                  watchStarted={season.season_watch_started ?? false}
+                  seasonNumber={Number(season_number)}
+                  isMonitored={season.show_is_monitored ?? false}
+                  requestEnabled={false}
+                  hideLists={false}
+                  userRating={season.season_user_rating ?? null}
+                />
+              </div>
+            )}
 
-            {season.show_in_library && (
+            {user && season.show_in_library && (
               <div class="mb-6">
                 <button
                   id="refresh-metadata-btn"
@@ -253,22 +255,24 @@ const show = season?.show;
                     </div>
                   </div>
                 </a>
-                <div class="px-5 pb-5">
-                  <ActionBar
-                    tmdbId={ep.tmdb_id}
-                    mediaType="episode"
-                    watched={ep.watched}
-                    inLists={ep.in_lists ?? []}
-                    inLibrary={ep.in_library}
-                    collectionPct={ep.in_library ? 100 : 0}
-                    showTmdbId={Number(id)}
-                    seasonNumber={Number(season_number)}
-                    episodeNumber={ep.episode_number}
-                    hideRequest={true}
-                    userRating={ep.user_rating}
-                    airDate={ep.air_date}
-                  />
-                </div>
+                {user && (
+                  <div class="px-5 pb-5">
+                    <ActionBar
+                      tmdbId={ep.tmdb_id}
+                      mediaType="episode"
+                      watched={ep.watched}
+                      inLists={ep.in_lists ?? []}
+                      inLibrary={ep.in_library}
+                      collectionPct={ep.in_library ? 100 : 0}
+                      showTmdbId={Number(id)}
+                      seasonNumber={Number(season_number)}
+                      episodeNumber={ep.episode_number}
+                      hideRequest={true}
+                      userRating={ep.user_rating}
+                      airDate={ep.air_date}
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>

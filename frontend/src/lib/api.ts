@@ -182,6 +182,11 @@ export interface EpisodeDetail {
   cast: CastMember[];
   guest_stars: CastMember[];
   episodes: EpisodeItem[];
+  season?: {
+    name: string;
+    season_number: number;
+    poster_path: string | null;
+  };
   library: {
     resolution: string;
     video_codec: string;
@@ -323,7 +328,7 @@ export interface GlobalSettings {
   sonarr_require_approval: boolean;
   image_cache_enabled: boolean;
   image_cache_limit_gb: number | null;
-  allow_public_profiles: boolean;
+  enable_logged_out_navigation: boolean;
 }
 
 export interface MediaRequestItem {
@@ -1150,6 +1155,9 @@ export const api = {
     airingTodayCollected: (token?: string) =>
       get<{ results: MediaItem[] }>("/media/airing-today/collected", {}, token),
 
+    publicPosterWall: () =>
+      get<{ posters: { poster_path: string; title: string | null; media_type: "movie" | "series" }[] }>("/media/public/poster-wall"),
+
     trendingMovies: (page: number = 1, token?: string) =>
       get<{ results: MediaItem[]; page: number; total_pages: number; total_results: number }>("/media/trending/movies", { page }, token),
 
@@ -1276,7 +1284,7 @@ export const api = {
   lists: {
     getAll: (token: string) =>
       get<{ lists: UserList[] }>("/lists", undefined, token),
-    getPublic: (token: string) =>
+    getPublic: (token?: string) =>
       get<{ lists: PublicList[] }>("/lists/public", undefined, token),
     create: (body: { name: string; description?: string; privacy_level?: PrivacyLevel }, token: string) =>
       post<UserList>("/lists", body, token),
@@ -1321,7 +1329,7 @@ export const api = {
     getPublic: (userId: number, token?: string) =>
       get<PublicProfile>(`/profile/${userId}`, undefined, token),
     publicAccessStatus: () =>
-      get<{ allow_public_profiles: boolean }>("/profile/public-access-status"),
+      get<{ enable_logged_out_navigation: boolean }>("/profile/public-access-status"),
     update: (body: Partial<UserPreferences>, token: string) =>
       patch<UserPreferences>("/profile/me", body, token),
     uploadAvatar: (formData: FormData, token: string) =>

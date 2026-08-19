@@ -15,6 +15,15 @@ if (user?.is_admin && token) {
     pendingRequestCount = data.pending;
   } catch {}
 }
+
+// Anonymous visitors get Movies/Shows nav links too, but only once the admin
+// has enabled logged-out navigation (the pages themselves 302 to /login
+// otherwise - see middleware.ts).
+let showAnonNavLinks = false;
+if (!user) {
+  const status = await api.profile.publicAccessStatus().catch(() => ({ enable_logged_out_navigation: false }));
+  showAnonNavLinks = status.enable_logged_out_navigation;
+}
 const blurExplicit = Astro.cookies.get("blur_explicit")?.value !== "false";
 const use24h = Astro.cookies.get("time_format_24h")?.value === "true";
 
@@ -38,7 +47,7 @@ const bottomNavItem = (active: boolean) =>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>{title} — Scrob</title>
+  <title>{title} - Scrob</title>
   <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
@@ -123,15 +132,17 @@ const bottomNavItem = (active: boolean) =>
             <img src={logo.src} alt="Scrob Logo" width="32" height="32" loading="eager" class="w-7 h-7 md:w-8 md:h-8 object-contain group-hover:scale-105 transition-transform" />
             <span>Scrob</span>
           </a>
-          {user && (
+          {(user || showAnonNavLinks) && (
             <div class="hidden md:flex items-center gap-6 text-sm">
               <a href="/movies" class={navLink(activeMovies)}>Movies</a>
               <a href="/shows" class={navLink(activeShows)}>Shows</a>
               <a href="/lists" class={navLink(activeLists)}>Lists</a>
-              <a href="/history" class={navLink(activeHistory)}>History</a>
+              {user && (
+                <a href="/history" class={navLink(activeHistory)}>History</a>
+              )}
             </div>
           )}
-          {user && (
+          {(user || showAnonNavLinks) && (
             <!-- Desktop search -->
             <form action="/search" method="GET" class="relative hidden md:block">
               <input
@@ -147,7 +158,7 @@ const bottomNavItem = (active: boolean) =>
         </div>
         <!-- Right: mobile search icon + theme + user -->
         <div class="flex items-center gap-2">
-          {user && (
+          {(user || showAnonNavLinks) && (
             <!-- Mobile search icon -->
             <button id="mobile-search-open" class="md:hidden p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors" aria-label="Search">
               <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -206,7 +217,7 @@ const bottomNavItem = (active: boolean) =>
         </div>
       </div>
 
-      {user && (
+      {(user || showAnonNavLinks) && (
         <!-- Mobile search bar (hidden by default, shown when search icon tapped) -->
         <div id="nav-search" class="hidden items-center gap-2 safe-area-top">
           <button id="mobile-search-close" class="p-2 text-zinc-400 hover:text-zinc-100 transition-colors shrink-0" aria-label="Close search">
@@ -238,7 +249,7 @@ const bottomNavItem = (active: boolean) =>
   </main>
 
   <!-- Mobile bottom nav -->
-  {!hideNav && user && (
+  {!hideNav && (user || showAnonNavLinks) && (
     <nav id="bottom-nav" class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-zinc-900 border-t border-zinc-800 flex items-stretch safe-area-bottom">
       <a href="/" class={bottomNavItem(activeHome)}>
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
@@ -256,10 +267,12 @@ const bottomNavItem = (active: boolean) =>
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
         Lists
       </a>
-      <a href="/history" class={bottomNavItem(activeHistory)}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        History
-      </a>
+      {user && (
+        <a href="/history" class={bottomNavItem(activeHistory)}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          History
+        </a>
+      )}
     </nav>
   )}
 
@@ -891,7 +904,11 @@ const bottomNavItem = (active: boolean) =>
         cb.addEventListener('change', async () => {
           const listId = cb.dataset.listId!;
           try {
-            const seasonNumber = _listSeasonNumber ? Number(_listSeasonNumber) : null;
+            // season_number identifies a whole-season list entry
+            // (media_type=series) - individual episodes have their own
+            // tmdb_id and never carry one, even though an episode card's
+            // dataset also has a season number for display purposes.
+            const seasonNumber = _listMediaType === 'series' && _listSeasonNumber ? Number(_listSeasonNumber) : null;
             if (cb.checked) {
               const body: Record<string, unknown> = { tmdb_id: Number(_listTmdbId), media_type: _listMediaType };
               if (seasonNumber != null) body.season_number = seasonNumber;
@@ -899,9 +916,19 @@ const bottomNavItem = (active: boolean) =>
             } else {
               // Find the list_item id — need to fetch list detail
               const detail = await apiFetch(`/lists/${listId}`);
-              const item = detail.items?.find((i: { media: { tmdb_id: number; season_number: number | null } }) =>
-                i.media?.tmdb_id === Number(_listTmdbId) && (i.media?.season_number ?? null) === seasonNumber
-              );
+              const item = detail.items?.find((i: { media: { tmdb_id: number; season_number: number | null } }) => {
+                if (i.media?.tmdb_id !== Number(_listTmdbId)) return false;
+                // Only a whole-season list entry (media_type=series) needs
+                // season_number to disambiguate one season from another on
+                // the same show. For everything else (movies, episodes,
+                // shows added whole) tmdb_id alone is already unique - and
+                // for an episode, media.season_number here is the episode's
+                // own season within its show (a display fallback the API
+                // uses when there's no stored list_item.season_number), not
+                // something to match against.
+                if (_listMediaType !== 'series') return true;
+                return (i.media?.season_number ?? null) === seasonNumber;
+              });
               if (item) {
                 await apiFetch(`/lists/${listId}/items/${item.id}`, 'DELETE');
                 // If we're on the list detail page for this list, remove the card immediately

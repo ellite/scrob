@@ -704,7 +704,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
     const card = (id, has) => { const el = document.getElementById(id + '-card'); if (el) el.style.display = has ? '' : 'none'; return has; };
 
     const posters = (items) => (items || []).filter(it => it.title).map(it => `
-      <a href="/media/${it.episodes != null ? 'series' : 'movie'}/${it.tmdb_id}" class="group block">
+      <a href="${it.episodes != null ? '/show/' + it.tmdb_id : '/media/movie/' + it.tmdb_id}" class="group block">
         <div class="aspect-[2/3] rounded-xl overflow-hidden bg-zinc-800">
           ${it.poster_path ? `<img src="${esc(it.poster_path)}" alt="${esc(it.title)}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform">` : ''}
         </div>

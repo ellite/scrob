@@ -37,6 +37,10 @@ services:
       # ENABLE_REGISTRATIONS: "true"
       # REGISTRATION_MAX_ALLOWED_USERS: "0"  # 0 = unlimited
 
+      # ── Nuvio (optional) ───────────────────────────────────────────────────
+      # Set this to the anon/public key when using a self-hosted Nuvio backend.
+      # NUVIO_APP_ANON_KEY: ""
+
       # ── OIDC (optional) ─────────────────────────────────────────────────────
       # OIDC_ENABLED: "false"
       # OIDC_PROVIDER_NAME: SSO

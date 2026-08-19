@@ -8,13 +8,22 @@ import { api, type ContinueWatchingItem, type MediaItem, tmdbImageUrl } from "..
 import { formatEpisodesLeft } from "../lib/media-format";
 import { episodeHref } from "../lib/episodeHref";
 
-const { token } = Astro.locals;
+const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? "http://localhost:8000";
 
 // Fetch settings first to check for TMDB key
-const settings = await api.auth.getSettings(token!);
-const hasTmdbKey = !!settings?.has_effective_tmdb_key;
+let settings: Awaited<ReturnType<typeof api.auth.getSettings>> | null = null;
+let hasTmdbKey = false;
+if (token) {
+  settings = await api.auth.getSettings(token);
+  hasTmdbKey = !!settings?.has_effective_tmdb_key;
+} else {
+  // Anonymous visitor - only reachable at all when the admin enabled
+  // logged-out navigation, which already implies a global TMDB key.
+  const status = await api.profile.publicAccessStatus().catch(() => ({ enable_logged_out_navigation: false }));
+  hasTmdbKey = status.enable_logged_out_navigation;
+}
 
 let recentMovies: { results: MediaItem[] } = { results: [] };
 let recentShows: { results: MediaItem[] } = { results: [] };
@@ -43,6 +52,19 @@ if (token) {
     }
     nextUp = raw;
   }
+}
+
+// Anonymous visitors never have a Next Up hero (it's inherently personal),
+// which leaves a gap at the top of the page - fill it with a Trending Shows
+// hero in the same visual treatment instead. Fetched server-side (not via
+// the client-side loadSection() below, like the rest of Trending Shows)
+// so it can render immediately as a real hero, not pop in after a fetch.
+let trendingShowsForHero: MediaItem[] = [];
+if (!token) {
+  try {
+    const data = await api.media.trendingShows(1);
+    trendingShowsForHero = data.results ?? [];
+  } catch {}
 }
 
 const FALLBACK_BACKDROPS: string[] = [
@@ -87,6 +109,64 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       </a>
     </div>
   )}
+
+  {!token && trendingShowsForHero.length > 0 && (() => {
+    const hero = trendingShowsForHero[0];
+    const rest = trendingShowsForHero.slice(1, 13);
+    const heroHref = `/show/${hero.tmdb_id}`;
+    const heroBackdrop = tmdbImageUrl(hero.backdrop_path, "w1280");
+    return (
+      <section class="relative md:-mt-8 mb-16">
+        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-screen overflow-hidden pointer-events-none" style="height: 100%;">
+          {heroBackdrop ? (
+            <img
+              src={heroBackdrop}
+              alt={hero.title}
+              class="w-full h-full object-cover"
+              loading="eager"
+              decoding="async"
+            />
+          ) : (
+            <div class="w-full h-full bg-zinc-900"></div>
+          )}
+          <div class="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-zinc-950/20"></div>
+          <div class="absolute inset-0 bg-gradient-to-r from-zinc-950/70 via-transparent to-transparent"></div>
+        </div>
+
+        <div class="relative aspect-[16/9] sm:aspect-[21/8] md:aspect-[21/5] flex flex-col">
+          <div class="flex items-center justify-between pt-8 pb-0">
+            <h2 class="section-headline">Trending Shows</h2>
+            <a href="/trending/shows" class="text-sm font-bold uppercase tracking-widest text-zinc-400 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
+              See All
+              <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+            </a>
+          </div>
+
+          <div class="flex-1 flex items-end pb-6 sm:pb-8">
+            <a href={heroHref} class="block max-w-2xl group">
+              {hero.tmdb_rating != null && hero.tmdb_rating > 0 && (
+                <span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-3 py-1 rounded-full mb-3">
+                  <span class="text-sm leading-none">★</span> {hero.tmdb_rating.toFixed(1)}
+                </span>
+              )}
+              <h3 class="text-2xl sm:text-4xl font-black text-zinc-100 leading-tight mb-1 drop-shadow-lg group-hover:text-blue-200 transition-colors">
+                {hero.title}
+              </h3>
+              {hero.overview && (
+                <p class="text-sm sm:text-base text-zinc-300 font-medium line-clamp-2 max-w-lg drop-shadow">{hero.overview}</p>
+              )}
+            </a>
+          </div>
+        </div>
+
+        {rest.length > 0 && (
+          <div class="relative flex gap-3 overflow-x-auto pb-3 scrollbar-none pt-6 -mx-6 px-6 md:mx-0 md:px-0">
+            {rest.map((item) => <div class="flex-shrink-0 w-40"><MediaCard item={item} /></div>)}
+          </div>
+        )}
+      </section>
+    );
+  })()}
 
   {nextUp.length > 0 && settings?.minimalist_next_up && (
     <section class="mb-16">
@@ -260,26 +340,28 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
         </div>
       </section>
 
-      <!-- Trending Shows -->
-      <section class="mb-16" id="section-trending-shows">
-        <div class="flex items-center justify-between mb-8">
-          <h2 class="section-headline">Trending Shows</h2>
-          <a href="/trending/shows" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-            See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
-          </a>
-        </div>
-        <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0" id="grid-trending-shows">
-          {Array.from({ length: 10 }).map(() => (
-            <div class="flex-shrink-0 w-40 animate-pulse rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800">
-              <div class="aspect-[2/3] bg-zinc-800"></div>
-              <div class="p-3 space-y-2">
-                <div class="h-3 bg-zinc-800 rounded w-3/4"></div>
-                <div class="h-2 bg-zinc-800 rounded w-1/4"></div>
+      <!-- Trending Shows (logged in only - anon visitors see this as the hero above instead) -->
+      {user && (
+        <section class="mb-16" id="section-trending-shows">
+          <div class="flex items-center justify-between mb-8">
+            <h2 class="section-headline">Trending Shows</h2>
+            <a href="/trending/shows" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
+              See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+            </a>
+          </div>
+          <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0" id="grid-trending-shows">
+            {Array.from({ length: 10 }).map(() => (
+              <div class="flex-shrink-0 w-40 animate-pulse rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800">
+                <div class="aspect-[2/3] bg-zinc-800"></div>
+                <div class="p-3 space-y-2">
+                  <div class="h-3 bg-zinc-800 rounded w-3/4"></div>
+                  <div class="h-2 bg-zinc-800 rounded w-1/4"></div>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      </section>
+            ))}
+          </div>
+        </section>
+      )}
 
       <!-- Airing Today -->
       <section class="mb-16" id="section-airing-today">
@@ -302,7 +384,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   )}
 </Base>
 
-<script define:vars={{ token }}>
+<script define:vars={{ token, hasUser: !!user }}>
 
   function esc(str) {
           if (str == null) return '';
@@ -365,7 +447,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
                 ${rating ? `<div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1"><span class="text-xs leading-none">★</span> ${esc(rating)}</div>` : ''}
               </div>
             </a>
-            <div class="grid grid-cols-3 flex-shrink-0">
+            ${hasUser ? `<div class="grid grid-cols-3 flex-shrink-0">
               <button data-action="watched" data-watched="${watched}" data-watch-pct="${watchPct}" data-state="${watchActive ? 'active' : 'inactive'}"
                 title="${isSeries ? `${watchPct}% watched` : (watched ? 'Mark as unwatched' : 'Mark as watched')}"
                 class="flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer border-r border-zinc-800/60 hover:brightness-125 ${watchActive ? 'bg-green-500/20 text-green-400' : 'bg-zinc-900 text-zinc-400 hover:bg-green-500/10 hover:text-green-500'}">
@@ -394,7 +476,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
                 </svg>
                 <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isSeries ? `${collectionPct}%` : 'Collected'}</span>
               </button>
-            </div>
+            </div>` : ''}
             <a href="${esc(href)}" class="block p-3 bg-gradient-to-b from-zinc-900 to-zinc-950 flex-1">
               <h3 class="text-sm font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors leading-tight mb-1">${esc(item.title)}</h3>
               <div class="flex items-center justify-between">
@@ -451,7 +533,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
           if (!grid) return;
           try {
             const res = await fetch(url, {
-              headers: { 'Authorization': `Bearer ${token}` },
+              headers: token ? { 'Authorization': `Bearer ${token}` } : {},
             });
             if (!res.ok) {
               grid.closest('section').remove();
@@ -470,9 +552,19 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
         }
 
         loadSection('/api/proxy/media/trending/movies', 'grid-trending-movies', mediaCardHtml, 12);
-        loadSection('/api/proxy/media/trending/shows', 'grid-trending-shows', mediaCardHtml, 12);
-        const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        loadSection(`/api/proxy/media/airing-today/collected?timezone=${encodeURIComponent(userTimezone)}`, 'grid-airing-today', episodeCardHtml, 12);
+        if (hasUser) {
+          // Anonymous visitors already get trending shows server-rendered as
+          // the hero at the top of the page - no need to fetch it again.
+          loadSection('/api/proxy/media/trending/shows', 'grid-trending-shows', mediaCardHtml, 12);
+        }
+        if (hasUser) {
+          const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          loadSection(`/api/proxy/media/airing-today/collected?timezone=${encodeURIComponent(userTimezone)}`, 'grid-airing-today', episodeCardHtml, 12);
+        } else {
+          // No personal collection to filter by when logged out - show a
+          // small generic sample of what's airing today instead.
+          loadSection('/api/proxy/media/on-air-today', 'grid-airing-today', episodeCardHtml, 6);
+        }
 
         // Continue watching dismiss
         document.addEventListener('click', async (e) => {

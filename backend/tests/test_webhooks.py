@@ -17,6 +17,7 @@ from routers.webhooks import (
     _episode_for_progress,
     _is_duplicate_webhook_delivery,
     _maybe_bingebase_scrobble,
+    _resolve_tvdb_episode_to_tmdb_position,
     _write_watch_event,
     find_or_create_media_jellyfin,
     find_or_create_media_jellyfin_multi,
@@ -523,6 +524,135 @@ class FindOrCreateMediaJellyfinBackfillShowLinkageTests(IsolatedAsyncioTestCase)
         self.assertIs(result, episode)
         self.assertIsNone(episode.show_id)
         enrich_mock.assert_not_awaited()
+
+
+class _QueuedResultDB:
+    """Fakes AsyncSession.execute() as a queue of .scalars().first()-style
+    results, popped in call order."""
+
+    def __init__(self, media_results):
+        self._queue = list(media_results)
+
+    async def execute(self, stmt):
+        return _FastPathResult(self._queue.pop(0) if self._queue else None)
+
+
+class ResolveTvdbEpisodeToTmdbPositionTests(IsolatedAsyncioTestCase):
+    """#162: resolves a Jellyfin-reported TVDB-native (season, episode)
+    position to the canonical TMDB one, computing/caching the mapping for
+    just that season on demand when it isn't known yet."""
+
+    def _show(self):
+        return SimpleNamespace(id=9, tmdb_id=100, tvdb_id=389597)
+
+    async def test_returns_none_without_tvdb_id_or_keys(self):
+        db = AsyncMock()
+        show_no_tvdb = SimpleNamespace(id=9, tmdb_id=100, tvdb_id=None)
+        result = await _resolve_tvdb_episode_to_tmdb_position(db, show_no_tvdb, 2, 1, "tmdb-key", "tvdb-key")
+        self.assertIsNone(result)
+        db.execute.assert_not_awaited()
+
+        result = await _resolve_tvdb_episode_to_tmdb_position(db, self._show(), 2, 1, "tmdb-key", None)
+        self.assertIsNone(result)
+
+    async def test_uses_an_existing_mapping_without_recomputing(self):
+        db = AsyncMock()
+        mapping = SimpleNamespace(tmdb_season_number=1, tmdb_episode_number=25)
+        with (
+            patch("routers.webhooks.get_mapping_by_tvdb_position", AsyncMock(return_value=mapping)),
+            patch("routers.webhooks.ensure_episode_order_mapping_for_season", AsyncMock()) as compute_mock,
+        ):
+            result = await _resolve_tvdb_episode_to_tmdb_position(db, self._show(), 2, 1, "tmdb-key", "tvdb-key")
+        self.assertEqual(result, (1, 25))
+        compute_mock.assert_not_awaited()
+
+    async def test_computes_on_demand_and_reconciles_when_no_mapping_exists_yet(self):
+        db = AsyncMock()
+        new_mapping = SimpleNamespace(
+            tmdb_season_number=1, tmdb_episode_number=25, tvdb_season_number=2, tvdb_episode_number=1,
+        )
+        show = self._show()
+        with (
+            patch("routers.webhooks.get_mapping_by_tvdb_position", AsyncMock(return_value=None)),
+            patch("routers.webhooks.ensure_episode_order_mapping_for_season", AsyncMock(return_value=[new_mapping])),
+            patch("routers.webhooks.reconcile_divergent_episode_media", AsyncMock()) as reconcile_mock,
+        ):
+            result = await _resolve_tvdb_episode_to_tmdb_position(db, show, 2, 1, "tmdb-key", "tvdb-key")
+        self.assertEqual(result, (1, 25))
+        reconcile_mock.assert_awaited_once_with(db, show, season_number=2)
+
+    async def test_returns_none_when_genuinely_unmapped(self):
+        # Real TVDB-only content (#101) - must fall through cleanly, not force a match.
+        db = AsyncMock()
+        with (
+            patch("routers.webhooks.get_mapping_by_tvdb_position", AsyncMock(return_value=None)),
+            patch("routers.webhooks.ensure_episode_order_mapping_for_season", AsyncMock(return_value=[])),
+        ):
+            result = await _resolve_tvdb_episode_to_tmdb_position(db, self._show(), 2, 1, "tmdb-key", "tvdb-key")
+        self.assertIsNone(result)
+
+    async def test_swallows_exceptions_and_returns_none(self):
+        db = AsyncMock()
+        with patch("routers.webhooks.get_mapping_by_tvdb_position", AsyncMock(side_effect=RuntimeError("boom"))):
+            result = await _resolve_tvdb_episode_to_tmdb_position(db, self._show(), 2, 1, "tmdb-key", "tvdb-key")
+        self.assertIsNone(result)
+
+
+class FindOrCreateMediaJellyfinTvdbTranslationTests(IsolatedAsyncioTestCase):
+    """#162: find_or_create_media_jellyfin must match/create the episode at
+    its canonical TMDB position when one can be resolved, not Jellyfin's raw
+    (potentially TVDB-native) SeasonNumber/EpisodeNumber."""
+
+    def _episode_data(self, **overrides):
+        data = {
+            "media_type": "episode",
+            "jellyfin_id": None,  # skip the CollectionFile fast path
+            "title": "Ep 1",
+            "series_name": "Jujutsu Kaisen",
+            "season_number": 2,
+            "episode_number": 1,
+            "tmdb_id": None,
+            "series_tmdb_id": None,
+        }
+        data.update(overrides)
+        return data
+
+    async def test_translated_position_is_used_for_the_media_match(self):
+        show = SimpleNamespace(id=9, tmdb_id=100, tvdb_id=389597)
+        found_media = SimpleNamespace(id=1, media_type=MediaType.episode, show_id=9, season_number=1, episode_number=25)
+        data = self._episode_data()
+        db = _QueuedResultDB([found_media])  # step 3's match, at the translated position
+
+        with (
+            patch("routers.webhooks._resolve_show_for_episode", AsyncMock(return_value=(show, 100))),
+            patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(389597, "tvdb-key", "en"))),
+            patch("routers.webhooks._resolve_tvdb_episode_to_tmdb_position", AsyncMock(return_value=(1, 25))),
+        ):
+            result = await find_or_create_media_jellyfin(data, db, api_key="tmdb-key")
+
+        self.assertIs(result, found_media)
+        # The raw TVDB-native numbers Jellyfin sent must have been replaced
+        # with the canonical TMDB position before the match/create step.
+        self.assertEqual(data["season_number"], 1)
+        self.assertEqual(data["episode_number"], 25)
+
+    async def test_unresolvable_position_falls_through_to_raw_numbers_unchanged(self):
+        show = SimpleNamespace(id=9, tmdb_id=100, tvdb_id=None)
+        found_media = SimpleNamespace(id=1, media_type=MediaType.episode, show_id=9, season_number=2, episode_number=1)
+        data = self._episode_data()
+        db = _QueuedResultDB([found_media])
+
+        with (
+            patch("routers.webhooks._resolve_show_for_episode", AsyncMock(return_value=(show, 100))),
+            patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(None, None, None))),
+            patch("routers.webhooks._resolve_tvdb_episode_to_tmdb_position", AsyncMock(return_value=None)) as resolve_mock,
+        ):
+            result = await find_or_create_media_jellyfin(data, db, api_key="tmdb-key")
+
+        self.assertIs(result, found_media)
+        self.assertEqual(data["season_number"], 2)
+        self.assertEqual(data["episode_number"], 1)
+        resolve_mock.assert_awaited_once()
 
 
 class _FakeSessionCommitDB:

@@ -335,18 +335,22 @@ The GitHub Actions workflow (`.github/workflows/docker-x64.yml`) automatically v
 
 ## Nuvio Cloud Synchronization
 
-Scrob connects to the [Nuvio public Cloud API](https://nuvio.tv/docs) at `https://api.nuvio.tv`. A TMDB Read Access Token must be configured in Scrob so Nuvio content identifiers can be matched to movies and shows.
+Scrob connects to the [Nuvio public Cloud API](https://nuvio.tv/docs) at `https://api.nuvio.tv` by default and also supports self-hosted Nuvio backends. A TMDB Read Access Token must be configured in Scrob so Nuvio content identifiers can be matched to movies and shows.
 
 ### Connect Nuvio
 
 1. Open **Connections → Media Players** and select **Add Connection**.
-2. Choose **Nuvio**, then enter a connection name, your Nuvio email, and your Nuvio password.
+2. Choose **Nuvio**, then enter a connection name, your Nuvio email, and your Nuvio password. To use a self-hosted backend, replace the default Cloud API URL with its Supabase project URL.
 3. Select **Test** to authenticate and load the profiles attached to the account.
 4. Select the Nuvio profile to synchronize, choose the pull and push options, then select **Add**.
 
 Scrob exchanges the email and password for a refresh token. The password is never persisted. Refresh-token rotation is handled automatically during connection checks and synchronization.
 
 Each connection targets one Nuvio profile. Add another connection if you need to synchronize another profile from the same account.
+
+### Self-hosted Backends
+
+Set `NUVIO_APP_ANON_KEY` to the anon/public key for your self-hosted Nuvio Supabase project, then enter that project's URL in the editable **Cloud API URL** field when adding the connection. If the variable is unset, Scrob continues to use the official Nuvio publishable key.
 
 ### Synchronization Directions
 

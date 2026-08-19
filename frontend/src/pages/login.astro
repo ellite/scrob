@@ -16,6 +16,7 @@ const oidcConfig: OidcConfig = await api.auth.oidcConfig().catch(() => ({
 
 const { enabled: registrationEnabled, smtp_configured: smtpConfigured } = await api.auth.registrationStatus().catch(() => ({ enabled: false, smtp_configured: false }));
 const { has_users: hasUsers } = await api.auth.hasUsers().catch(() => ({ has_users: true }));
+const { enable_logged_out_navigation: showNav } = await api.profile.publicAccessStatus().catch(() => ({ enable_logged_out_navigation: false }));
 
 if (Astro.url.searchParams.get("restored") === "true") {
   success = "Database restored successfully. You can now log in.";
@@ -90,29 +91,154 @@ const token = Astro.cookies.get("token")?.value;
 if (token) {
   return Astro.redirect("/");
 }
+
+// ── Decorative poster wall (background) ──
+const pwIcon = (paths: string): string =>
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+
+// Fallback tile used only when the instance has no TMDB key configured yet,
+// so there are no real posters to show.
+const fallbackIcon = pwIcon('<rect width="20" height="20" x="2" y="2" rx="2.18" ry="2.18"/><line x1="7" x2="7" y1="2" y2="22"/><line x1="17" x2="17" y1="2" y2="22"/><line x1="2" x2="22" y1="7" y2="7"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="2" x2="22" y1="17" y2="17"/>');
+
+const { posters } = await api.media.publicPosterWall().catch(() => ({ posters: [] }));
+
+const PW_COLS = 7;
+const PW_ROWS = 4;
+const pwDepths = [0.4, 1, 0.65, 1.2, 0.5, 0.9, 0.7]; // per-column parallax intensity
+const pwColumns: { poster: (typeof posters)[number] | null; depth: number }[][] = Array.from(
+  { length: PW_COLS },
+  (_, ci) =>
+    Array.from({ length: PW_ROWS }, (_, ri) => {
+      const idx = ci * PW_ROWS + ri;
+      return {
+        poster: posters.length ? posters[idx % posters.length] : null,
+        depth: pwDepths[ci % pwDepths.length],
+      };
+    })
+);
+
+// When the nav bar renders (logged-out navigation enabled), it adds real
+// height above this section that the fixed 9rem/5rem budget below doesn't
+// know about - without this, the page overflows by the nav's height even
+// though the hero content itself fits the viewport.
+const heroMinHeightClass = showNav
+  ? "min-h-[calc(100dvh-14rem)] md:min-h-[calc(100dvh-10rem)]"
+  : "min-h-[calc(100dvh-9rem)] md:min-h-[calc(100dvh-5rem)]";
 ---
 
-<Base title="Login" hideNav>
-  <div class="max-w-md mx-auto mt-16 p-8 bg-zinc-900 rounded-xl border border-zinc-800 shadow-2xl relative">
-    <button
-      id="theme-toggle"
-      tabindex="1"
-      class="absolute top-4 right-4 p-2 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-100 transition-all hover:scale-110 active:scale-95"
-      aria-label="Toggle Theme"
-    >
-      <span id="sun-icon" class="hidden">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
-      </span>
-      <span id="moon-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
-      </span>
-    </button>
-    <div class="flex flex-col items-center mb-6">
-      <img src="/scrob.png" alt="Scrob Logo" class="w-36 object-contain mb-2" />
-      <span class="text-zinc-100 font-bold text-xl tracking-tight">Scrob</span>
+<Base title="Welcome" hideNav={!showNav}>
+  <!-- Decorative poster-wall background (full viewport, behind content) -->
+  <div id="poster-wall-viewport" class="fixed inset-0 z-0 overflow-hidden pointer-events-none" aria-hidden="true">
+    <div class="poster-wall">
+      {pwColumns.map((col, ci) => (
+        <div class={`pw-col pw-drift-${ci % 3}`} data-depth={col[0]?.depth ?? 0.7}>
+          {col.map(({ poster }, ri) => (
+            poster ? (
+              <div class="pw-card pw-card--poster">
+                <img
+                  src={`https://image.tmdb.org/t/p/w342${poster.poster_path}`}
+                  alt=""
+                  loading="lazy"
+                  referrerpolicy="no-referrer"
+                />
+              </div>
+            ) : (
+              <div class={`pw-card pw-g${(ri * 3 + ci) % 5}`}>
+                <span class="pw-icon" set:html={fallbackIcon} />
+              </div>
+            )
+          ))}
+        </div>
+      ))}
     </div>
-    <h1 class="text-3xl font-bold mb-6 text-zinc-100 text-center">Login</h1>
-    
+    <div class="pw-overlay"></div>
+  </div>
+
+  {!showNav && (
+  <button
+    id="theme-toggle"
+    tabindex="1"
+    class="fixed top-4 right-4 z-20 p-2 rounded-lg bg-zinc-900/80 backdrop-blur-sm border border-zinc-700 text-zinc-400 hover:text-zinc-100 transition-all hover:scale-110 active:scale-95"
+    aria-label="Toggle Theme"
+  >
+    <span id="sun-icon" class="hidden">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+    </span>
+    <span id="moon-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+    </span>
+  </button>
+  )}
+
+  <div class={`relative z-10 ${heroMinHeightClass} flex items-center py-6 md:py-10`}>
+    <div class="w-full grid md:grid-cols-2 gap-8 md:gap-12 lg:gap-20 items-center">
+
+      <!-- Hero: what Scrob is -->
+      <div class="text-center md:text-left hero-copy">
+        <div class="flex items-center justify-center md:justify-start gap-3 mb-5 md:mb-7">
+          <img src="/scrob.png" alt="Scrob Logo" class="w-12 md:w-14 object-contain" />
+          <span class="text-zinc-100 font-black text-2xl md:text-3xl tracking-tight">Scrob</span>
+        </div>
+        <h1 class="text-3xl md:text-5xl font-black text-zinc-100 leading-tight mb-4">
+          Track <span class="hero-gradient-text text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-blue-600">everything</span> you watch.
+        </h1>
+        <p class="hero-lead text-zinc-400 text-sm md:text-base leading-relaxed max-w-lg mx-auto md:mx-0">
+          <span class="hero-highlight-mark">Scrob is your private, self-hosted home for movies and TV. Sync your
+          media servers, keep your watch history, rate and review, and always
+          know what to watch next.</span>
+        </p>
+
+        <ul class="hidden md:flex flex-col gap-4 mt-8">
+          <li class="flex items-start gap-3">
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-zinc-900/80 border border-zinc-700 flex items-center justify-center text-blue-400">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+            </span>
+            <span>
+              <span class="block text-sm font-semibold text-zinc-100">Syncs with your servers</span>
+              <span class="hero-lead block text-sm text-zinc-400">Jellyfin, Plex, Emby, Kodi and more - in and out.</span>
+            </span>
+          </li>
+          <li class="flex items-start gap-3">
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-zinc-900/80 border border-zinc-700 flex items-center justify-center text-blue-400">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </span>
+            <span>
+              <span class="block text-sm font-semibold text-zinc-100">Complete watch history</span>
+              <span class="hero-lead block text-sm text-zinc-400">Every movie, episode and rewatch, with ratings and reviews.</span>
+            </span>
+          </li>
+          <li class="flex items-start gap-3">
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-zinc-900/80 border border-zinc-700 flex items-center justify-center text-blue-400">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/></svg>
+            </span>
+            <span>
+              <span class="block text-sm font-semibold text-zinc-100">Lists and collections</span>
+              <span class="hero-lead block text-sm text-zinc-400">Watchlists, custom lists and lists shared by the community.</span>
+            </span>
+          </li>
+          <li class="flex items-start gap-3">
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-zinc-900/80 border border-zinc-700 flex items-center justify-center text-blue-400">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>
+            </span>
+            <span>
+              <span class="block text-sm font-semibold text-zinc-100">Discover and stats</span>
+              <span class="hero-lead block text-sm text-zinc-400">Trending titles, personal recommendations and your viewing stats.</span>
+            </span>
+          </li>
+        </ul>
+
+        <div class="hidden md:flex items-center gap-2 mt-8 text-xs text-zinc-500">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.07 1.83 2.8 1.3 3.49 1 .1-.78.42-1.31.76-1.61-2.66-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.63-5.48 5.92.43.37.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg>
+          <span>Open source and self-hosted.</span>
+          <a href="https://github.com/ellite/scrob" target="_blank" rel="noopener noreferrer" class="text-zinc-400 hover:text-zinc-100 underline underline-offset-2 transition-colors">GitHub</a>
+        </div>
+      </div>
+
+      <!-- Login card -->
+      <div class="w-full max-w-md mx-auto md:justify-self-end">
+        <div class="p-8 bg-zinc-900/85 backdrop-blur-md rounded-xl border border-zinc-800 shadow-2xl">
+    <h2 class="text-2xl font-bold mb-6 text-zinc-100 text-center">Sign in</h2>
+
     {error && (
       <div class="bg-red-500/10 border border-red-500 text-red-500 p-3 rounded-lg mb-6">
         {error}
@@ -254,31 +380,168 @@ if (token) {
         </div>
       </form>
     )}
-  </div>
-
-  {!hasUsers && (
-    <div class="max-w-md mx-auto mt-4 mb-12">
-      <div class="flex items-center gap-3 mb-4">
-        <div class="flex-1 border-t border-zinc-800"></div>
-        <span class="text-xs text-zinc-600">or restore from backup</span>
-        <div class="flex-1 border-t border-zinc-800"></div>
-      </div>
-      <div class="p-6 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl">
-        <h2 class="font-semibold text-zinc-100 mb-1">Restore Database</h2>
-        <p class="text-sm text-zinc-400 mb-4">Upload a <code class="text-zinc-300">.bak</code> file to restore a previous installation.</p>
-        <div class="flex flex-col gap-3">
-          <input id="bootstrap-restore-file" type="file" accept=".bak"
-            class="block w-full text-sm text-zinc-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-zinc-800 file:text-zinc-300 hover:file:bg-zinc-700 file:cursor-pointer cursor-pointer" />
-          <button id="bootstrap-restore-btn" disabled
-            class="w-full px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-            Restore Database
-          </button>
         </div>
-        <div id="bootstrap-restore-error" class="hidden mt-3 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2"></div>
+
+        {!hasUsers && (
+          <div class="mt-4">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="flex-1 border-t border-zinc-800"></div>
+              <span class="text-xs text-zinc-600">or restore from backup</span>
+              <div class="flex-1 border-t border-zinc-800"></div>
+            </div>
+            <div class="p-6 bg-zinc-900/85 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl">
+              <h2 class="font-semibold text-zinc-100 mb-1">Restore Database</h2>
+              <p class="text-sm text-zinc-400 mb-4">Upload a <code class="text-zinc-300">.bak</code> file to restore a previous installation.</p>
+              <div class="flex flex-col gap-3">
+                <input id="bootstrap-restore-file" type="file" accept=".bak"
+                  class="block w-full text-sm text-zinc-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-zinc-800 file:text-zinc-300 hover:file:bg-zinc-700 file:cursor-pointer cursor-pointer" />
+                <button id="bootstrap-restore-btn" disabled
+                  class="w-full px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                  Restore Database
+                </button>
+              </div>
+              <div id="bootstrap-restore-error" class="hidden mt-3 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2"></div>
+            </div>
+          </div>
+        )}
+
+        <!-- Compact feature strip (mobile only) -->
+        <div class="md:hidden mt-6 grid grid-cols-2 gap-2 text-left">
+          <div class="flex items-center gap-2 bg-zinc-900/70 backdrop-blur-sm border border-zinc-800 rounded-lg px-3 py-2.5">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-blue-400"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+            <span class="text-xs text-zinc-300">Syncs Jellyfin, Plex &amp; Emby</span>
+          </div>
+          <div class="flex items-center gap-2 bg-zinc-900/70 backdrop-blur-sm border border-zinc-800 rounded-lg px-3 py-2.5">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-blue-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span class="text-xs text-zinc-300">Full watch history</span>
+          </div>
+          <div class="flex items-center gap-2 bg-zinc-900/70 backdrop-blur-sm border border-zinc-800 rounded-lg px-3 py-2.5">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-blue-400"><path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/></svg>
+            <span class="text-xs text-zinc-300">Ratings &amp; lists</span>
+          </div>
+          <div class="flex items-center gap-2 bg-zinc-900/70 backdrop-blur-sm border border-zinc-800 rounded-lg px-3 py-2.5">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-blue-400"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>
+            <span class="text-xs text-zinc-300">Discover &amp; stats</span>
+          </div>
+        </div>
       </div>
     </div>
-  )}
+  </div>
 </Base>
+
+<style is:global>
+  /* Guarantees hero text legibility over the poster wall regardless of what
+     poster happens to sit behind any given word. */
+  .hero-copy { text-shadow: 0 1px 8px rgba(0, 0, 0, 0.65), 0 1px 3px rgba(0, 0, 0, 0.5); }
+  html.light .hero-copy { text-shadow: 0 1px 8px rgba(255, 255, 255, 0.75), 0 1px 3px rgba(255, 255, 255, 0.6); }
+  /* A text-shadow on a background-clip:text/transparent-fill span paints as a
+     solid smear instead of following the glyph's gradient fill, so opt it out. */
+  .hero-copy .hero-gradient-text { text-shadow: none; }
+  .hero-lead { color: #fff; }
+  html.light .hero-lead { color: #000; }
+  .hero-highlight-mark {
+    background-color: #ec4899;
+    color: #fff;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding: 0.15em 0.35em;
+    border-radius: 0.3em;
+  }
+
+  /* ── Login poster-wall background ── */
+  .poster-wall {
+    position: absolute;
+    inset: -10%;
+    display: flex;
+    justify-content: center;
+    gap: clamp(1.5rem, 2.6vw, 3rem);
+    transform: rotate(-4deg);
+  }
+  .pw-col {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(1.5rem, 2.6vw, 3rem);
+    flex: 0 0 auto;
+    width: clamp(140px, 13vw, 210px);
+    transition: transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: transform;
+  }
+  .pw-col:nth-child(even) { margin-top: -6rem; }
+  .pw-card {
+    aspect-ratio: 2 / 3;
+    border-radius: 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pw-icon { width: 34%; color: rgba(255, 255, 255, 0.16); }
+  .pw-icon svg { width: 100%; height: auto; }
+
+  .pw-card--poster {
+    overflow: hidden;
+    background: #111;
+    box-shadow: 0 14px 34px -14px rgba(0, 0, 0, 0.65);
+  }
+  .pw-card--poster img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    filter: saturate(1.02) brightness(0.98);
+  }
+
+  .pw-g0 { background: linear-gradient(160deg, #312e81, #1e1b4b); }
+  .pw-g1 { background: linear-gradient(160deg, #581c87, #3b0764); }
+  .pw-g2 { background: linear-gradient(160deg, #881337, #4c0519); }
+  .pw-g3 { background: linear-gradient(160deg, #115e59, #042f2e); }
+  .pw-g4 { background: linear-gradient(160deg, #075985, #082f49); }
+
+  .pw-overlay {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(
+        115deg,
+        color-mix(in srgb, var(--color-bg-page) 62%, transparent) 0%,
+        color-mix(in srgb, var(--color-bg-page) 34%, transparent) 30%,
+        transparent 56%
+      ),
+      radial-gradient(
+        70% 65% at 50% 50%,
+        color-mix(in srgb, var(--color-bg-page) 18%, transparent) 0%,
+        color-mix(in srgb, var(--color-bg-page) 45%, transparent) 55%,
+        color-mix(in srgb, var(--color-bg-page) 68%, transparent) 100%
+      );
+  }
+  html.light .pw-overlay {
+    background:
+      linear-gradient(
+        115deg,
+        color-mix(in srgb, var(--color-bg-page) 72%, transparent) 0%,
+        color-mix(in srgb, var(--color-bg-page) 45%, transparent) 30%,
+        transparent 56%
+      ),
+      radial-gradient(
+        70% 65% at 50% 50%,
+        color-mix(in srgb, var(--color-bg-page) 32%, transparent) 0%,
+        color-mix(in srgb, var(--color-bg-page) 58%, transparent) 55%,
+        color-mix(in srgb, var(--color-bg-page) 78%, transparent) 100%
+      );
+  }
+
+  @keyframes pw-drift {
+    from { translate: 0 -1.5%; }
+    to { translate: 0 1.5%; }
+  }
+  .pw-drift-0 { animation: pw-drift 22s ease-in-out infinite alternate; }
+  .pw-drift-1 { animation: pw-drift 28s ease-in-out infinite alternate-reverse; }
+  .pw-drift-2 { animation: pw-drift 34s ease-in-out infinite alternate; }
+  @media (prefers-reduced-motion: reduce) {
+    .pw-drift-0, .pw-drift-1, .pw-drift-2 { animation: none; }
+    .pw-col { transition: none; }
+  }
+</style>
 
 <!-- Bootstrap Restore Confirmation Modal -->
 <div id="bootstrap-restore-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -330,6 +593,37 @@ if (token) {
 
   setupPasswordToggles();
   document.addEventListener('astro:after-swap', setupPasswordToggles);
+
+  // ── Poster-wall mouse parallax ──
+  function setupPosterParallax() {
+    const viewport = document.getElementById('poster-wall-viewport');
+    if (!viewport || viewport.dataset.parallaxBound === 'true') return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    const cols = Array.from(viewport.querySelectorAll<HTMLElement>('.pw-col'));
+    if (!cols.length) return;
+    viewport.dataset.parallaxBound = 'true';
+
+    const MAX_PX = 24;
+    let raf = 0;
+    window.addEventListener('mousemove', (e) => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const nx = (e.clientX / window.innerWidth - 0.5) * 2;
+        const ny = (e.clientY / window.innerHeight - 0.5) * 2;
+        for (const col of cols) {
+          const depth = parseFloat(col.dataset.depth || '0.7');
+          const tx = nx * MAX_PX * depth;
+          const ty = ny * MAX_PX * depth * 0.6;
+          col.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
+        }
+      });
+    });
+  }
+
+  setupPosterParallax();
+  document.addEventListener('astro:after-swap', setupPosterParallax);
 
   // ── Bootstrap restore ──
   const bootstrapFile = document.getElementById('bootstrap-restore-file') as HTMLInputElement | null;
