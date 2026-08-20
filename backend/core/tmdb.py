@@ -1,7 +1,7 @@
 import asyncio
 import time
 import httpx
-from core.config import settings
+from core.config import settings, tmdb_httpx_kwargs
 
 TMDB_BASE = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
@@ -78,7 +78,9 @@ async def _get(
     last_exc: Exception = None
     for attempt in range(max_retries + 1):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0), **tmdb_httpx_kwargs()
+            ) as client:
                 r = await client.get(url, headers=headers or {}, params=params)
                 if r.status_code == 429:
                     wait = int(r.headers.get("Retry-After", 2 ** (attempt + 1)))

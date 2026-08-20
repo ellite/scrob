@@ -5687,6 +5687,27 @@ async def serve_image(
     settings_stmt = select(GlobalSettings).where(GlobalSettings.id == 1)
     gs = (await db.execute(settings_stmt)).scalar_one_or_none()
 
+    # With a TMDB-only proxy configured, stream through the backend when the
+    # optional disk cache is disabled. Redirecting would make the browser
+    # contact image.tmdb.org directly and bypass the deployment proxy. When
+    # the disk cache is enabled, the normal cache path below still uses the
+    # same proxy for its TMDB fetches.
+    if settings.tmdb_proxy_url and (not gs or not gs.image_cache_enabled):
+        from core.image_cache import ALLOWED_SIZES, fetch_tmdb_image
+        if size not in ALLOWED_SIZES:
+            raise HTTPException(status_code=400, detail="Invalid image size")
+        if ".." in path:
+            raise HTTPException(status_code=400, detail="Invalid image path")
+        image = await fetch_tmdb_image(size, path)
+        if not image:
+            raise HTTPException(status_code=502, detail="Unable to fetch TMDB image through configured proxy")
+        content, content_type = image
+        return Response(
+            content=content,
+            media_type=content_type or "application/octet-stream",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
     if not gs or not gs.image_cache_enabled:
         return RedirectResponse(f"https://image.tmdb.org/t/p/{size}{path}")
 
@@ -5698,6 +5719,8 @@ async def serve_image(
 
     local_path_str = await download_and_cache_image(db, size, path)
     if not local_path_str:
+        if settings.tmdb_proxy_url:
+            raise HTTPException(status_code=502, detail="Unable to fetch TMDB image through configured proxy")
         return RedirectResponse(f"https://image.tmdb.org/t/p/{size}{path}")
 
     # Eviction pruning check in background

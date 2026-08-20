@@ -24,6 +24,11 @@ services:
       # to use the official key.
       # ARVIO_APP_ANON_KEY: ""
 
+      # ── TMDB-only proxy (optional) ─────────────────────────────────────────
+      # Route only TMDB metadata and image traffic through an HTTP or SOCKS5
+      # proxy such as a Cloudflare WARP container on this Docker network.
+      # TMDB_PROXY_URL: socks5://warp:1080
+
       # ── OIDC (optional) ─────────────────────────────────────────────────────
       # OIDC_ENABLED: "false"
       # OIDC_PROVIDER_NAME: SSO

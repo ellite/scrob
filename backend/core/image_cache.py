@@ -9,7 +9,7 @@ from sqlalchemy import select, func, delete as sa_delete
 from sqlalchemy.exc import IntegrityError
 
 from db import AsyncSessionLocal
-from core.config import settings
+from core.config import settings, tmdb_httpx_kwargs
 from models.image_cache import ImageCache
 from models.media import Media
 from models.show import Show as ShowModel
@@ -65,41 +65,55 @@ async def download_and_cache_image(db, size: str, path: str, image_type: str = "
             await db.delete(cached)
             await db.commit()
 
-    # Fetch from TMDB
-    url = f"https://image.tmdb.org/t/p/{size}{path}"
+    # Fetch from TMDB.  This is deliberately the only non-metadata request
+    # that receives TMDB_PROXY_URL, so image caching works on networks that
+    # block image.tmdb.org without proxying any other provider.
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(url)
-            if r.status_code == 200:
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-                local_path.write_bytes(r.content)
+        image = await fetch_tmdb_image(size, path)
+        if image:
+            content, _content_type = image
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            local_path.write_bytes(content)
 
-                cache_entry = ImageCache(
-                    path=path,
-                    size=size,
-                    image_type=image_type,
-                    file_size=len(r.content),
-                    last_accessed=datetime.now(timezone.utc),
-                    created_at=datetime.now(timezone.utc),
+            cache_entry = ImageCache(
+                path=path,
+                size=size,
+                image_type=image_type,
+                file_size=len(content),
+                last_accessed=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc),
+            )
+            try:
+                db.add(cache_entry)
+                await db.commit()
+            except IntegrityError:
+                # Concurrent request already inserted this entry; update last_accessed instead
+                await db.rollback()
+                result = await db.execute(
+                    select(ImageCache).where(ImageCache.path == path, ImageCache.size == size)
                 )
-                try:
-                    db.add(cache_entry)
+                existing = result.scalar_one_or_none()
+                if existing:
+                    existing.last_accessed = datetime.now(timezone.utc)
                     await db.commit()
-                except IntegrityError:
-                    # Concurrent request already inserted this entry; update last_accessed instead
-                    await db.rollback()
-                    result = await db.execute(
-                        select(ImageCache).where(ImageCache.path == path, ImageCache.size == size)
-                    )
-                    existing = result.scalar_one_or_none()
-                    if existing:
-                        existing.last_accessed = datetime.now(timezone.utc)
-                        await db.commit()
-                return str(local_path)
+            return str(local_path)
     except Exception as e:
-        logger.error(f"Error downloading TMDB image {url}: {e}")
+        logger.error("Error downloading TMDB image: %s", e)
 
     return None
+
+
+async def fetch_tmdb_image(size: str, path: str) -> tuple[bytes, Optional[str]] | None:
+    """Fetch one validated TMDB image, using the optional TMDB-only proxy."""
+    if size not in ALLOWED_SIZES or ".." in path or not path.startswith("/"):
+        return None
+
+    url = f"https://image.tmdb.org/t/p/{size}{path}"
+    async with httpx.AsyncClient(timeout=15.0, **tmdb_httpx_kwargs()) as client:
+        response = await client.get(url)
+        if response.status_code != 200:
+            return None
+        return response.content, response.headers.get("content-type")
 
 
 async def _prune_type(db, image_type: str, total_size: int, limit_bytes: int) -> int:

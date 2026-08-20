@@ -16,6 +16,12 @@ class Settings(BaseSettings):
 
     server_url: str = "http://localhost:7330"
 
+    # Optional outbound proxy used exclusively by TMDB metadata and image
+    # requests. This is intentionally an environment-only deployment setting,
+    # rather than a per-user preference, so users cannot select an arbitrary
+    # proxy for server-side requests.
+    tmdb_proxy_url: Optional[str] = None
+
     # Already set to UTC in the Dockerfiles (ENV TZ=UTC) for the container's own
     # system clock; reused here as the server-side "today" for pages that have
     # no per-request browser timezone to go on (e.g. /airing-today's plain SSR
@@ -82,3 +88,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def tmdb_httpx_kwargs() -> dict[str, str]:
+    """Return the explicit proxy option for TMDB-only httpx clients.
+
+    httpx 0.28 uses the singular ``proxy`` keyword. Keeping this helper next
+    to the environment setting makes it harder to accidentally apply the
+    proxy to another provider's client.
+    """
+    return {"proxy": settings.tmdb_proxy_url} if settings.tmdb_proxy_url else {}

@@ -295,10 +295,27 @@ Database migrations run automatically on startup - no manual steps required.
 | `PUID` | `1000` | User ID to run the process as. |
 | `PGID` | `1000` | Group ID to run the process as. |
 | `BACKEND_PORT` | `7331` | Internal port the backend binds to. Override only if `7331` conflicts on bare metal. |
+| `TMDB_PROXY_URL` | - | Optional HTTP or SOCKS5 proxy for TMDB metadata and image requests only. |
 | `OIDC_ENABLED` | `false` | Enable OIDC login. |
 | `OIDC_DISABLE_PASSWORD_LOGIN` | `false` | Enforce OIDC-only login (disables username/password). |
 
 See `docker-compose.yaml` for the full list of OIDC variables and other variables.
+
+### TMDB-only proxy
+
+On networks where TMDB is blocked, route Scrob's TMDB traffic through a proxy
+without affecting Plex, Jellyfin, Trakt, or any other provider. Set
+`TMDB_PROXY_URL` to an HTTP or SOCKS5 proxy reachable from the Scrob container:
+
+```yaml
+environment:
+  TMDB_PROXY_URL: socks5://warp:1080
+```
+
+For example, `warp` can be a Cloudflare WARP container on the same Docker
+network. The setting is deployment-wide and is not exposed in user settings.
+TMDB image requests served through Scrob's `/media/image/...` endpoint also use
+the proxy, including when Scrob's optional disk image cache is disabled.
 
 ### Reverse proxy
 
