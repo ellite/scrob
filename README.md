@@ -492,6 +492,13 @@ The manual **Push** action sends the complete enabled watched, ratings, or manag
 
 Webhooks update your watch history and Continue Watching in real time. Each user's webhook URL is shown in **Connections** next to the relevant integration.
 
+For Jellyfin, Plex, and Emby, use **one connection type per physical server**:
+
+- A full media-server connection supports library synchronization and provider push/pull. Use the webhook URL shown on that connection's card.
+- A scrobble-only connection accepts webhook events without storing the server URL or token. Use the separate webhook URL shown on that scrobble-only connection's card.
+
+Do not create both connection types for the same server or send the same event to both URLs. Doing so can process one playback event twice and can prevent Scrob from reliably identifying which connection originated a watched-state change.
+
 ```
 # Jellyfin, Plex, Emby - connection_id is shown in Connections next to each server
 https://your-scrob-url/api/proxy/webhooks/{jellyfin|plex|emby}/{connection_id}?api_key=YOUR_API_KEY
@@ -529,7 +536,19 @@ Plex webhooks require a **Plex Pass** subscription.
 
 ### Kodi
 
-Kodi scrobbling uses the **[scrob-kodi](https://github.com/ellite/scrob-kodi)** add-on - no manual webhook configuration needed.
+Kodi can connect directly to Scrob through **[Umbrella](https://github.com/umbrellaplug/umbrellaplug.github.io)** or the standalone **[scrob-kodi](https://github.com/ellite/scrob-kodi)** service add-on. Both clients send playback events to Scrob automatically, so no manual webhook configuration is needed.
+
+#### Umbrella
+
+Umbrella 6.7.82 or later includes built-in Scrob support:
+
+1. In Umbrella, open **Tools → Settings → Online Services → Scrob**.
+2. Enter your Scrob server URL and API key (found in **Scrob → Connections → API Key**), then authorize the connection.
+3. Choose Scrob as Umbrella's watched/unwatched indicator and scrobbling service when prompted.
+
+The server URL and API key are enough for scrobbling, watched history, resume progress, and marking items watched. Adding your Scrob username and password is optional and enables actions that require a signed-in session, such as marking items unwatched and managing lists. These optional session-based actions are unavailable for accounts that require 2FA, but API-key features continue to work.
+
+#### scrob-kodi
 
 1. Install the **scrob-kodi** add-on from the [scrob-kodi repository](https://github.com/ellite/scrob-kodi).
 2. In the add-on settings, enter your Scrob URL and your API key (found in **Connections → API Key**).
