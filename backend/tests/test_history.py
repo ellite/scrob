@@ -278,6 +278,52 @@ class MarkSeasonWatchedDateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["count"], 1)
         self.assertEqual(event.watched_at, custom)
 
+    async def test_release_date_uses_the_episode_air_date(self) -> None:
+        response, event = await self._mark_season(use_release_date=True)
+        self.assertEqual(response["count"], 1)
+        self.assertEqual(event.watched_at, datetime(2020, 1, 1))
+
+    async def test_release_date_preserves_each_episode_air_date(self) -> None:
+        """A season release-date action creates one event per air date."""
+        show = Show(id=55, tmdb_id=100, title="Test Show")
+        db = _FakeSession([show, [], None, [], None])
+        db.info["tmdb_key_7"] = "test-key"
+        next_media_id = 100
+
+        def add_with_unique_media_ids(value):
+            nonlocal next_media_id
+            if isinstance(value, Media) and value.id is None:
+                next_media_id += 1
+                value.id = next_media_id
+            db.added.append(value)
+
+        db.add = add_with_unique_media_ids
+        payload = {
+            "episodes": [
+                {"episode_number": 1, "id": 999, "name": "Ep 1", "air_date": "2020-01-01", "vote_average": 8.0, "still_path": None},
+                {"episode_number": 2, "id": 1000, "name": "Ep 2", "air_date": "2020-01-08", "vote_average": 8.0, "still_path": None},
+            ]
+        }
+        with (
+            patch.object(history.tmdb, "get_season", AsyncMock(return_value=payload)),
+            patch("routers.history._push_watch_state", new_callable=AsyncMock),
+            patch("routers.history.record_rewatch_progress", new_callable=AsyncMock),
+        ):
+            response = await history.mark_season_watched(
+                history.SeasonWatchRequest(
+                    series_tmdb_id=100, season_number=1, use_release_date=True
+                ),
+                db,
+                SimpleNamespace(id=7),
+            )
+
+        events = [value for value in db.added if isinstance(value, WatchEvent)]
+        self.assertEqual(response["count"], 2)
+        self.assertEqual(
+            [event.watched_at for event in events],
+            [datetime(2020, 1, 1), datetime(2020, 1, 8)],
+        )
+
 
 class MarkShowWatchedDateTests(unittest.IsolatedAsyncioTestCase):
     """Same regression as MarkSeasonWatchedDateTests, but for mark_show_watched."""

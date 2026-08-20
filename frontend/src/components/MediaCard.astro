@@ -57,6 +57,7 @@ const inLibrary = item.in_library ?? false;
   data-show-tvdb-id={item.show_tvdb_id ? String(item.show_tvdb_id) : ""}
   data-season={item.season_number != null ? String(item.season_number) : ""}
   data-episode-number={item.episode_number != null ? String(item.episode_number) : ""}
+  data-air-date={item.release_date ?? ""}
 >
   <!-- Clickable poster -->
   {href ? (
@@ -177,4 +178,3 @@ const inLibrary = item.in_library ?? false;
     </div>
   )}
 </div>
-

@@ -45,6 +45,7 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
   data-show-tvdb-id={item.show_tvdb_id ? String(item.show_tvdb_id) : ""}
   data-season={item.season_number != null ? String(item.season_number) : ""}
   data-episode-number={item.episode_number != null ? String(item.episode_number) : ""}
+  data-air-date={item.release_date ?? ""}
 >
   {href ? (
     <a href={href} class="block">

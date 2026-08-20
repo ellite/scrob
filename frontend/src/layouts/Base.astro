@@ -436,10 +436,11 @@ const bottomNavItem = (active: boolean) =>
           Mark as unwatched
         </button>
         <p id="watch-history-add-play-label" class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Add a play</p>
-        <div class="flex gap-2">
+        <div id="watch-history-date-options" class="flex gap-2">
           <button id="watch-history-now-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white">Just now</button>
           <button id="watch-history-custom-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Custom</button>
           <button id="watch-history-unknown-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Unknown</button>
+          <button id="watch-history-release-btn" class="hidden flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Release date</button>
         </div>
         <input type="datetime-local" id="watch-history-date-input" class="hidden w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-sm text-zinc-200 focus:outline-none focus:border-green-500 [color-scheme:dark]" />
         <button id="watch-history-log-btn" class="w-full px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
@@ -1388,7 +1389,12 @@ const bottomNavItem = (active: boolean) =>
     // ── Watch history modal ────────────────────────────────────────────────────
     let _watchHistoryTmdbId = '';
     let _watchHistoryMediaType = '';
-    let _watchHistoryDateMode: 'now' | 'custom' | 'unknown' = 'now';
+    let _watchHistoryDateMode: 'now' | 'custom' | 'unknown' | 'release' = 'now';
+    // An individual episode supplies this from its displayed air date. A
+    // season instead uses the explicit backend mode so each episode keeps its
+    // own air date rather than inheriting a season-wide timestamp.
+    let _watchHistoryReleaseDate = '';
+    let _watchHistoryReleaseAvailable = false;
     let _watchHistoryShowTmdbId = '';
     let _watchHistoryShowTvdbId = '';
     let _watchHistorySeasonNumber = '';
@@ -1413,18 +1419,23 @@ const bottomNavItem = (active: boolean) =>
       const nowBtn = document.getElementById('watch-history-now-btn')!;
       const customBtn = document.getElementById('watch-history-custom-btn')!;
       const unknownBtn = document.getElementById('watch-history-unknown-btn')!;
+      const releaseBtn = document.getElementById('watch-history-release-btn')!;
+      const dateOptions = document.getElementById('watch-history-date-options')!;
       const dateInput = document.getElementById('watch-history-date-input') as HTMLInputElement;
       const activeClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white';
       const inactiveClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200';
       nowBtn.className = activeClass;
       customBtn.className = inactiveClass;
       unknownBtn.className = inactiveClass;
+      releaseBtn.className = inactiveClass;
+      releaseBtn.classList.toggle('hidden', !_watchHistoryReleaseAvailable);
+      dateOptions.className = _watchHistoryReleaseAvailable ? 'grid grid-cols-2 gap-2' : 'flex gap-2';
       dateInput.classList.add('hidden');
       dateInput.value = toLocal(new Date());
       dateInput.max = toLocal(new Date());
     }
 
-    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '', showTvdbId = '') {
+    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '', showTvdbId = '', releaseDate = '') {
       _watchHistoryBulkMode = null;
       _watchHistoryTmdbId = tmdbId;
       _watchHistoryMediaType = mediaType;
@@ -1432,6 +1443,14 @@ const bottomNavItem = (active: boolean) =>
       _watchHistoryShowTvdbId = showTvdbId;
       _watchHistorySeasonNumber = seasonNumber;
       _watchHistoryEpisodeNumber = episodeNumber;
+      _watchHistoryReleaseDate = releaseDate.slice(0, 10);
+      const releaseTimestamp = Date.parse(`${_watchHistoryReleaseDate}T00:00:00Z`);
+      const validReleaseDate = /^\d{4}-\d{2}-\d{2}$/.test(_watchHistoryReleaseDate)
+        && !Number.isNaN(releaseTimestamp)
+        && new Date(releaseTimestamp).toISOString().slice(0, 10) === _watchHistoryReleaseDate;
+      _watchHistoryReleaseAvailable = mediaType === 'episode'
+        && validReleaseDate
+        && _watchHistoryReleaseDate <= toLocal(new Date()).slice(0, 10);
 
       document.getElementById('watch-history-modal-title')!.textContent = 'Watch History';
       document.getElementById('watch-history-modal-events')!.classList.remove('hidden');
@@ -1445,6 +1464,8 @@ const bottomNavItem = (active: boolean) =>
 
     function openBulkWatchModal(btn: HTMLElement, kind: 'season' | 'show', seriesId: string, season = '', episodeOrder = '', tvdbId = '') {
       _watchHistoryBulkMode = { kind, seriesId, season, episodeOrder, btn, tvdbId };
+      _watchHistoryReleaseDate = '';
+      _watchHistoryReleaseAvailable = kind === 'season';
 
       document.getElementById('watch-history-modal-title')!.textContent = kind === 'season' ? 'Mark Season Watched' : 'Mark Show Watched';
       document.getElementById('watch-history-modal-events')!.classList.add('hidden');
@@ -1586,6 +1607,7 @@ const bottomNavItem = (active: boolean) =>
         (document.getElementById('watch-history-now-btn') as HTMLElement).className = activeClass;
         (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
         (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
+        (document.getElementById('watch-history-release-btn') as HTMLElement).className = inactiveClass;
         document.getElementById('watch-history-date-input')!.classList.add('hidden');
       });
 
@@ -1594,6 +1616,7 @@ const bottomNavItem = (active: boolean) =>
         (document.getElementById('watch-history-now-btn') as HTMLElement).className = inactiveClass;
         (document.getElementById('watch-history-custom-btn') as HTMLElement).className = activeClass;
         (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
+        (document.getElementById('watch-history-release-btn') as HTMLElement).className = inactiveClass;
         const input = document.getElementById('watch-history-date-input') as HTMLInputElement;
         input.max = toLocal(new Date());
         input.classList.remove('hidden');
@@ -1605,6 +1628,17 @@ const bottomNavItem = (active: boolean) =>
         (document.getElementById('watch-history-now-btn') as HTMLElement).className = inactiveClass;
         (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
         (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = activeClass;
+        (document.getElementById('watch-history-release-btn') as HTMLElement).className = inactiveClass;
+        document.getElementById('watch-history-date-input')!.classList.add('hidden');
+      });
+
+      document.getElementById('watch-history-release-btn')!.addEventListener('click', () => {
+        if (!_watchHistoryReleaseAvailable) return;
+        _watchHistoryDateMode = 'release';
+        (document.getElementById('watch-history-now-btn') as HTMLElement).className = inactiveClass;
+        (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
+        (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
+        (document.getElementById('watch-history-release-btn') as HTMLElement).className = activeClass;
         document.getElementById('watch-history-date-input')!.classList.add('hidden');
       });
 
@@ -1612,6 +1646,8 @@ const bottomNavItem = (active: boolean) =>
         const input = document.getElementById('watch-history-date-input') as HTMLInputElement;
         const watchedAt = _watchHistoryDateMode === 'unknown'
           ? null
+          : _watchHistoryDateMode === 'release'
+            ? `${_watchHistoryReleaseDate}T00:00:00`
           : _watchHistoryDateMode === 'now'
             ? toUTC(new Date())
             : toUTC(new Date(input.value || toLocal(new Date())));
@@ -1627,8 +1663,9 @@ const bottomNavItem = (active: boolean) =>
               const body: Record<string, unknown> = {
                 series_tmdb_id: Number(seriesId),
                 season_number: Number(season),
-                watched_at: watchedAt,
               };
+              if (_watchHistoryDateMode === 'release') body.use_release_date = true;
+              else body.watched_at = watchedAt;
               if (episodeOrder === 'tvdb') body.episode_order = 'tvdb';
               if (bulkTvdbId) body.series_tvdb_id = Number(bulkTvdbId);
               await apiFetch('/history/season', 'POST', body);
@@ -1670,6 +1707,7 @@ const bottomNavItem = (active: boolean) =>
           (document.getElementById('watch-history-now-btn') as HTMLElement).className = activeClass;
           (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
           (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
+          (document.getElementById('watch-history-release-btn') as HTMLElement).className = inactiveClass;
           input.classList.add('hidden');
         } catch (err) {
           logBtn.textContent = idleLabel;
@@ -1713,7 +1751,7 @@ const bottomNavItem = (active: boolean) =>
         const seriesId = showTmdbId || tmdbId;
 
         if (mediaType === 'movie' || mediaType === 'episode') {
-          await openWatchHistoryModal(btn, tmdbId, mediaType, card.dataset.showTmdbId || '', card.dataset.season || '', card.dataset.episodeNumber || '', card.dataset.showTvdbId || '');
+          await openWatchHistoryModal(btn, tmdbId, mediaType, card.dataset.showTmdbId || '', card.dataset.season || '', card.dataset.episodeNumber || '', card.dataset.showTvdbId || '', card.dataset.airDate || '');
           return;
         }
 

@@ -180,6 +180,7 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
                   mediaId={episode.id}
                   hideRequest={true}
                   userRating={episode.user_rating}
+                  airDate={episode.air_date}
                 />
               </div>
             ))}

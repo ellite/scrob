@@ -1074,6 +1074,9 @@ class SeasonWatchRequest(BaseModel):
     season_number: int
     episode_order: str | None = None
     watched_at: datetime | None = None  # omitted = now; explicit null = unknown date
+    # A season consists of episodes with distinct air dates. This is separate
+    # from watched_at, which applies one timestamp to every episode.
+    use_release_date: bool = False
 
 
 class ShowWatchRequest(BaseModel):
@@ -1537,6 +1540,9 @@ async def mark_season_watched(
     )
 
     all_season_episodes = []
+    # Use the dates just fetched for this operation. Existing Media rows can
+    # carry stale or incomplete metadata.
+    release_date_by_media_id: dict[int, datetime] = {}
     if tvdb_fallback_episodes is not None:
         existing_q = await db.execute(
             select(Media).where(
@@ -1550,12 +1556,26 @@ async def mark_season_watched(
             for media in existing_q.scalars().all()
         }
         for tvdb_ep in tvdb_fallback_episodes:
-            if tvdb_ep.get("episode_number") is None or not _has_aired(tvdb_ep.get("air_date"), today):
+            air_date_str = tvdb_ep.get("air_date")
+            release_watched_at = None
+            if air_date_str:
+                try:
+                    release_watched_at = datetime.strptime(air_date_str, "%Y-%m-%d")
+                except (TypeError, ValueError):
+                    pass
+            if tvdb_ep.get("episode_number") is None or not _has_aired(air_date_str, today):
+                continue
+            # TVDB may return an episode without an air date. Keep the existing
+            # bulk behavior for the other date modes, but a release-date action
+            # can only include episodes with a valid date to apply.
+            if body.use_release_date and release_watched_at is None:
                 continue
             position = (body.season_number, tvdb_ep["episode_number"])
             existing = existing_map.get(position)
             if existing:
                 all_season_episodes.append(existing)
+                if release_watched_at is not None:
+                    release_date_by_media_id[existing.id] = release_watched_at
                 continue
             new_ep = Media(
                 show_id=show.id,
@@ -1584,6 +1604,8 @@ async def mark_season_watched(
                     raise
                 new_ep = existing
             all_season_episodes.append(new_ep)
+            if release_watched_at is not None:
+                release_date_by_media_id[new_ep.id] = release_watched_at
     else:
         try:
             season_payloads = await asyncio.gather(
@@ -1629,6 +1651,9 @@ async def mark_season_watched(
                 existing = existing_map.get(position)
                 if existing:
                     all_season_episodes.append(existing)
+                    release_date_by_media_id[existing.id] = datetime.combine(
+                        air_date, datetime.min.time()
+                    )
                     continue
                 new_ep, _created = await create_media_safely(
                     db,
@@ -1643,6 +1668,9 @@ async def mark_season_watched(
                     tmdb_rating=ep.get("vote_average"),
                 )
                 all_season_episodes.append(new_ep)
+                release_date_by_media_id[new_ep.id] = datetime.combine(
+                    air_date, datetime.min.time()
+                )
 
     await db.flush() # Get IDs for new episodes
     
@@ -1658,10 +1686,13 @@ async def mark_season_watched(
     new_events = []
     for ep in all_season_episodes:
         if ep.id not in already_watched:
+            watched_at = resolved_watched_at
+            if body.use_release_date:
+                watched_at = release_date_by_media_id[ep.id]
             event = WatchEvent(
                 user_id=current_user.id,
                 media_id=ep.id,
-                watched_at=resolved_watched_at,
+                watched_at=watched_at,
                 completed=True,
                 play_count=1,
                 progress_percent=1.0,
