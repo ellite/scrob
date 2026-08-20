@@ -1,11 +1,25 @@
 import os
 import unittest
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _remaining_episode_stats
+from sqlalchemy.dialects import postgresql
+
+from models.users import UserSettings
+from routers.history import (
+    NextUpHideRequest,
+    _compute_next_episode,
+    _group_last_watched,
+    _has_aired,
+    _has_confirmed_air_date,
+    _remaining_episode_stats,
+    hide_next_up_show,
+    unhide_next_up_show,
+)
 
 
 class ComputeNextEpisodeTests(unittest.TestCase):
@@ -173,3 +187,50 @@ class RemainingEpisodeStatsTests(unittest.TestCase):
         stats = _remaining_episode_stats({1: 4}, {1: 1}, avg_runtime=42.5)
         self.assertEqual(stats["episodes_left"], 3)
         self.assertEqual(stats["remaining_runtime"], 128)
+
+
+class _HideResult:
+    def __init__(self, settings):
+        self.settings = settings
+
+    def scalar_one_or_none(self):
+        return self.settings
+
+
+class _HideDB:
+    def __init__(self, settings):
+        self.settings = settings
+        self.statements = []
+        self.commit = AsyncMock()
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return _HideResult(self.settings)
+
+
+class NextUpCalendarInvalidationTests(unittest.IsolatedAsyncioTestCase):
+    """Changing the shared hidden-show list must invalidate Calendar's cache."""
+
+    async def test_hiding_a_show_invalidates_its_calendar(self):
+        settings = UserSettings(user_id=3, next_up_hidden_shows=[])
+        db = _HideDB(settings)
+
+        await hide_next_up_show(NextUpHideRequest(show_id=9), db, SimpleNamespace(id=3))
+
+        self.assertEqual(settings.next_up_hidden_shows, [9])
+        self.assertEqual(db.commit.await_count, 1)
+        self.assertEqual(len(db.statements), 2)
+        rendered = str(db.statements[1].compile(dialect=postgresql.dialect()))
+        self.assertIn("DELETE FROM user_calendar_cache", rendered)
+
+    async def test_restoring_a_show_invalidates_its_calendar(self):
+        settings = UserSettings(user_id=3, next_up_hidden_shows=[9])
+        db = _HideDB(settings)
+
+        await unhide_next_up_show(9, db, SimpleNamespace(id=3))
+
+        self.assertEqual(settings.next_up_hidden_shows, [])
+        self.assertEqual(db.commit.await_count, 1)
+        self.assertEqual(len(db.statements), 2)
+        rendered = str(db.statements[1].compile(dialect=postgresql.dialect()))
+        self.assertIn("DELETE FROM user_calendar_cache", rendered)

@@ -33,23 +33,25 @@ from models.collection import Collection
 from models.events import WatchEvent
 from models.media import Media
 from models.show import Show
-from models.users import User
+from models.users import User, UserSettings
 
 router = APIRouter()
 
 CALENDAR_TTL = timedelta(hours=24)
-CALENDAR_SCHEMA = 3
+CALENDAR_SCHEMA = 4
 CALENDAR_WINDOW_DAYS = 14
 FETCH_CONCURRENCY = 8
 
 _computing: set[int] = set()
 
 
-async def _candidate_shows(db: AsyncSession, user_id: int) -> list[Show]:
-    """Shows the user is either collecting or has watched at least one
-    episode of - the "no Plex connected" case still needs to show up via
-    watch history alone (Trakt/manual import/etc.), not just synced library
-    collection."""
+def _candidate_show_query(user_id: int, hidden_show_ids: list[int]):
+    """Build the per-user calendar candidate query.
+
+    Next Up's hidden-show list is the existing per-user show-hiding signal.
+    Calendar uses the same preference so it does not keep surfacing a show
+    the user explicitly dismissed elsewhere in the app.
+    """
     collected_show_ids = (
         select(Media.show_id)
         .join(Collection, Collection.media_id == Media.id)
@@ -73,12 +75,27 @@ async def _candidate_shows(db: AsyncSession, user_id: int) -> list[Show]:
         .where(Collection.user_id == user_id, Media.media_type == MediaType.series, Media.tmdb_id.isnot(None))
         .distinct()
     )
+    filters = [or_(
+        Show.id.in_(collected_show_ids),
+        Show.id.in_(watched_show_ids),
+        Show.tmdb_id.in_(direct_series_tmdb_ids),
+    )]
+    if hidden_show_ids:
+        filters.append(Show.id.notin_(hidden_show_ids))
+    return select(Show).where(*filters)
+
+
+async def _candidate_shows(db: AsyncSession, user_id: int) -> list[Show]:
+    """Shows the user is either collecting or has watched at least one
+    episode of - the "no Plex connected" case still needs to show up via
+    watch history alone (Trakt/manual import/etc.), not just synced library
+    collection."""
+    settings = (await db.execute(
+        select(UserSettings.next_up_hidden_shows).where(UserSettings.user_id == user_id)
+    )).scalar_one_or_none()
+    hidden_show_ids = list(settings or [])
     shows = (await db.execute(
-        select(Show).where(or_(
-            Show.id.in_(collected_show_ids),
-            Show.id.in_(watched_show_ids),
-            Show.tmdb_id.in_(direct_series_tmdb_ids),
-        ))
+        _candidate_show_query(user_id, hidden_show_ids)
     )).scalars().all()
     return [s for s in shows if s.tmdb_id and (s.status or "") not in ("Ended", "Canceled")]
 

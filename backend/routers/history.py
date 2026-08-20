@@ -14,6 +14,7 @@ from models.events import WatchEvent
 from models.playback_session import PlaybackSession
 from models.playback_progress import PlaybackProgress
 from models.collection import Collection, CollectionFile
+from models.calendar_cache import UserCalendarCache
 from models.base import MediaType, CollectionSource
 from models.users import UserSettings
 from models.connections import MediaServerConnection
@@ -1046,6 +1047,7 @@ async def hide_next_up_show(
         hidden.append(body.show_id)
         settings.next_up_hidden_shows = hidden
         flag_modified(settings, "next_up_hidden_shows")
+        await db.execute(delete(UserCalendarCache).where(UserCalendarCache.user_id == current_user.id))
         await db.commit()
     return {"status": "ok"}
 
@@ -1064,6 +1066,7 @@ async def unhide_next_up_show(
             hidden.remove(show_id)
             settings.next_up_hidden_shows = hidden
             flag_modified(settings, "next_up_hidden_shows")
+            await db.execute(delete(UserCalendarCache).where(UserCalendarCache.user_id == current_user.id))
             await db.commit()
     return {"status": "ok"}
 
