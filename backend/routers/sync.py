@@ -1018,21 +1018,28 @@ async def _fan_out_changes_to_other_connections(
     if push_candidates:
         # Chunk the IN clause to stay under asyncpg's 32767-parameter limit.
         # A large first-time sync can produce tens of thousands of changed IDs.
-        source_ids_map: dict[tuple[CollectionSource, int], list[str]] = {}
+        # Keyed by connection_id, not source type - a ratingKey/item ID is only
+        # valid on the specific server it was read from, and a user can have
+        # several connections of the same type (e.g. two Plex servers). Rows
+        # with no connection_id (pre-migration data for an ambiguous multi-
+        # connection user) are skipped rather than risk pushing to the wrong
+        # server; they'll get one after their next sync.
+        source_ids_map: dict[tuple[int, int], list[str]] = {}
         all_changed_list = list(all_changed_ids)
         for i in range(0, len(all_changed_list), _MAX_IN_PARAMS):
             chunk = all_changed_list[i : i + _MAX_IN_PARAMS]
             files_result = await db.execute(
-                select(CollectionFile.source_id, CollectionFile.source, Collection.media_id)
+                select(CollectionFile.source_id, CollectionFile.connection_id, Collection.media_id)
                 .join(Collection, Collection.id == CollectionFile.collection_id)
                 .where(
                     Collection.user_id == user_id,
                     Collection.media_id.in_(chunk),
                     CollectionFile.source_id.isnot(None),
+                    CollectionFile.connection_id.isnot(None),
                 )
             )
-            for source_id, source_type, media_id in files_result.all():
-                source_ids_map.setdefault((source_type, media_id), []).append(source_id)
+            for source_id, connection_id, media_id in files_result.all():
+                source_ids_map.setdefault((connection_id, media_id), []).append(source_id)
 
         import httpx as _httpx
         sem = asyncio.Semaphore(20)
@@ -1169,10 +1176,9 @@ async def _fan_out_changes_to_other_connections(
                         )
                     )
                 continue
-            conn_source = CollectionSource(conn.type)
             if conn.push_watched:
                 for mid in new_watched_ids:
-                    for sid in source_ids_map.get((conn_source, mid), []):
+                    for sid in source_ids_map.get((conn.id, mid), []):
                         if conn.type == "plex":
                             push_tasks.append(_guarded(plex.mark_watched(conn.url, conn.token, sid)))
                         elif conn.type == "jellyfin":
@@ -1212,7 +1218,7 @@ async def _fan_out_changes_to_other_connections(
 
                             push_tasks.append(_guarded(_set_plex_season_rating()))
                         continue
-                    for sid in source_ids_map.get((conn_source, mid), []):
+                    for sid in source_ids_map.get((conn.id, mid), []):
                         if conn.type == "plex":
                             push_tasks.append(_guarded(plex.set_rating(conn.url, conn.token, sid, rating)))
                         elif conn.type == "jellyfin":
@@ -6226,6 +6232,12 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                         Collection.user_id == user_id,
                         Collection.media_id.in_(chunk),
                         CollectionFile.source == conn_source,
+                        # Not just the source type - a ratingKey/item ID from a
+                        # different connection of the same type (e.g. another
+                        # Plex server) is meaningless here and would push to
+                        # the wrong server. Items missing a connection_id
+                        # (pre-migration data) fall through to the slow path.
+                        CollectionFile.connection_id == conn.id,
                         CollectionFile.source_id.isnot(None),
                     )
                 )
