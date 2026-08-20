@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, SecretStr, field_validator, model_validator
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime
 from models.base import UserRole, MediaType, PrivacyLevel
 
@@ -155,6 +155,14 @@ class UserSettings(BaseModel):
     shuffle_next_up: Optional[bool] = None
     minimalist_next_up: Optional[bool] = None
     hide_watched_from_recently_added: Optional[bool] = None
+    default_media_tab: Literal["explore", "collection"] = "explore"
+
+    @field_validator("default_media_tab", mode="before")
+    @classmethod
+    def default_media_tab_falls_back_to_explore(cls, value):
+        # SQLAlchemy applies column defaults on insert, not when an object is
+        # constructed. Normalize that transient None for settings responses.
+        return "explore" if value is None else value
 
     class Config:
         from_attributes = True

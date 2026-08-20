@@ -129,6 +129,9 @@ class UserSettings(Base):
     minimalist_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     next_up_hidden_shows : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="'[]'")
     hide_watched_from_recently_added : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Controls whether the Movies and Shows navigation links open Explore or
+    # the user's collection. Keep this constrained to known application tabs.
+    default_media_tab : Mapped[str] = mapped_column(String(20), nullable=False, default="explore", server_default="explore")
 
     # MDBList — API key authentication
     mdblist_api_key: Mapped[Optional[str]] = mapped_column(String(255))

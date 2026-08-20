@@ -535,5 +535,51 @@ class RegisterRoleEscalationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(new_user.is_admin)
 
 
+class DefaultMediaTabSettingsTests(unittest.IsolatedAsyncioTestCase):
+    """The navigation preference must only ever contain internal tab names."""
+
+    def test_api_schema_defaults_to_explore(self) -> None:
+        self.assertEqual(schemas.UserSettings().default_media_tab, "explore")
+
+    def test_external_default_tab_is_rejected_by_the_api_schema(self) -> None:
+        with self.assertRaises(ValueError):
+            schemas.UserSettings(default_media_tab="https://example.com")
+
+    async def test_explore_is_the_response_default_before_insert(self) -> None:
+        from models.users import UserSettings
+
+        response = await auth._settings_response(
+            UserSettings(user_id=1), _GlobalSettingsFakeDB(None),
+        )
+
+        self.assertEqual(response.default_media_tab, "explore")
+
+    async def test_update_persists_the_explore_choice(self) -> None:
+        from models.users import UserSettings
+
+        settings = UserSettings(user_id=1)
+        response = await auth.update_user_settings(
+            schemas.UserSettings(default_media_tab="explore"),
+            db=_SettingsFakeDB(settings),
+            current_user=SimpleNamespace(id=1),
+        )
+
+        self.assertEqual(settings.default_media_tab, "explore")
+        self.assertEqual(response.default_media_tab, "explore")
+
+    async def test_update_persists_the_collection_choice(self) -> None:
+        from models.users import UserSettings
+
+        settings = UserSettings(user_id=1)
+        response = await auth.update_user_settings(
+            schemas.UserSettings(default_media_tab="collection"),
+            db=_SettingsFakeDB(settings),
+            current_user=SimpleNamespace(id=1),
+        )
+
+        self.assertEqual(settings.default_media_tab, "collection")
+        self.assertEqual(response.default_media_tab, "collection")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -457,6 +457,7 @@ export interface UserSettings {
   use_hls_player: boolean;
   shuffle_next_up: boolean;
   minimalist_next_up: boolean;
+  default_media_tab: "explore" | "collection";
 }
 
 export interface MediaServerConnection {

@@ -195,6 +195,20 @@ if (me.totp_enabled) {
           </div>
           <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
             <div>
+              <p class="text-sm font-semibold text-zinc-100 mb-1">Default Movies &amp; Shows tab</p>
+              <p class="text-xs text-zinc-400">Choose whether Movies and Shows in the main navigation open My Collection or Explore. You can still switch tabs on either page.</p>
+            </div>
+            <select
+              id="default-media-tab-select"
+              data-previous-value={settings.default_media_tab === "collection" ? "collection" : "explore"}
+              class="shrink-0 bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="collection" selected={settings.default_media_tab === "collection"}>My Collection</option>
+              <option value="explore" selected={settings.default_media_tab !== "collection"}>Explore</option>
+            </select>
+          </div>
+          <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
+            <div>
               <p class="text-sm font-semibold text-zinc-100 mb-1">Blur explicit content</p>
               <p class="text-xs text-zinc-400">Blur posters flagged as adult content by TMDB. Click a blurred poster to reveal it.</p>
             </div>
@@ -1608,6 +1622,29 @@ if (me.totp_enabled) {
         headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ hide_watched_from_recently_added: hideWatchedRecentlyAddedToggle.checked }),
       });
+    });
+  }
+
+  const defaultMediaTabSelect = document.getElementById('default-media-tab-select') as HTMLSelectElement | null;
+  if (defaultMediaTabSelect) {
+    defaultMediaTabSelect.addEventListener('change', async () => {
+      const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
+      const previousValue = defaultMediaTabSelect.dataset.previousValue ?? 'explore';
+      const selectedValue = defaultMediaTabSelect.value;
+      defaultMediaTabSelect.disabled = true;
+      try {
+        const res = await fetch('/api/proxy/auth/settings', {
+          method: 'PATCH',
+          headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ default_media_tab: selectedValue }),
+        });
+        if (!res.ok) throw new Error('Failed to update default media tab');
+        defaultMediaTabSelect.dataset.previousValue = selectedValue;
+      } catch {
+        defaultMediaTabSelect.value = previousValue;
+      } finally {
+        defaultMediaTabSelect.disabled = false;
+      }
     });
   }
 

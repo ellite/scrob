@@ -355,6 +355,10 @@ async def delete_user_me(
 async def _settings_response(settings: UserSettings, db: AsyncSession) -> schemas.UserSettings:
     """Build a UserSettings schema response, injecting computed fields."""
     data = schemas.UserSettings.model_validate(settings)
+    # A server default covers persisted rows after the migration. The fallback
+    # also keeps the API stable for a newly constructed settings object before
+    # SQLAlchemy has applied its column default.
+    data.default_media_tab = settings.default_media_tab or "explore"
     data.trakt_connected = bool(settings.trakt_access_token)
     data.simkl_connected = bool(settings.simkl_access_token)
     data.mdblist_connected = bool(settings.mdblist_api_key)
