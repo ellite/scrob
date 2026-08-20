@@ -35,6 +35,7 @@ const blurExplicit = Astro.cookies.get("blur_explicit")?.value !== "false";
 const use24h = Astro.cookies.get("time_format_24h")?.value === "true";
 
 const pathname = Astro.url.pathname;
+const loginNextUrl = `/login?next=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
 const activeMovies = pathname.startsWith('/movies') || pathname.startsWith('/collection/movies') || pathname.startsWith('/trending/movies') || pathname.startsWith('/media/movie');
 const activeShows  = pathname.startsWith('/shows') || pathname.startsWith('/collection/shows') || pathname.startsWith('/show') || pathname.startsWith('/trending/shows');
 const activeHistory = pathname.startsWith('/history') || pathname === '/next-up';
@@ -254,7 +255,7 @@ const bottomNavItem = (active: boolean) =>
               </div>
             </div>
           ) : (
-            <a href="/login" class="text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 transition-colors px-4 py-3 rounded-xl">Login</a>
+            <a href={loginNextUrl} class="text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 transition-colors px-4 py-3 rounded-xl">Login</a>
           )}
         </div>
       </div>

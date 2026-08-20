@@ -11,6 +11,7 @@ interface Props {
 const { mediaType, tmdbId, seasonNumber, episodeNumber } = Astro.props;
 const token = Astro.cookies.get("token")?.value;
 const user = Astro.locals.user;
+const loginNextUrl = `/login?next=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
 
 let comments: Comment[] = [];
 try {
@@ -78,7 +79,7 @@ try {
       </div>
     ) : (
       <div class="mb-12 p-8 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-3xl text-center">
-        <p class="text-zinc-400 font-medium">Please <a href="/login" class="text-blue-500 hover:underline">log in</a> to leave a comment.</p>
+        <p class="text-zinc-400 font-medium">Please <a href={loginNextUrl} class="text-blue-500 hover:underline">log in</a> to leave a comment.</p>
       </div>
     )}
 

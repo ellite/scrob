@@ -18,6 +18,12 @@ const { enabled: registrationEnabled, smtp_configured: smtpConfigured } = await 
 const { has_users: hasUsers } = await api.auth.hasUsers().catch(() => ({ has_users: true }));
 const { enable_logged_out_navigation: showNav } = await api.profile.publicAccessStatus().catch(() => ({ enable_logged_out_navigation: false }));
 
+// Only a same-site path is a safe redirect target - anything else (an
+// absolute URL, or a protocol-relative "//evil.com") could send a
+// successful login to an attacker-controlled site.
+const rawNext = Astro.url.searchParams.get("next") || "";
+const nextPath = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
+
 if (Astro.url.searchParams.get("restored") === "true") {
   success = "Database restored successfully. You can now log in.";
 }
@@ -47,6 +53,13 @@ if (Astro.request.method === "POST") {
   const data = await Astro.request.formData();
   const step = (data.get("_step") as string) || "login";
 
+  // The hidden field, not the query string, is authoritative here - it's
+  // what the form that was actually rendered (and might have moved through
+  // the 2FA step) carried, rather than assuming the POST landed back on the
+  // same URL the page was first loaded with.
+  const submittedNext = (data.get("_next") as string) || "";
+  const postNext = submittedNext.startsWith("/") && !submittedNext.startsWith("//") ? submittedNext : nextPath;
+
   if (step === "login") {
     try {
       const result = await api.auth.login(data);
@@ -60,7 +73,7 @@ if (Astro.request.method === "POST") {
           sameSite: "lax",
           maxAge: 60 * 60 * 24 * 7,
         });
-        return Astro.redirect("/");
+        return Astro.redirect(postNext);
       }
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Login failed";
@@ -77,7 +90,7 @@ if (Astro.request.method === "POST") {
           sameSite: "lax",
           maxAge: 60 * 60 * 24 * 7,
         });
-        return Astro.redirect("/");
+        return Astro.redirect(postNext);
       }
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Verification failed";
@@ -89,7 +102,7 @@ if (Astro.request.method === "POST") {
 
 const token = Astro.cookies.get("token")?.value;
 if (token) {
-  return Astro.redirect("/");
+  return Astro.redirect(nextPath);
 }
 
 // ── Decorative poster wall (background) ──
@@ -256,7 +269,7 @@ const heroMinHeightClass = showNav
         {/* OIDC button */}
         {oidcConfig.enabled && (
           <a
-            href="/oidc-start"
+            href={`/oidc-start?next=${encodeURIComponent(nextPath)}`}
             tabindex="2"
             class="flex items-center justify-center gap-2 w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 font-bold py-2 rounded-lg transition-colors cursor-pointer mb-4"
           >
@@ -283,6 +296,7 @@ const heroMinHeightClass = showNav
         {!oidcConfig.disable_password_login && (
           <form method="POST" class="space-y-4">
             <input type="hidden" name="_step" value="login" />
+            <input type="hidden" name="_next" value={nextPath} />
             <div>
               <label for="username" class="block text-sm font-medium text-zinc-400 mb-1">Username</label>
               <input
@@ -348,6 +362,7 @@ const heroMinHeightClass = showNav
       <form method="POST" class="space-y-4">
         <input type="hidden" name="_step" value="verify_2fa" />
         <input type="hidden" name="temp_token" value={tempToken} />
+        <input type="hidden" name="_next" value={nextPath} />
         <div class="text-center mb-2">
           <div class="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-3">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-zinc-300">
@@ -376,7 +391,7 @@ const heroMinHeightClass = showNav
           Verify
         </button>
         <div class="text-center">
-          <a href="/login" class="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">Back to login</a>
+          <a href={`/login?next=${encodeURIComponent(nextPath)}`} class="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">Back to login</a>
         </div>
       </form>
     )}

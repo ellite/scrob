@@ -24,6 +24,8 @@ if (!error) {
     error = "Invalid state parameter. Please try logging in again.";
   } else {
     Astro.cookies.delete("oidc_state", { path: "/" });
+    const storedNext = Astro.cookies.get("oidc_next")?.value ?? "/";
+    Astro.cookies.delete("oidc_next", { path: "/" });
 
     try {
       const { access_token } = await api.auth.oidcExchange(code);
@@ -34,7 +36,7 @@ if (!error) {
         sameSite: "lax",
         maxAge: 60 * 60 * 24 * 7,
       });
-      return Astro.redirect("/");
+      return Astro.redirect(storedNext);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "SSO login failed";
     }

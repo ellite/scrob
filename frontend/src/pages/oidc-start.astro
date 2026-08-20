@@ -7,10 +7,22 @@ import { api } from "../lib/api";
 
 let errorMsg = "";
 
+// Same validation as login.astro's `next` handling - only a same-site path
+// is a safe redirect target once the provider sends the browser back.
+const rawNext = Astro.url.searchParams.get("next") || "";
+const nextPath = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
+
 try {
   const { auth_url, state } = await api.auth.oidcAuthorize();
 
   Astro.cookies.set("oidc_state", state, {
+    path: "/",
+    httpOnly: true,
+    secure: import.meta.env.PROD,
+    sameSite: "lax",
+    maxAge: 600, // 10 minutes
+  });
+  Astro.cookies.set("oidc_next", nextPath, {
     path: "/",
     httpOnly: true,
     secure: import.meta.env.PROD,
