@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy import select, update, delete, func, cast, bindparam, DateTime
+from sqlalchemy import select, update, delete, func, cast, bindparam, DateTime, literal_column
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.dialects.postgresql import insert, JSONB
@@ -3153,11 +3153,19 @@ async def _apply_local_watchlist_changes(
                     # ON CONFLICT ON CONSTRAINT needs a real constraint, not a bare
                     # index, so the conflict target is given as the matching
                     # expression list instead (verified against the actual index).
+                    # The -1 must be a literal, not a bound parameter: once this
+                    # statement's plan is executed 5+ times on the same connection,
+                    # Postgres switches from a per-execution custom plan to a cached
+                    # generic plan, which can no longer prove a coalesce(col, $N)
+                    # bind param is the same expression as the index's
+                    # coalesce(col, -1) - the arbiter match then silently fails with
+                    # "no unique or exclusion constraint matching the ON CONFLICT
+                    # specification" for every item after the 5th in a given run.
                     await db.execute(
                         insert(ListItem)
                         .values(list_id=watchlist.id, media_id=media.id)
                         .on_conflict_do_nothing(
-                            index_elements=[ListItem.list_id, ListItem.media_id, func.coalesce(ListItem.season_number, -1)]
+                            index_elements=[ListItem.list_id, ListItem.media_id, func.coalesce(ListItem.season_number, literal_column("-1"))]
                         )
                     )
                 applied.add(key)
