@@ -412,6 +412,19 @@ const bottomNavItem = (active: boolean) =>
           <input type="checkbox" id="customize-add-season-folder" class="sr-only peer" />
           <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
         </label>
+        <div id="customize-add-seasons-row" class="hidden space-y-2">
+          <span class="block text-sm font-medium text-zinc-400">Seasons</span>
+          <label class="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+            <input type="radio" name="customize-add-seasons" value="all" id="customize-add-seasons-all" checked class="accent-blue-500" />
+            Monitor all regular seasons
+          </label>
+          <p class="text-xs text-zinc-500 ml-6">Specials stay unmonitored unless you choose them below.</p>
+          <label class="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+            <input type="radio" name="customize-add-seasons" value="selected" id="customize-add-seasons-selected" class="accent-blue-500" />
+            Choose seasons
+          </label>
+          <div id="customize-add-seasons-list" class="hidden grid grid-cols-2 gap-2 p-3 bg-zinc-950 border border-zinc-800 rounded-lg"></div>
+        </div>
         <div id="customize-add-error" class="hidden text-sm text-red-400"></div>
       </div>
       <div id="customize-add-footer" class="hidden border-t border-zinc-800 px-5 py-4 flex gap-2">
@@ -494,6 +507,8 @@ const bottomNavItem = (active: boolean) =>
   </div>
 
   <script>
+    import { selectableSonarrSeasons, selectedSonarrSeasons } from "../lib/sonarrSeasons";
+
     // ── Theme toggle ───────────────────────────────────────────────────────────
     const themeToggle = document.getElementById('theme-toggle');
 
@@ -1163,13 +1178,35 @@ const bottomNavItem = (active: boolean) =>
       });
     }
 
-    async function openCustomizeAddPopover(mediaType: string, onConfirm: (overrides: Record<string, unknown>) => Promise<void>) {
+    function renderCustomizeAddSeasons(seasons: any[]) {
+      const all = document.getElementById('customize-add-seasons-all') as HTMLInputElement;
+      const selected = document.getElementById('customize-add-seasons-selected') as HTMLInputElement;
+      const list = document.getElementById('customize-add-seasons-list')!;
+      const validSeasons = selectableSonarrSeasons(seasons);
+
+      all.checked = true;
+      selected.checked = false;
+      selected.disabled = validSeasons.length === 0;
+      list.innerHTML = validSeasons.map((season: any) => {
+        const number = season.season_number as number;
+        const label = number === 0 ? 'Specials' : `Season ${number}`;
+        return `<label class="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer"><input type="checkbox" value="${number}" class="customize-add-season-checkbox accent-blue-500" />${label}</label>`;
+      }).join('') || '<span class="col-span-2 text-xs text-zinc-500">No selectable seasons were returned by Sonarr.</span>';
+      list.classList.add('hidden');
+
+      const syncVisibility = () => list.classList.toggle('hidden', !selected.checked);
+      all.onchange = syncVisibility;
+      selected.onchange = syncVisibility;
+    }
+
+    async function openCustomizeAddPopover(mediaType: string, tmdbId: string, onConfirm: (overrides: Record<string, unknown>) => Promise<void>) {
       const popover = document.getElementById('customize-add-popover')!;
       const loading = document.getElementById('customize-add-loading')!;
       const body = document.getElementById('customize-add-body')!;
       const footer = document.getElementById('customize-add-footer')!;
       const errorEl = document.getElementById('customize-add-error')!;
       const seasonRow = document.getElementById('customize-add-season-folder-row')!;
+      const seasonsRow = document.getElementById('customize-add-seasons-row')!;
       const isSeries = mediaType === 'series';
 
       document.getElementById('customize-add-title')!.textContent = isSeries ? 'Add to Sonarr' : 'Add to Radarr';
@@ -1178,10 +1215,14 @@ const bottomNavItem = (active: boolean) =>
       footer.classList.add('hidden');
       errorEl.classList.add('hidden');
       seasonRow.classList.toggle('hidden', !isSeries);
+      seasonsRow.classList.toggle('hidden', !isSeries);
       popover.classList.remove('hidden');
 
       try {
-        const opts = await apiFetch(`/media/${mediaType}/customize-options`);
+        const optionsPath = isSeries
+          ? `/media/${mediaType}/customize-options?tmdb_id=${encodeURIComponent(tmdbId)}`
+          : `/media/${mediaType}/customize-options`;
+        const opts = await apiFetch(optionsPath);
 
         const rootSelect = document.getElementById('customize-add-root-folder') as HTMLSelectElement;
         rootSelect.innerHTML = opts.root_folders.map((f: any) =>
@@ -1198,6 +1239,7 @@ const bottomNavItem = (active: boolean) =>
 
         if (isSeries) {
           (document.getElementById('customize-add-season-folder') as HTMLInputElement).checked = opts.current.season_folder !== false;
+          renderCustomizeAddSeasons(opts.seasons);
         }
 
         loading.classList.add('hidden');
@@ -1219,6 +1261,18 @@ const bottomNavItem = (active: boolean) =>
         };
         if (isSeries) {
           overrides.season_folder = (document.getElementById('customize-add-season-folder') as HTMLInputElement).checked;
+          const selectedMode = (document.getElementById('customize-add-seasons-selected') as HTMLInputElement).checked;
+          if (selectedMode) {
+            const checkedSeasons = Array.from(document.querySelectorAll<HTMLInputElement>('.customize-add-season-checkbox:checked'))
+              .map(input => Number(input.value));
+            try {
+              overrides.selected_seasons = selectedSonarrSeasons(true, checkedSeasons);
+            } catch (error: any) {
+              errorEl.textContent = error.message;
+              errorEl.classList.remove('hidden');
+              return;
+            }
+          }
         }
         closeCustomizeAddPopover();
         await onConfirm(overrides);
@@ -1842,11 +1896,15 @@ const bottomNavItem = (active: boolean) =>
 
           try {
             const res = await apiFetch(`/media/${mediaType}/${tmdbId}/request`, 'POST', overrides);
-            if (res.status === 'added' || res.status === 'already_exists') {
-              btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-green-500"><polyline points="20 6 9 17 4 12"></polyline></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-green-500">' + (res.status === 'added' ? 'Added' : 'Exists') + '</span>';
+            if (res.status === 'added' || res.status === 'already_exists' || res.status === 'added_search_failed') {
+              btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-green-500"><polyline points="20 6 9 17 4 12"></polyline></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-green-500">' + (res.status === 'already_exists' ? 'Exists' : 'Added') + '</span>';
               btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-500/10', 'hover:text-orange-400');
               btn.classList.add('bg-green-500/10', 'text-green-500');
               (btn as HTMLButtonElement).disabled = true;
+              if (res.status === 'added_search_failed') {
+                const seasons = (res.search_failed_seasons || []).map((season: number) => season === 0 ? 'Specials' : `Season ${season}`).join(', ');
+                alert(`Added to Sonarr, but its search for ${seasons} could not be queued. Do not submit this request again; search those seasons manually in Sonarr.`);
+              }
             } else if (res.status === 'pending_approval') {
               btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-amber-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-amber-400">Pending</span>';
               btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-500/10', 'hover:text-orange-400');
@@ -1869,7 +1927,7 @@ const bottomNavItem = (active: boolean) =>
           (mediaType === 'series' && (window as any).__SONARR_CUSTOMIZE_ON_ADD__)
         );
         if (customizeOnAdd) {
-          openCustomizeAddPopover(mediaType, performRequestAdd);
+          openCustomizeAddPopover(mediaType, tmdbId, performRequestAdd);
         } else {
           await performRequestAdd();
         }

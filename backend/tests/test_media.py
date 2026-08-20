@@ -1,6 +1,8 @@
 import os
 import unittest
 
+from pydantic import ValidationError
+
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
@@ -141,6 +143,17 @@ class ResolveAddOverridesTests(unittest.TestCase):
 
     def test_no_overrides_sent_is_a_noop_for_a_non_admin(self) -> None:
         self.assertIsNone(_resolve_add_overrides(None, False))
+
+    def test_selected_seasons_are_admin_only_like_other_add_overrides(self) -> None:
+        overrides = RequestOverrides(selected_seasons=[0, 2])
+        self.assertEqual(_resolve_add_overrides(overrides, True).selected_seasons, [0, 2])
+        self.assertIsNone(_resolve_add_overrides(overrides, False))
+
+    def test_selected_seasons_reject_empty_duplicate_and_negative_values(self) -> None:
+        for seasons in ([], [1, 1], [-1], [True]):
+            with self.subTest(seasons=seasons):
+                with self.assertRaises(ValidationError):
+                    RequestOverrides(selected_seasons=seasons)
 
 
 if __name__ == "__main__":

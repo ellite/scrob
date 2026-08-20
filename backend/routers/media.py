@@ -7,7 +7,7 @@ import uuid
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 from starlette.background import BackgroundTask
@@ -3654,6 +3654,7 @@ async def get_request_status(
 @router.get("/{type}/customize-options")
 async def get_customize_options(
     type: MediaType,
+    tmdb_id: int | None = Query(None, ge=1),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -3698,6 +3699,29 @@ async def get_customize_options(
             sonarr.get_quality_profiles(sonarr_cfg.sonarr_url, sonarr_cfg.sonarr_token),
             sonarr.get_tags(sonarr_cfg.sonarr_url, sonarr_cfg.sonarr_token),
         )
+        # Keep this endpoint backwards compatible for clients that only need
+        # the existing add defaults.  The per-show UI supplies tmdb_id so its
+        # season picker can use a fresh Sonarr lookup.
+        seasons = []
+        if tmdb_id is not None:
+            tmdb_key = await get_user_tmdb_key(db, current_user.id)
+            external_ids = await tmdb.get_external_ids(tmdb_id, "tv", api_key=tmdb_key)
+            tvdb_id = external_ids.get("tvdb_id")
+            if not tvdb_id:
+                raise HTTPException(status_code=400, detail="Could not find TVDB ID for this show")
+
+            try:
+                series_data = await sonarr.lookup_series(
+                    sonarr_cfg.sonarr_url, sonarr_cfg.sonarr_token, tvdb_id
+                )
+            except Exception:
+                raise HTTPException(status_code=503, detail="Could not load seasons from Sonarr")
+
+            seasons = [
+                {"season_number": season["seasonNumber"]}
+                for season in series_data.get("seasons", [])
+                if isinstance(season, dict) and isinstance(season.get("seasonNumber"), int)
+            ]
         return {
             "root_folders": root_folders,
             "quality_profiles": quality_profiles,
@@ -3708,6 +3732,7 @@ async def get_customize_options(
                 "tags": sonarr_cfg.sonarr_tags or [],
                 "season_folder": sonarr_cfg.sonarr_season_folder if sonarr_cfg.sonarr_season_folder is not None else True,
             },
+            "seasons": seasons,
         }
 
     else:
@@ -3724,6 +3749,17 @@ class RequestOverrides(BaseModel):
     quality_profile: int | None = None
     tags: list[int] | None = None
     season_folder: bool | None = None
+    selected_seasons: list[StrictInt] | None = None
+
+    def model_post_init(self, __context) -> None:
+        if self.selected_seasons is None:
+            return
+        if not self.selected_seasons:
+            raise ValueError("Select at least one season or choose all seasons")
+        if len(set(self.selected_seasons)) != len(self.selected_seasons):
+            raise ValueError("Selected seasons must not contain duplicates")
+        if any(season < 0 for season in self.selected_seasons):
+            raise ValueError("Selected seasons must be valid non-negative numbers")
 
 
 def _resolve_add_overrides(overrides: RequestOverrides | None, is_admin: bool) -> RequestOverrides | None:
@@ -3847,8 +3883,11 @@ async def request_media(
                 quality_profile_id=(ov.quality_profile if ov and ov.quality_profile is not None else sonarr_cfg.sonarr_quality_profile),
                 tags=(ov.tags if ov and ov.tags is not None else sonarr_cfg.sonarr_tags),
                 season_folder=(ov.season_folder if ov and ov.season_folder is not None else default_season_folder),
+                selected_seasons=(ov.selected_seasons if ov else None),
             )
             return res
+        except sonarr.InvalidSeasonSelectionError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             if isinstance(e, HTTPException): raise e
             raise HTTPException(status_code=500, detail=f"Sonarr error: {e}")
