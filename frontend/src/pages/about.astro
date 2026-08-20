@@ -1,9 +1,10 @@
 ---
 import Base from "../layouts/Base.astro";
+import { readImageVersion } from "../lib/imageVersion.mjs";
 
 Astro.response.headers.set("Cache-Control", "no-store");
 
-const currentVersion = process.env.APP_VERSION ?? 'dev';
+const currentVersion = await readImageVersion();
 
 let latestVersion: string | null = null;
 let releaseUrl: string | null = null;

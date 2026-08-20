@@ -41,13 +41,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve image version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "value=dev" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Extract Docker metadata (standard image)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=sha,format=short
@@ -59,6 +68,8 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64
           push: true
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.value }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=docker-x64
@@ -72,7 +83,6 @@ jobs:
           flavor: |
             suffix=-omnibus
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=sha,format=short
@@ -84,6 +94,8 @@ jobs:
           file: Dockerfile.omnibus
           platforms: linux/amd64
           push: true
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.value }}
           tags: ${{ steps.meta-omnibus.outputs.tags }}
           labels: ${{ steps.meta-omnibus.outputs.labels }}
           cache-from: type=gha,scope=docker-omnibus-x64
