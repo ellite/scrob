@@ -1839,9 +1839,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       bar.className = `h-1.5 rounded-full transition-all duration-500 ${barColor}${isPending || job.total_items === 0 ? ' animate-pulse' : ''}`;
       bar.style.width = isPending || job.total_items === 0 ? '100%' : `${pct}%`;
     }
-    if (label) label.textContent = isPush
-      ? (isPending ? 'Push queued…' : 'Pushing…')
-      : (isPending ? 'Pull queued…' : 'Pulling…');
+    if (label) label.textContent = isPending
+      ? (isPush ? 'Push queued…' : 'Pull queued…')
+      : (job.current_step || (isPush ? 'Pushing…' : 'Pulling…'));
     if (pctEl) pctEl.textContent = job.total_items > 0 ? `${pct}%` : '';
     if (items) items.textContent = job.total_items > 0
       ? `${job.processed_items} / ${job.total_items} items`
@@ -1945,7 +1945,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       bar.className = `h-1.5 rounded-full transition-all duration-500 ${barColor}${indeterminate ? ' animate-pulse' : ''}`;
       bar.style.width = indeterminate ? '100%' : `${pct}%`;
     }
-    if (label) label.textContent = isPush ? (isPending ? 'Push queued…' : 'Pushing…') : (isPending ? 'Pull queued…' : 'Pulling…');
+    if (label) label.textContent = isPending
+      ? (isPush ? 'Push queued…' : 'Pull queued…')
+      : (job.current_step || (isPush ? 'Pushing…' : 'Pulling…'));
     if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
     if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
   }
@@ -2032,7 +2034,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       bar.className = `h-1.5 rounded-full transition-all duration-500 bg-red-500${indeterminate ? ' animate-pulse' : ''}`;
       bar.style.width = indeterminate ? '100%' : `${pct}%`;
     }
-    if (label) label.textContent = isPending ? verbs.queued : verbs.active;
+    if (label) label.textContent = isPending ? verbs.queued : (job.current_step || verbs.active);
     if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
     if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
   }
@@ -2355,7 +2357,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       bar.className = `h-1.5 rounded-full transition-all duration-500 bg-violet-500${indeterminate ? ' animate-pulse' : ''}`;
       bar.style.width = indeterminate ? '100%' : `${pct}%`;
     }
-    if (label) label.textContent = isPush ? (isPending ? 'Push queued…' : 'Pushing…') : (isPending ? 'Pull queued…' : 'Pulling…');
+    if (label) label.textContent = isPending
+      ? (isPush ? 'Push queued…' : 'Pull queued…')
+      : (job.current_step || (isPush ? 'Pushing…' : 'Pulling…'));
     if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
     if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
   }
