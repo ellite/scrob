@@ -38,7 +38,7 @@ from core.translations import (
     upsert_media_translation,
     apply_media_translations,
 )
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, ANON_USER_ID
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, ANON_USER_ID, require_admin
 from models.users import User, UserSettings
 from models.show import Show as ShowModel
 from models.global_settings import GlobalSettings
@@ -3651,10 +3651,94 @@ async def get_request_status(
     return {"monitored": monitored}
 
 
+@router.get("/{type}/customize-options")
+async def get_customize_options(
+    type: MediaType,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Live root folders/quality profiles/tags for the customize-on-add
+    popup, plus the connection's current defaults to pre-select. Admin-only,
+    same as the popup itself - resolves the effective Radarr/Sonarr config
+    server-side so the token never reaches the client."""
+    settings_q = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == current_user.id)
+    )
+    settings = settings_q.scalar_one_or_none()
+    gs = await _get_global_settings(db)
+
+    if type == MediaType.movie:
+        radarr_cfg = _effective_radarr(settings, gs)
+        if not radarr_cfg:
+            raise HTTPException(status_code=400, detail="Radarr not configured in settings")
+        from core import radarr
+        root_folders, quality_profiles, tags = await asyncio.gather(
+            radarr.get_root_folders(radarr_cfg.radarr_url, radarr_cfg.radarr_token),
+            radarr.get_quality_profiles(radarr_cfg.radarr_url, radarr_cfg.radarr_token),
+            radarr.get_tags(radarr_cfg.radarr_url, radarr_cfg.radarr_token),
+        )
+        return {
+            "root_folders": root_folders,
+            "quality_profiles": quality_profiles,
+            "tags": tags,
+            "current": {
+                "root_folder": radarr_cfg.radarr_root_folder,
+                "quality_profile": radarr_cfg.radarr_quality_profile,
+                "tags": radarr_cfg.radarr_tags or [],
+            },
+        }
+
+    elif type == MediaType.series:
+        sonarr_cfg = _effective_sonarr(settings, gs)
+        if not sonarr_cfg:
+            raise HTTPException(status_code=400, detail="Sonarr not configured in settings")
+        from core import sonarr
+        root_folders, quality_profiles, tags = await asyncio.gather(
+            sonarr.get_root_folders(sonarr_cfg.sonarr_url, sonarr_cfg.sonarr_token),
+            sonarr.get_quality_profiles(sonarr_cfg.sonarr_url, sonarr_cfg.sonarr_token),
+            sonarr.get_tags(sonarr_cfg.sonarr_url, sonarr_cfg.sonarr_token),
+        )
+        return {
+            "root_folders": root_folders,
+            "quality_profiles": quality_profiles,
+            "tags": tags,
+            "current": {
+                "root_folder": sonarr_cfg.sonarr_root_folder,
+                "quality_profile": sonarr_cfg.sonarr_quality_profile,
+                "tags": sonarr_cfg.sonarr_tags or [],
+                "season_folder": sonarr_cfg.sonarr_season_folder if sonarr_cfg.sonarr_season_folder is not None else True,
+            },
+        }
+
+    else:
+        raise HTTPException(status_code=400, detail="Can only fetch options for movies or series")
+
+
+class RequestOverrides(BaseModel):
+    """Per-item root folder/quality profile/tags/season-folder override for
+    an admin-initiated add - see radarr_customize_on_add/sonarr_customize_on_add.
+    Only ever honored for admins (checked server-side below), regardless of
+    what a client sends - the *_customize_on_add flags just control whether
+    the frontend ever shows the picker that produces this body."""
+    root_folder: str | None = None
+    quality_profile: int | None = None
+    tags: list[int] | None = None
+    season_folder: bool | None = None
+
+
+def _resolve_add_overrides(overrides: RequestOverrides | None, is_admin: bool) -> RequestOverrides | None:
+    """Only an admin's own overrides are ever honored - a non-admin client
+    sending this body just gets ignored, same as if it sent nothing. Pulled
+    out as its own function so this rule is unit-testable without a full
+    request/DB round-trip."""
+    return overrides if (overrides and is_admin) else None
+
+
 @router.post("/{type}/{tmdb_id}/request")
 async def request_media(
     type: MediaType,
     tmdb_id: int,
+    overrides: RequestOverrides | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -3709,6 +3793,8 @@ async def request_media(
             except Exception: pass
             return await _upsert_request("movie", title, poster)
 
+        ov = _resolve_add_overrides(overrides, current_user.is_admin)
+
         from core import radarr
         try:
             res = await radarr.add_movie(
@@ -3716,9 +3802,9 @@ async def request_media(
                 token=radarr_cfg.radarr_token,
                 tmdb_id=tmdb_id,
                 title="",
-                root_folder=radarr_cfg.radarr_root_folder,
-                quality_profile_id=radarr_cfg.radarr_quality_profile,
-                tags=radarr_cfg.radarr_tags
+                root_folder=(ov.root_folder if ov and ov.root_folder is not None else radarr_cfg.radarr_root_folder),
+                quality_profile_id=(ov.quality_profile if ov and ov.quality_profile is not None else radarr_cfg.radarr_quality_profile),
+                tags=(ov.tags if ov and ov.tags is not None else radarr_cfg.radarr_tags),
             )
             return res
         except Exception as e:
@@ -3741,6 +3827,8 @@ async def request_media(
             except Exception: pass
             return await _upsert_request("series", title, poster)
 
+        ov = _resolve_add_overrides(overrides, current_user.is_admin)
+
         from core import sonarr, tmdb
         try:
             tmdb_key = await get_user_tmdb_key(db, current_user.id)
@@ -3750,14 +3838,15 @@ async def request_media(
             if not tvdb_id:
                 raise HTTPException(status_code=400, detail="Could not find TVDB ID for this show")
 
+            default_season_folder = sonarr_cfg.sonarr_season_folder if sonarr_cfg.sonarr_season_folder is not None else True
             res = await sonarr.add_series(
                 url=sonarr_cfg.sonarr_url,
                 token=sonarr_cfg.sonarr_token,
                 tvdb_id=tvdb_id,
-                root_folder=sonarr_cfg.sonarr_root_folder,
-                quality_profile_id=sonarr_cfg.sonarr_quality_profile,
-                tags=sonarr_cfg.sonarr_tags,
-                season_folder=sonarr_cfg.sonarr_season_folder if sonarr_cfg.sonarr_season_folder is not None else True,
+                root_folder=(ov.root_folder if ov and ov.root_folder is not None else sonarr_cfg.sonarr_root_folder),
+                quality_profile_id=(ov.quality_profile if ov and ov.quality_profile is not None else sonarr_cfg.sonarr_quality_profile),
+                tags=(ov.tags if ov and ov.tags is not None else sonarr_cfg.sonarr_tags),
+                season_folder=(ov.season_folder if ov and ov.season_folder is not None else default_season_folder),
             )
             return res
         except Exception as e:

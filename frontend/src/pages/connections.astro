@@ -1254,6 +1254,13 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         ))}
                       </div>
                     </div>
+                    {me.is_admin && (
+                      <label class="flex items-center justify-between gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:bg-zinc-800/60 transition-colors">
+                        <span class="text-sm text-zinc-300">Let me customize root folder/quality profile/tags when adding</span>
+                        <input type="checkbox" name="radarr_customize_on_add" id="radarr_customize_on_add" value="true" class="sr-only peer" checked={settings.radarr_customize_on_add === true} />
+                        <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
+                      </label>
+                    )}
                   </div>
                 </div>
                 <div class="border-t border-zinc-800 px-6 py-4 flex gap-2">
@@ -1328,6 +1335,13 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       <input type="checkbox" name="sonarr_season_folder" id="sonarr_season_folder" value="true" class="sr-only peer" checked={settings.sonarr_season_folder !== false} />
                       <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
                     </label>
+                    {me.is_admin && (
+                      <label class="flex items-center justify-between gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:bg-zinc-800/60 transition-colors">
+                        <span class="text-sm text-zinc-300">Let me customize root folder/quality profile/tags/season folders when adding</span>
+                        <input type="checkbox" name="sonarr_customize_on_add" id="sonarr_customize_on_add" value="true" class="sr-only peer" checked={settings.sonarr_customize_on_add === true} />
+                        <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
+                      </label>
+                    )}
                   </div>
                 </div>
                 <div class="border-t border-zinc-800 px-6 py-4 flex gap-2">
@@ -3249,6 +3263,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 return v ? parseInt(v) : null;
               })(),
               radarr_tags: Array.from(radarrTagInputs).map((i: any) => parseInt(i.value)),
+              radarr_customize_on_add: (document.getElementById('radarr_customize_on_add') as HTMLInputElement)?.checked ?? false,
             };
             const radarrRes = await fetch('/api/proxy/auth/settings', {
               method: 'PATCH',
@@ -3273,6 +3288,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               })(),
               sonarr_tags: Array.from(sonarrTagInputs).map((i: any) => parseInt(i.value)),
               sonarr_season_folder: (document.getElementById('sonarr_season_folder') as HTMLInputElement)?.checked ?? true,
+              sonarr_customize_on_add: (document.getElementById('sonarr_customize_on_add') as HTMLInputElement)?.checked ?? false,
             };
             const sonarrRes = await fetch('/api/proxy/auth/settings', {
               method: 'PATCH',

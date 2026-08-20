@@ -180,6 +180,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                     class="w-4 h-4 rounded border-zinc-600 bg-zinc-950 text-blue-500 focus:ring-blue-500 cursor-pointer" />
                   <span class="text-sm text-zinc-300">Require admin approval for requests</span>
                 </label>
+                <label class="flex items-center justify-between gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:bg-zinc-800/60 transition-colors">
+                  <span class="text-sm text-zinc-300">Let admins customize root folder/quality profile/tags when adding</span>
+                  <input type="checkbox" name="radarr_customize_on_add" id="radarr_customize_on_add" value="true" class="sr-only peer" checked={globalSettings.radarr_customize_on_add ?? false} />
+                  <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
+                </label>
               </div>
             </div>
           </div>
@@ -260,6 +265,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                     checked={globalSettings.sonarr_require_approval ?? false}
                     class="w-4 h-4 rounded border-zinc-600 bg-zinc-950 text-blue-500 focus:ring-blue-500 cursor-pointer" />
                   <span class="text-sm text-zinc-300">Require admin approval for requests</span>
+                </label>
+                <label class="flex items-center justify-between gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:bg-zinc-800/60 transition-colors">
+                  <span class="text-sm text-zinc-300">Let admins customize root folder/quality profile/tags/season folders when adding</span>
+                  <input type="checkbox" name="sonarr_customize_on_add" id="sonarr_customize_on_add" value="true" class="sr-only peer" checked={globalSettings.sonarr_customize_on_add ?? false} />
+                  <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
                 </label>
               </div>
             </div>
@@ -845,6 +855,8 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     body['sonarr_season_folder']      = fd.get('sonarr_season_folder') === 'true';
     body['radarr_require_approval']   = fd.get('radarr_require_approval') === 'true';
     body['sonarr_require_approval']   = fd.get('sonarr_require_approval') === 'true';
+    body['radarr_customize_on_add']   = fd.get('radarr_customize_on_add') === 'true';
+    body['sonarr_customize_on_add']   = fd.get('sonarr_customize_on_add') === 'true';
     body['enable_logged_out_navigation'] = fd.get('enable_logged_out_navigation') === 'true';
     const radarrTags = fd.getAll('radarr_tags').map(v => parseInt(v as string)).filter(n => !isNaN(n));
     body['radarr_tags'] = radarrTags.length ? radarrTags : null;

@@ -5,7 +5,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
-from routers.media import _attach_episode_order_fields
+from routers.media import _attach_episode_order_fields, _resolve_add_overrides, RequestOverrides
 
 
 def _pref(series_tmdb_id, episode_order="tvdb"):
@@ -120,6 +120,27 @@ class AttachEpisodeOrderFieldsTests(unittest.TestCase):
         item = {"type": "movie", "tmdb_id": 550}
         _attach_episode_order_fields(item, {550: _pref(550)}, {})
         self.assertNotIn("show_episode_order", item)
+
+
+class ResolveAddOverridesTests(unittest.TestCase):
+    """The customize-on-add popup lets an admin override the root folder/
+    quality profile/tags/season-folder for a single Radarr/Sonarr add - this
+    must only ever apply for an admin, regardless of the *_customize_on_add
+    settings (those only control whether the frontend shows the picker)."""
+
+    def test_admin_overrides_are_honored(self) -> None:
+        overrides = RequestOverrides(root_folder="/movies-4k")
+        self.assertIs(_resolve_add_overrides(overrides, True), overrides)
+
+    def test_non_admin_overrides_are_ignored(self) -> None:
+        overrides = RequestOverrides(root_folder="/movies-4k")
+        self.assertIsNone(_resolve_add_overrides(overrides, False))
+
+    def test_no_overrides_sent_is_a_noop_for_an_admin(self) -> None:
+        self.assertIsNone(_resolve_add_overrides(None, True))
+
+    def test_no_overrides_sent_is_a_noop_for_a_non_admin(self) -> None:
+        self.assertIsNone(_resolve_add_overrides(None, False))
 
 
 if __name__ == "__main__":

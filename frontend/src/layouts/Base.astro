@@ -9,10 +9,17 @@ const { title, hideNav } = Astro.props;
 const { user, token } = Astro.locals;
 
 let pendingRequestCount = 0;
+let radarrCustomizeOnAdd = false;
+let sonarrCustomizeOnAdd = false;
 if (user?.is_admin && token) {
   try {
     const data = await api.admin.getPendingCount(token);
     pendingRequestCount = data.pending;
+  } catch {}
+  try {
+    const settings = await api.auth.getSettings(token);
+    radarrCustomizeOnAdd = settings.radarr_customize_on_add === true;
+    sonarrCustomizeOnAdd = settings.sonarr_customize_on_add === true;
   } catch {}
 }
 
@@ -371,6 +378,49 @@ const bottomNavItem = (active: boolean) =>
     </div>
   </div>
 
+  <!-- Customize-on-add modal (shared, centered - same convention as rating/list popovers; admin-only feature) -->
+  <div id="customize-add-popover" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+      <div class="px-5 pt-5 pb-4 border-b border-zinc-800 flex items-center justify-between gap-3">
+        <span id="customize-add-title" class="text-base font-bold text-zinc-100">Add options</span>
+        <button id="customize-add-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div id="customize-add-loading" class="px-5 py-10 text-center text-sm text-zinc-500">Loading options…</div>
+      <div id="customize-add-body" class="hidden px-5 py-5 space-y-4">
+        <div class="space-y-1.5">
+          <label for="customize-add-root-folder" class="block text-sm font-medium text-zinc-400">Root Folder</label>
+          <div class="relative">
+            <select id="customize-add-root-folder" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-9 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none"></select>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500"><path d="m6 9 6 6 6-6"/></svg>
+          </div>
+        </div>
+        <div class="space-y-1.5">
+          <label for="customize-add-quality-profile" class="block text-sm font-medium text-zinc-400">Quality Profile</label>
+          <div class="relative">
+            <select id="customize-add-quality-profile" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-9 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none"></select>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500"><path d="m6 9 6 6 6-6"/></svg>
+          </div>
+        </div>
+        <div class="space-y-1.5">
+          <span class="block text-sm font-medium text-zinc-400">Tags</span>
+          <div id="customize-add-tags" class="flex flex-wrap gap-2 min-h-[42px] p-2 bg-zinc-950 border border-zinc-800 rounded-lg"></div>
+        </div>
+        <label id="customize-add-season-folder-row" class="hidden flex items-center justify-between gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:bg-zinc-800/60 transition-colors">
+          <span class="text-sm text-zinc-300">Use season folders</span>
+          <input type="checkbox" id="customize-add-season-folder" class="sr-only peer" />
+          <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
+        </label>
+        <div id="customize-add-error" class="hidden text-sm text-red-400"></div>
+      </div>
+      <div id="customize-add-footer" class="hidden border-t border-zinc-800 px-5 py-4 flex gap-2">
+        <button id="customize-add-cancel" class="flex-1 px-4 py-2.5 text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold rounded-lg transition cursor-pointer">Cancel</button>
+        <button id="customize-add-confirm" class="flex-1 px-4 py-2.5 text-sm bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition cursor-pointer">Add</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Watch history modal -->
   <div id="watch-history-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
@@ -518,10 +568,13 @@ const bottomNavItem = (active: boolean) =>
     });
   </script>
 
-  <script define:vars={{ __layoutAuthToken: token ?? '', __use24h: use24h }}>
+  <script define:vars={{ __layoutAuthToken: token ?? '', __use24h: use24h, __isAdmin: user?.is_admin === true, __radarrCustomizeOnAdd: radarrCustomizeOnAdd, __sonarrCustomizeOnAdd: sonarrCustomizeOnAdd }}>
     // Expose the server-side token for the card action script (httpOnly cookie is not JS-readable)
     window.__AUTH_TOKEN__ = __layoutAuthToken;
     window.__USE_24H__ = __use24h;
+    window.__IS_ADMIN__ = __isAdmin;
+    window.__RADARR_CUSTOMIZE_ON_ADD__ = __radarrCustomizeOnAdd;
+    window.__SONARR_CUSTOMIZE_ON_ADD__ = __sonarrCustomizeOnAdd;
 
     // ── Now Playing poller (Global) ──────────────────────────────────────────
     function esc(str) {
@@ -1070,6 +1123,115 @@ const bottomNavItem = (active: boolean) =>
       if (!popover.classList.contains('hidden') && !popover.contains(e.target as Node) && e.target !== _activeRewatchBtn) {
         closeRewatchPopover();
       }
+    });
+
+    // ── Customize-on-add modal (admin-only - root folder/quality profile/
+    // tags/season-folder override for one Radarr/Sonarr add) ────────────────
+    let _customizeAddTags: number[] = [];
+
+    function closeCustomizeAddPopover() {
+      document.getElementById('customize-add-popover')!.classList.add('hidden');
+    }
+
+    function renderCustomizeAddTags(tags: any[], selectedIds: number[]) {
+      const container = document.getElementById('customize-add-tags')!;
+      if (!tags || tags.length === 0) {
+        container.innerHTML = '<span class="text-xs text-zinc-500 italic px-1">No tags found</span>';
+        return;
+      }
+      container.innerHTML = tags.map((tag: any) => {
+        const isSelected = selectedIds.includes(tag.id);
+        return `<button type="button" data-tag-id="${tag.id}" class="customize-add-tag-pill px-2 py-1 text-xs font-medium rounded-md border transition-colors cursor-pointer ${isSelected ? 'ring-1 ring-blue-500 border-blue-500/50 bg-blue-500/10 text-zinc-100' : 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-300'}">${esc(tag.label)}</button>`;
+      }).join('');
+      container.querySelectorAll('.customize-add-tag-pill').forEach((pill) => {
+        pill.addEventListener('click', () => {
+          const id = parseInt((pill as HTMLElement).dataset.tagId!);
+          const selected = _customizeAddTags.includes(id);
+          if (selected) {
+            _customizeAddTags = _customizeAddTags.filter(t => t !== id);
+          } else {
+            _customizeAddTags.push(id);
+          }
+          pill.classList.toggle('ring-1', !selected);
+          pill.classList.toggle('ring-blue-500', !selected);
+          pill.classList.toggle('border-blue-500/50', !selected);
+          pill.classList.toggle('bg-blue-500/10', !selected);
+          pill.classList.toggle('text-zinc-100', !selected);
+          pill.classList.toggle('bg-zinc-800', selected);
+          pill.classList.toggle('text-zinc-300', selected);
+        });
+      });
+    }
+
+    async function openCustomizeAddPopover(mediaType: string, onConfirm: (overrides: Record<string, unknown>) => Promise<void>) {
+      const popover = document.getElementById('customize-add-popover')!;
+      const loading = document.getElementById('customize-add-loading')!;
+      const body = document.getElementById('customize-add-body')!;
+      const footer = document.getElementById('customize-add-footer')!;
+      const errorEl = document.getElementById('customize-add-error')!;
+      const seasonRow = document.getElementById('customize-add-season-folder-row')!;
+      const isSeries = mediaType === 'series';
+
+      document.getElementById('customize-add-title')!.textContent = isSeries ? 'Add to Sonarr' : 'Add to Radarr';
+      loading.classList.remove('hidden');
+      body.classList.add('hidden');
+      footer.classList.add('hidden');
+      errorEl.classList.add('hidden');
+      seasonRow.classList.toggle('hidden', !isSeries);
+      popover.classList.remove('hidden');
+
+      try {
+        const opts = await apiFetch(`/media/${mediaType}/customize-options`);
+
+        const rootSelect = document.getElementById('customize-add-root-folder') as HTMLSelectElement;
+        rootSelect.innerHTML = opts.root_folders.map((f: any) =>
+          `<option value="${esc(f.path)}" ${f.path === opts.current.root_folder ? 'selected' : ''}>${esc(f.path)}</option>`
+        ).join('');
+
+        const qualitySelect = document.getElementById('customize-add-quality-profile') as HTMLSelectElement;
+        qualitySelect.innerHTML = opts.quality_profiles.map((p: any) =>
+          `<option value="${p.id}" ${p.id === opts.current.quality_profile ? 'selected' : ''}>${esc(p.name)}</option>`
+        ).join('');
+
+        _customizeAddTags = [...(opts.current.tags || [])];
+        renderCustomizeAddTags(opts.tags, _customizeAddTags);
+
+        if (isSeries) {
+          (document.getElementById('customize-add-season-folder') as HTMLInputElement).checked = opts.current.season_folder !== false;
+        }
+
+        loading.classList.add('hidden');
+        body.classList.remove('hidden');
+        footer.classList.remove('hidden');
+      } catch {
+        loading.classList.add('hidden');
+        body.classList.remove('hidden');
+        errorEl.textContent = 'Could not load options.';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+
+      document.getElementById('customize-add-confirm')!.onclick = async () => {
+        const overrides: Record<string, unknown> = {
+          root_folder: (document.getElementById('customize-add-root-folder') as HTMLSelectElement).value,
+          quality_profile: parseInt((document.getElementById('customize-add-quality-profile') as HTMLSelectElement).value),
+          tags: _customizeAddTags,
+        };
+        if (isSeries) {
+          overrides.season_folder = (document.getElementById('customize-add-season-folder') as HTMLInputElement).checked;
+        }
+        closeCustomizeAddPopover();
+        await onConfirm(overrides);
+      };
+    }
+
+    document.getElementById('customize-add-close')!.addEventListener('click', () => closeCustomizeAddPopover());
+    document.getElementById('customize-add-cancel')!.addEventListener('click', () => closeCustomizeAddPopover());
+    document.getElementById('customize-add-popover')!.addEventListener('click', (e) => {
+      if (e.target === document.getElementById('customize-add-popover')) closeCustomizeAddPopover();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeCustomizeAddPopover();
     });
 
     // ── Create list modal ──────────────────────────────────────────────────────
@@ -1673,29 +1835,43 @@ const bottomNavItem = (active: boolean) =>
         }
 
       } else if (action === 'request') {
-        const originalContent = btn.innerHTML;
-        btn.innerHTML = '<svg class="animate-spin h-5 w-5 text-orange-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
-        btn.classList.add('pointer-events-none');
-        
-        try {
-          const res = await apiFetch(`/media/${mediaType}/${tmdbId}/request`, 'POST');
-          if (res.status === 'added' || res.status === 'already_exists') {
-            btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-green-500"><polyline points="20 6 9 17 4 12"></polyline></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-green-500">' + (res.status === 'added' ? 'Added' : 'Exists') + '</span>';
-            btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-500/10', 'hover:text-orange-400');
-            btn.classList.add('bg-green-500/10', 'text-green-500');
-            (btn as HTMLButtonElement).disabled = true;
-          } else if (res.status === 'pending_approval') {
-            btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-amber-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-amber-400">Pending</span>';
-            btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-500/10', 'hover:text-orange-400');
-            btn.classList.add('bg-amber-500/10', 'text-amber-400');
-            (btn as HTMLButtonElement).disabled = true;
-          } else {
-            throw new Error('Failed to request');
+        const performRequestAdd = async (overrides?: Record<string, unknown>) => {
+          const originalContent = btn.innerHTML;
+          btn.innerHTML = '<svg class="animate-spin h-5 w-5 text-orange-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+          btn.classList.add('pointer-events-none');
+
+          try {
+            const res = await apiFetch(`/media/${mediaType}/${tmdbId}/request`, 'POST', overrides);
+            if (res.status === 'added' || res.status === 'already_exists') {
+              btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-green-500"><polyline points="20 6 9 17 4 12"></polyline></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-green-500">' + (res.status === 'added' ? 'Added' : 'Exists') + '</span>';
+              btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-500/10', 'hover:text-orange-400');
+              btn.classList.add('bg-green-500/10', 'text-green-500');
+              (btn as HTMLButtonElement).disabled = true;
+            } else if (res.status === 'pending_approval') {
+              btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-amber-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-amber-400">Pending</span>';
+              btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-500/10', 'hover:text-orange-400');
+              btn.classList.add('bg-amber-500/10', 'text-amber-400');
+              (btn as HTMLButtonElement).disabled = true;
+            } else {
+              throw new Error('Failed to request');
+            }
+          } catch (err: any) {
+            btn.innerHTML = originalContent;
+            btn.classList.remove('pointer-events-none');
+            alertFromError(err, 'Request failed');
           }
-        } catch (err: any) {
-          btn.innerHTML = originalContent;
-          btn.classList.remove('pointer-events-none');
-          alertFromError(err, 'Request failed');
+        };
+
+        // Admin-only, opt-in via Connections/Admin settings - everyone else
+        // (and admins who've left the toggle off) keeps the instant-add path.
+        const customizeOnAdd = (window as any).__IS_ADMIN__ && (
+          (mediaType === 'movie' && (window as any).__RADARR_CUSTOMIZE_ON_ADD__) ||
+          (mediaType === 'series' && (window as any).__SONARR_CUSTOMIZE_ON_ADD__)
+        );
+        if (customizeOnAdd) {
+          openCustomizeAddPopover(mediaType, performRequestAdd);
+        } else {
+          await performRequestAdd();
         }
 
       } else if (action === 'rewatch') {
