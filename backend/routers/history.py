@@ -1076,6 +1076,11 @@ class SeasonWatchRequest(BaseModel):
     watched_at: datetime | None = None  # omitted = now; explicit null = unknown date
 
 
+class PreviousEpisodesWatchRequest(SeasonWatchRequest):
+    """Episode cap in the selected (TMDB or TVDB) season order."""
+    up_to_episode_number: int
+
+
 class ShowWatchRequest(BaseModel):
     series_tmdb_id: int
     series_tvdb_id: int | None = None  # links the show to TVDB on demand, see #101
@@ -1448,6 +1453,7 @@ async def mark_season_watched(
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Mark all aired episodes of a season as watched, fetching from TMDB if needed."""
+    up_to_episode_number = getattr(body, "up_to_episode_number", None)
     # 1. Ensure show exists
     show_q = await db.execute(select(Show).where(Show.tmdb_id == body.series_tmdb_id))
     show = show_q.scalar_one_or_none()
@@ -1495,6 +1501,10 @@ async def mark_season_watched(
             )
         )
         mappings = list(mapping_result.scalars().all())
+        if up_to_episode_number is not None:
+            # A TVDB season can span TMDB seasons, so apply the cap before
+            # translating back to the canonical positions stored locally.
+            mappings = [m for m in mappings if m.tvdb_episode_number <= up_to_episode_number]
         if not mappings:
             # No computed mapping — if TMDB doesn't even have a season with
             # this number, it's confidently absent (see #101): fetch straight
@@ -1551,6 +1561,8 @@ async def mark_season_watched(
         }
         for tvdb_ep in tvdb_fallback_episodes:
             if tvdb_ep.get("episode_number") is None or not _has_aired(tvdb_ep.get("air_date"), today):
+                continue
+            if up_to_episode_number is not None and tvdb_ep["episode_number"] > up_to_episode_number:
                 continue
             position = (body.season_number, tvdb_ep["episode_number"])
             existing = existing_map.get(position)
@@ -1615,6 +1627,12 @@ async def mark_season_watched(
             for ep in season_data.get("episodes", []):
                 position = (canonical_season, ep["episode_number"])
                 if target_positions is not None and position not in target_positions:
+                    continue
+                if (
+                    up_to_episode_number is not None
+                    and target_positions is None
+                    and ep["episode_number"] > up_to_episode_number
+                ):
                     continue
                 air_date_str = ep.get("air_date")
                 if not air_date_str:
@@ -1682,8 +1700,25 @@ async def mark_season_watched(
         for event in new_events:
             await record_rewatch_progress(db, current_user.id, event.media_id, event.id)
         await db.commit()
-    await _push_watch_state(db, current_user.id, newly_watched, watched=True)
+    await _push_watch_state(
+        db, current_user.id, newly_watched, watched=True,
+        watched_at_by_media={media_id: resolved_watched_at for media_id in newly_watched},
+    )
     return {"status": "ok", "count": len(newly_watched)}
+
+
+@router.post("/previous-episodes")
+async def mark_previous_episodes_watched(
+    body: PreviousEpisodesWatchRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    """Mark this and earlier aired episodes in one normal season only."""
+    if body.season_number <= 0:
+        raise HTTPException(status_code=400, detail="Previous-episode marking is only available for normal seasons")
+    if body.up_to_episode_number <= 1:
+        raise HTTPException(status_code=400, detail="Previous-episode marking requires an episode after episode 1")
+    return await mark_season_watched(body, db, current_user)
 
 
 @router.delete("/season")

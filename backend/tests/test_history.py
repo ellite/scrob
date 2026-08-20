@@ -4,6 +4,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
+
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
@@ -462,6 +464,76 @@ class ClearHistoryTests(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(tables_deleted, {ShowRewatch.__tablename__, WatchEvent.__tablename__, PlaybackProgress.__tablename__})
         db.commit.assert_awaited_once()
+
+
+class PreviousEpisodesWatchValidationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_specials_and_episode_one_are_rejected_before_any_database_write(self) -> None:
+        user = SimpleNamespace(id=7)
+        db = SimpleNamespace()
+        for season, episode in ((0, 2), (1, 1)):
+            with self.assertRaises(HTTPException):
+                await history.mark_previous_episodes_watched(
+                    history.PreviousEpisodesWatchRequest(
+                        series_tmdb_id=100, season_number=season, up_to_episode_number=episode,
+                    ), db, user,
+                )
+
+    async def test_tvdb_cap_is_applied_before_mapping_to_canonical_episode_number(self) -> None:
+        show = Show(id=55, tmdb_id=100, tvdb_id=900, title="Test Show")
+        mapping = EpisodeOrderMapping(
+            series_tmdb_id=100,
+            tmdb_season_number=4,
+            tmdb_episode_number=12,
+            tmdb_episode_id=1200,
+            tvdb_id=2200,
+            tvdb_season_number=1,
+            tvdb_episode_number=2,
+            match_method="external_id",
+        )
+        episode = Media(
+            id=12,
+            tmdb_id=1200,
+            media_type=MediaType.episode,
+            show_id=55,
+            season_number=4,
+            episode_number=12,
+            title="Canonical episode 12",
+        )
+        db = _FakeSession([show, [mapping], [episode], None])
+        db.info["tmdb_key_7"] = "test-key"
+        season_payload = {
+            "episodes": [
+                {
+                    "episode_number": 12,
+                    "id": 1200,
+                    "name": "Canonical episode 12",
+                    "air_date": "2020-01-01",
+                    "vote_average": 8.0,
+                    "still_path": None,
+                },
+            ],
+        }
+        body = history.PreviousEpisodesWatchRequest(
+            series_tmdb_id=100,
+            series_tvdb_id=900,
+            season_number=1,
+            episode_order="tvdb",
+            up_to_episode_number=2,
+        )
+
+        with (
+            patch.object(history.tmdb, "get_season", AsyncMock(return_value=season_payload)),
+            patch("routers.history.get_already_watched_for_bulk_mark", AsyncMock(return_value=set())),
+            patch("routers.history.record_rewatch_progress", AsyncMock()),
+            patch("routers.history._push_watch_state", new_callable=AsyncMock),
+        ):
+            response = await history.mark_previous_episodes_watched(
+                body, db, SimpleNamespace(id=7),
+            )
+
+        self.assertEqual(response["count"], 1)
+        event = next(value for value in db.added if isinstance(value, WatchEvent))
+        self.assertEqual(event.media_id, 12)
 
 
 if __name__ == "__main__":

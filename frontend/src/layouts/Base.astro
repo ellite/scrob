@@ -436,6 +436,14 @@ const bottomNavItem = (active: boolean) =>
           Mark as unwatched
         </button>
         <p id="watch-history-add-play-label" class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Add a play</p>
+        <div id="watch-history-previous-options" class="hidden rounded-xl border border-green-500/20 bg-green-500/5 p-3 space-y-2">
+          <p class="text-xs font-semibold text-zinc-300">Include earlier aired episodes in this season?</p>
+          <p class="text-[11px] leading-snug text-zinc-500">Already watched episodes are left alone. Future episodes and specials are never included.</p>
+          <div class="grid grid-cols-2 gap-2">
+            <button id="watch-history-this-episode-btn" class="px-2 py-2 rounded-lg text-xs font-bold bg-green-600 text-white">Only this episode</button>
+            <button id="watch-history-previous-episodes-btn" class="px-2 py-2 rounded-lg text-xs font-bold bg-zinc-800 text-zinc-300 border border-zinc-700 hover:bg-zinc-700">This and previous</button>
+          </div>
+        </div>
         <div class="flex gap-2">
           <button id="watch-history-now-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white">Just now</button>
           <button id="watch-history-custom-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Custom</button>
@@ -1393,6 +1401,9 @@ const bottomNavItem = (active: boolean) =>
     let _watchHistoryShowTvdbId = '';
     let _watchHistorySeasonNumber = '';
     let _watchHistoryEpisodeNumber = '';
+    let _watchHistoryDisplayEpisodeNumber = '';
+    let _watchHistoryEpisodeOrder = 'tmdb';
+    let _watchHistoryIncludePrevious = false;
     // Set when the modal is being used to mark a whole season/show watched
     // (no single item's history applies) rather than logging one item's play.
     let _watchHistoryBulkMode: { kind: 'season' | 'show'; seriesId: string; season: string; episodeOrder: string; btn: HTMLElement; tvdbId: string } | null = null;
@@ -1424,7 +1435,15 @@ const bottomNavItem = (active: boolean) =>
       dateInput.max = toLocal(new Date());
     }
 
-    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '', showTvdbId = '') {
+    function setPreviousEpisodeChoice(includePrevious: boolean) {
+      _watchHistoryIncludePrevious = includePrevious;
+      const only = document.getElementById('watch-history-this-episode-btn')!;
+      const previous = document.getElementById('watch-history-previous-episodes-btn')!;
+      only.className = includePrevious ? 'px-2 py-2 rounded-lg text-xs font-bold bg-zinc-800 text-zinc-300 border border-zinc-700 hover:bg-zinc-700' : 'px-2 py-2 rounded-lg text-xs font-bold bg-green-600 text-white';
+      previous.className = includePrevious ? 'px-2 py-2 rounded-lg text-xs font-bold bg-green-600 text-white' : 'px-2 py-2 rounded-lg text-xs font-bold bg-zinc-800 text-zinc-300 border border-zinc-700 hover:bg-zinc-700';
+    }
+
+    async function openWatchHistoryModal(btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '', showTvdbId = '') {
       _watchHistoryBulkMode = null;
       _watchHistoryTmdbId = tmdbId;
       _watchHistoryMediaType = mediaType;
@@ -1432,6 +1451,11 @@ const bottomNavItem = (active: boolean) =>
       _watchHistoryShowTvdbId = showTvdbId;
       _watchHistorySeasonNumber = seasonNumber;
       _watchHistoryEpisodeNumber = episodeNumber;
+      _watchHistoryDisplayEpisodeNumber = btn.closest<HTMLElement>('[data-card]')?.dataset.displayEpisode || episodeNumber;
+      _watchHistoryEpisodeOrder = btn.closest<HTMLElement>('[data-card]')?.dataset.episodeOrder || 'tmdb';
+      const canIncludePrevious = mediaType === 'episode' && Number(seasonNumber) > 0 && Number(_watchHistoryDisplayEpisodeNumber) > 1;
+      document.getElementById('watch-history-previous-options')!.classList.toggle('hidden', !canIncludePrevious);
+      setPreviousEpisodeChoice(false);
 
       document.getElementById('watch-history-modal-title')!.textContent = 'Watch History';
       document.getElementById('watch-history-modal-events')!.classList.remove('hidden');
@@ -1450,6 +1474,7 @@ const bottomNavItem = (active: boolean) =>
       document.getElementById('watch-history-modal-events')!.classList.add('hidden');
       document.getElementById('watch-history-unwatch-btn')!.classList.add('hidden');
       document.getElementById('watch-history-add-play-label')!.classList.add('hidden');
+      document.getElementById('watch-history-previous-options')!.classList.add('hidden');
       resetWatchHistoryDateUI();
 
       document.getElementById('watch-history-log-btn')!.textContent = 'Mark as watched';
@@ -1533,6 +1558,8 @@ const bottomNavItem = (active: boolean) =>
     }
 
     document.getElementById('watch-history-modal-close')!.addEventListener('click', closeWatchHistoryModal);
+    document.getElementById('watch-history-this-episode-btn')!.addEventListener('click', () => setPreviousEpisodeChoice(false));
+    document.getElementById('watch-history-previous-episodes-btn')!.addEventListener('click', () => setPreviousEpisodeChoice(true));
     document.getElementById('watch-history-modal')!.addEventListener('click', (e) => {
       if (e.target === document.getElementById('watch-history-modal')) closeWatchHistoryModal();
     });
@@ -1662,7 +1689,19 @@ const bottomNavItem = (active: boolean) =>
             if (_watchHistorySeasonNumber) watchBody.season_number = Number(_watchHistorySeasonNumber);
             if (_watchHistoryEpisodeNumber) watchBody.episode_number = Number(_watchHistoryEpisodeNumber);
           }
-          await apiFetch('/history', 'POST', watchBody);
+          if (_watchHistoryIncludePrevious) {
+            const previousBody: Record<string, unknown> = {
+              series_tmdb_id: Number(_watchHistoryShowTmdbId),
+              season_number: Number(_watchHistorySeasonNumber),
+              up_to_episode_number: Number(_watchHistoryDisplayEpisodeNumber),
+              watched_at: watchedAt,
+            };
+            if (_watchHistoryShowTvdbId) previousBody.series_tvdb_id = Number(_watchHistoryShowTvdbId);
+            if (_watchHistoryEpisodeOrder === 'tvdb') previousBody.episode_order = 'tvdb';
+            await apiFetch('/history/previous-episodes', 'POST', previousBody);
+          } else {
+            await apiFetch('/history', 'POST', watchBody);
+          }
           await loadWatchHistoryEvents();
           syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
           // Reset to "Just now" after logging

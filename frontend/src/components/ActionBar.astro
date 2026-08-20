@@ -12,6 +12,7 @@ interface Props {
   seasonNumber?: number;
   episodeNumber?: number;
   displaySeasonNumber?: number;
+  displayEpisodeNumber?: number;
   episodeOrder?: "tmdb" | "tvdb";
   tvdbId?: number;
   hideRequest?: boolean;
@@ -40,6 +41,7 @@ const {
   seasonNumber,
   episodeNumber,
   displaySeasonNumber,
+  displayEpisodeNumber,
   episodeOrder = "tmdb",
   tvdbId,
   hideRequest = false,
@@ -121,6 +123,7 @@ const requestTitle = isMonitored
   data-air-date={airDate ?? ""}
   data-tvdb-id={tvdbId != null ? String(tvdbId) : ""}
   data-display-season={displaySeasonNumber != null ? String(displaySeasonNumber) : ""}
+  data-display-episode={displayEpisodeNumber != null ? String(displayEpisodeNumber) : ""}
   data-media-id={mediaId != null ? String(mediaId) : ""}
   class="flex w-fit"
 >

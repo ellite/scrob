@@ -175,6 +175,7 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
                   seasonNumber={episode.tmdb_season_number}
                   episodeNumber={episode.tmdb_episode_number}
                   displaySeasonNumber={Number(season_number)}
+                  displayEpisodeNumber={Number(episode_number)}
                   episodeOrder="tvdb"
                   tvdbId={Number(id)}
                   mediaId={episode.id}
