@@ -264,7 +264,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           </div>
                         )}
                       </div>
-                      {conn.type === "plex" && (
+                      {conn.type === "plex" && me.is_admin && (
                         <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
                           <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Watchlist → Radarr / Sonarr</p>
                           <p class="text-xs text-zinc-500">Automatically request items added to your Plex watchlist. Requires Radarr / Sonarr to be configured in settings.</p>
