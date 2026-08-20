@@ -225,8 +225,8 @@ def provider_added_at(item: dict, source: CollectionSource) -> datetime | None:
     or unparseable, in which case the caller leaves the column on its server
     default. Sources are matched explicitly rather than through
     _MEDIA_BROWSER_ITEM_SOURCES: Nuvio and Stremio items are synthesized with
-    a fixed key set and carry no date, and matching them here would only wait
-    for a key rename to start feeding in something wrong."""
+    a fixed key set. Nuvio library records explicitly retain their source
+    add-date; Stremio has no library add-date."""
     if source is CollectionSource.plex:
         raw = item.get("addedAt")
         if raw is None:
@@ -245,6 +245,15 @@ def provider_added_at(item: dict, source: CollectionSource) -> datetime | None:
         except (TypeError, ValueError):
             return None
         return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+
+    if source is CollectionSource.nuvio:
+        raw = item.get("added_at")
+        if raw is None:
+            return None
+        try:
+            return datetime.fromtimestamp(int(raw) / 1000, tz=timezone.utc).replace(tzinfo=None)
+        except (TypeError, ValueError, OSError, OverflowError):
+            return None
 
     return None
 
@@ -3803,6 +3812,9 @@ def _normalize_nuvio_item(
         "SeriesName": title if is_episode else None,
         "ParentIndexNumber": int(season) if season is not None else None,
         "IndexNumber": int(episode) if episode is not None else None,
+        # Retain Nuvio's per-item epoch-millisecond library add-date so the
+        # generic collection sync can persist it on Collection.added_at.
+        "added_at": record.get("added_at"),
         "UserData": {
             "Played": watched,
             "PlayCount": 1 if watched else 0,

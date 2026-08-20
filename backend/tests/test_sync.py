@@ -704,9 +704,15 @@ class ProviderAddedAtTests(unittest.TestCase):
         )
         self.assertEqual(got, datetime(2026, 8, 1, 9, 30, 0))
 
+    def test_nuvio_epoch_milliseconds(self):
+        got = sync.provider_added_at(
+            {"added_at": 1711600000000}, sync.CollectionSource.nuvio
+        )
+        self.assertEqual(got, datetime(2024, 3, 28, 4, 26, 40))
+
     def test_sources_without_a_library_date_return_none(self):
-        # Nuvio and Stremio items are synthesized with a fixed key set, so they
-        # must never be read as if they were a media browser payload.
+        # Synthesized Nuvio/Stremio items must not be read as media-browser
+        # payloads. Nuvio's retained ``added_at`` has its own parser above.
         for source in (sync.CollectionSource.nuvio, sync.CollectionSource.stremio):
             self.assertIsNone(
                 sync.provider_added_at({"DateCreated": "2026-08-01T09:30:00Z"}, source)

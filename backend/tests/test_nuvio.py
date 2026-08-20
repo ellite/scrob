@@ -702,6 +702,21 @@ class NuvioWatchHistoryTests(unittest.IsolatedAsyncioTestCase):
         )
 
 class NuvioNormalizationTests(unittest.TestCase):
+    def test_library_item_retains_added_at_for_collection_sync(self) -> None:
+        normalized = _normalize_nuvio_item(
+            {
+                "content_id": "tmdb:550",
+                "content_type": "movie",
+                "name": "Fight Club",
+                "added_at": 1711600000000,
+            },
+            profile_id=1,
+        )
+
+        self.assertIsNotNone(normalized)
+        _, item = normalized
+        self.assertEqual(item["added_at"], 1711600000000)
+
     def test_episode_history_maps_to_tmdb_series_and_watch_state(self) -> None:
         normalized = _normalize_nuvio_item(
             {
