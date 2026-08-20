@@ -12,6 +12,7 @@ from sqlalchemy import delete, func, update
 
 from db import get_db, engine
 from models.users import User
+from models.profile import UserProfileData
 from models.global_settings import GlobalSettings
 from models.media import Media
 from models.collection import Collection
@@ -74,8 +75,23 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    result = await db.execute(select(User).order_by(User.created_at.asc()))
-    return result.scalars().all()
+    result = await db.execute(
+        select(User, UserProfileData)
+        .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
+        .order_by(User.created_at.asc())
+    )
+    return [
+        schemas.AdminUser(
+            id=u.id,
+            username=u.username,
+            email=u.email,
+            is_admin=u.is_admin,
+            api_key=u.api_key,
+            created_at=u.created_at,
+            avatar_url=f"/profile/avatar/{u.id}" if (p and p.avatar_path) else None,
+        )
+        for u, p in result.all()
+    ]
 
 
 @router.patch("/users/{user_id}/toggle-admin", response_model=schemas.AdminUser)
