@@ -98,7 +98,7 @@ const { token } = Astro.locals;
                     </div>
                     
                     <div class="flex justify-between text-xs text-zinc-500 uppercase tracking-wider font-bold">
-                      <span>${percent >= 100 ? 'Enriching metadata...' : `${esc(String(job.processed_items))} / ${esc(String(job.total_items || '?'))} items`}</span>
+                      <span>${job.current_step ? esc(job.current_step) : `${esc(String(job.processed_items))} / ${esc(String(job.total_items || '?'))} items`}</span>
                       <span>${esc(String(percent))}%</span>
                     </div>
                   `}

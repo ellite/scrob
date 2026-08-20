@@ -606,7 +606,7 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
     async with session_factory() as db:
         try:
             await db.execute(
-                update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.running)
+                update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.running, current_step="Pulling from MDBList")
             )
             await db.commit()
 

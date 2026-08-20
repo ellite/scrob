@@ -526,7 +526,7 @@ async def _apply_trakt_import(
             end_at=history_end,
         )
         print(f"  {len(history_movies)} movie plays fetched from Trakt")
-        await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(history_movies)))
+        await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(history_movies), current_step="Pulling watched movies"))
         await db.commit()
 
         # Pre-load existing watch events for this user, keyed by the
@@ -600,6 +600,7 @@ async def _apply_trakt_import(
         await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
             total_items=len(history_movies) + len(history_episodes),
             processed_items=watched_processed,
+            current_step="Pulling watched shows",
         ))
         await db.commit()
 

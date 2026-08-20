@@ -2469,7 +2469,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                         await asyncio.gather(*[resolve_movie_tmdb_id(m) for m in movies_without_tmdb])
 
                     total_discovered += len(items)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered))
+                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling movies"))
                     await db.commit()
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.jellyfin, db, stats, user_id, job_id, api_key=tmdb_api_key,
@@ -2489,7 +2489,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                     }
 
                     total_discovered += len(series_tmdb_map)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered))
+                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling shows"))
                     await db.commit()
 
                     print(f"    Mapping {len(series_tmdb_map)} shows to TMDB...")
@@ -2509,7 +2509,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                     unmatched_series_episodes = [e for e in items if str(e.get("SeriesId")) in unmatched_series_ids]
 
                     total_discovered = total_discovered - len(series_tmdb_map) + len(filtered_episodes) + len(unmatched_series_episodes)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered))
+                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling episodes"))
                     await db.commit()
 
                     w = await sync_items(
@@ -2676,7 +2676,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         await asyncio.gather(*[resolve_emby_movie_tmdb_id(m) for m in movies_without_tmdb])
 
                     total_discovered += len(items)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered))
+                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling movies"))
                     await db.commit()
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.emby, db, stats, user_id, job_id, api_key=tmdb_api_key,
@@ -2696,7 +2696,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                     }
 
                     total_discovered += len(series_tmdb_map)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered))
+                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling shows"))
                     await db.commit()
 
                     print(f"    Mapping {len(series_tmdb_map)} shows to TMDB...")
@@ -2718,7 +2718,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                     unmatched_series_episodes = [e for e in items if str(e.get("SeriesId")) in unmatched_series_ids]
 
                     total_discovered = total_discovered - len(series_tmdb_map) + len(filtered_episodes) + len(unmatched_series_episodes)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered))
+                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling episodes"))
                     await db.commit()
 
                     w = await sync_items(
@@ -2802,7 +2802,7 @@ async def _backfill_plex_languages(user_id: int, connection_id: int, p_url: str,
         print(f"  Backfilling language data for {total} Plex file(s)...")
 
         if job_id is not None:
-            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=0, total_items=total))
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=0, total_items=total, current_step="Backfilling file details"))
             await db.commit()
 
         sem = asyncio.Semaphore(10)
@@ -2919,6 +2919,10 @@ async def _backfill_plex_watch_history(
 
         if not history:
             return 0, 0, 0
+
+        if job_id is not None:
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=0, total_items=len(history), current_step="Backfilling watch history"))
+            await db.commit()
 
         we_res = await db.execute(
             select(WatchEvent.id, WatchEvent.media_id, WatchEvent.watched_at, WatchEvent.provisional)
@@ -3321,7 +3325,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
-            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.running, processed_items=0, total_items=0))
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.running, processed_items=0, total_items=0, current_step="Pulling library"))
             await db.commit()
 
             if connection_id is not None:
@@ -3457,7 +3461,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         await asyncio.gather(*[resolve_movie_tmdb_id(m) for m in movies_without_tmdb])
 
                     total_discovered += len(items)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered))
+                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling movies"))
                     await db.commit()
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.plex, db, stats, user_id, job_id, api_key=tmdb_api_key,
@@ -3513,7 +3517,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         await asyncio.gather(*[resolve_show_tmdb_id(s) for s in shows_without_tmdb])
 
                     total_discovered += len(series_tmdb_map)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered))
+                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling shows"))
                     await db.commit()
 
                     print(f"    Mapping {len(series_tmdb_map)} shows to TMDB...")
@@ -3645,7 +3649,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                     unmatched_series_episodes = [i for i in items if str(i.get("grandparentRatingKey")) in unmatched_ratingkeys]
 
                     total_discovered = total_discovered - len(series_tmdb_map) + len(filtered_episodes) + len(unmatched_series_episodes)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered))
+                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling episodes"))
                     await db.commit()
 
                     w = await sync_items(
@@ -4095,7 +4099,7 @@ async def _run_nuvio_sync(
             await db.execute(
                 update(SyncJob)
                 .where(SyncJob.id == job_id)
-                .values(status=SyncStatus.running, processed_items=0, total_items=0)
+                .values(status=SyncStatus.running, processed_items=0, total_items=0, current_step="Pulling from Nuvio")
             )
             await db.commit()
 
@@ -4638,7 +4642,7 @@ async def _run_stremio_sync(
             await db.execute(
                 update(SyncJob)
                 .where(SyncJob.id == job_id)
-                .values(status=SyncStatus.running, processed_items=0, total_items=0)
+                .values(status=SyncStatus.running, processed_items=0, total_items=0, current_step="Pulling from Stremio")
             )
             await db.commit()
             settings_result = await db.execute(
@@ -6048,6 +6052,8 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 )
                 user_settings = settings_result.scalar_one_or_none()
                 api_key = await _get_effective_tmdb_key(db, user_settings)
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(current_step="Pushing to Stremio"))
+                await db.commit()
                 changed = await _push_stremio_connection(
                     db,
                     conn,
@@ -6097,7 +6103,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 await db.execute(
                     update(SyncJob)
                     .where(SyncJob.id == job_id)
-                    .values(total_items=total, processed_items=0)
+                    .values(total_items=total, processed_items=0, current_step="Pushing to Nuvio")
                 )
                 await db.commit()
 
@@ -6296,7 +6302,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 print(f"Full push for connection {connection_id}: no items found for this server")
                 return
 
-            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total, processed_items=0))
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total, processed_items=0, current_step="Pushing watched status & ratings"))
             await db.commit()
             print(f"Full push for connection {connection_id}: pushing {total} items ({len(push_items)} known, {len(lookup_items)} via live lookup)...")
 
@@ -6654,14 +6660,14 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
                 to_enrich = [(m, None) for m in movies] + [
                     (m, show_tmdb_map[m.show_id]) for m in episodes if m.show_id in show_tmdb_map
                 ]
-                await _update_job(total_items=len(to_enrich), processed_items=0)
+                await _update_job(total_items=len(to_enrich), processed_items=0, current_step="Re-enriching metadata")
                 await batch_enrich_items(db, to_enrich, api_key=api_key, user_id=user_id)
                 await db.commit()
                 await _update_job(processed_items=len(to_enrich))
                 print(f"Heal: re-enriched {len(to_enrich)} items for user {user_id}")
             else:
                 print(f"Heal: nothing to re-enrich for user {user_id}")
-                await _update_job(total_items=0, processed_items=0)
+                await _update_job(total_items=0, processed_items=0, current_step="Re-enriching metadata")
 
             await _raise_if_cancelled(db, job_id)
 
@@ -6686,6 +6692,7 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
             orphan_rows = orphan_q.all()
 
             if orphan_rows:
+                await _update_job(current_step="Recovering orphaned episodes")
                 recovered = 0
                 seen: set[int] = set()
                 for orphan_media, coll_file, conn in orphan_rows:

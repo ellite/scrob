@@ -291,7 +291,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
         try:
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
-                    status=SyncStatus.running, processed_items=0, total_items=0
+                    status=SyncStatus.running, processed_items=0, total_items=0, current_step="Pulling from Simkl"
                 )
             )
             await db.commit()

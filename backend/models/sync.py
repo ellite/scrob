@@ -31,6 +31,12 @@ class SyncJob(Base):
     stats           : Mapped[Optional[dict]] = mapped_column(JSONB)
     warnings        : Mapped[Optional[list]] = mapped_column(JSONB)
 
+    # Human-readable phase label ("Pulling watched history", "Backfilling
+    # file details", ...), set at each point in a sync/push/heal function
+    # that already resets total_items/processed_items for a new phase - see
+    # the corresponding routers/*.py functions.
+    current_step    : Mapped[Optional[str]] = mapped_column(String(100))
+
     connection_id   : Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("media_server_connections.id", ondelete="SET NULL"), nullable=True)
     job_type        : Mapped[str]           = mapped_column(String(20), nullable=False, server_default="pull")
 
