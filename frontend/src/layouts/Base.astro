@@ -531,7 +531,22 @@ const bottomNavItem = (active: boolean) =>
       if (active.length) document.documentElement.setAttribute('data-spoilers', active.join(' ')); else document.documentElement.removeAttribute('data-spoilers');
       if (reset) document.querySelectorAll('[data-spoiler-revealed]').forEach(node => node.removeAttribute('data-spoiler-revealed'));
       spoilerToggles.forEach(toggle => { toggle.checked = spoilerControls[toggle.dataset.spoilerToggle || ''] === true; });
-      document.querySelectorAll<HTMLElement>('[data-spoiler]').forEach(node => { const enabled = spoilerControls[node.dataset.spoiler || '']; node.tabIndex = enabled ? 0 : -1; if (enabled) { node.setAttribute('role', 'button'); node.setAttribute('aria-label', `Reveal hidden ${node.dataset.spoiler}`); } else { node.removeAttribute('role'); node.removeAttribute('aria-label'); } });
+      document.querySelectorAll<HTMLElement>('[data-spoiler]').forEach(node => {
+        const enabled = spoilerControls[node.dataset.spoiler || ''];
+        const interactive = node.closest('a, button');
+        const nativeControl = node.matches('a, button, input, select, textarea');
+        // A nested faux button inside a link is invalid. Native controls retain
+        // their own keyboard behavior; non-interactive content becomes a reveal trigger.
+        if (enabled && !interactive) {
+          node.tabIndex = 0;
+          node.setAttribute('role', 'button');
+          node.setAttribute('aria-label', `Reveal hidden ${node.dataset.spoiler}`);
+        } else {
+          if (!nativeControl) node.tabIndex = -1;
+          node.removeAttribute('role');
+          node.removeAttribute('aria-label');
+        }
+      });
     }
     syncSpoilerControls();
     document.addEventListener('spoiler-content-added', () => syncSpoilerControls());
@@ -539,9 +554,20 @@ const bottomNavItem = (active: boolean) =>
     spoilerPanel?.addEventListener('click', event => event.stopPropagation());
     spoilerToggles.forEach(toggle => toggle.addEventListener('change', () => { spoilerControls[toggle.dataset.spoilerToggle || ''] = toggle.checked; try { localStorage.setItem(SPOILER_KEY, JSON.stringify(spoilerControls)); } catch {} syncSpoilerControls(true); }));
     document.addEventListener('click', () => { spoilerPanel?.classList.add('hidden'); spoilerBtn?.setAttribute('aria-expanded', 'false'); });
-    function reveal(node: HTMLElement) { if (spoilerControls[node.dataset.spoiler || '']) node.dataset.spoilerRevealed = 'true'; }
+    function reveal(node: HTMLElement) {
+      const category = node.dataset.spoiler || '';
+      if (!spoilerControls[category]) return;
+      const interactive = node.closest('a, button');
+      // Reveal every matching marker inside the same native control. This lets
+      // the link's first Enter/click reveal and its second activation navigate.
+      if (interactive) {
+        if (interactive === node) node.dataset.spoilerRevealed = 'true';
+        interactive.querySelectorAll<HTMLElement>('[data-spoiler]').forEach(marker => { if (marker.dataset.spoiler === category) marker.dataset.spoilerRevealed = 'true'; });
+      }
+      else node.dataset.spoilerRevealed = 'true';
+    }
     document.addEventListener('click', event => { const node = (event.target as Element).closest<HTMLElement>('[data-spoiler]'); if (node && spoilerControls[node.dataset.spoiler || ''] && node.dataset.spoilerRevealed !== 'true') { event.preventDefault(); event.stopPropagation(); reveal(node); } }, true);
-    document.addEventListener('keydown', event => { if (event.key === 'Escape') { const wasOpen = !!spoilerPanel && !spoilerPanel.classList.contains('hidden'); spoilerPanel?.classList.add('hidden'); spoilerBtn?.setAttribute('aria-expanded', 'false'); if (wasOpen) spoilerBtn?.focus(); return; } const node = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-spoiler]') : null; if (node && (event.key === 'Enter' || event.key === ' ') && spoilerControls[node.dataset.spoiler || '']) { event.preventDefault(); reveal(node); } });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') { const wasOpen = !!spoilerPanel && !spoilerPanel.classList.contains('hidden'); spoilerPanel?.classList.add('hidden'); spoilerBtn?.setAttribute('aria-expanded', 'false'); if (wasOpen) spoilerBtn?.focus(); return; } const target = event.target instanceof Element ? event.target : null; const node = target?.closest<HTMLElement>('[data-spoiler]') || Array.from(target?.matches('a, button') ? target.querySelectorAll<HTMLElement>('[data-spoiler]') : []).find(marker => spoilerControls[marker.dataset.spoiler || ''] && marker.dataset.spoilerRevealed !== 'true'); if (node && node.dataset.spoilerRevealed !== 'true' && (event.key === 'Enter' || event.key === ' ') && spoilerControls[node.dataset.spoiler || '']) { event.preventDefault(); reveal(node); } });
 
     // ── Theme toggle ───────────────────────────────────────────────────────────
     const themeToggle = document.getElementById('theme-toggle');

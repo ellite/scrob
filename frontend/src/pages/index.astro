@@ -145,7 +145,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
           <div class="flex-1 flex items-end pb-6 sm:pb-8">
             <a href={heroHref} class="block max-w-2xl group">
               {hero.tmdb_rating != null && hero.tmdb_rating > 0 && (
-                <span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-3 py-1 rounded-full mb-3">
+                <span data-spoiler="ratings" class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-3 py-1 rounded-full mb-3">
                   <span class="text-sm leading-none">★</span> {hero.tmdb_rating.toFixed(1)}
                 </span>
               )}
@@ -153,7 +153,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
                 {hero.title}
               </h3>
               {hero.overview && (
-                <p class="text-sm sm:text-base text-zinc-300 font-medium line-clamp-2 max-w-lg drop-shadow">{hero.overview}</p>
+                <p data-spoiler="descriptions" class="text-sm sm:text-base text-zinc-300 font-medium line-clamp-2 max-w-lg drop-shadow">{hero.overview}</p>
               )}
             </a>
           </div>

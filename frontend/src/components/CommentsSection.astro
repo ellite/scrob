@@ -151,6 +151,7 @@ try {
                 </div>
                 <!-- Spoiler wrapper: always present, overlay toggled via JS -->
                 <div class="comment-body relative">
+                  <!-- Comments have an explicit author-selected spoiler flag; global media controls do not hide unflagged discussion. -->
                   <p class={`comment-text text-zinc-300 leading-relaxed font-medium whitespace-pre-wrap break-words${comment.is_spoiler ? ' blur-sm select-none pointer-events-none' : ''}`}>{comment.content}</p>
                   <div class={`spoiler-overlay absolute inset-0 flex items-center justify-center rounded-lg cursor-pointer bg-zinc-950/70 backdrop-blur-sm${comment.is_spoiler ? '' : ' hidden'}`}>
                     <span class="text-amber-400 font-bold text-sm">Click to reveal</span>

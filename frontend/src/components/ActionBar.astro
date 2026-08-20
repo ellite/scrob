@@ -190,6 +190,7 @@ const requestTitle = isMonitored
     {!listOnly && (
       <button
         data-action="rate"
+        data-spoiler="ratings"
         data-user-rating={userRating != null ? String(userRating) : ""}
         data-state={userRating != null ? "active" : "inactive"}
         title={userRating != null ? `Your rating: ${ratingLabel}/10` : "Rate this"}

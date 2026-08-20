@@ -120,7 +120,7 @@ const originalLanguage = show?.original_language
               <div class="flex flex-wrap items-center gap-4 text-zinc-300 text-sm bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm">
                 {year && <span class="font-bold">{year}</span>}
                 {rating && (
-                  <span class="flex items-center gap-1.5 text-yellow-400 font-black">
+                  <span data-spoiler="ratings" class="flex items-center gap-1.5 text-yellow-400 font-black">
                     <span class="text-lg leading-none">★</span> {rating}
                   </span>
                 )}
@@ -216,7 +216,7 @@ const originalLanguage = show?.original_language
                 <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
                 Overview
               </h2>
-              <p class="text-zinc-300 leading-relaxed text-lg max-w-4xl font-medium opacity-90">
+              <p data-spoiler="descriptions" class="text-zinc-300 leading-relaxed text-lg max-w-4xl font-medium opacity-90">
                 {show.overview}
               </p>
             </div>
@@ -286,7 +286,7 @@ const originalLanguage = show?.original_language
                             <div class="flex items-start justify-between gap-4 mb-1">
                                 <h3 class="text-xl font-black text-zinc-100 group-hover/season:text-blue-400 transition-colors">{s.name || `Season ${seasonNum}`}</h3>
                                 {s.tmdb_rating != null && s.tmdb_rating > 0 && (
-                                    <div class="bg-zinc-950 border border-zinc-800 px-2 py-1 rounded-xl flex items-center gap-1.5 shrink-0 shadow-sm">
+                                    <div data-spoiler="ratings" class="bg-zinc-950 border border-zinc-800 px-2 py-1 rounded-xl flex items-center gap-1.5 shrink-0 shadow-sm">
                                         <span class="text-yellow-400 text-xs">★</span>
                                         <span class="text-zinc-100 text-xs font-bold">{s.tmdb_rating.toFixed(1)}</span>
                                     </div>
@@ -297,7 +297,7 @@ const originalLanguage = show?.original_language
                                     {s.episode_count || episodes.length} Episodes
                                 </span>
                             </div>
-                            <p class="text-xs text-zinc-400 line-clamp-3 leading-relaxed opacity-80">{s.overview || "No overview available."}</p>
+                            <p data-spoiler="descriptions" class="text-xs text-zinc-400 line-clamp-3 leading-relaxed opacity-80">{s.overview || "No overview available."}</p>
                         </div>
                     </a>
                     {user && (
