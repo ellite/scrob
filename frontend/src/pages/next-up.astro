@@ -156,19 +156,19 @@ Astro.response.headers.set("Cache-Control", "no-store");
       <div class="${wrapperClass}" data-next-up-hidden="${isHidden ? 'true' : 'false'}">
         <div class="group relative flex flex-col rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-blue-500/50 hover:shadow-2xl hover:shadow-blue-900/20 transition-all duration-300 transform hover:-translate-y-1">
           <a href="${esc(href)}" class="block active:scale-95 active:opacity-70 transition-all duration-100">
-            <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
+            <div data-spoiler="next" class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
               ${posterSrc
                 ? `<img src="${esc(posterSrc)}" alt="${esc(item.show_title ?? item.title)}" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" loading="lazy" decoding="async" />`
                 : `<div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center"><span class="text-3xl mb-2 opacity-30">📺</span><span class="text-xs font-bold uppercase tracking-widest">${esc(item.show_title ?? item.title)}</span></div>`
               }
               <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-              ${rating ? `<div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1"><span class="text-xs leading-none">★</span> ${esc(rating)}</div>` : ''}
+              ${rating ? `<div data-spoiler="ratings" class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1"><span class="text-xs leading-none">★</span> ${esc(rating)}</div>` : ''}
             </div>
           </a>
           ${hideBtn}
           <a href="${esc(href)}" class="block p-3 bg-gradient-to-b from-zinc-900 to-zinc-950 flex-1">
             ${item.show_title ? `<h3 class="text-xs font-medium text-zinc-400 truncate mb-0.5">${esc(item.show_title)}</h3>` : ''}
-            <h3 class="text-sm font-bold text-zinc-100 group-hover:text-blue-400 truncate transition-colors leading-tight mb-1">${esc(item.title)}</h3>
+            <h3 data-spoiler="next" class="text-sm font-bold text-zinc-100 group-hover:text-blue-400 truncate transition-colors leading-tight mb-1">${esc(item.title)}</h3>
             ${sxe ? `<p class="text-[11px] font-bold text-blue-400 tracking-wide">${esc(sxe)}</p>` : ''}
             ${episodesLeftLabel(item) ? `<p class="text-[11px] text-zinc-500 font-medium mt-0.5">${esc(episodesLeftLabel(item))}</p>` : ''}
           </a>
@@ -180,6 +180,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
   function renderGrid() {
     const grid = document.getElementById('next-up-grid');
     grid.innerHTML = sortedItems().map(buildCard).join('');
+    document.dispatchEvent(new Event('spoiler-content-added'));
     grid.classList.remove('hidden');
     updateEmptyState();
     bindHideButtons();

@@ -139,12 +139,12 @@ const refreshUrl = isEpisode
               <div class="flex flex-wrap items-center gap-4 text-zinc-300 text-sm bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm">
                 {year && <span class="font-bold">{year}</span>}
                 {rating && (
-                  <span class="flex items-center gap-1.5 text-yellow-400 font-black item-rating">
+                  <span data-spoiler="ratings" class="flex items-center gap-1.5 text-yellow-400 font-black item-rating">
                     <span class="text-lg leading-none">★</span> {rating}
                   </span>
                 )}
                 {item.runtime && (
-                  <span class="flex items-center gap-1.5 font-medium">
+                  <span data-spoiler="runtime" class="flex items-center gap-1.5 font-medium">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4 text-zinc-500">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                     </svg>
@@ -313,7 +313,7 @@ const refreshUrl = isEpisode
                 <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
                 Overview
               </h2>
-              <p class="text-zinc-300 leading-relaxed text-lg max-w-4xl font-medium opacity-90">
+              <p data-spoiler="descriptions" class="text-zinc-300 leading-relaxed text-lg max-w-4xl font-medium opacity-90">
                 {item.overview}
               </p>
             </div>

@@ -178,7 +178,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       </div>
       <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
         {nextUp.map((item) => (
-          <div class="flex-shrink-0 w-56"><EpisodeCard item={item} /></div>
+          <div class="flex-shrink-0 w-56"><EpisodeCard item={item} spoilerNext /></div>
         ))}
       </div>
     </section>
@@ -195,7 +195,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
     const heroBackdrop = tmdbImageUrl(rawBackdrop, "w1280");
     return (
       <section class="relative md:-mt-8 mb-16">
-        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-screen overflow-hidden pointer-events-none" style="height: 100%;">
+        <div data-spoiler="next" class="absolute top-0 left-1/2 -translate-x-1/2 w-screen overflow-hidden" style="height: 100%;">
           {heroBackdrop ? (
             <img
               src={heroBackdrop}
@@ -231,7 +231,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
                 {hero.show_title ?? hero.title}
               </h3>
               {hero.show_title && (
-                <p class="text-sm sm:text-base text-zinc-300 font-medium truncate">{hero.title}</p>
+                <p data-spoiler="next" class="text-sm sm:text-base text-zinc-300 font-medium truncate">{hero.title}</p>
               )}
               {formatEpisodesLeft(hero.episodes_left, hero.remaining_runtime) && (
                 <p class="text-xs sm:text-sm text-zinc-400 font-medium mt-1.5 drop-shadow">
@@ -244,7 +244,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
 
         {rest.length > 0 && (
           <div class="relative flex gap-3 overflow-x-auto pb-3 scrollbar-none pt-6 -mx-6 px-6 md:mx-0 md:px-0">
-            {rest.map((item) => <div class="flex-shrink-0 w-40"><MediaCard item={item} /></div>)}
+            {rest.map((item) => <div class="flex-shrink-0 w-40"><MediaCard item={item} spoilerNext /></div>)}
           </div>
         )}
       </section>

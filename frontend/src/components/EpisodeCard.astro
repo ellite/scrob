@@ -6,9 +6,10 @@ import { episodeHref } from "../lib/episodeHref";
 
 interface Props {
   item: MediaItem;
+  spoilerNext?: boolean;
 }
 
-const { item } = Astro.props;
+const { item, spoilerNext = false } = Astro.props;
 
 const sxe =
   item.season_number != null && item.episode_number != null
@@ -49,7 +50,7 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
   {href ? (
     <a href={href} class="block">
       <!-- Backdrop container: 3:2 (no title info here — info is below action bar) -->
-      <div class="aspect-[3/2] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
+      <div data-spoiler={spoilerNext ? "next" : undefined} class="aspect-[3/2] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
         {imageUrl ? (
           <img
             src={imageUrl}
@@ -83,7 +84,7 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
   ) : (
     <div class="block">
       <!-- Backdrop container: no link when metadata is incomplete -->
-      <div class="aspect-[3/2] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5">
+      <div data-spoiler={spoilerNext ? "next" : undefined} class="aspect-[3/2] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5">
         {imageUrl ? (
           <img
             src={imageUrl}
@@ -136,7 +137,7 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
       {item.show_title && (
         <p class="text-xs font-medium text-zinc-400 truncate mb-0.5">{item.show_title}</p>
       )}
-      <h3 class="text-sm font-bold text-zinc-100 truncate group-hover:text-blue-300 transition-colors leading-tight">
+      <h3 data-spoiler={spoilerNext ? "next" : undefined} class="text-sm font-bold text-zinc-100 truncate group-hover:text-blue-300 transition-colors leading-tight">
         {item.title}
       </h3>
       {sxe && <span class="text-[11px] font-bold text-blue-400 tracking-wide mt-0.5 block">{sxe}</span>}
@@ -146,7 +147,7 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
       {item.show_title && (
         <p class="text-xs font-medium text-zinc-400 truncate mb-0.5">{item.show_title}</p>
       )}
-      <h3 class="text-sm font-bold text-zinc-500 truncate leading-tight">
+      <h3 data-spoiler={spoilerNext ? "next" : undefined} class="text-sm font-bold text-zinc-500 truncate leading-tight">
         {item.title}
       </h3>
       {sxe && <span class="text-[11px] font-bold text-zinc-400 tracking-wide mt-0.5 block">{sxe}</span>}

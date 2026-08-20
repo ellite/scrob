@@ -6,9 +6,10 @@ import { episodeHref } from "../lib/episodeHref";
 
 interface Props {
   item: MediaItem;
+  spoilerNext?: boolean;
 }
 
-const { item } = Astro.props;
+const { item, spoilerNext = false } = Astro.props;
 const { user } = Astro.locals;
 
 const isPerson = item.type === "person";
@@ -61,7 +62,7 @@ const inLibrary = item.in_library ?? false;
   <!-- Clickable poster -->
   {href ? (
     <a href={href} class="block">
-      <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300" data-adult={item.adult ? "true" : undefined}>
+      <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300" data-adult={item.adult ? "true" : undefined} data-spoiler={spoilerNext && isEpisode ? "next" : undefined}>
         {posterPath ? (
           <>
             <img
@@ -87,7 +88,7 @@ const inLibrary = item.in_library ?? false;
         <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
 
         {rating && (
-          <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
+          <div data-spoiler="ratings" class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
             <span class="text-xs leading-none">★</span> {rating}
           </div>
         )}
@@ -101,7 +102,7 @@ const inLibrary = item.in_library ?? false;
     </a>
   ) : (
     <div class="block">
-      <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5" data-adult={item.adult ? "true" : undefined}>
+      <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5" data-adult={item.adult ? "true" : undefined} data-spoiler={spoilerNext && isEpisode ? "next" : undefined}>
         {posterPath ? (
           <img
             src={posterPath}
@@ -117,7 +118,7 @@ const inLibrary = item.in_library ?? false;
           </div>
         )}
         {rating && (
-          <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
+          <div data-spoiler="ratings" class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
             <span class="text-xs leading-none">★</span> {rating}
           </div>
         )}
@@ -145,7 +146,7 @@ const inLibrary = item.in_library ?? false;
       {(isEpisode || isSeason) && item.show_title ? (
         <h3 class="text-xs font-medium text-zinc-400 truncate mb-0.5">{item.show_title}</h3>
       ) : null}
-      <h3 class="text-sm font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors leading-tight mb-1">{cardTitle}</h3>
+      <h3 data-spoiler={spoilerNext && isEpisode ? "next" : undefined} class="text-sm font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors leading-tight mb-1">{cardTitle}</h3>
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           {sxe && <span class="text-[11px] font-bold text-blue-400 tracking-wide">{sxe}</span>}
@@ -164,7 +165,7 @@ const inLibrary = item.in_library ?? false;
       {(isEpisode || isSeason) && item.show_title ? (
         <h3 class="text-xs font-medium text-zinc-400 truncate mb-0.5">{item.show_title}</h3>
       ) : null}
-      <h3 class="text-sm font-bold text-zinc-500 truncate leading-tight mb-1">{cardTitle}</h3>
+      <h3 data-spoiler={spoilerNext && isEpisode ? "next" : undefined} class="text-sm font-bold text-zinc-500 truncate leading-tight mb-1">{cardTitle}</h3>
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           {sxe && <span class="text-[11px] font-bold text-zinc-400 tracking-wide">{sxe}</span>}
@@ -177,4 +178,3 @@ const inLibrary = item.in_library ?? false;
     </div>
   )}
 </div>
-

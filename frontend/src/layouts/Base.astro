@@ -71,6 +71,11 @@ const bottomNavItem = (active: boolean) =>
     #sun-icon { display: none; }
     html.light #sun-icon { display: inline; }
     html.light #moon-icon { display: none; }
+    html[data-spoilers~="ratings"] [data-spoiler="ratings"]:not([data-spoiler-revealed="true"]),
+    html[data-spoilers~="descriptions"] [data-spoiler="descriptions"]:not([data-spoiler-revealed="true"]),
+    html[data-spoilers~="runtime"] [data-spoiler="runtime"]:not([data-spoiler-revealed="true"]),
+    html[data-spoilers~="next"] [data-spoiler="next"]:not([data-spoiler-revealed="true"]) { filter: blur(.55rem); opacity: .65; cursor: pointer; }
+    [data-spoiler][role="button"]:focus-visible { outline: 2px solid #60a5fa; outline-offset: 3px; }
   </style>
   <script is:inline>
     // Theme initialization to avoid FOUC
@@ -97,6 +102,12 @@ const bottomNavItem = (active: boolean) =>
     } else {
       document.documentElement.removeAttribute('data-accent');
     }
+    try {
+      const parsed = JSON.parse(localStorage.getItem('spoilerControls') || '{}');
+      const saved = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      const active = ['ratings', 'descriptions', 'runtime', 'next'].filter(function (key) { return saved[key] === true; });
+      if (active.length) document.documentElement.setAttribute('data-spoilers', active.join(' '));
+    } catch {}
 
     // TMDB image fallback — registered here (head, inline) so the capture-phase
     // listener is active before any <img> tags are parsed and start loading.
@@ -171,6 +182,18 @@ const bottomNavItem = (active: boolean) =>
               <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             </button>
           )}
+          <div class="relative">
+            <button id="spoiler-controls-btn" class="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors" aria-label="Spoiler controls" aria-expanded="false" aria-controls="spoiler-controls">Spoilers</button>
+            <div id="spoiler-controls" class="hidden absolute right-0 top-full mt-2 z-50 w-72 bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl p-4" role="group" aria-label="Spoiler controls">
+              <p class="text-sm font-bold text-zinc-100">Spoiler controls</p><p class="text-xs text-zinc-400 mt-1 mb-3">Stored in this browser. Tap hidden content to reveal it for this page.</p>
+              <div class="space-y-2">
+                <label class="flex justify-between gap-3 text-sm text-zinc-300 cursor-pointer">Ratings <input data-spoiler-toggle="ratings" type="checkbox" class="w-4 accent-blue-500" /></label>
+                <label class="flex justify-between gap-3 text-sm text-zinc-300 cursor-pointer">Descriptions <input data-spoiler-toggle="descriptions" type="checkbox" class="w-4 accent-blue-500" /></label>
+                <label class="flex justify-between gap-3 text-sm text-zinc-300 cursor-pointer">Runtime <input data-spoiler-toggle="runtime" type="checkbox" class="w-4 accent-blue-500" /></label>
+                <label class="flex justify-between gap-3 text-sm text-zinc-300 cursor-pointer">Next episode title &amp; images <input data-spoiler-toggle="next" type="checkbox" class="w-4 accent-blue-500" /></label>
+              </div>
+            </div>
+          </div>
           <!-- Theme toggle -->
           <button id="theme-toggle" class="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-all hover:scale-110 active:scale-95" aria-label="Toggle Theme">
             <span id="sun-icon">
@@ -494,6 +517,32 @@ const bottomNavItem = (active: boolean) =>
   </div>
 
   <script>
+    const SPOILER_KEY = 'spoilerControls';
+    const spoilerBtn = document.getElementById('spoiler-controls-btn') as HTMLButtonElement | null;
+    const spoilerPanel = document.getElementById('spoiler-controls');
+    const spoilerToggles = Array.from(document.querySelectorAll<HTMLInputElement>('[data-spoiler-toggle]'));
+    let spoilerControls: Record<string, boolean> = {};
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SPOILER_KEY) || '{}');
+      spoilerControls = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {}
+    function syncSpoilerControls(reset = false) {
+      const active = ['ratings', 'descriptions', 'runtime', 'next'].filter(key => spoilerControls[key]);
+      if (active.length) document.documentElement.setAttribute('data-spoilers', active.join(' ')); else document.documentElement.removeAttribute('data-spoilers');
+      if (reset) document.querySelectorAll('[data-spoiler-revealed]').forEach(node => node.removeAttribute('data-spoiler-revealed'));
+      spoilerToggles.forEach(toggle => { toggle.checked = spoilerControls[toggle.dataset.spoilerToggle || ''] === true; });
+      document.querySelectorAll<HTMLElement>('[data-spoiler]').forEach(node => { const enabled = spoilerControls[node.dataset.spoiler || '']; node.tabIndex = enabled ? 0 : -1; if (enabled) { node.setAttribute('role', 'button'); node.setAttribute('aria-label', `Reveal hidden ${node.dataset.spoiler}`); } else { node.removeAttribute('role'); node.removeAttribute('aria-label'); } });
+    }
+    syncSpoilerControls();
+    document.addEventListener('spoiler-content-added', () => syncSpoilerControls());
+    spoilerBtn?.addEventListener('click', event => { event.stopPropagation(); const hidden = spoilerPanel?.classList.toggle('hidden'); spoilerBtn.setAttribute('aria-expanded', String(hidden === false)); });
+    spoilerPanel?.addEventListener('click', event => event.stopPropagation());
+    spoilerToggles.forEach(toggle => toggle.addEventListener('change', () => { spoilerControls[toggle.dataset.spoilerToggle || ''] = toggle.checked; try { localStorage.setItem(SPOILER_KEY, JSON.stringify(spoilerControls)); } catch {} syncSpoilerControls(true); }));
+    document.addEventListener('click', () => { spoilerPanel?.classList.add('hidden'); spoilerBtn?.setAttribute('aria-expanded', 'false'); });
+    function reveal(node: HTMLElement) { if (spoilerControls[node.dataset.spoiler || '']) node.dataset.spoilerRevealed = 'true'; }
+    document.addEventListener('click', event => { const node = (event.target as Element).closest<HTMLElement>('[data-spoiler]'); if (node && spoilerControls[node.dataset.spoiler || ''] && node.dataset.spoilerRevealed !== 'true') { event.preventDefault(); event.stopPropagation(); reveal(node); } }, true);
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') { const wasOpen = !!spoilerPanel && !spoilerPanel.classList.contains('hidden'); spoilerPanel?.classList.add('hidden'); spoilerBtn?.setAttribute('aria-expanded', 'false'); if (wasOpen) spoilerBtn?.focus(); return; } const node = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-spoiler]') : null; if (node && (event.key === 'Enter' || event.key === ' ') && spoilerControls[node.dataset.spoiler || '']) { event.preventDefault(); reveal(node); } });
+
     // ── Theme toggle ───────────────────────────────────────────────────────────
     const themeToggle = document.getElementById('theme-toggle');
 
