@@ -15,6 +15,7 @@ const status = Astro.url.searchParams.get("status") ?? "";
 const collection = Astro.url.searchParams.getAll("collection");
 const watch = Astro.url.searchParams.getAll("watch");
 const arr = Astro.url.searchParams.getAll("arr");
+const myRating = Astro.url.searchParams.getAll("my_rating").map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 10);
 const langs = Astro.url.searchParams.getAll("lang");
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token, user } = Astro.locals;
@@ -47,6 +48,7 @@ if (hasTmdbKey) {
       ...(collection.length ? { collection } : {}),
       ...(watch.length ? { watch } : {}),
       ...(hasSonarr && arr.length ? { arr } : {}),
+      ...(myRating.length ? { my_rating: myRating } : {}),
       ...(langs.length ? { original_language: langs.join("|") } : {}),
     }, token);
   } catch (e) {
@@ -86,6 +88,7 @@ if (status) baseParams.set("status", status);
 collection.forEach((v) => baseParams.append("collection", v));
 watch.forEach((v) => baseParams.append("watch", v));
 if (hasSonarr) arr.forEach((v) => baseParams.append("arr", v));
+myRating.forEach((rating) => baseParams.append("my_rating", String(rating)));
 langs.forEach((l) => baseParams.append("lang", l));
 const baseUrl = `/shows?${baseParams.toString()}`;
 ---
@@ -129,6 +132,7 @@ const baseUrl = `/shows?${baseParams.toString()}`;
             ...(user ? [
               { key: "collection", label: "Collection", options: [{ value: "in", label: "In My Collection" }, { value: "out", label: "Not In My Collection" }], selected: collection },
               { key: "watch", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }, { value: "started", label: "In Progress" }], selected: watch },
+              { key: "my_rating", label: "My Rating", options: Array.from({ length: 10 }, (_, index) => 10 - index).map((rating) => ({ value: String(rating), label: `${rating} / 10` })), selected: myRating.map(String) },
             ] : []),
             ...(hasSonarr ? [{ key: "arr", label: "Sonarr", options: [{ value: "added", label: "In Sonarr" }, { value: "notadded", label: "Not In Sonarr" }], selected: arr }] : []),
             { key: "lang", label: "Language", options: LANGUAGES, selected: langs },

@@ -11,6 +11,7 @@ const sort = Astro.url.searchParams.get("sort") ?? "title";
 const genres = Astro.url.searchParams.getAll("genre");
 const years = Astro.url.searchParams.getAll("year").map(Number).filter((n) => !Number.isNaN(n));
 const watched = Astro.url.searchParams.getAll("watched");
+const myRating = Astro.url.searchParams.getAll("my_rating").map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 10);
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -22,6 +23,7 @@ const data = await api.media.list({
   genre: genres,
   year: years,
   watched,
+  my_rating: myRating,
 }, token);
 
 const MOVIE_GENRES = [
@@ -29,8 +31,11 @@ const MOVIE_GENRES = [
   "Drama", "Family", "Fantasy", "History", "Horror", "Music", "Mystery",
   "Romance", "Science Fiction", "Thriller", "War", "Western",
 ];
+const RATING_OPTIONS = Array.from({ length: 10 }, (_, index) => 10 - index).map((rating) => ({
+  value: String(rating), label: `${rating} / 10`,
+}));
 
-const hasFilters = genres.length > 0 || years.length > 0 || watched.length > 0;
+const hasFilters = genres.length > 0 || years.length > 0 || watched.length > 0 || myRating.length > 0;
 
 // Build base URL preserving active filters (without page)
 const baseParams = new URLSearchParams();
@@ -38,6 +43,7 @@ baseParams.set("sort", sort);
 genres.forEach((g) => baseParams.append("genre", g));
 years.forEach((y) => baseParams.append("year", String(y)));
 watched.forEach((w) => baseParams.append("watched", w));
+myRating.forEach((rating) => baseParams.append("my_rating", String(rating)));
 const baseUrl = `/collection/movies?${baseParams.toString()}`;
 ---
 
@@ -60,6 +66,7 @@ const baseUrl = `/collection/movies?${baseParams.toString()}`;
         options={[
           { value: "title", label: "A–Z" },
           { value: "rating", label: "Top" },
+          { value: "user_rating", label: "My Rating" },
           { value: "release_date", label: "Newest" },
           { value: "created_at", label: "Recently Added" },
           { value: "last_watched", label: "Recently Watched" },
@@ -73,6 +80,7 @@ const baseUrl = `/collection/movies?${baseParams.toString()}`;
           { key: "genre", label: "Genre", options: MOVIE_GENRES.map((g) => ({ value: g, label: g })), selected: genres },
           { key: "year", label: "Year", selected: years.map(String), dynamic: true, endpoint: "/api/proxy/media/years?type=movie" },
           { key: "watched", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }], selected: watched },
+          { key: "my_rating", label: "My Rating", options: RATING_OPTIONS, selected: myRating.map(String) },
         ]}
       />
     </div>

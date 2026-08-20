@@ -209,6 +209,7 @@ async def list_shows(
     year: list[int] = Query(default=[]),
     status: list[str] = Query(default=[]),
     watched: list[str] = Query(default=[]),
+    my_rating: list[int] = Query(default=[], ge=0, le=10),
 ):
     offset = (page - 1) * page_size
 
@@ -281,6 +282,32 @@ async def list_shows(
         else:
             base_query = base_query.where(ShowModel.id.notin_(select(watched_show_ids)))
 
+    # Shows have their own metadata table, while a personal show rating is
+    # stored against its MediaType.series Media row. Match by TMDB ID so this
+    # also works for collections built from episode rows alone.
+    show_ratings_sq = (
+        select(
+            Media.tmdb_id.label("tmdb_id"),
+            func.max(Rating.rating).label("user_rating"),
+        )
+        .join(Rating, Rating.media_id == Media.id)
+        .where(
+            Media.media_type == MediaType.series,
+            Media.tmdb_id.isnot(None),
+            Rating.user_id == current_user.id,
+            Rating.season_number.is_(None),
+            Rating.rating.isnot(None),
+        )
+        .group_by(Media.tmdb_id)
+        .subquery()
+    )
+    if my_rating:
+        base_query = base_query.where(
+            ShowModel.tmdb_id.in_(
+                select(show_ratings_sq.c.tmdb_id).where(show_ratings_sq.c.user_rating.in_(my_rating))
+            )
+        )
+
     # Count total
     count_query = select(func.count()).select_from(base_query.subquery())
     total_result = await db.execute(count_query)
@@ -290,6 +317,12 @@ async def list_shows(
     # Sort and Paginate
     if sort == "rating":
         q = base_query.order_by(ShowModel.tmdb_rating.desc().nulls_last())
+    elif sort == "user_rating":
+        q = (
+            base_query
+            .outerjoin(show_ratings_sq, show_ratings_sq.c.tmdb_id == ShowModel.tmdb_id)
+            .order_by(show_ratings_sq.c.user_rating.desc().nulls_last(), ShowModel.id.desc())
+        )
     elif sort == "release_date":
         q = base_query.order_by(ShowModel.first_air_date.desc().nulls_last())
     elif sort == "created_at":
