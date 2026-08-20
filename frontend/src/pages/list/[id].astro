@@ -236,8 +236,19 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
 
       <!-- Add Items Search (owner only) -->
       {list.is_owner && (
-      <div class="mb-10 bg-zinc-900/40 border border-zinc-800/60 rounded-3xl p-6">
-        <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest mb-4">Add Items</h2>
+      <details class="mb-10 group bg-zinc-900/40 border border-zinc-800/60 rounded-2xl">
+        <summary class="flex items-center justify-between px-5 py-4 cursor-pointer list-none select-none">
+          <div class="flex items-center gap-2.5">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-400">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            <span class="text-sm font-black text-zinc-400 uppercase tracking-widest">Add Items</span>
+          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-500 transition-transform group-open:rotate-180">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+          </svg>
+        </summary>
+        <div class="px-5 pb-5 pt-1 border-t border-zinc-800/60 mt-0 bg-zinc-900/40 rounded-b-2xl p-6">
         <div class="flex flex-col sm:flex-row gap-3">
           <input
             type="text"
@@ -275,7 +286,8 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
           Searching…
         </div>
         <p id="search-empty" class="hidden mt-4 text-sm text-zinc-400 text-center py-4">No results found.</p>
-      </div>
+        </div>
+      </details>
       )}
 
       <!-- Items Grid -->
