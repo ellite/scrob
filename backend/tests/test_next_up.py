@@ -5,7 +5,14 @@ from datetime import date, datetime, timezone
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _remaining_episode_stats
+from routers.history import (
+    _attach_next_up_last_watched,
+    _compute_next_episode,
+    _group_last_watched,
+    _has_aired,
+    _has_confirmed_air_date,
+    _remaining_episode_stats,
+)
 
 
 class ComputeNextEpisodeTests(unittest.TestCase):
@@ -84,6 +91,25 @@ class GroupLastWatchedTests(unittest.TestCase):
         rows = [(1, None, 1, None), (1, None, 2, None)]
         last_per_show, last_watched_at = _group_last_watched(rows)
         self.assertNotIn(1, last_per_show)
+
+
+class AttachNextUpLastWatchedTests(unittest.TestCase):
+    """Regression tests for #237: expose the timestamp used for Next Up order."""
+
+    def test_adds_iso_timestamp_for_each_show(self):
+        watched_at = datetime(2026, 8, 16, 14, 30, tzinfo=timezone.utc)
+        items = [{"show_id": 12}]
+
+        _attach_next_up_last_watched(items, {12: watched_at})
+
+        self.assertEqual(items[0]["last_watched_at"], "2026-08-16T14:30:00+00:00")
+
+    def test_adds_null_when_watch_history_has_no_timestamp(self):
+        items = [{"show_id": 12}]
+
+        _attach_next_up_last_watched(items, {})
+
+        self.assertIsNone(items[0]["last_watched_at"])
 
 
 class HasAiredTests(unittest.TestCase):

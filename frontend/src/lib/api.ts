@@ -583,6 +583,8 @@ export interface MediaItem {
   tvdb_season_number?: number | null;
   tvdb_episode_number?: number | null;
   next_up_hidden?: boolean;
+  // Most recent watched episode timestamp used to order Next Up (#237).
+  last_watched_at?: string | null;
   // Next Up remaining-content estimate (#170) — released unwatched episodes
   // for the show and their estimated total runtime in minutes.
   episodes_left?: number | null;

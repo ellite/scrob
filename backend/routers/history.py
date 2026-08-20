@@ -620,6 +620,15 @@ def _group_last_watched(
     return last_per_show, last_watched_at
 
 
+def _attach_next_up_last_watched(
+    items: list[dict], last_watched_at: dict[int, datetime]
+) -> None:
+    """Expose the timestamp used to order Next Up items in the API response."""
+    for item in items:
+        watched_at = last_watched_at.get(item.get("show_id"))
+        item["last_watched_at"] = watched_at.isoformat() if watched_at else None
+
+
 def _has_aired(release_date: str | None, today: date) -> bool:
     """True if release_date (ISO 8601, e.g. from TMDB air_date) is on or before
     today, or unknown. ISO 8601 strings sort lexicographically the same as their
@@ -1001,6 +1010,7 @@ async def get_next_up(
     )
 
     items = [_format_media_item(m) for m in next_up]
+    _attach_next_up_last_watched(items, last_watched_at)
     for item in items:
         item["next_up_hidden"] = item.get("show_id") in hidden_set
         show_stats = remaining_stats.get(item.get("show_id"))
