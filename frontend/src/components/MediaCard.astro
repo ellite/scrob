@@ -127,14 +127,16 @@ const inLibrary = item.in_library ?? false;
 
   <!-- Action bar (below poster, above info) -->
   {showActionBar && (
-    <CardActionBar
-      watched={watched}
-      inLists={inLists}
-      inLibrary={inLibrary}
-      collectionPct={collectionPct}
-      watchPct={watchPct}
-      isSeries={isPercentageStyle}
-    />
+    <div data-card-actions>
+      <CardActionBar
+        watched={watched}
+        inLists={inLists}
+        inLibrary={inLibrary}
+        collectionPct={collectionPct}
+        watchPct={watchPct}
+        isSeries={isPercentageStyle}
+      />
+    </div>
   )}
 
   <slot />
@@ -177,4 +179,3 @@ const inLibrary = item.in_library ?? false;
     </div>
   )}
 </div>
-

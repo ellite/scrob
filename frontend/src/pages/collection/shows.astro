@@ -4,6 +4,7 @@ import MediaCard from "../../components/MediaCard.astro";
 import Pagination from "../../components/Pagination.astro";
 import FilterPanel from "../../components/FilterPanel.astro";
 import SortButton from "../../components/SortButton.astro";
+import MediaViewToggle from "../../components/MediaViewToggle.astro";
 import { api } from "../../lib/api";
 export const prerender = false;
 
@@ -57,7 +58,7 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
     </div>
 
     <!-- Sort & filter controls -->
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
       <SortButton
         id="show-sort"
         current={sort}
@@ -80,6 +81,7 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
           { key: "watched", label: "Progress", options: [{ value: "watched", label: "Started" }, { value: "unwatched", label: "Not Started" }], selected: watched },
         ]}
       />
+      <MediaViewToggle targetId="collection-show-results" />
     </div>
   </div>
 
@@ -96,7 +98,7 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
     </div>
   ) : (
     <>
-      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
+      <div id="collection-show-results" data-media-view-container data-media-view="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
         {data.results.map(item => <MediaCard item={{...item, type: 'series', in_library: true}} />)}
       </div>
 

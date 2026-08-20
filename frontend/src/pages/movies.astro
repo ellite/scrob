@@ -4,6 +4,7 @@ import MediaCard from "../components/MediaCard.astro";
 import Pagination from "../components/Pagination.astro";
 import FilterPanel from "../components/FilterPanel.astro";
 import SortButton from "../components/SortButton.astro";
+import MediaViewToggle from "../components/MediaViewToggle.astro";
 import { api, type MediaItem } from "../lib/api";
 export const prerender = false;
 
@@ -96,7 +97,7 @@ const baseUrl = `/movies?${baseParams.toString()}`;
     <h1 class="page-title">Explore Movies</h1>
 
     {hasTmdbKey && (
-      <div class="flex items-center gap-3">
+      <div class="flex flex-wrap items-center gap-3">
         <SortButton
           id="explore-movie-category"
           current={category}
@@ -128,6 +129,7 @@ const baseUrl = `/movies?${baseParams.toString()}`;
             { key: "lang", label: "Language", options: LANGUAGES, selected: langs },
           ]}
         />
+        <MediaViewToggle targetId="movie-results" />
       </div>
     )}
   </div>
@@ -143,7 +145,7 @@ const baseUrl = `/movies?${baseParams.toString()}`;
     </div>
   ) : (
     <>
-      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
+      <div id="movie-results" data-media-view-container data-media-view="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
         {data.results.map(item => <MediaCard item={item} />)}
       </div>
 

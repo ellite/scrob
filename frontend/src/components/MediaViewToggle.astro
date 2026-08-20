@@ -1,0 +1,139 @@
+---
+interface Props {
+  targetId: string;
+}
+
+const { targetId } = Astro.props;
+---
+
+<div class="inline-flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900 p-1" data-media-view-toggle data-target-id={targetId} role="group" aria-label="Media layout">
+  <button
+    type="button"
+    class="rounded-md p-1.5 text-zinc-300 transition hover:bg-zinc-800 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+    data-view="grid"
+    aria-label="Use grid view"
+    aria-pressed="true"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="h-4 w-4" aria-hidden="true">
+      <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+    </svg>
+  </button>
+  <button
+    type="button"
+    class="rounded-md p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+    data-view="list"
+    aria-label="Use compact list view"
+    aria-pressed="false"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="h-4 w-4" aria-hidden="true">
+      <path stroke-linecap="round" d="M9 6h11M9 12h11M9 18h11" /><path fill="currentColor" stroke="none" d="M4 5h2v2H4zM4 11h2v2H4zM4 17h2v2H4z" />
+    </svg>
+  </button>
+</div>
+
+<script>
+  const STORAGE_KEY = "scrob-media-view";
+  type MediaView = "grid" | "list";
+
+  function storedView(): MediaView {
+    try {
+      return localStorage.getItem(STORAGE_KEY) === "list" ? "list" : "grid";
+    } catch {
+      return "grid";
+    }
+  }
+
+  function initMediaViewToggle(toggle: HTMLElement) {
+    if (toggle.dataset.initialized) return;
+    toggle.dataset.initialized = "true";
+
+    const targetId = toggle.dataset.targetId;
+    const target = targetId ? document.getElementById(targetId) : null;
+    if (!target) return;
+
+    const buttons = Array.from(toggle.querySelectorAll<HTMLButtonElement>("[data-view]"));
+    const applyView = (view: MediaView, persist = false) => {
+      target.dataset.mediaView = view;
+      buttons.forEach((button) => {
+        const selected = button.dataset.view === view;
+        button.setAttribute("aria-pressed", String(selected));
+        button.classList.toggle("bg-zinc-700", selected);
+        button.classList.toggle("text-white", selected);
+        button.classList.toggle("text-zinc-400", !selected);
+      });
+      if (persist) {
+        try {
+          localStorage.setItem(STORAGE_KEY, view);
+        } catch {
+          // Storage can be disabled; the selected layout remains usable for this page.
+        }
+      }
+    };
+
+    applyView(storedView());
+    buttons.forEach((button) => button.addEventListener("click", () => {
+      applyView(button.dataset.view === "list" ? "list" : "grid", true);
+    }));
+  }
+
+  document.querySelectorAll<HTMLElement>("[data-media-view-toggle]").forEach(initMediaViewToggle);
+</script>
+
+<style>
+  :global([data-media-view-container][data-media-view="list"]) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  :global([data-media-view-container][data-media-view="list"] > [data-card]) {
+    min-height: 5.75rem;
+    flex-direction: row;
+    align-items: stretch;
+    border-radius: 0.75rem;
+    transform: none;
+  }
+
+  :global([data-media-view-container][data-media-view="list"] > [data-card]:hover) {
+    transform: none;
+  }
+
+  :global([data-media-view-container][data-media-view="list"] > [data-card] > a:first-child),
+  :global([data-media-view-container][data-media-view="list"] > [data-card] > div:first-child) {
+    width: 4rem;
+    flex: 0 0 4rem;
+  }
+
+  :global([data-media-view-container][data-media-view="list"] > [data-card] > a:first-child > div),
+  :global([data-media-view-container][data-media-view="list"] > [data-card] > div:first-child > div) {
+    height: 100%;
+    min-height: 5.75rem;
+    aspect-ratio: 2 / 3;
+  }
+
+  :global([data-media-view-container][data-media-view="list"] > [data-card] > [data-card-actions]) {
+    width: 8.25rem;
+    flex: 0 0 auto;
+    align-self: stretch;
+  }
+
+  :global([data-media-view-container][data-media-view="list"] > [data-card] > [data-card-actions] > div) {
+    height: 100%;
+  }
+
+  :global([data-media-view-container][data-media-view="list"] > [data-card] > a:last-child),
+  :global([data-media-view-container][data-media-view="list"] > [data-card] > div:last-child) {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    padding: 0.65rem 0.8rem;
+  }
+
+  @media (max-width: 420px) {
+    :global([data-media-view-container][data-media-view="list"] > [data-card] > a:first-child),
+    :global([data-media-view-container][data-media-view="list"] > [data-card] > div:first-child) {
+      width: 3.25rem;
+      flex-basis: 3.25rem;
+    }
+  }
+</style>
