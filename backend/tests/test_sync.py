@@ -8,8 +8,10 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from fastapi import HTTPException
+from fastapi import FastAPI
 
 from models.connections import MediaServerConnection
+from models.base import CollectionSource
 from routers import sync
 
 
@@ -84,6 +86,181 @@ class PushUpstreamValidationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response["status"], "started")
 
+
+class _RowsResult:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class _IgnoredItemDB:
+    """Small ordered-result double for the acknowledgement API routes."""
+
+    def __init__(self, results):
+        self.results = list(results)
+        self.statements = []
+        self.commit = AsyncMock()
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return self.results.pop(0) if self.results else _RowsResult([])
+
+
+class IgnoreUnmatchedItemsTests(unittest.IsolatedAsyncioTestCase):
+    _warning = {
+        "title": "Family Vacation 2024",
+        "media_type": "movie",
+        "source_id": "jellyfin-home-video-1",
+        "reason": "Unmatched on source — no TMDB ID available",
+    }
+
+    @classmethod
+    def _job(cls, warnings):
+        return sync.SyncJob(
+            user_id=1,
+            source=CollectionSource.jellyfin,
+            status=sync.SyncStatus.completed,
+            connection_id=9,
+            job_type="pull",
+            warnings=warnings,
+        )
+
+    def test_only_normal_unmatched_source_warnings_are_hidden(self):
+        warnings = [
+            self._warning,
+            {"tmdb_id": 1, "season": 2, "show": "Needs remap"},
+            {**self._warning, "source_id": "matched-item", "matched": True},
+        ]
+
+        warnings[0] = {**warnings[0], "ignored": True}
+        visible = sync._filter_ignored_warnings(warnings)
+
+        self.assertEqual(visible, [warnings[1], warnings[2]])
+        self.assertEqual(warnings[0]["source_id"], "jellyfin-home-video-1")  # no persisted JSON mutation
+
+    def test_only_source_backed_unmatched_warnings_can_be_ignored(self):
+        self.assertTrue(sync._is_ignorable_unmatched_warning(self._warning))
+        self.assertFalse(sync._is_ignorable_unmatched_warning({"tmdb_id": 1, "season": 2}))
+        self.assertFalse(sync._is_ignorable_unmatched_warning({**self._warning, "matched": True}))
+
+    async def test_ignore_accepts_only_a_warning_from_the_owned_connection(self):
+        connection = SimpleNamespace(id=9, user_id=1, type="jellyfin")
+        job = self._job([self._warning])
+        db = _IgnoredItemDB([
+            _Result(connection),  # _get_connection_or_404
+            _RowsResult([job]),   # completed warnings for that exact connection
+        ])
+
+        response = await sync.ignore_unmatched_items(
+            sync.IgnoreUnmatchedItemsBody(connection_id=9, source_ids=["jellyfin-home-video-1"]),
+            db=db,
+            current_user=SimpleNamespace(id=1),
+        )
+
+        self.assertEqual(response, {"status": "ok", "ignored": 1})
+        self.assertEqual(db.commit.await_count, 1)
+        self.assertTrue(job.warnings[0]["ignored"])
+        self.assertEqual(job.warnings[0]["source_id"], "jellyfin-home-video-1")
+        validation_sql = str(db.statements[1])
+        self.assertIn("sync_jobs.connection_id", validation_sql)
+        self.assertIn("sync_jobs.user_id", validation_sql)
+
+    async def test_ignore_rejects_source_ids_not_in_that_connections_warning_history(self):
+        connection = SimpleNamespace(id=9, user_id=1, type="jellyfin")
+        db = _IgnoredItemDB([
+            _Result(connection),
+            _RowsResult([self._job([self._warning])]),
+        ])
+
+        with self.assertRaises(HTTPException) as ctx:
+            await sync.ignore_unmatched_items(
+                sync.IgnoreUnmatchedItemsBody(connection_id=9, source_ids=["another-connection-item"]),
+                db=db,
+                current_user=SimpleNamespace(id=1),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 404)
+        db.commit.assert_not_awaited()
+
+    async def test_unignore_deletes_only_the_current_users_acknowledgement(self):
+        connection = SimpleNamespace(id=9, user_id=1, type="jellyfin")
+        older_job = self._job([{**self._warning, "ignored": True}])
+        newer_job = self._job([{**self._warning, "ignored": True}])
+        db = _IgnoredItemDB([_Result(connection), _RowsResult([older_job, newer_job])])
+        response = await sync.unignore_unmatched_items(
+            sync.IgnoreUnmatchedItemsBody(connection_id=9, source_ids=["jellyfin-home-video-1"]),
+            db=db,
+            current_user=SimpleNamespace(id=1),
+        )
+
+        self.assertEqual(response, {"status": "ok"})
+        self.assertEqual(db.commit.await_count, 1)
+        self.assertNotIn("ignored", older_job.warnings[0])
+        self.assertNotIn("ignored", newer_job.warnings[0])
+
+    async def test_status_hides_an_ignored_item_without_overwriting_job_warnings(self):
+        job = sync.SyncJob(
+            id=1,
+            user_id=1,
+            source=CollectionSource.jellyfin,
+            status=sync.SyncStatus.completed,
+            connection_id=9,
+            job_type="pull",
+            warnings=[{**self._warning, "ignored": True}],
+        )
+        db = _IgnoredItemDB([
+            _RowsResult([job]),
+        ])
+
+        response = await sync.get_sync_status(db=db, current_user=SimpleNamespace(id=1))
+
+        self.assertIsNone(response[0]["warnings"])
+        self.assertEqual(job.warnings, [{**self._warning, "ignored": True}])
+
+    async def test_later_sync_reuses_the_same_connections_ignored_source_ids(self):
+        historical = [{**self._warning, "ignored": True}]
+        incoming = [{**self._warning}, {"title": "Different", "source_id": "other", "reason": "Unmatched on source — no TMDB ID available"}]
+        db = _IgnoredItemDB([_RowsResult([(historical,)])])
+
+        stamped = await sync._stamp_ignored_unmatched_warnings(
+            db, user_id=1, connection_id=9, warnings=incoming
+        )
+
+        self.assertTrue(stamped[0]["ignored"])
+        self.assertNotIn("ignored", stamped[1])
+        self.assertNotIn("ignored", incoming[0])
+        self.assertIn("sync_jobs.connection_id", str(db.statements[0]))
+
+    async def test_ignored_view_deduplicates_source_items_across_sync_history(self):
+        older = self._job([{**self._warning, "ignored": True}])
+        newer = self._job([{**self._warning, "ignored": True}])
+        db = _IgnoredItemDB([_RowsResult([newer, older])])
+
+        response = await sync.list_ignored_unmatched_items(
+            connection_id=None, db=db, current_user=SimpleNamespace(id=1)
+        )
+
+        self.assertEqual(len(response), 1)
+        self.assertEqual(response[0]["connection_id"], 9)
+        self.assertEqual(response[0]["source_id"], "jellyfin-home-video-1")
+
+
+class IgnoreUnmatchedItemsApiContractTests(unittest.TestCase):
+    def test_reversible_ignore_endpoints_are_exposed_with_a_body(self):
+        app = FastAPI()
+        app.include_router(sync.router, prefix="/sync")
+        openapi = app.openapi()
+
+        self.assertIn("get", openapi["paths"]["/sync/unmatched-ignores"])
+        self.assertIn("post", openapi["paths"]["/sync/unmatched-ignores"])
+        self.assertIn("requestBody", openapi["paths"]["/sync/unmatched-ignores"]["post"])
+        self.assertIn("delete", openapi["paths"]["/sync/unmatched-ignores"])
+        self.assertIn("requestBody", openapi["paths"]["/sync/unmatched-ignores"]["delete"])
 
 class PlexSyncNeedsLibraryScanTests(unittest.TestCase):
     """Regression test: a Plex pull with only "Watchlist" selected still

@@ -4972,15 +4972,25 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         if (!el.classList.contains('hidden')) expandedDetails.add(el.id);
       });
 
-      const [statusRes, overridesRes, matchedRes] = await Promise.all([
+      const [statusRes, overridesRes, matchedRes, ignoredRes] = await Promise.all([
         fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } }),
         fetch('/api/proxy/sync/season-overrides', { headers: { 'Authorization': `Bearer ${token}` } }),
         fetch('/api/proxy/sync/matched-shows', { headers: { 'Authorization': `Bearer ${token}` } }),
+        fetch('/api/proxy/sync/unmatched-ignores', { headers: { 'Authorization': `Bearer ${token}` } }),
       ]);
       if (!statusRes.ok) return;
       const jobs: any[] = await statusRes.json();
       const overrides: any[] = overridesRes.ok ? await overridesRes.json() : [];
       const matchedShows: any[] = matchedRes.ok ? await matchedRes.json() : [];
+      const ignoredItems: any[] = ignoredRes.ok ? await ignoredRes.json() : [];
+
+      const ignoredByConnection = new Map<string, any[]>();
+      for (const item of ignoredItems) {
+        const key = String(item.connection_id);
+        const items = ignoredByConnection.get(key) ?? [];
+        items.push(item);
+        ignoredByConnection.set(key, items);
+      }
 
       // Build a lookup: lowercase show_title → matched show info
       // Used to overlay matched state onto SyncJob warnings that lack matched:true stamps
@@ -4998,11 +5008,17 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const containers = document.querySelectorAll<HTMLElement>('[id^="conn-warnings-"]');
       containers.forEach(container => {
         const connId = container.id.replace('conn-warnings-', '');
-        const job = jobs.find(j => String(j.connection_id) === connId && j.status === 'completed' && j.warnings?.length > 0);
-        if (!job) { container.classList.add('hidden'); container.innerHTML = ''; return; }
+        // Only the latest completed run describes this connection's current
+        // warning state.  Do not fall back to an older warning after the
+        // latest one was fully acknowledged or fixed.
+        const latestCompletedJob = jobs.find(j => String(j.connection_id) === connId && j.status === 'completed');
+        const job = latestCompletedJob?.warnings?.length ? latestCompletedJob : undefined;
+        const ignoredForConnection = ignoredByConnection.get(connId) ?? [];
+        if (!job && !ignoredForConnection.length) { container.classList.add('hidden'); container.innerHTML = ''; return; }
 
-        const warnings: any[] = job.warnings;
-        const _updatedAt = job.updated_at.endsWith('Z') || job.updated_at.includes('+') ? job.updated_at : job.updated_at + 'Z';
+        const warnings: any[] = job?.warnings ?? [];
+        const rawUpdatedAt = job?.updated_at ?? new Date().toISOString();
+        const _updatedAt = rawUpdatedAt.endsWith('Z') || rawUpdatedAt.includes('+') ? rawUpdatedAt : `${rawUpdatedAt}Z`;
         const date = new Date(_updatedAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
         const detailsId = `conn-warnings-details-${connId}`;
 
@@ -5036,7 +5052,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         // Series-level warnings for the same show are merged in (to carry their GUIDs) rather
         // than rendered as a separate row. Matched state is read directly from warning entries,
         // with a fallback to matchedShowMap for warnings created before auto-stamping existed.
-        type GroupEntry = {count: number, reason: string, plex_guids: string[], matched: boolean, matched_tvdb_id?: number, matched_show_id?: number, matched_show_title?: string};
+        type GroupEntry = {count: number, reason: string, plex_guids: string[], sourceIds: string[], matched: boolean, matched_tvdb_id?: number, matched_show_id?: number, matched_show_title?: string};
         const groupedEpisodeWarnings: Map<string, GroupEntry> = new Map();
         const standaloneUnmatched: any[] = [];
         for (const w of unmatchedWarnings) {
@@ -5047,6 +5063,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const existing = groupedEpisodeWarnings.get(w.series_name);
             if (existing) {
               existing.count++;
+              if (w.source_id) existing.sourceIds.push(String(w.source_id));
               if (isMatched) {
                 existing.matched = true;
                 // Prefer tvdb_id: DB > stamp (stamps from old `already_linked` runs may have null tvdb_id)
@@ -5059,6 +5076,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 count: 1,
                 reason: w.reason ?? 'unknown reason',
                 plex_guids: w.plex_guids ?? [],
+                sourceIds: w.source_id ? [String(w.source_id)] : [],
                 matched: isMatched,
                 matched_tvdb_id: dbMatch?.tvdb_id ?? w.matched_tvdb_id,
                 matched_show_id: dbMatch?.show_id ?? w.matched_show_id,
@@ -5079,6 +5097,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             if (w.plex_guids?.length && !grouped.plex_guids.length) {
               grouped.plex_guids = w.plex_guids;
             }
+            if (w.source_id) grouped.sourceIds.push(String(w.source_id));
             return false; // suppress — already shown in grouped section
           }
           // Apply matchedShowMap overlay for series-type standalone warnings
@@ -5099,7 +5118,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         const renderUnmatched = hasUnmatched ? `
           <div class="space-y-1 ${enrichmentWarnings.length > 0 ? 'mt-4 pt-4 border-t border-zinc-800/60' : ''}">
             <p class="text-xs text-zinc-500 mb-2">Items that couldn't be matched to TMDB:</p>
-            ${[...groupedEpisodeWarnings.entries()].map(([seriesName, {count, reason, plex_guids, matched, matched_tvdb_id, matched_show_id, matched_show_title}]) => {
+            ${[...groupedEpisodeWarnings.entries()].map(([seriesName, {count, reason, plex_guids, sourceIds, matched, matched_tvdb_id, matched_show_id, matched_show_title}]) => {
               const isMatched = matched;
               const matchedTitle = matched_show_title ?? '';
               const matchHref = matched_tvdb_id ? `/show/tvdb/${matched_tvdb_id}` : (matched_show_id ? `/show/${matched_show_id}` : '');
@@ -5122,6 +5141,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     : `<button type="button" class="match-show-btn text-xs px-2.5 py-1 rounded-lg border bg-amber-500/15 border-amber-500/40 text-amber-500 hover:bg-amber-500/25 hover:border-amber-500/60 cursor-pointer transition-colors"
                         data-series-name="${escapeHtml(seriesName)}">Match</button>`
                   }
+                  ${!isMatched && sourceIds.length ? `<button type="button" class="ignore-unmatched-btn text-xs px-2.5 py-1 rounded-lg border border-zinc-700 text-zinc-400 hover:bg-zinc-800 cursor-pointer transition-colors"
+                    data-source-ids="${escapeHtml(JSON.stringify([...new Set(sourceIds)]))}">Ignore</button>` : ''}
                 </div>
               </div>`;
             }).join('')}
@@ -5150,14 +5171,32 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     : `<button type="button" class="match-show-btn text-xs px-2.5 py-1 rounded-lg border bg-amber-500/15 border-amber-500/40 text-amber-500 hover:bg-amber-500/25 hover:border-amber-500/60 cursor-pointer transition-colors shrink-0"
                         data-series-name="${escapeHtml(w.title)}" data-media-type="${escapeHtml(w.media_type ?? '')}">Match</button>`
                   }
+                  ${!wMatched && w.source_id ? `<button type="button" class="ignore-unmatched-btn text-xs px-2.5 py-1 rounded-lg border border-zinc-700 text-zinc-400 hover:bg-zinc-800 cursor-pointer transition-colors shrink-0"
+                    data-source-ids="${escapeHtml(JSON.stringify([String(w.source_id)]))}">Ignore</button>` : ''}
                 </div>
               </div>`;
             }).join('')}
           </div>
         ` : '';
 
+        const renderIgnored = ignoredForConnection.length ? `
+          <div class="space-y-1 ${displayCount > 0 ? 'mt-4 pt-4 border-t border-zinc-800/60' : ''}">
+            <p class="text-xs text-zinc-500 mb-2">Ignored unmatched items — kept out of sync warnings, never removed from your media server:</p>
+            ${ignoredForConnection.map((item: any) => `
+              <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
+                <div class="flex-1 min-w-0">
+                  <span class="text-sm text-zinc-300 font-medium">${escapeHtml(item.series_name || item.title || 'Untitled item')}</span>
+                  ${item.series_name && item.title && item.series_name !== item.title ? `<span class="ml-2 text-xs text-zinc-600">${escapeHtml(item.title)}</span>` : ''}
+                  ${item.media_type ? `<span class="ml-2 text-xs text-zinc-600">${escapeHtml(item.media_type)}</span>` : ''}
+                </div>
+                <button type="button" class="unignore-unmatched-btn text-xs px-2.5 py-1 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-800 cursor-pointer transition-colors shrink-0"
+                  data-source-id="${escapeHtml(String(item.source_id))}">Unignore</button>
+              </div>`).join('')}
+          </div>
+        ` : '';
+
         container.classList.remove('hidden');
-        container.innerHTML = `
+        container.innerHTML = job ? `
           <div class="rounded-xl border border-amber-500/20 bg-amber-500/5 overflow-hidden">
             <button
               type="button"
@@ -5176,7 +5215,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             <div id="${detailsId}" class="hidden border-t border-amber-500/15 px-4 py-3">
               ${renderEnrichment}
               ${renderUnmatched}
+              ${renderIgnored}
             </div>
+          </div>
+        ` : `
+          <div class="rounded-xl border border-zinc-700/60 bg-zinc-900/40 px-4 py-3">
+            ${renderIgnored}
           </div>
         `;
 
@@ -5230,6 +5274,57 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               el.disabled = false;
               el.textContent = 'Unmatch';
               alert(`Failed to unmatch: ${e.message ?? 'Unknown error'}`);
+            }
+          });
+        });
+
+        container.querySelectorAll('.ignore-unmatched-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const el = btn as HTMLButtonElement;
+            let sourceIds: string[];
+            try {
+              sourceIds = JSON.parse(el.dataset.sourceIds ?? '[]');
+            } catch {
+              return;
+            }
+            if (!sourceIds.length || !confirm('Ignore these unmatched item(s)? They will remain in your media server and can be restored here later.')) return;
+            el.disabled = true;
+            el.textContent = 'Ignoring…';
+            try {
+              const res = await fetch('/api/proxy/sync/unmatched-ignores', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ connection_id: Number(connId), source_ids: sourceIds }),
+              });
+              if (!res.ok) throw new Error(await res.text());
+              loadSyncWarnings();
+            } catch (e: any) {
+              el.disabled = false;
+              el.textContent = 'Ignore';
+              alert(`Failed to ignore item: ${e.message ?? 'Unknown error'}`);
+            }
+          });
+        });
+
+        container.querySelectorAll('.unignore-unmatched-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const el = btn as HTMLButtonElement;
+            const sourceId = el.dataset.sourceId;
+            if (!sourceId) return;
+            el.disabled = true;
+            el.textContent = 'Restoring…';
+            try {
+              const res = await fetch('/api/proxy/sync/unmatched-ignores', {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ connection_id: Number(connId), source_ids: [sourceId] }),
+              });
+              if (!res.ok) throw new Error(await res.text());
+              loadSyncWarnings();
+            } catch (e: any) {
+              el.disabled = false;
+              el.textContent = 'Unignore';
+              alert(`Failed to restore item: ${e.message ?? 'Unknown error'}`);
             }
           });
         });

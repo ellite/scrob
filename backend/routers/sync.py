@@ -45,6 +45,56 @@ class SyncCancelled(Exception):
     """Raised internally to unwind a background sync loop once its SyncJob has been cancelled."""
 
 
+class IgnoreUnmatchedItemsBody(BaseModel):
+    """Source IDs from one owned connection that the user has acknowledged."""
+
+    connection_id: int
+    source_ids: list[str]
+
+
+def _is_ignorable_unmatched_warning(warning: object) -> bool:
+    """Only source items with the normal unmatched warning may be ignored.
+
+    Enrichment/remap warnings deliberately stay actionable. Keeping this
+    predicate narrow also prevents the endpoint becoming a generic way to hide
+    arbitrary SyncJob messages.
+    """
+    return bool(
+        isinstance(warning, dict)
+        and warning.get("source_id")
+        and warning.get("title") is not None
+        and str(warning.get("reason") or "").startswith("Unmatched on source")
+        and not warning.get("matched")
+    )
+
+
+def _filter_ignored_warnings(warnings: list | None) -> list | None:
+    """Return displayable warnings without mutating persisted SyncJob JSON."""
+    if not warnings:
+        return warnings
+    visible = [
+        warning for warning in warnings
+        if not (
+            isinstance(warning, dict)
+            and _is_ignorable_unmatched_warning(warning)
+            and warning.get("ignored")
+        )
+    ]
+    return visible or None
+
+
+def _sync_job_response(job: SyncJob, warnings: list | None) -> dict:
+    """Serialize a job without assigning to its ORM warnings attribute.
+
+    Assigning filtered warnings to the model in a GET route risks accidentally
+    persisting the display-only filtering in a later flush.
+    """
+    return {
+        column.key: (warnings if column.key == "warnings" else getattr(job, column.key))
+        for column in SyncJob.__table__.columns
+    }
+
+
 async def _raise_if_cancelled(db: AsyncSession, job_id: int | None) -> None:
     """Re-read a job's status from the DB and raise SyncCancelled if the user cancelled it.
 
@@ -2546,6 +2596,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
+            all_warnings = await _stamp_ignored_unmatched_warnings(db, user_id, conn.id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
@@ -2755,6 +2806,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
+            all_warnings = await _stamp_ignored_unmatched_warnings(db, user_id, conn.id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
@@ -3666,6 +3718,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             # connection's own plex_push_watchlist flag in both jobs, so pull/push
             # scheduling order can't resurrect items removed on the other side.
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
+            all_warnings = await _stamp_ignored_unmatched_warnings(db, user_id, conn.id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
@@ -4274,6 +4327,7 @@ async def _run_nuvio_sync(
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
+            warnings = await _stamp_ignored_unmatched_warnings(db, user_id, conn.id, warnings)
             await db.execute(
                 update(SyncJob)
                 .where(SyncJob.id == job_id)
@@ -4775,6 +4829,7 @@ async def _run_stremio_sync(
             conn.stremio_pull_cursor_at = pull_started_at
             conn.stremio_full_sync_done = True
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
+            warnings = await _stamp_ignored_unmatched_warnings(db, user_id, conn.id, warnings)
             await db.execute(
                 update(SyncJob)
                 .where(SyncJob.id == job_id)
@@ -6544,7 +6599,157 @@ async def get_sync_status(
     query = select(SyncJob).where(SyncJob.user_id == current_user.id).order_by(SyncJob.created_at.desc()).limit(20)
     result = await db.execute(query)
     jobs = result.scalars().all()
-    return jobs
+
+    # Ignoring only changes the Connections warning view.  SyncJob.warnings is
+    # intentionally retained as an audit trail and to make Unignore reversible.
+    return [
+        _sync_job_response(
+            job,
+            _filter_ignored_warnings(job.warnings),
+        )
+        for job in jobs
+    ]
+
+
+@router.get("/unmatched-ignores")
+async def list_ignored_unmatched_items(
+    connection_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    """List acknowledgements separately so users can always recover them."""
+    if connection_id is not None:
+        await _get_connection_or_404(db, connection_id, current_user.id)
+
+    query = select(SyncJob).where(
+        SyncJob.user_id == current_user.id,
+        SyncJob.status == SyncStatus.completed,
+        SyncJob.warnings.isnot(None),
+    )
+    if connection_id is not None:
+        query = query.where(SyncJob.connection_id == connection_id)
+    result = await db.execute(query.order_by(SyncJob.created_at.desc()))
+
+    # The same item may be present in many completed sync jobs. Return its
+    # newest warning snapshot once, so the recovery UI stays concise.
+    ignored_items: dict[tuple[int, str], dict] = {}
+    for job in result.scalars().all():
+        if job.connection_id is None:
+            continue
+        for warning in job.warnings or []:
+            if not (_is_ignorable_unmatched_warning(warning) and warning.get("ignored")):
+                continue
+            source_id = str(warning["source_id"])
+            key = (job.connection_id, source_id)
+            ignored_items.setdefault(key, {
+                "connection_id": job.connection_id,
+                "source_id": source_id,
+                "title": warning.get("title"),
+                "series_name": warning.get("series_name"),
+                "media_type": warning.get("media_type"),
+                "reason": warning.get("reason"),
+                "ignored_at": job.updated_at,
+            })
+    return list(ignored_items.values())
+
+
+@router.post("/unmatched-ignores")
+async def ignore_unmatched_items(
+    body: IgnoreUnmatchedItemsBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Acknowledge source items from this user's connection, without touching media."""
+    await _get_connection_or_404(db, body.connection_id, current_user.id)
+    source_ids = list(dict.fromkeys(source_id.strip() for source_id in body.source_ids if source_id.strip()))
+    if not source_ids:
+        raise HTTPException(status_code=422, detail="At least one source item is required")
+    if len(source_ids) > 200:
+        raise HTTPException(status_code=422, detail="At most 200 source items can be ignored at once")
+
+    # Accept IDs only when they appear in an unmatched warning for this exact
+    # user+connection.  A caller cannot invent IDs, hide a different user's
+    # warning, or turn this into a library-wide exclusion.
+    jobs_result = await db.execute(
+        select(SyncJob).where(
+            SyncJob.user_id == current_user.id,
+            SyncJob.connection_id == body.connection_id,
+            SyncJob.status == SyncStatus.completed,
+            SyncJob.warnings.isnot(None),
+        ).order_by(SyncJob.created_at.desc())
+    )
+    warnings_by_source_id: dict[str, dict] = {}
+    matching_jobs: list[SyncJob] = []
+    requested_ids = set(source_ids)
+    for job in jobs_result.scalars().all():
+        matching_jobs.append(job)
+        for warning in job.warnings or []:
+            if not _is_ignorable_unmatched_warning(warning):
+                continue
+            source_id = str(warning["source_id"])
+            if source_id in requested_ids:
+                warnings_by_source_id.setdefault(source_id, warning)
+
+    missing_ids = requested_ids - warnings_by_source_id.keys()
+    if missing_ids:
+        raise HTTPException(status_code=404, detail="Unmatched source item not found for this connection")
+
+    for job in matching_jobs:
+        updated_warnings = []
+        changed = False
+        for warning in job.warnings or []:
+            if _is_ignorable_unmatched_warning(warning) and str(warning["source_id"]) in requested_ids:
+                updated_warnings.append({**warning, "ignored": True})
+                changed = changed or not warning.get("ignored")
+            else:
+                updated_warnings.append(warning)
+        if changed:
+            job.warnings = updated_warnings
+            flag_modified(job, "warnings")
+    await db.commit()
+    return {"status": "ok", "ignored": len(source_ids)}
+
+
+@router.delete("/unmatched-ignores")
+async def unignore_unmatched_items(
+    body: IgnoreUnmatchedItemsBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _get_connection_or_404(db, body.connection_id, current_user.id)
+    source_ids = list(dict.fromkeys(source_id.strip() for source_id in body.source_ids if source_id.strip()))
+    if not source_ids:
+        raise HTTPException(status_code=422, detail="At least one source item is required")
+    requested_ids = set(source_ids)
+    result = await db.execute(
+        select(SyncJob).where(
+            SyncJob.user_id == current_user.id,
+            SyncJob.connection_id == body.connection_id,
+            SyncJob.status == SyncStatus.completed,
+            SyncJob.warnings.isnot(None),
+        )
+    )
+    jobs = result.scalars().all()
+    found_ids: set[str] = set()
+    for job in jobs:
+        updated_warnings = []
+        changed = False
+        for warning in job.warnings or []:
+            source_id = str(warning.get("source_id") or "")
+            if _is_ignorable_unmatched_warning(warning) and warning.get("ignored") and source_id in requested_ids:
+                updated = {key: value for key, value in warning.items() if key != "ignored"}
+                updated_warnings.append(updated)
+                found_ids.add(source_id)
+                changed = True
+            else:
+                updated_warnings.append(warning)
+        if changed:
+            job.warnings = updated_warnings
+            flag_modified(job, "warnings")
+    if found_ids != requested_ids:
+        raise HTTPException(status_code=404, detail="Ignored item not found")
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.post("/heal")
@@ -6794,6 +6999,46 @@ async def _stamp_matched_show_warnings(db: AsyncSession, user_id: int, warnings:
         else:
             stamped.append(w)
     return stamped
+
+
+async def _stamp_ignored_unmatched_warnings(
+    db: AsyncSession,
+    user_id: int,
+    connection_id: int | None,
+    warnings: list[dict],
+) -> list[dict]:
+    """Carry per-source acknowledgements into a newly generated sync result.
+
+    The acknowledgement is deliberately stored on existing SyncJob warning JSON
+    rather than a new table. This keeps it auditable and reversible while
+    avoiding a schema migration for a single UI state. Sync jobs are never
+    pruned here; old completed warnings provide the durable source-ID record.
+    """
+    if connection_id is None or not warnings:
+        return warnings
+    previous_result = await db.execute(
+        select(SyncJob.warnings).where(
+            SyncJob.user_id == user_id,
+            SyncJob.connection_id == connection_id,
+            SyncJob.status == SyncStatus.completed,
+            SyncJob.warnings.isnot(None),
+        )
+    )
+    ignored_source_ids = {
+        str(warning["source_id"])
+        for (job_warnings,) in previous_result.all()
+        for warning in (job_warnings or [])
+        if _is_ignorable_unmatched_warning(warning) and warning.get("ignored")
+    }
+    if not ignored_source_ids:
+        return warnings
+    return [
+        {**warning, "ignored": True}
+        if _is_ignorable_unmatched_warning(warning)
+        and str(warning["source_id"]) in ignored_source_ids
+        else warning
+        for warning in warnings
+    ]
 
 
 # ── Season override endpoints ─────────────────────────────────────────────────
