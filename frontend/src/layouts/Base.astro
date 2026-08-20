@@ -1002,6 +1002,15 @@ const bottomNavItem = (active: boolean) =>
               if (seasonNumber != null) body.season_number = seasonNumber;
               await apiFetch(`/lists/${listId}/items`, 'POST', body);
             } else {
+              const confirmed = await showConfirm(
+                'Remove item from list?',
+                'This will remove this item from the list.'
+              );
+              if (!confirmed) {
+                cb.checked = true;
+                return;
+              }
+
               // Find the list_item id — need to fetch list detail
               const detail = await apiFetch(`/lists/${listId}`);
               const item = detail.items?.find((i: { media: { tmdb_id: number; season_number: number | null } }) => {
@@ -1543,6 +1552,12 @@ const bottomNavItem = (active: boolean) =>
     document.getElementById('watch-history-modal-events')!.addEventListener('click', async (e) => {
       const delBtn = (e.target as Element).closest<HTMLElement>('[data-delete-event]');
       if (!delBtn) return;
+      const confirmed = await showConfirm(
+        'Remove history entry?',
+        'This will remove this recorded play.'
+      );
+      if (!confirmed) return;
+
       delBtn.style.opacity = '0.4';
       delBtn.style.pointerEvents = 'none';
       try {

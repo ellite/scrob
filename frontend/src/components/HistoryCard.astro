@@ -111,6 +111,12 @@ const href = isEpisode ? episodeHref(media) : `/media/movie/${media.tmdb_id}`;
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
 
+      const confirmed = await window.showConfirm(
+        'Remove history entry?',
+        'This will remove this recorded play.'
+      );
+      if (!confirmed) return;
+
       const eventId = card.dataset.eventId;
       const token = (window as any).__AUTH_TOKEN__ ?? '';
 

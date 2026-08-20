@@ -469,6 +469,12 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
         const itemId = btn.getAttribute('data-item-id');
+        const confirmed = await window.showConfirm(
+          'Remove item from list?',
+          'This will remove this item from the list.'
+        );
+        if (!confirmed) return;
+
         btn.disabled = true;
         btn.innerHTML = `<svg class="animate-spin w-3.5 h-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>`;
 
