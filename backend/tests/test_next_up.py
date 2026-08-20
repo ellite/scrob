@@ -5,7 +5,9 @@ from datetime import date, datetime, timezone
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _remaining_episode_stats
+from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _next_up_status, _remaining_episode_stats
+from models.media import Media
+from models.show import Show
 
 
 class ComputeNextEpisodeTests(unittest.TestCase):
@@ -127,6 +129,55 @@ class HasConfirmedAirDateTests(unittest.TestCase):
         # date is missing rather than in the future.
         self.assertFalse(_has_confirmed_air_date(None, date(2026, 1, 1)))
         self.assertFalse(_has_confirmed_air_date("", date(2026, 1, 1)))
+
+
+class NextUpStatusTests(unittest.TestCase):
+    """Feature #195: precise, mutually-exclusive labels for Next Up cards."""
+
+    def _episode(self, *, season=1, episode=2, release_date="2026-01-01", episode_count=None):
+        media = Media(season_number=season, episode_number=episode, release_date=release_date)
+        if episode_count is not None:
+            media.show = Show(tmdb_data={"seasons": [{"season_number": season, "episode_count": episode_count}]})
+        return media
+
+    def test_finale_takes_precedence_over_new_today(self):
+        self.assertEqual(
+            _next_up_status(self._episode(episode=8, episode_count=8), date(2026, 1, 1)),
+            "season_finale",
+        )
+
+    def test_premiere_takes_precedence_over_new_today(self):
+        self.assertEqual(
+            _next_up_status(self._episode(episode=1), date(2026, 1, 1)),
+            "season_premiere",
+        )
+
+    def test_specials_do_not_receive_a_season_premiere_badge(self):
+        self.assertEqual(
+            _next_up_status(self._episode(season=0, episode=1, release_date="2025-12-31"), date(2026, 1, 1)),
+            "next_episode",
+        )
+
+    def test_new_today_requires_an_exact_release_date_match(self):
+        self.assertEqual(_next_up_status(self._episode(), date(2026, 1, 1)), "new_today")
+        self.assertEqual(
+            _next_up_status(self._episode(release_date=None), date(2026, 1, 1)),
+            "next_episode",
+        )
+        self.assertEqual(
+            _next_up_status(self._episode(release_date="2025-12-31"), date(2026, 1, 1)),
+            "next_episode",
+        )
+
+    def test_finale_requires_explicit_matching_season_metadata(self):
+        self.assertEqual(
+            _next_up_status(self._episode(episode=8, episode_count=9), date(2026, 1, 1)),
+            "new_today",
+        )
+        self.assertEqual(
+            _next_up_status(self._episode(episode=8), date(2026, 1, 1)),
+            "new_today",
+        )
 
 
 if __name__ == "__main__":

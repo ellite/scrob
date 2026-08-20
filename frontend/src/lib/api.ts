@@ -583,6 +583,9 @@ export interface MediaItem {
   tvdb_season_number?: number | null;
   tvdb_episode_number?: number | null;
   next_up_hidden?: boolean;
+  // Backend-derived status for a Next Up episode. The server only emits
+  // "New Today" with an exact release-date match; see #195.
+  next_up_status?: "season_finale" | "season_premiere" | "new_today" | "next_episode";
   // Next Up remaining-content estimate (#170) — released unwatched episodes
   // for the show and their estimated total runtime in minutes.
   episodes_left?: number | null;

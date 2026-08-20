@@ -1,0 +1,24 @@
+---
+import type { NextUpStatus } from "../lib/next-up-status";
+import { nextUpBadge } from "../lib/next-up-status";
+
+interface Props {
+  status?: NextUpStatus | null;
+  variant?: "overlay" | "inline";
+}
+
+const { status, variant = "overlay" } = Astro.props;
+const badge = status ? nextUpBadge(status) : null;
+---
+
+{badge && (
+  <span
+    class:list={[
+      "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider shadow-lg backdrop-blur-md",
+      badge.className,
+      variant === "overlay" ? "absolute top-2 right-2 z-10" : "mb-3",
+    ]}
+  >
+    {badge.label}
+  </span>
+)}

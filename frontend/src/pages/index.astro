@@ -7,6 +7,7 @@ import ContinueWatchingCard from "../components/ContinueWatchingCard.astro";
 import { api, type ContinueWatchingItem, type MediaItem, tmdbImageUrl } from "../lib/api";
 import { formatEpisodesLeft } from "../lib/media-format";
 import { episodeHref } from "../lib/episodeHref";
+import NextUpBadge from "../components/NextUpBadge.astro";
 
 const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -178,7 +179,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       </div>
       <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
         {nextUp.map((item) => (
-          <div class="flex-shrink-0 w-56"><EpisodeCard item={item} /></div>
+          <div class="flex-shrink-0 w-56"><EpisodeCard item={item} nextUpStatus={item.next_up_status} /></div>
         ))}
       </div>
     </section>
@@ -222,11 +223,14 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
 
           <div class="flex-1 flex items-end pb-6 sm:pb-8">
             <a href={heroHref} class="block max-w-2xl group">
-              {episodeLabel && (
-                <span class="inline-block text-xs font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full mb-3">
-                  {episodeLabel}
-                </span>
-              )}
+              <div class="flex flex-wrap items-center gap-2 mb-3">
+                <NextUpBadge status={hero.next_up_status} variant="inline" />
+                {episodeLabel && (
+                  <span class="inline-block text-xs font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full">
+                    {episodeLabel}
+                  </span>
+                )}
+              </div>
               <h3 class="text-2xl sm:text-4xl font-black text-zinc-100 leading-tight mb-1 drop-shadow-lg group-hover:text-blue-200 transition-colors">
                 {hero.show_title ?? hero.title}
               </h3>
@@ -244,7 +248,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
 
         {rest.length > 0 && (
           <div class="relative flex gap-3 overflow-x-auto pb-3 scrollbar-none pt-6 -mx-6 px-6 md:mx-0 md:px-0">
-            {rest.map((item) => <div class="flex-shrink-0 w-40"><MediaCard item={item} /></div>)}
+            {rest.map((item) => <div class="flex-shrink-0 w-40"><MediaCard item={item} nextUpStatus={item.next_up_status} /></div>)}
           </div>
         )}
       </section>

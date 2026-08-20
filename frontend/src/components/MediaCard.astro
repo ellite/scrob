@@ -3,12 +3,15 @@ import type { MediaItem } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import CardActionBar from "./CardActionBar.astro";
 import { episodeHref } from "../lib/episodeHref";
+import NextUpBadge from "./NextUpBadge.astro";
+import type { NextUpStatus } from "../lib/next-up-status";
 
 interface Props {
   item: MediaItem;
+  nextUpStatus?: NextUpStatus | null;
 }
 
-const { item } = Astro.props;
+const { item, nextUpStatus } = Astro.props;
 const { user } = Astro.locals;
 
 const isPerson = item.type === "person";
@@ -86,6 +89,8 @@ const inLibrary = item.in_library ?? false;
 
         <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
 
+        <NextUpBadge status={nextUpStatus} />
+
         {rating && (
           <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
             <span class="text-xs leading-none">★</span> {rating}
@@ -121,6 +126,7 @@ const inLibrary = item.in_library ?? false;
             <span class="text-xs leading-none">★</span> {rating}
           </div>
         )}
+        <NextUpBadge status={nextUpStatus} />
       </div>
     </div>
   )}
@@ -177,4 +183,3 @@ const inLibrary = item.in_library ?? false;
     </div>
   )}
 </div>
-

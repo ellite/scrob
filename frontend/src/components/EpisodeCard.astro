@@ -3,12 +3,15 @@ import type { MediaItem } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import CardActionBar from "./CardActionBar.astro";
 import { episodeHref } from "../lib/episodeHref";
+import NextUpBadge from "./NextUpBadge.astro";
+import type { NextUpStatus } from "../lib/next-up-status";
 
 interface Props {
   item: MediaItem;
+  nextUpStatus?: NextUpStatus | null;
 }
 
-const { item } = Astro.props;
+const { item, nextUpStatus } = Astro.props;
 
 const sxe =
   item.season_number != null && item.episode_number != null
@@ -67,6 +70,8 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
 
         <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
 
+        <NextUpBadge status={nextUpStatus} />
+
         {sxe && (
           <div class="absolute top-2 left-2 bg-blue-600/90 backdrop-blur-md text-white text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-blue-500/30">
             {sxe}
@@ -74,7 +79,7 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
         )}
 
         {item.library?.resolution && (
-          <div class="absolute top-2 right-2 bg-black/70 backdrop-blur-md text-white text-[11px] font-bold px-2 py-0.5 rounded-md border border-white/10 shadow-lg tracking-tighter">
+          <div class:list={["absolute right-2 bg-black/70 backdrop-blur-md text-white text-[11px] font-bold px-2 py-0.5 rounded-md border border-white/10 shadow-lg tracking-tighter", nextUpStatus ? "top-10" : "top-2"]}>
             {item.library.resolution}
           </div>
         )}
@@ -101,6 +106,8 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
 
         <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
 
+        <NextUpBadge status={nextUpStatus} />
+
         {sxe && (
           <div class="absolute top-2 left-2 bg-blue-600/90 backdrop-blur-md text-white text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-blue-500/30">
             {sxe}
@@ -108,7 +115,7 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
         )}
 
         {item.library?.resolution && (
-          <div class="absolute top-2 right-2 bg-black/70 backdrop-blur-md text-white text-[11px] font-bold px-2 py-0.5 rounded-md border border-white/10 shadow-lg tracking-tighter">
+          <div class:list={["absolute right-2 bg-black/70 backdrop-blur-md text-white text-[11px] font-bold px-2 py-0.5 rounded-md border border-white/10 shadow-lg tracking-tighter", nextUpStatus ? "top-10" : "top-2"]}>
             {item.library.resolution}
           </div>
         )}

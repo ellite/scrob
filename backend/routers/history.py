@@ -645,6 +645,33 @@ def _has_confirmed_air_date(release_date: str | None, today: date) -> bool:
     return bool(release_date) and release_date <= today.isoformat()
 
 
+def _next_up_status(media: Media, today: date) -> str:
+    """Return the single, highest-priority badge for a Next Up episode.
+
+    Precedence is finale, premiere, new today, then the universal next-episode
+    label. A finale is emitted only when the show's existing TMDB season
+    metadata explicitly names this episode as its final numbered episode. A
+    "new" label is emitted only for an exact ISO release-date match, never from
+    a guess based on watch history or a missing date.
+    """
+    season = media.season_number
+    episode = media.episode_number
+    if media.show and season is not None and episode is not None:
+        seasons = (media.show.tmdb_data or {}).get("seasons") or []
+        for season_data in seasons:
+            if season_data.get("season_number") != season:
+                continue
+            episode_count = season_data.get("episode_count")
+            if isinstance(episode_count, int) and episode_count > 0 and episode == episode_count:
+                return "season_finale"
+            break
+    if season is not None and season > 0 and episode == 1:
+        return "season_premiere"
+    if media.release_date == today.isoformat():
+        return "new_today"
+    return "next_episode"
+
+
 class _NextUpEpisodeNotOnTmdb(Exception):
     """Internal signal to roll back a speculative next-up episode row when TMDB
     doesn't actually have it — not a real error, never raised past get_next_up."""
@@ -1001,8 +1028,10 @@ async def get_next_up(
     )
 
     items = [_format_media_item(m) for m in next_up]
+    status_by_media_id = {media.id: _next_up_status(media, today) for media in next_up}
     for item in items:
         item["next_up_hidden"] = item.get("show_id") in hidden_set
+        item["next_up_status"] = status_by_media_id.get(item.get("id"), "next_episode")
         show_stats = remaining_stats.get(item.get("show_id"))
         if show_stats:
             item["episodes_left"] = show_stats["episodes_left"]
