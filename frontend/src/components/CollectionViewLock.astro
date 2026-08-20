@@ -1,0 +1,77 @@
+---
+---
+
+<button
+  type="button"
+  data-collection-lock-toggle
+  aria-pressed="true"
+  title="Collection view locked. Unlock to change collection items."
+  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-amber-300 hover:text-amber-200 hover:bg-amber-400/10 transition-colors active:scale-95 active:opacity-70"
+>
+  <svg data-collection-lock-closed-icon xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+  </svg>
+  <svg data-collection-lock-open-icon class="hidden" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+    <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+  </svg>
+  <span data-collection-lock-label>Locked</span>
+</button>
+
+<span class="sr-only" data-collection-lock-status aria-live="polite">Collection changes are locked on this page.</span>
+
+<script>
+  const lockToggle = document.querySelector<HTMLButtonElement>('[data-collection-lock-toggle]');
+  const lockLabel = document.querySelector<HTMLElement>('[data-collection-lock-label]');
+  const lockStatus = document.querySelector<HTMLElement>('[data-collection-lock-status]');
+  const closedIcon = document.querySelector<SVGElement>('[data-collection-lock-closed-icon]');
+  const openIcon = document.querySelector<SVGElement>('[data-collection-lock-open-icon]');
+  const storageKey = 'scrob.collection-view-locked';
+
+  function setCollectionLocked(locked: boolean) {
+    document.querySelectorAll<HTMLButtonElement>('[data-collection-mutation]').forEach((button) => {
+      button.disabled = locked;
+      button.setAttribute('aria-disabled', String(locked));
+      button.title = locked
+        ? 'Collection view is locked. Unlock it to change collection items.'
+        : (button.dataset.defaultTitle ?? 'Change collection');
+      button.classList.toggle('cursor-not-allowed', locked);
+      button.classList.toggle('opacity-60', locked);
+    });
+
+    closedIcon?.classList.toggle('hidden', !locked);
+    openIcon?.classList.toggle('hidden', locked);
+
+    if (!lockToggle || !lockLabel || !lockStatus) return;
+    lockToggle.setAttribute('aria-pressed', String(locked));
+    lockToggle.title = locked
+      ? 'Collection view locked. Unlock to change collection items.'
+      : 'Collection view unlocked. Lock to prevent collection changes.';
+    lockLabel.textContent = locked ? 'Locked' : 'Unlocked';
+    lockStatus.textContent = locked
+      ? 'Collection changes are locked on this page.'
+      : 'Collection changes are enabled on this page.';
+  }
+
+  if (lockToggle) {
+    let locked = true;
+    try {
+      // Lock by default; an explicit local opt-out is kept for this browser.
+      locked = localStorage.getItem(storageKey) !== 'false';
+    } catch {
+      // Private browsing or blocked storage should retain the safe default.
+    }
+
+    setCollectionLocked(locked);
+    lockToggle.addEventListener('click', () => {
+      locked = !locked;
+      try {
+        localStorage.setItem(storageKey, String(locked));
+      } catch {
+        // The toggle remains useful for this page even without persistent storage.
+      }
+      setCollectionLocked(locked);
+    });
+  }
+</script>

@@ -6,12 +6,14 @@ interface Props {
   collectionPct: number;
   watchPct: number;
   isSeries: boolean;
+  collectionReadOnly?: boolean;
 }
 
-const { watched, inLists, inLibrary, collectionPct, watchPct, isSeries } = Astro.props;
+const { watched, inLists, inLibrary, collectionPct, watchPct, isSeries, collectionReadOnly = false } = Astro.props;
 
 const watchActive = isSeries ? watchPct > 0 : watched;
 const collectActive = isSeries ? collectionPct > 0 : inLibrary;
+const collectedTitle = isSeries ? `${collectionPct}% in library` : (inLibrary ? 'Remove from collection' : 'Add to collection');
 ---
 
 <div class="grid grid-cols-3 flex-shrink-0">
@@ -53,11 +55,15 @@ const collectActive = isSeries ? collectionPct > 0 : inLibrary;
   <!-- Collected (purple) -->
   <button
     data-action="collected"
+    data-collection-mutation={collectionReadOnly ? "" : undefined}
+    data-default-title={collectionReadOnly ? collectedTitle : undefined}
     data-in-library={String(inLibrary)}
     data-collection-pct={String(collectionPct)}
     data-state={collectActive ? 'active' : 'inactive'}
-    title={isSeries ? `${collectionPct}% in library` : (inLibrary ? 'Remove from collection' : 'Add to collection')}
-    class={`flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer hover:brightness-125 ${collectActive ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-900 text-zinc-400 hover:bg-purple-500/10 hover:text-purple-400'}`}
+    title={collectionReadOnly ? 'Collection view is locked. Unlock it to change collection items.' : collectedTitle}
+    disabled={collectionReadOnly}
+    aria-disabled={collectionReadOnly ? 'true' : undefined}
+    class={`flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-60 ${collectActive ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-900 text-zinc-400 hover:bg-purple-500/10 hover:text-purple-400'}`}
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>

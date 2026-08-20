@@ -4,6 +4,7 @@ import MediaCard from "../../components/MediaCard.astro";
 import Pagination from "../../components/Pagination.astro";
 import FilterPanel from "../../components/FilterPanel.astro";
 import SortButton from "../../components/SortButton.astro";
+import CollectionViewLock from "../../components/CollectionViewLock.astro";
 import { api } from "../../lib/api";
 export const prerender = false;
 
@@ -49,6 +50,7 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
   <div class="flex items-center gap-1 mb-6 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit">
     <a href="/shows" class="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors active:scale-95 active:opacity-70">Explore</a>
     <a href="/collection/shows" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors active:scale-95 active:opacity-70">My Collection</a>
+    <CollectionViewLock />
   </div>
   <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
     <div class="flex items-baseline gap-3">
@@ -97,7 +99,7 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
   ) : (
     <>
       <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
-        {data.results.map(item => <MediaCard item={{...item, type: 'series', in_library: true}} />)}
+        {data.results.map(item => <MediaCard item={{...item, type: 'series', in_library: true}} collectionReadOnly />)}
       </div>
 
       <Pagination

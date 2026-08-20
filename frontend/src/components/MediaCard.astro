@@ -6,9 +6,10 @@ import { episodeHref } from "../lib/episodeHref";
 
 interface Props {
   item: MediaItem;
+  collectionReadOnly?: boolean;
 }
 
-const { item } = Astro.props;
+const { item, collectionReadOnly = false } = Astro.props;
 const { user } = Astro.locals;
 
 const isPerson = item.type === "person";
@@ -134,6 +135,7 @@ const inLibrary = item.in_library ?? false;
       collectionPct={collectionPct}
       watchPct={watchPct}
       isSeries={isPercentageStyle}
+      collectionReadOnly={collectionReadOnly}
     />
   )}
 
@@ -177,4 +179,3 @@ const inLibrary = item.in_library ?? false;
     </div>
   )}
 </div>
-
