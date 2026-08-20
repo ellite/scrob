@@ -11,7 +11,7 @@ from models.base import MediaType
 from models.media import Media
 from routers.mdblist import _import_ratings
 from routers.trakt import _apply_imported_rating
-from routers.sync import _fan_out_changes_to_other_connections
+from routers.sync import _fan_out_changes_to_other_connections, _run_full_push
 
 
 def _scalar_result(items: list) -> MagicMock:
@@ -24,6 +24,23 @@ def _rows_result(items: list[tuple]) -> MagicMock:
     result = MagicMock()
     result.all.return_value = items
     return result
+
+
+def _scalar_one_or_none_result(item) -> MagicMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = item
+    return result
+
+
+class _SessionCM:
+    def __init__(self, db) -> None:
+        self.db = db
+
+    async def __aenter__(self):
+        return self.db
+
+    async def __aexit__(self, *exc_info):
+        return False
 
 
 def _settings() -> SimpleNamespace:
@@ -57,7 +74,95 @@ def _plex_connection() -> SimpleNamespace:
     )
 
 
+def _plex_connection_with_id(connection_id: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=connection_id,
+        type="plex",
+        url=f"http://plex-{connection_id}.local",
+        token=f"plex-token-{connection_id}",
+        server_user_id=None,
+        push_watched=False,
+        push_ratings=True,
+        push_playback=False,
+    )
+
+
 class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
+    async def test_movie_rating_uses_only_the_target_plex_connection_rating_key(self) -> None:
+        """Plex ratingKeys are local to each server and must never cross fan-out targets."""
+        media = Media(
+            id=1,
+            tmdb_id=550,
+            media_type=MediaType.movie,
+            title="Fight Club",
+        )
+        first = _plex_connection_with_id(7)
+        second = _plex_connection_with_id(8)
+        db = SimpleNamespace(
+            execute=AsyncMock(
+                side_effect=[
+                    _scalar_result([media]),
+                    _scalar_result([first, second]),
+                    _rows_result([
+                        ("101", "plex", 7, 1),
+                        ("202", "plex", 8, 1),
+                    ]),
+                ]
+            ),
+            commit=AsyncMock(),
+        )
+
+        with patch("routers.sync.plex.set_rating", AsyncMock(return_value=True)) as set_plex:
+            await _fan_out_changes_to_other_connections(
+                db,
+                user_id=3,
+                exclude_connection_id=None,
+                new_watched_ids=set(),
+                new_ratings={(1, None): 8.0},
+                settings=None,
+            )
+
+        self.assertCountEqual(
+            set_plex.await_args_list,
+            [
+                unittest.mock.call("http://plex-7.local", "plex-token-7", "101", 8.0),
+                unittest.mock.call("http://plex-8.local", "plex-token-8", "202", 8.0),
+            ],
+        )
+
+    async def test_full_push_scopes_known_plex_rating_keys_to_the_connection(self) -> None:
+        conn = _plex_connection_with_id(8)
+        conn.plex_push_watchlist = False
+        db = SimpleNamespace(
+            execute=AsyncMock(
+                side_effect=[
+                    MagicMock(),
+                    _scalar_one_or_none_result(conn),
+                    _rows_result([(1, None, 8.0)]),
+                    _rows_result([("202", 1)]),
+                    MagicMock(),
+                    MagicMock(),
+                ]
+            ),
+            commit=AsyncMock(),
+        )
+
+        with (
+            patch("routers.sync.async_sessionmaker", return_value=lambda: _SessionCM(db)),
+            patch("routers.sync.plex.set_rating", AsyncMock(return_value=True)) as set_plex,
+        ):
+            await _run_full_push(user_id=3, connection_id=8, job_id=99)
+
+        set_plex.assert_awaited_once_with(
+            "http://plex-8.local",
+            "plex-token-8",
+            "202",
+            8.0,
+            client=unittest.mock.ANY,
+        )
+        source_id_query = db.execute.await_args_list[3].args[0]
+        self.assertIn("collection_files.connection_id", str(source_id_query))
+
     async def test_season_rating_fans_out_with_provider_specific_identity(self) -> None:
         media = Media(
             id=1,
