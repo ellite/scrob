@@ -2,6 +2,7 @@
 import Base from "../layouts/Base.astro";
 import { api } from "../lib/api";
 import type { AdminUser } from "../lib/api";
+import { connectionIconHtml } from "../lib/connectionIcons";
 
 const { token, user } = Astro.locals;
 
@@ -42,8 +43,8 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <!-- TMDB -->
         <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
           <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="tmdb-body">
-            <div class="flex items-center gap-3 pointer-events-none">
-              <span class="w-2 h-2 bg-blue-500 rounded-full shrink-0"></span>
+            <div class="flex items-center gap-4 pointer-events-none">
+              <Fragment set:html={connectionIconHtml("themoviedatabase")} />
               <span class="font-medium text-zinc-200">TMDB</span>
             </div>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
@@ -77,8 +78,8 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <!-- TVDB -->
         <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
           <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="tvdb-body">
-            <div class="flex items-center gap-3 pointer-events-none">
-              <span class="w-2 h-2 bg-teal-500 rounded-full shrink-0"></span>
+            <div class="flex items-center gap-4 pointer-events-none">
+              <Fragment set:html={connectionIconHtml("tvdb")} />
               <span class="font-medium text-zinc-200">TVDB</span>
             </div>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
@@ -112,8 +113,8 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <!-- Radarr -->
         <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
           <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="radarr-body">
-            <div class="flex items-center gap-3 pointer-events-none">
-              <span class="w-2 h-2 bg-yellow-500 rounded-full shrink-0"></span>
+            <div class="flex items-center gap-4 pointer-events-none">
+              <Fragment set:html={connectionIconHtml("radarr")} />
               <div class="flex flex-col gap-0.5">
                 <span class="font-medium text-zinc-200">Radarr</span>
                 <span id="radarr-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
@@ -193,8 +194,8 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <!-- Sonarr -->
         <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
           <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="sonarr-body">
-            <div class="flex items-center gap-3 pointer-events-none">
-              <span class="w-2 h-2 bg-sky-500 rounded-full shrink-0"></span>
+            <div class="flex items-center gap-4 pointer-events-none">
+              <Fragment set:html={connectionIconHtml("sonarr")} />
               <div class="flex flex-col gap-0.5">
                 <span class="font-medium text-zinc-200">Sonarr</span>
                 <span id="sonarr-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>

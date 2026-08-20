@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import { api } from "../lib/api";
+import { connectionIconHtml } from "../lib/connectionIcons";
 
 const { token } = Astro.locals;
 const [settings, me, connections, scrobbleConnections, seasonOverrides] = await Promise.all([
@@ -43,13 +44,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             <!-- Connections list (server-side rendered, managed client-side) -->
             <div id="connections-list" class="space-y-3">
             {connections.map((conn) => {
-              const typeColor = conn.type === "jellyfin" ? "bg-purple-500" : conn.type === "emby" ? "bg-green-500" : conn.type === "plex" ? "bg-yellow-500" : conn.type === "stremio" ? "bg-blue-500" : conn.type === "arvio" ? "bg-teal-500" : "bg-cyan-500";
               const typeLabel = conn.type === "jellyfin" ? "Jellyfin" : conn.type === "emby" ? "Emby" : conn.type === "plex" ? "Plex" : conn.type === "stremio" ? "Stremio" : conn.type === "arvio" ? "ARVIO" : "Nuvio";
               return (
               <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden" data-connection-id={conn.id}>
                 <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target={`conn-body-${conn.id}`}>
-                  <div class="flex items-center gap-3 pointer-events-none">
-                    <span class={`w-2 h-2 ${typeColor} rounded-full shrink-0`}></span>
+                  <div class="flex items-center gap-4 pointer-events-none">
+                    <Fragment set:html={connectionIconHtml(conn.type)} />
                     <div class="flex flex-col gap-0.5">
                       <span class="font-medium text-zinc-200 flex items-center gap-2">
                         {conn.name}
@@ -495,14 +495,13 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
             <div id="scrobble-connections-list" class="space-y-2">
             {scrobbleConnections.map((conn) => {
-              const typeColor = conn.type === "jellyfin" ? "bg-purple-500" : conn.type === "emby" ? "bg-green-500" : "bg-yellow-500";
               const typeLabel = conn.type === "jellyfin" ? "Jellyfin" : conn.type === "emby" ? "Emby" : "Plex";
               const identity = conn.type === "plex" ? conn.server_username : conn.server_user_id;
               return (
               <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden" data-scrobble-conn-id={conn.id}>
                 <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target={`scrobble-body-${conn.id}`}>
-                  <div class="flex items-center gap-3 pointer-events-none">
-                    <span class={`w-2 h-2 ${typeColor} rounded-full shrink-0`}></span>
+                  <div class="flex items-center gap-4 pointer-events-none">
+                    <Fragment set:html={connectionIconHtml(conn.type)} />
                     <div class="flex flex-col gap-0.5">
                       <span class="font-medium text-zinc-200">{conn.name}</span>
                       <span class="text-xs text-zinc-500">{typeLabel}{identity ? ` · ${identity}` : ' · Webhook only'}</span>
@@ -613,8 +612,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             <!-- Trakt collapsible row -->
             <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
               <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="trakt-body">
-                <div class="flex items-center gap-3 pointer-events-none">
-                  <span class="w-2 h-2 bg-red-500 rounded-full shrink-0"></span>
+                <div class="flex items-center gap-4 pointer-events-none">
+                  <Fragment set:html={connectionIconHtml("trakt")} />
                   <div class="flex flex-col gap-0.5">
                     <span class="font-medium text-zinc-200">Trakt</span>
                     <span id="trakt-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
@@ -800,8 +799,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             <!-- Simkl collapsible row -->
             <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
               <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="simkl-body">
-                <div class="flex items-center gap-3 pointer-events-none">
-                  <span class="w-2 h-2 bg-teal-400 rounded-full shrink-0"></span>
+                <div class="flex items-center gap-4 pointer-events-none">
+                  <Fragment set:html={connectionIconHtml("simkl")} />
                   <div class="flex flex-col gap-0.5">
                     <span class="font-medium text-zinc-200">Simkl</span>
                     <span id="simkl-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
@@ -943,8 +942,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             <!-- MDBList collapsible row -->
             <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
               <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="mdblist-body">
-                <div class="flex items-center gap-3 pointer-events-none">
-                  <span class="w-2 h-2 bg-violet-400 rounded-full shrink-0"></span>
+                <div class="flex items-center gap-4 pointer-events-none">
+                  <Fragment set:html={connectionIconHtml("mdblist")} />
                   <div class="flex flex-col gap-0.5">
                     <span class="font-medium text-zinc-200">MDBList</span>
                     <span id="mdblist-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
@@ -1084,19 +1083,33 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
             <!-- Bingebase Card -->
             <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-lg hover:border-zinc-700 transition-colors">
-              <div class="collapsible-header p-6 flex items-center justify-between cursor-pointer select-none" data-target="bingebase-body">
+              <div class="collapsible-header flex items-center justify-between px-6 py-4 cursor-pointer select-none" data-target="bingebase-body">
                 <div class="flex items-center gap-4">
-                  <div class="w-12 h-12 bg-zinc-800 rounded-xl flex items-center justify-center border border-zinc-700 shrink-0 font-bold text-lg text-emerald-400">
-                    BB
-                  </div>
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <h2 class="font-semibold text-zinc-100 text-lg">Bingebase</h2>
-                      <span class={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${settings.bingebase_connected ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-zinc-800 text-zinc-400'}`}>
-                        {settings.bingebase_connected ? 'Connected' : 'Disconnected'}
-                      </span>
-                    </div>
-                    <p class="text-sm text-zinc-400 mt-0.5">Push watch history & live scrobbles to Bingebase</p>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="36" height="36" class="shrink-0">
+                    <defs>
+                      <linearGradient id="bingebaseBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#FF9333" />
+                        <stop offset="100%" stop-color="#FF6F00" />
+                      </linearGradient>
+                      <linearGradient id="bingebaseStarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#FFFFFF" />
+                        <stop offset="100%" stop-color="#FFE0CC" />
+                      </linearGradient>
+                      <filter id="bingebaseDropShadow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feDropShadow dx="1.5" dy="2.5" stdDeviation="1.5" flood-color="#B34B00" flood-opacity="0.6"/>
+                      </filter>
+                    </defs>
+                    <rect width="100" height="100" rx="18" fill="url(#bingebaseBgGrad)" />
+                    <g filter="url(#bingebaseDropShadow)" fill="url(#bingebaseStarGrad)">
+                      <polygon points="52.5,12 66,35 52.5,35" />
+                      <polygon points="21,43.5 56,38.5 86,33 59,57 66,88 47.5,58" />
+                    </g>
+                  </svg>
+                  <div class="flex flex-col gap-0.5">
+                    <h2 class="font-semibold text-zinc-100 text-lg">Bingebase</h2>
+                    <span class={`text-xs font-normal px-1.5 py-0.5 rounded self-start ${settings.bingebase_connected ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'}`}>
+                      {settings.bingebase_connected ? '● Connected' : '● Disconnected'}
+                    </span>
                   </div>
                 </div>
                 <div class="flex items-center gap-2">
@@ -1196,8 +1209,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             <!-- Radarr collapsible row -->
             <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
               <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="radarr-body">
-                <div class="flex items-center gap-3 pointer-events-none">
-                  <span class="w-2 h-2 bg-yellow-500 rounded-full shrink-0"></span>
+                <div class="flex items-center gap-4 pointer-events-none">
+                  <Fragment set:html={connectionIconHtml("radarr")} />
                   <div class="flex flex-col gap-0.5">
                     <span class="font-medium text-zinc-200">Radarr</span>
                     <span id="radarr-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
@@ -1272,8 +1285,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             <!-- Sonarr collapsible row -->
             <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
               <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="sonarr-body">
-                <div class="flex items-center gap-3 pointer-events-none">
-                  <span class="w-2 h-2 bg-sky-500 rounded-full shrink-0"></span>
+                <div class="flex items-center gap-4 pointer-events-none">
+                  <Fragment set:html={connectionIconHtml("sonarr")} />
                   <div class="flex flex-col gap-0.5">
                     <span class="font-medium text-zinc-200">Sonarr</span>
                     <span id="sonarr-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
