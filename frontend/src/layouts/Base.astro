@@ -135,6 +135,9 @@ const bottomNavItem = (active: boolean) =>
       <div id="nav-default" class="flex items-center justify-between gap-3 safe-area-top">
         <!-- Left: logo + desktop links -->
         <div class="flex items-center gap-6 min-w-0">
+          <button id="pwa-back" type="button" class="hidden md:hidden -ml-2 p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors active:scale-95" aria-label="Go back" title="Go back">
+            <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
           <a href="/" class="flex items-center gap-2 text-zinc-100 font-bold text-lg tracking-tight shrink-0 group active:opacity-70 transition-opacity">
             <img src={logo.src} alt="Scrob Logo" width="32" height="32" loading="eager" class="w-7 h-7 md:w-8 md:h-8 object-contain group-hover:scale-105 transition-transform" />
             <span>Scrob</span>
@@ -1998,6 +2001,19 @@ const bottomNavItem = (active: boolean) =>
     if (isIos && !isInStandaloneMode) {
       msgEl.textContent = 'Tap the Share button, then "Add to Home Screen".';
       setTimeout(showBanner, 2000);
+    }
+  </script>
+
+  <script>
+    // iOS hides browser chrome for Home Screen apps. Provide an in-app back
+    // control only when the standalone session actually has somewhere to go.
+    const pwaBackButton = document.getElementById('pwa-back');
+    const isStandalonePwa = window.matchMedia('(display-mode: standalone)').matches
+      || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+
+    if (pwaBackButton && isStandalonePwa && window.history.length > 1) {
+      pwaBackButton.classList.remove('hidden');
+      pwaBackButton.addEventListener('click', () => window.history.back());
     }
   </script>
 
