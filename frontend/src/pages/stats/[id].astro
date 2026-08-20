@@ -1,5 +1,6 @@
 ---
 import Base from "../../layouts/Base.astro";
+import { backendPath } from "../../lib/backend-url.mjs";
 export const prerender = false;
 
 const { id } = Astro.params;
@@ -11,7 +12,7 @@ let accessError = "";
 
 try {
   const res = await fetch(
-    `http://localhost:${import.meta.env.BACKEND_PORT ?? "7331"}/profile/${id}`,
+    backendPath(`/profile/${id}`),
     token ? { headers: { Authorization: `Bearer ${token}` } } : {}
   );
   if (res.status === 404) accessError = "User not found.";

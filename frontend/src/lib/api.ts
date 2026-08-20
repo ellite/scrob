@@ -1,5 +1,4 @@
-const BACKEND_PORT = (import.meta.env.BACKEND_PORT as string | undefined) ?? "7331";
-const BASE = `http://localhost:${BACKEND_PORT}`;
+import { backendUrl as BASE } from "./backend-url.mjs";
 
 type ParamValue = string | number | boolean | undefined;
 

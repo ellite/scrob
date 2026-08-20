@@ -294,7 +294,9 @@ Database migrations run automatically on startup - no manual steps required.
 | `TZ` | `UTC` | Container timezone (e.g. `Europe/Lisbon`). |
 | `PUID` | `1000` | User ID to run the process as. |
 | `PGID` | `1000` | Group ID to run the process as. |
-| `BACKEND_PORT` | `7331` | Internal port the backend binds to. Override only if `7331` conflicts on bare metal. |
+| `BACKEND_URL` | `http://127.0.0.1:7331` | Runtime URL Astro uses to reach FastAPI. Set this when frontend and backend are on different hosts or the backend has a non-loopback address. Must be an `http://` or `https://` origin with no path or credentials. |
+| `BACKEND_PORT` | `7331` | Backwards-compatible loopback-port override when `BACKEND_URL` is unset. Must be between `1` and `65535`. |
+| `SERVER_URL` | `http://localhost:7330` | Public URL of the Astro frontend. Set it on public deployments; FastAPI uses it for email/OIDC links and its direct-API CORS allowlist. |
 | `OIDC_ENABLED` | `false` | Enable OIDC login. |
 | `OIDC_DISABLE_PASSWORD_LOGIN` | `false` | Enforce OIDC-only login (disables username/password). |
 
@@ -310,6 +312,34 @@ scrob.yourdomain.com {
     reverse_proxy localhost:7330
 }
 ```
+
+### Bare-metal installation
+
+The supported bare-metal topology keeps FastAPI private and lets Astro proxy
+all browser API requests, so no browser credentials or CORS relaxation is
+needed. Install Node.js 22+ and [uv](https://docs.astral.sh/uv/), provision
+PostgreSQL, then copy `.env.example` to `.env` and set `DATABASE_URL`,
+`SECRET_KEY`, and the public `SERVER_URL`.
+
+```bash
+# terminal 1 — FastAPI stays on loopback
+cd backend
+uv sync --frozen
+uv run alembic upgrade head
+uv run uvicorn main:app --host 127.0.0.1 --port 7331
+
+# terminal 2 — Astro reads BACKEND_URL/BACKEND_PORT at process start
+cd frontend
+npm ci
+npm run build
+HOST=127.0.0.1 PORT=7330 BACKEND_URL=http://127.0.0.1:7331 node dist/server/entry.mjs
+```
+
+Put Caddy, Nginx, or another HTTPS reverse proxy in front of port `7330`.
+If FastAPI is on another host, set `BACKEND_URL=https://backend.internal.example`
+for the Astro process and protect that backend network path independently.
+Do not expose FastAPI just to make the frontend work; browser traffic should
+continue through `/api/proxy/`.
 
 ### External PostgreSQL
 

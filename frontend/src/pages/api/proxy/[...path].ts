@@ -1,7 +1,5 @@
 import type { APIRoute } from "astro";
-
-const BACKEND_PORT = (import.meta.env.BACKEND_PORT as string | undefined) ?? "7331";
-const BACKEND = `http://localhost:${BACKEND_PORT}`;
+import { backendPath } from "../../../lib/backend-url.mjs";
 
 // This proxy is a generic catch-all for every backend path, so a redirect
 // passed straight through to the browser must be pinned to hosts we actually
@@ -13,7 +11,7 @@ const ALLOWED_REDIRECT_HOSTS = new Set(["image.tmdb.org"]);
 async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Response> {
   const path = params.path ?? "";
   const search = new URL(request.url).search;
-  const backendUrl = `${BACKEND}/${path}${search}`;
+  const backendUrl = backendPath(`/${path}${search}`);
 
   const forwardHeaders = new Headers();
 

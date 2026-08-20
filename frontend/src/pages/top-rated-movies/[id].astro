@@ -2,6 +2,7 @@
 import Base from "../../layouts/Base.astro";
 import Pagination from "../../components/Pagination.astro";
 import { api, type ProfileRatedItem, tmdbImageUrl } from "../../lib/api";
+import { backendPath } from "../../lib/backend-url.mjs";
 
 export const prerender = false;
 
@@ -17,7 +18,7 @@ let accessError = "";
 
 try {
   const res = await fetch(
-    `http://localhost:${import.meta.env.BACKEND_PORT ?? "7331"}/profile/${id}`,
+    backendPath(`/profile/${id}`),
     token ? { headers: { Authorization: `Bearer ${token}` } } : {}
   );
   if (res.status === 404) accessError = "User not found.";

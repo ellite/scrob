@@ -1,5 +1,4 @@
-const BACKEND_PORT = (import.meta.env.BACKEND_PORT as string | undefined) ?? "7331";
-const BACKEND = `http://localhost:${BACKEND_PORT}`;
+import { backendPath } from "./backend-url.mjs";
 
 // Passes a backend path straight through byte-for-byte. Used for FastAPI's
 // built-in docs (/docs, /redoc, /openapi.json) — their generated HTML embeds
@@ -13,7 +12,7 @@ const BACKEND = `http://localhost:${BACKEND_PORT}`;
 export async function proxyBackendPath(path: string, token?: string): Promise<Response> {
   const headers = new Headers();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const res = await fetch(`${BACKEND}${path}`, { headers });
+  const res = await fetch(backendPath(path), { headers });
   const responseHeaders = new Headers();
   const contentType = res.headers.get("Content-Type");
   if (contentType) responseHeaders.set("Content-Type", contentType);
