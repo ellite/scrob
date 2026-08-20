@@ -2,6 +2,7 @@
 import Base from "../../../../../layouts/Base.astro";
 import ActionBar from "../../../../../components/ActionBar.astro";
 import CommentsSection from "../../../../../components/CommentsSection.astro";
+import SeasonRatingChart from "../../../../../components/SeasonRatingChart.astro";
 import { api, type TvdbSeason } from "../../../../../lib/api";
 import { formatSeasonTitle } from "../../../../../lib/media-format";
 export const prerender = false;
@@ -193,6 +194,11 @@ const seasonTitle = season
           mediaType="series"
           tmdbId={season.show.tmdb_id ?? Number(id)}
           seasonNumber={Number(season_number)}
+        />
+
+        <SeasonRatingChart
+          episodes={season.episodes ?? []}
+          episodeBasePath={`/show/tvdb/${id}/season/${season_number}`}
         />
 
         <div class="space-y-4">

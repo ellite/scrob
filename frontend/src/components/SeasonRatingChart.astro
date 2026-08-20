@@ -1,0 +1,140 @@
+---
+import { buildSeasonRatingEntries, summarizeEpisodeRatings } from "../lib/season-ratings.mjs";
+
+interface Props {
+  episodes: Array<{
+    episode_number: number;
+    tmdb_rating?: number | null;
+    title?: string | null;
+    name?: string | null;
+  }>;
+  episodeBasePath: string;
+}
+
+const { episodes, episodeBasePath } = Astro.props;
+const chartId = "episode-rating-chart";
+const entries = buildSeasonRatingEntries(episodes);
+const { ratedEntries, highRating, lowRating, hasRange, highest, lowest } = summarizeEpisodeRatings(entries);
+const minWidth = Math.max(320, entries.length * 42);
+---
+
+<section class="mb-10 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 sm:p-5" aria-labelledby={chartId}>
+  <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+    <div>
+      <h2 id={chartId} class="text-lg font-black tracking-tight text-zinc-100">Episode ratings</h2>
+      <p class="text-xs text-zinc-500">Community ratings · select an episode bar to open its details</p>
+    </div>
+    {hasRange && highest && lowest && (
+      <p class="text-xs font-semibold text-zinc-400">
+        <span class="text-emerald-400">High E{highest.episodeNumber} · {highRating!.toFixed(1)}</span>
+        <span aria-hidden="true"> · </span>
+        <span class="text-amber-300">Low E{lowest.episodeNumber} · {lowRating!.toFixed(1)}</span>
+      </p>
+    )}
+  </div>
+
+  {ratedEntries.length === 0 ? (
+    <p class="rounded-xl border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400" role="status">
+      No episode ratings are available for this season yet.
+    </p>
+  ) : (
+    <div class="overflow-x-auto pb-2" tabindex="0" role="region" aria-label="Episode ratings chart; scroll horizontally to view every episode">
+      <div class="rating-chart" style={`min-width: ${minWidth}px`}>
+        <div class="rating-axis" aria-hidden="true"><span>10</span><span>5</span><span>0</span></div>
+        <div class="rating-bars">
+          {entries.map((episode) => {
+            const isRated = episode.rating !== null;
+            const isHighest = hasRange && episode.rating === highRating;
+            const isLowest = hasRange && episode.rating === lowRating;
+            const label = isRated
+              ? `Episode ${episode.episodeNumber}${episode.title ? `, ${episode.title}` : ""}: ${episode.rating!.toFixed(1)} out of 10${isHighest ? ", highest rated" : isLowest ? ", lowest rated" : ""}`
+              : `Episode ${episode.episodeNumber}${episode.title ? `, ${episode.title}` : ""}: rating unavailable`;
+            return (
+              <a
+                href={`${episodeBasePath}/${episode.episodeNumber}`}
+                class:list={["rating-bar", { "rating-bar--missing": !isRated, "rating-bar--highest": isHighest, "rating-bar--lowest": isLowest }]}
+                aria-label={label}
+              >
+                <span class="rating-bar__value" aria-hidden="true">{isRated ? episode.rating!.toFixed(1) : "—"}</span>
+                <span
+                  class="rating-bar__column"
+                  style={isRated ? `height: ${Math.max(8, episode.rating! * 10)}%` : undefined}
+                  aria-hidden="true"
+                ></span>
+                <span class="rating-bar__episode" aria-hidden="true">E{episode.episodeNumber}</span>
+              </a>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  )}
+</section>
+
+<style>
+  .rating-chart {
+    display: grid;
+    grid-template-columns: 1.6rem minmax(0, 1fr);
+    gap: 0.5rem;
+    height: 13rem;
+  }
+
+  .rating-axis {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 0.1rem 0 1.6rem;
+    color: rgb(113 113 122);
+    font-size: 0.625rem;
+    font-weight: 700;
+  }
+
+  .rating-bars {
+    display: grid;
+    grid-auto-columns: minmax(2rem, 1fr);
+    grid-auto-flow: column;
+    align-items: end;
+    gap: 0.35rem;
+    min-width: 0;
+    border-bottom: 1px solid rgb(63 63 70);
+    background-image: linear-gradient(to top, rgb(63 63 70 / 0.55) 1px, transparent 1px);
+    background-size: 100% 50%;
+  }
+
+  .rating-bar {
+    display: grid;
+    grid-template-rows: 1rem minmax(0, 1fr) 1.25rem;
+    min-width: 0;
+    height: 100%;
+    color: rgb(161 161 170);
+    text-align: center;
+    text-decoration: none;
+    outline-offset: 3px;
+  }
+
+  .rating-bar:focus-visible { outline: 2px solid rgb(96 165 250); }
+  .rating-bar:hover .rating-bar__column { filter: brightness(1.2); }
+
+  .rating-bar__value,
+  .rating-bar__episode { font-size: 0.625rem; font-weight: 700; line-height: 1rem; }
+  .rating-bar__episode { color: rgb(113 113 122); }
+
+  .rating-bar__column {
+    align-self: end;
+    min-height: 0.25rem;
+    border-radius: 0.35rem 0.35rem 0 0;
+    background: linear-gradient(to top, rgb(37 99 235), rgb(96 165 250));
+    transition: filter 150ms ease;
+  }
+
+  .rating-bar--highest .rating-bar__column { background: linear-gradient(to top, rgb(5 150 105), rgb(74 222 128)); }
+  .rating-bar--highest .rating-bar__value { color: rgb(74 222 128); }
+  .rating-bar--lowest .rating-bar__column { background: linear-gradient(to top, rgb(217 119 6), rgb(251 191 36)); }
+  .rating-bar--lowest .rating-bar__value { color: rgb(252 211 77); }
+
+  .rating-bar--missing .rating-bar__column {
+    height: 0.35rem;
+    border: 1px dashed rgb(82 82 91);
+    background: transparent;
+  }
+</style>
