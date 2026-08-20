@@ -2842,7 +2842,6 @@ async def _backfill_plex_languages(user_id: int, connection_id: int, p_url: str,
         return total
 
 
-PLEX_HISTORY_OVERLAP = timedelta(minutes=5)
 # How long a webhook-created (provisional) WatchEvent's watched_at — this
 # server's receipt time for the completion webhook — can plausibly lag behind
 # Plex's own recorded viewedAt for that same play, before this stops treating
@@ -2900,10 +2899,14 @@ async def _backfill_plex_watch_history(
 
         account_id = await plex.get_account_id(p_url, p_token, server_username) if server_username else None
 
-        cutoff = datetime.now(timezone.utc).replace(tzinfo=None)
-        since = None if conn.plex_history_cursor_at is None else conn.plex_history_cursor_at - PLEX_HISTORY_OVERLAP
-
-        history = await plex.get_history(p_url, p_token, since=since)
+        # Always a full pull, not bounded by a saved cursor - an incremental
+        # cursor that advances on every run (even one that ends up matching
+        # nothing, e.g. before server_username was configured correctly) can
+        # permanently skip real history that was never actually imported.
+        # Every previously-imported play still dedupes by exact (media_id,
+        # watched_at) below, so re-scanning the full history each time is
+        # safe, just not the cheapest possible option.
+        history = await plex.get_history(p_url, p_token, since=None)
         history = [h for h in history if h.get("type") in ("movie", "episode")]
         if account_id is not None:
             history = [h for h in history if h.get("accountID") == account_id]
@@ -2988,7 +2991,6 @@ async def _backfill_plex_watch_history(
                     await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=i + 1, total_items=len(history)))
                     await db.commit()
 
-        conn.plex_history_cursor_at = cutoff
         await db.commit()
         return new_events, reconciled, unmatched
 
@@ -3096,58 +3098,64 @@ async def _apply_local_watchlist_changes(
             kind, _, raw_id = key.partition(":")
             tmdb_id_item = int(raw_id)
             try:
-                if kind == "movie":
-                    media_result = await db.execute(
-                        select(Media)
-                        .where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.movie)
-                        .order_by(Media.id)
-                    )
-                    media = media_result.scalars().first()
-                    if not media:
-                        d = await tmdb.get_movie(tmdb_id_item, api_key=tmdb_api_key)
-                        media, _created = await create_media_safely(
-                            db, tmdb_id_item, MediaType.movie,
-                            title=d.get("title") or item.get("title", ""),
-                            poster_path=tmdb.poster_url(d.get("poster_path")),
-                            backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-                            release_date=d.get("release_date"),
-                            tmdb_rating=d.get("vote_average"),
-                            overview=d.get("overview"),
-                            adult=d.get("adult", False),
+                # A savepoint per item - db is the same session the caller
+                # keeps using for language backfill and watch-history backfill
+                # afterward, so one item's DB-level failure (e.g. an ON
+                # CONFLICT mismatch) must not abort the whole shared
+                # transaction and take those later steps down with it.
+                async with db.begin_nested():
+                    if kind == "movie":
+                        media_result = await db.execute(
+                            select(Media)
+                            .where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.movie)
+                            .order_by(Media.id)
                         )
-                else:
-                    media_result = await db.execute(
-                        select(Media)
-                        .where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
-                        .order_by(Media.id)
-                    )
-                    media = media_result.scalars().first()
-                    if not media:
-                        d = await tmdb.get_show(tmdb_id_item, api_key=tmdb_api_key)
-                        media, _created = await create_media_safely(
-                            db, tmdb_id_item, MediaType.series,
-                            title=d.get("name") or item.get("title", ""),
-                            poster_path=tmdb.poster_url(d.get("poster_path")),
-                            backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-                            release_date=d.get("first_air_date"),
-                            tmdb_rating=d.get("vote_average"),
-                            overview=d.get("overview"),
-                            adult=d.get("adult", False),
+                        media = media_result.scalars().first()
+                        if not media:
+                            d = await tmdb.get_movie(tmdb_id_item, api_key=tmdb_api_key)
+                            media, _created = await create_media_safely(
+                                db, tmdb_id_item, MediaType.movie,
+                                title=d.get("title") or item.get("title", ""),
+                                poster_path=tmdb.poster_url(d.get("poster_path")),
+                                backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
+                                release_date=d.get("release_date"),
+                                tmdb_rating=d.get("vote_average"),
+                                overview=d.get("overview"),
+                                adult=d.get("adult", False),
+                            )
+                    else:
+                        media_result = await db.execute(
+                            select(Media)
+                            .where(Media.tmdb_id == tmdb_id_item, Media.media_type == MediaType.series)
+                            .order_by(Media.id)
                         )
+                        media = media_result.scalars().first()
+                        if not media:
+                            d = await tmdb.get_show(tmdb_id_item, api_key=tmdb_api_key)
+                            media, _created = await create_media_safely(
+                                db, tmdb_id_item, MediaType.series,
+                                title=d.get("name") or item.get("title", ""),
+                                poster_path=tmdb.poster_url(d.get("poster_path")),
+                                backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
+                                release_date=d.get("first_air_date"),
+                                tmdb_rating=d.get("vote_average"),
+                                overview=d.get("overview"),
+                                adult=d.get("adult", False),
+                            )
 
-                # Idempotent against a concurrent add from the lists UI, which
-                # doesn't hold this connection's reconcile lock. uq_list_item was
-                # replaced by the uq_list_item_season expression index (#142) -
-                # ON CONFLICT ON CONSTRAINT needs a real constraint, not a bare
-                # index, so the conflict target is given as the matching
-                # expression list instead (verified against the actual index).
-                await db.execute(
-                    insert(ListItem)
-                    .values(list_id=watchlist.id, media_id=media.id)
-                    .on_conflict_do_nothing(
-                        index_elements=[ListItem.list_id, ListItem.media_id, func.coalesce(ListItem.season_number, -1)]
+                    # Idempotent against a concurrent add from the lists UI, which
+                    # doesn't hold this connection's reconcile lock. uq_list_item was
+                    # replaced by the uq_list_item_season expression index (#142) -
+                    # ON CONFLICT ON CONSTRAINT needs a real constraint, not a bare
+                    # index, so the conflict target is given as the matching
+                    # expression list instead (verified against the actual index).
+                    await db.execute(
+                        insert(ListItem)
+                        .values(list_id=watchlist.id, media_id=media.id)
+                        .on_conflict_do_nothing(
+                            index_elements=[ListItem.list_id, ListItem.media_id, func.coalesce(ListItem.season_number, -1)]
+                        )
                     )
-                )
                 applied.add(key)
             except Exception as exc:
                 print(f"  Warning: failed to import Plex watchlist item {key}: {exc}")
@@ -3215,7 +3223,7 @@ async def _apply_remote_watchlist_changes(
     return failed_add, failed_remove
 
 
-async def _reconcile_plex_watchlist(db: AsyncSession, user_id: int, conn, tmdb_api_key: str | None) -> None:
+async def _reconcile_plex_watchlist(user_id: int, connection_id: int, tmdb_api_key: str | None) -> None:
     """Reconcile the Plex account watchlist with the managed Scrob list in
     both directions, against this connection's last-synced baseline (see
     core/watchlist_reconcile.py for the semantics).
@@ -3223,75 +3231,89 @@ async def _reconcile_plex_watchlist(db: AsyncSession, user_id: int, conn, tmdb_a
     The pull job and the full push job both call this, and it honors both
     direction flags itself, so it doesn't matter which job runs first.
     Never raises: failures log a warning and leave the baseline alone so
-    the next run retries."""
-    pull_enabled = bool(conn.plex_sync_watchlist)
-    push_enabled = bool(conn.plex_push_watchlist)
-    if not (pull_enabled or push_enabled):
-        return
+    the next run retries.
 
-    async with _plex_watchlist_lock(conn.id):
-        try:
-            # A concurrent job may have reconciled while we waited on the
-            # lock, and conn was loaded well before it. Re-read the baseline.
-            baseline_result = await db.execute(
-                select(MediaServerConnection.plex_watchlist_synced_keys).where(
-                    MediaServerConnection.id == conn.id
+    Runs in its own DB session, same rationale as _backfill_plex_languages -
+    when called from the main collection/watched sync pass, sharing that
+    session (which has by then executed tens of thousands of statements)
+    was observed to make some of this function's own inserts spuriously
+    fail their ON CONFLICT match against a real, verified-correct index,
+    for reasons that couldn't be reproduced in isolation. A connection this
+    function's own is unaffected."""
+    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with async_session() as db:
+        conn = await db.get(MediaServerConnection, connection_id)
+        if not conn:
+            return
+
+        pull_enabled = bool(conn.plex_sync_watchlist)
+        push_enabled = bool(conn.plex_push_watchlist)
+        if not (pull_enabled or push_enabled):
+            return
+
+        async with _plex_watchlist_lock(conn.id):
+            try:
+                # A concurrent job may have reconciled while we waited on the
+                # lock, and conn was loaded well before it. Re-read the baseline.
+                baseline_result = await db.execute(
+                    select(MediaServerConnection.plex_watchlist_synced_keys).where(
+                        MediaServerConnection.id == conn.id
+                    )
                 )
-            )
-            baseline = baseline_result.scalar_one_or_none()
+                baseline = baseline_result.scalar_one_or_none()
 
-            print(f"  Fetching Plex watchlist...")
-            remote_items = await plex.get_watchlist(conn.token)
-            print(f"  {len(remote_items)} items in Plex watchlist")
-            remote_by_key = _plex_watchlist_remote_map(remote_items)
+                print(f"  Fetching Plex watchlist...")
+                remote_items = await plex.get_watchlist(conn.token)
+                print(f"  {len(remote_items)} items in Plex watchlist")
+                remote_by_key = _plex_watchlist_remote_map(remote_items)
 
-            watchlist, local_by_key = await _load_local_watchlist_state(db, user_id)
-            if watchlist is None and baseline is not None:
-                # The managed list was deleted in the UI. Without this reset,
-                # every baseline key would read as a local deletion and wipe
-                # the user's real Plex watchlist. Start over instead.
-                baseline = None
+                watchlist, local_by_key = await _load_local_watchlist_state(db, user_id)
+                if watchlist is None and baseline is not None:
+                    # The managed list was deleted in the UI. Without this reset,
+                    # every baseline key would read as a local deletion and wipe
+                    # the user's real Plex watchlist. Start over instead.
+                    baseline = None
 
-            plan = plan_watchlist_reconcile(
-                local_by_key.keys(),
-                remote_by_key.keys(),
-                baseline,
-                pull_enabled=pull_enabled,
-                push_enabled=push_enabled,
-            )
-            if plan.suppressed:
-                logger.warning(
-                    "Plex watchlist reconcile suppressed for connection %s: %s. Not acting on a fetch "
-                    "that may be truncated. If the removals are real, remove the items from the list "
-                    "in Scrob, or toggle watchlist sync off and on to rebuild from a fresh baseline.",
-                    conn.id, plan.suppressed_reason,
+                plan = plan_watchlist_reconcile(
+                    local_by_key.keys(),
+                    remote_by_key.keys(),
+                    baseline,
+                    pull_enabled=pull_enabled,
+                    push_enabled=push_enabled,
                 )
-                return
+                if plan.suppressed:
+                    logger.warning(
+                        "Plex watchlist reconcile suppressed for connection %s: %s. Not acting on a fetch "
+                        "that may be truncated. If the removals are real, remove the items from the list "
+                        "in Scrob, or toggle watchlist sync off and on to rebuild from a fresh baseline.",
+                        conn.id, plan.suppressed_reason,
+                    )
+                    return
 
-            applied_local = await _apply_local_watchlist_changes(
-                db, user_id, watchlist, local_by_key, plan, remote_by_key, tmdb_api_key
-            )
-            failed_add, failed_remove = await _apply_remote_watchlist_changes(
-                conn, plan, local_by_key, remote_by_key
-            )
+                applied_local = await _apply_local_watchlist_changes(
+                    db, user_id, watchlist, local_by_key, plan, remote_by_key, tmdb_api_key
+                )
+                failed_add, failed_remove = await _apply_remote_watchlist_changes(
+                    conn, plan, local_by_key, remote_by_key
+                )
 
-            new_baseline = compute_new_baseline(
-                applied_local, failed_push_add=failed_add, failed_push_remove=failed_remove
-            )
-            await db.execute(
-                update(MediaServerConnection)
-                .where(MediaServerConnection.id == conn.id)
-                .values(plex_watchlist_synced_keys=new_baseline)
-            )
-            await db.commit()
-            print(
-                f"  Plex watchlist reconcile complete: "
-                f"+{len(plan.add_local)}/-{len(plan.remove_local)} local, "
-                f"+{len(plan.push_add) - len(failed_add)}/-{len(plan.push_remove) - len(failed_remove)} on Plex"
-            )
-        except Exception as exc:
-            print(f"  Warning: Plex watchlist reconcile failed: {exc}")
-            await db.rollback()
+                new_baseline = compute_new_baseline(
+                    applied_local, failed_push_add=failed_add, failed_push_remove=failed_remove
+                )
+                await db.execute(
+                    update(MediaServerConnection)
+                    .where(MediaServerConnection.id == conn.id)
+                    .values(plex_watchlist_synced_keys=new_baseline)
+                )
+                await db.commit()
+                print(
+                    f"  Plex watchlist reconcile complete: "
+                    f"+{len(plan.add_local)}/-{len(plan.remove_local)} local, "
+                    f"+{len(plan.push_add) - len(failed_add)}/-{len(plan.push_remove) - len(failed_remove)} on Plex"
+                )
+            except Exception as exc:
+                print(f"  Warning: Plex watchlist reconcile failed: {exc}")
+                await db.rollback()
 
 
 async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
@@ -3331,6 +3353,21 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
             p_url = conn.url
             p_token = conn.token
+
+            # Plex's bulk library-listing endpoints (get_movies/get_shows/get_episodes)
+            # only ever return viewCount/lastViewedAt/userRating for whichever account
+            # the token itself belongs to - there's no per-Home-user view of that data,
+            # unlike Jellyfin/Emby's admin-key-plus-user-id model. A connection scoped
+            # to a specific Home user via server_username can share the same token as
+            # another connection (e.g. the server owner's own), so trusting this bulk
+            # watched-status data here would silently attribute the token owner's own
+            # plays to whichever Scrob account this connection belongs to.
+            # _backfill_plex_watch_history below is the one watched-status path that's
+            # actually account-scoped (via Plex's real per-play history + account_id
+            # filtering), so it stays the sole source of truth whenever server_username
+            # is set - this only affects the redundant bulk pass, not sync_watched
+            # itself, which still gates the (correct) backfill call further down.
+            plex_watched_state_is_reliable = conn.sync_watched and not conn.server_username
 
             print(f"  Fetching Plex libraries...")
             libraries = await plex.get_libraries(p_url, p_token)
@@ -3424,7 +3461,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                     await db.commit()
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.plex, db, stats, user_id, job_id, api_key=tmdb_api_key,
-                        sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
+                        sync_collection=conn.sync_collection, sync_watched=plex_watched_state_is_reliable, sync_ratings=conn.sync_ratings,
                         new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                         ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids)
                     all_warnings.extend(w)
@@ -3615,7 +3652,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         filtered_episodes, MediaType.episode, CollectionSource.plex,
                         db, stats, user_id, job_id, show_map,
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
-                        sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
+                        sync_collection=conn.sync_collection, sync_watched=plex_watched_state_is_reliable, sync_ratings=conn.sync_ratings,
                         new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                         ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids,
                     )
@@ -3626,7 +3663,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                             unmatched_series_episodes, MediaType.episode, CollectionSource.plex,
                             db, stats, user_id, job_id, {},
                             api_key=tmdb_api_key, show_id_to_tmdb={},
-                            sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
+                            sync_collection=conn.sync_collection, sync_watched=plex_watched_state_is_reliable, sync_ratings=conn.sync_ratings,
                             new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                             ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids,
                         )
@@ -3634,7 +3671,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
             # ── Plex watchlist ↔ Scrob list ──────────────────────────────────
             if conn.plex_sync_watchlist:
-                await _reconcile_plex_watchlist(db, user_id, conn, tmdb_api_key)
+                await _reconcile_plex_watchlist(user_id, conn.id, tmdb_api_key)
 
             backfilled = await _backfill_plex_languages(user_id, conn.id, p_url, p_token, job_id)
             if backfilled:
@@ -6132,7 +6169,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     select(UserSettings).where(UserSettings.user_id == user_id)
                 )
                 wl_tmdb_key = await _get_effective_tmdb_key(db, wl_settings_result.scalar_one_or_none())
-                await _reconcile_plex_watchlist(db, user_id, conn, wl_tmdb_key)
+                await _reconcile_plex_watchlist(user_id, conn.id, wl_tmdb_key)
 
             watched_ids: set[int] = set()
             ratings_map: RatingChanges = {}
