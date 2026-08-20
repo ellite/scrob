@@ -4,7 +4,9 @@ import logging
 import re
 import urllib.parse
 import uuid
-from typing import Optional
+from datetime import date, datetime, timedelta
+from typing import Literal, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel
@@ -84,6 +86,34 @@ TV_GENRE_IDS: dict[str, int] = {
 
 MOVIE_GENRE_NAMES: dict[int, str] = {v: k for k, v in MOVIE_GENRE_IDS.items()}
 TV_GENRE_NAMES: dict[int, str] = {v: k for k, v in TV_GENRE_IDS.items()}
+
+
+def _browser_timezone(timezone_name: str) -> ZoneInfo:
+    """Return the browser-supplied IANA zone, with a safe UTC fallback."""
+    try:
+        return ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, KeyError):
+        return ZoneInfo("UTC")
+
+
+def _airing_window(timezone_name: str, days: int, now: datetime | None = None) -> tuple[date, date]:
+    """Calendar-date bounds for the homepage rail.
+
+    TMDB gives episode air *dates*, not reliable universal air instants, so all
+    comparisons deliberately remain date-only in the viewer's timezone.
+    """
+    user_tz = _browser_timezone(timezone_name)
+    start = (now.astimezone(user_tz) if now else datetime.now(user_tz)).date()
+    return start, start + timedelta(days=days - 1)
+
+
+def _air_date_in_window(air_date: str | None, start: date, end: date) -> bool:
+    if not air_date:
+        return False
+    try:
+        return start <= date.fromisoformat(air_date) <= end
+    except ValueError:
+        return False
 
 
 def _genre_weight(genre_ids: list[int], liked: set[str], disliked: set[str], name_map: dict[int, str]) -> float:
@@ -1617,10 +1647,16 @@ async def on_air_today(
 @router.get("/airing-today/collected")
 async def airing_today_collected(
     timezone: str = Query(default="UTC"),
+    days: Literal[1, 7] = Query(default=1),
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    """Return shows airing today on TMDB that the user has in their collection."""
+    """Return collected-show episodes with date-only air dates in a short window.
+
+    ``days`` intentionally accepts only the homepage's two UI states: today
+    (1) and today plus the next six calendar dates (7). This is not a live
+    guide: TMDB provides an air_date rather than a reliable universal airtime.
+    """
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
@@ -1629,15 +1665,7 @@ async def airing_today_collected(
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
 
-    from datetime import datetime
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-    try:
-        user_tz = ZoneInfo(timezone)
-    except (ZoneInfoNotFoundError, KeyError):
-        user_tz = ZoneInfo("UTC")
-
-    today = datetime.now(user_tz).date().isoformat()
+    window_start, window_end = _airing_window(timezone, days)
 
     # Collect the user's show TMDB IDs in one query
     collected_q = await db.execute(
@@ -1652,79 +1680,82 @@ async def airing_today_collected(
     if not collected_tmdb_ids:
         return {"results": []}
 
-    # Fetch page 1 to discover total_pages, then fetch remaining pages concurrently.
-    # timezone forwarded to TMDB itself, not just the local air_date check below -
-    # otherwise TMDB pre-filters "airing today" against its own default timezone,
-    # which can miss (or wrongly include) shows relative to the user's real today.
-    try:
-        first = await tmdb.get_on_air_today(page=1, api_key=tmdb_key, timezone=timezone)
-    except Exception as e:
-        print(f"Error fetching airing-today from TMDB: {e}")
-        return {"results": []}
-    total_pages = min(first.get("total_pages", 1), 20)
-    all_shows = list(first.get("results", []))
+    # The global /airing_today discovery list cannot represent a seven-day
+    # range and is only an approximate "around today" signal. Fetch the
+    # user's collected shows directly, then filter their date-only episode
+    # metadata using the browser's calendar boundaries.
+    shows_q = await db.execute(
+        select(ShowModel).where(ShowModel.tmdb_id.in_(collected_tmdb_ids))
+    )
+    collected_shows = sorted(
+        (show for show in shows_q.scalars().all() if show.tmdb_id),
+        key=lambda show: (show.title or "").casefold(),
+    )
+    semaphore = asyncio.Semaphore(8)
 
-    if total_pages > 1:
-        pages = await asyncio.gather(
-            *[tmdb.get_on_air_today(page=p, api_key=tmdb_key, timezone=timezone) for p in range(2, total_pages + 1)],
-            return_exceptions=True,
-        )
-        for page_data in pages:
-            if isinstance(page_data, Exception):
-                continue
-            all_shows.extend(page_data.get("results", []))
-
-    collected_shows = [s for s in all_shows if s.get("id") in collected_tmdb_ids]
-
-    if not collected_shows:
-        return {"results": []}
-
-    semaphore = asyncio.Semaphore(10)
-
-    async def fetch_episode(show: dict) -> dict | None:
+    async def fetch_episodes(show: ShowModel) -> list[dict]:
         async with semaphore:
             try:
-                detail = await tmdb.get_show_light(show["id"], api_key=tmdb_key)
+                detail = await tmdb.get_show_light(show.tmdb_id, api_key=tmdb_key)
             except Exception:
-                detail = {}
+                return []
 
-        episode: dict | None = None
-        for candidate in (detail.get("last_episode_to_air"), detail.get("next_episode_to_air")):
-            if candidate and candidate.get("air_date") == today:
-                episode = candidate
-                break
+            # The last pointer matters for today's view: TMDB can move an
+            # episode there shortly after its release. The next pointer finds
+            # the current season for future entries.
+            season_numbers = {
+                candidate.get("season_number")
+                for candidate in (detail.get("last_episode_to_air"), detail.get("next_episode_to_air"))
+                if candidate
+                and _air_date_in_window(candidate.get("air_date"), window_start, window_end)
+                and candidate.get("season_number") is not None
+            }
+            if not season_numbers:
+                return []
+            seasons = await asyncio.gather(
+                *[tmdb.get_season(show.tmdb_id, season_number, api_key=tmdb_key) for season_number in season_numbers],
+                return_exceptions=True,
+            )
 
-        # TMDB's own /tv/airing_today list is a looser "has something airing
-        # around today" signal than an exact per-episode date match - a show
-        # can appear on it while its actual next/last episode is tomorrow (or
-        # yesterday). Without this check, that mismatch used to be masked by
-        # falling back to a generic "still airing" entry instead of excluding
-        # the show, which is how a show could show up here a day early/late.
-        if not episode:
-            return None
+        show_name = detail.get("name") or show.title
+        backdrop_path = detail.get("backdrop_path") or show.backdrop_path
+        results: list[dict] = []
+        for season in seasons:
+            if isinstance(season, Exception):
+                continue
+            for episode in season.get("episodes") or []:
+                air_date = episode.get("air_date")
+                if not _air_date_in_window(air_date, window_start, window_end):
+                    continue
+                results.append({
+                    "id": None,
+                    "tmdb_id": episode.get("id"),
+                    "type": "episode",
+                    "title": episode.get("name") or show_name,
+                    "show_title": show_name,
+                    "show_tmdb_id": show.tmdb_id,
+                    "season_number": episode.get("season_number"),
+                    "episode_number": episode.get("episode_number"),
+                    "poster_path": tmdb.poster_url(episode.get("still_path"), size="w780")
+                        or tmdb.poster_url(backdrop_path, size="w780"),
+                    "backdrop_path": tmdb.poster_url(backdrop_path, size="w780"),
+                    "tmdb_rating": episode.get("vote_average") or detail.get("vote_average") or show.tmdb_rating,
+                    "release_date": air_date,
+                    "adult": detail.get("adult", False),
+                })
+        return results
 
-        show_name = show.get("name")
-        return {
-            "id": None,
-            "tmdb_id": show["id"],
-            "type": "episode",
-            "title": episode.get("name") or show_name,
-            "show_title": show_name,
-            "show_tmdb_id": show["id"],
-            "season_number": episode.get("season_number"),
-            "episode_number": episode.get("episode_number"),
-            "poster_path": tmdb.poster_url(episode.get("still_path"), size="w780")
-                or tmdb.poster_url(show.get("backdrop_path"), size="w780"),
-            "backdrop_path": tmdb.poster_url(show.get("backdrop_path"), size="w780"),
-            "tmdb_rating": show.get("vote_average"),
-            "release_date": episode.get("air_date"),
-            "adult": show.get("adult", False),
-        }
-
-    fetched = await asyncio.gather(*[fetch_episode(s) for s in collected_shows])
-    results = [r for r in fetched if r is not None]
-    await enrich_with_state(db, current_user.id, results)
-    return {"results": results}
+    fetched = await asyncio.gather(*(fetch_episodes(show) for show in collected_shows))
+    results = [episode for episodes in fetched for episode in episodes]
+    results.sort(key=lambda episode: (
+        episode.get("release_date") or "",
+        (episode.get("show_title") or "").casefold(),
+        episode.get("season_number") if episode.get("season_number") is not None else -1,
+        episode.get("episode_number") if episode.get("episode_number") is not None else -1,
+        episode.get("tmdb_id") or -1,
+    ))
+    await enrich_with_state(db, effective_user_id, results)
+    return {"results": results, "today": window_start.isoformat(), "window_days": days}
 
 
 def recently_added_order(max_added):

@@ -366,12 +366,23 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       <!-- Airing Today -->
       <section class="mb-16" id="section-airing-today">
         <div class="flex items-center justify-between mb-8">
-          <h2 class="section-headline">Airing Today</h2>
-          <a href="/airing-today" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-            See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
-          </a>
+          <div>
+            <h2 class="section-headline" id="airing-window-heading">Airing Today</h2>
+            <p id="airing-window-description" class="mt-1 text-xs text-zinc-500">Episode release dates for shows in your collection</p>
+          </div>
+          <div class="flex items-center gap-4">
+            {user && (
+              <div class="flex rounded-lg border border-zinc-800 bg-zinc-900 p-1" role="group" aria-label="Airing episode date range">
+                <button type="button" data-airing-window="1" aria-pressed="true" class="rounded-md px-2.5 py-1 text-xs font-bold text-zinc-100 bg-zinc-800 transition-colors">Today</button>
+                <button type="button" data-airing-window="7" aria-pressed="false" class="rounded-md px-2.5 py-1 text-xs font-bold text-zinc-400 hover:text-zinc-100 transition-colors">7 days</button>
+              </div>
+            )}
+            <a href="/airing-today" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
+              See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+            </a>
+          </div>
         </div>
-        <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0" id="grid-airing-today">
+        <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0" id="grid-airing-today" aria-live="polite">
           {Array.from({ length: 10 }).map(() => (
             <div class="flex-shrink-0 w-56 animate-pulse rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800">
               <div class="aspect-[3/2] bg-zinc-800"></div>
@@ -385,6 +396,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
 </Base>
 
 <script define:vars={{ token, hasUser: !!user }}>
+
+  const airingPreferenceKey = 'scrob:home-airing-window-days';
+  const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
   function esc(str) {
           if (str == null) return '';
@@ -403,6 +417,26 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       return path;
     }
     return `/api/proxy/media/image/${size}${path.startsWith('/') ? path : '/' + path}`;
+  }
+
+  function localIsoDate() {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: userTimezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date());
+    const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${value.year}-${value.month}-${value.day}`;
+  }
+
+  function episodeDateLabel(iso) {
+    if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
+    const current = Date.UTC(...localIsoDate().split('-').map(Number));
+    const target = Date.UTC(...iso.split('-').map(Number));
+    const diff = Math.round((target - current) / 86400000);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Tomorrow';
+    return new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, {
+      weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC',
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -511,6 +545,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
           const sxe = item.season_number != null && item.episode_number != null
             ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`
             : null;
+          const airDate = episodeDateLabel(item.release_date);
 
           return `<a href="${esc(href)}" class="flex-shrink-0 w-56 group relative block rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-blue-500/50 hover:shadow-2xl hover:shadow-blue-900/20 transition-all duration-300 transform hover:-translate-y-1 active:scale-95 active:opacity-70">
             <div class="aspect-[3/2] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
@@ -521,33 +556,43 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
               <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
               ${sxe ? `<div class="absolute top-2 left-2 bg-blue-600/90 backdrop-blur-md text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg border border-blue-500/30">${esc(sxe)}</div>` : ''}
               <div class="absolute bottom-0 left-0 right-0 p-3">
-                ${item.show_title ? `<p class="text-[11px] font-bold text-white/70 truncate leading-tight">${esc(item.show_title)}</p>` : ''}
+                <div class="flex items-center justify-between gap-2">
+                  ${item.show_title ? `<p class="text-[11px] font-bold text-white/70 truncate leading-tight">${esc(item.show_title)}</p>` : ''}
+                  ${airDate ? `<span class="shrink-0 text-[10px] font-bold text-blue-200">${esc(airDate)}</span>` : ''}
+                </div>
                 <h3 class="text-sm font-bold text-white truncate group-hover:text-blue-300 transition-colors leading-tight">${esc(item.title)}</h3>
               </div>
             </div>
           </a>`;
         }
 
-        async function loadSection(url, gridId, renderFn, limit) {
+        async function loadSection(url, gridId, renderFn, limit, emptyMessage = null) {
           const grid = document.getElementById(gridId);
           if (!grid) return;
+          const clearOrRemove = () => {
+            if (emptyMessage) {
+              grid.innerHTML = `<p class="w-full py-5 text-sm text-zinc-500">${esc(emptyMessage)}</p>`;
+            } else {
+              grid.closest('section').remove();
+            }
+          };
           try {
             const res = await fetch(url, {
               headers: token ? { 'Authorization': `Bearer ${token}` } : {},
             });
             if (!res.ok) {
-              grid.closest('section').remove();
+              clearOrRemove();
               return;
             }
             const data = await res.json();
             const items = (data.results ?? []).slice(0, limit);
             if (items.length === 0) {
-              grid.closest('section').remove();
+              clearOrRemove();
               return;
             }
             grid.innerHTML = items.map(renderFn).join('');
           } catch {
-            grid.closest('section').remove();
+            clearOrRemove();
           }
         }
 
@@ -558,8 +603,41 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
           loadSection('/api/proxy/media/trending/shows', 'grid-trending-shows', mediaCardHtml, 12);
         }
         if (hasUser) {
-          const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-          loadSection(`/api/proxy/media/airing-today/collected?timezone=${encodeURIComponent(userTimezone)}`, 'grid-airing-today', episodeCardHtml, 12);
+          const heading = document.getElementById('airing-window-heading');
+          const description = document.getElementById('airing-window-description');
+          const windowButtons = Array.from(document.querySelectorAll('[data-airing-window]'));
+          let selectedDays = 1;
+          try {
+            selectedDays = localStorage.getItem(airingPreferenceKey) === '7' ? 7 : 1;
+          } catch {}
+
+          const loadAiringWindow = (days) => {
+            const isWeek = days === 7;
+            heading.textContent = isWeek ? 'Airing Next 7 Days' : 'Airing Today';
+            description.textContent = isWeek
+              ? 'Episode release dates for the next 7 calendar days — no airtimes are implied'
+              : 'Episode release dates for shows in your collection';
+            windowButtons.forEach((button) => {
+              const active = Number(button.dataset.airingWindow) === days;
+              button.setAttribute('aria-pressed', String(active));
+              button.classList.toggle('bg-zinc-800', active);
+              button.classList.toggle('text-zinc-100', active);
+              button.classList.toggle('text-zinc-400', !active);
+            });
+            loadSection(
+              `/api/proxy/media/airing-today/collected?timezone=${encodeURIComponent(userTimezone)}&days=${days}`,
+              'grid-airing-today',
+              episodeCardHtml,
+              12,
+              isWeek ? 'No collected episodes are scheduled in the next 7 calendar days.' : 'No collected episodes are scheduled today.',
+            );
+          };
+          windowButtons.forEach((button) => button.addEventListener('click', () => {
+            selectedDays = Number(button.dataset.airingWindow);
+            try { localStorage.setItem(airingPreferenceKey, String(selectedDays)); } catch {}
+            loadAiringWindow(selectedDays);
+          }));
+          loadAiringWindow(selectedDays);
         } else {
           // No personal collection to filter by when logged out - show a
           // small generic sample of what's airing today instead.
