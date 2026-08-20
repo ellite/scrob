@@ -1490,6 +1490,12 @@ const bottomNavItem = (active: boolean) =>
       }
     }
 
+    function updateWatchHistoryItemUI(watched: boolean) {
+      document.querySelectorAll<HTMLElement>(
+        `[data-card][data-tmdb-id="${_watchHistoryTmdbId}"][data-media-type="${_watchHistoryMediaType}"] [data-action="watched"]`
+      ).forEach(btn => updateWatchedButtonUI(btn, watched));
+    }
+
     async function loadWatchHistoryEvents() {
       const eventsEl = document.getElementById('watch-history-modal-events')!;
       eventsEl.innerHTML = '<div class="px-4 py-3 text-xs text-zinc-500">Loading…</div>';
@@ -1524,9 +1530,7 @@ const bottomNavItem = (active: boolean) =>
         const hasEvents = events.length > 0;
         unwatchBtn.classList.toggle('hidden', !hasEvents);
         document.getElementById('watch-history-log-btn')!.textContent = hasEvents ? 'Log a rewatch' : 'Mark as watched';
-        document.querySelectorAll<HTMLElement>(
-          `[data-card][data-tmdb-id="${_watchHistoryTmdbId}"][data-media-type="${_watchHistoryMediaType}"] [data-action="watched"]`
-        ).forEach(b => updateWatchedButtonUI(b, watched));
+        updateWatchHistoryItemUI(watched);
       } catch {
         eventsEl.innerHTML = '<div class="px-4 py-2 text-xs text-red-400">Failed to load</div>';
       }
@@ -1663,17 +1667,26 @@ const bottomNavItem = (active: boolean) =>
             if (_watchHistoryEpisodeNumber) watchBody.episode_number = Number(_watchHistoryEpisodeNumber);
           }
           await apiFetch('/history', 'POST', watchBody);
-          await loadWatchHistoryEvents();
-          syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
-          // Reset to "Just now" after logging
-          _watchHistoryDateMode = 'now';
-          (document.getElementById('watch-history-now-btn') as HTMLElement).className = activeClass;
-          (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
-          (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
-          input.classList.add('hidden');
         } catch (err) {
           logBtn.textContent = idleLabel;
           alertFromError(err, 'Failed to mark as watched');
+          logBtn.disabled = false;
+          return;
+        }
+
+        // The write is now durable. Reflect that locally before attempting
+        // the non-critical history reload, so a failed follow-up GET cannot
+        // be presented as a failed write or invite a duplicate submission.
+        updateWatchHistoryItemUI(true);
+        try {
+          await loadWatchHistoryEvents();
+          syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
+        } catch {
+          // The POST succeeded; the next modal opening retries the history
+          // fetch. Keep the local watched state instead of reporting a write
+          // failure after the fact.
+        } finally {
+          closeWatchHistoryModal();
         }
         logBtn.disabled = false;
       });
