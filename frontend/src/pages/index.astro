@@ -558,8 +558,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
           loadSection('/api/proxy/media/trending/shows', 'grid-trending-shows', mediaCardHtml, 12);
         }
         if (hasUser) {
-          const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-          loadSection(`/api/proxy/media/airing-today/collected?timezone=${encodeURIComponent(userTimezone)}`, 'grid-airing-today', episodeCardHtml, 12);
+          loadSection('/api/proxy/media/airing-today/collected', 'grid-airing-today', episodeCardHtml, 12);
         } else {
           // No personal collection to filter by when logged out - show a
           // small generic sample of what's airing today instead.

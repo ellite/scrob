@@ -1616,11 +1616,19 @@ async def on_air_today(
 
 @router.get("/airing-today/collected")
 async def airing_today_collected(
-    timezone: str = Query(default="UTC"),
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
-    """Return shows airing today on TMDB that the user has in their collection."""
+    """Return today's episodes for the user's collected/watched shows.
+
+    Built from the same per-user calendar computation as /calendar (#194,
+    #243) rather than TMDB's own /tv/airing_today list, which is a global
+    "popular shows airing around now" feed - a collected show not in that
+    feed's first 20 pages (or not TMDB-popular at all) used to be silently
+    dropped here even though its actual episode aired today. Reusing the
+    calendar's cache also guarantees this widget can't drift from the
+    calendar's own Today row (#288).
+    """
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
@@ -1629,101 +1637,30 @@ async def airing_today_collected(
     if not check_tmdb_key(tmdb_key):
         return {"results": []}
 
-    from datetime import datetime
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    from routers.calendar import _load_or_compute
 
-    try:
-        user_tz = ZoneInfo(timezone)
-    except (ZoneInfoNotFoundError, KeyError):
-        user_tz = ZoneInfo("UTC")
+    cache = await _load_or_compute(db, effective_user_id, force=False)
+    calendar = cache["calendar"]
+    today = calendar.get("today")
 
-    today = datetime.now(user_tz).date().isoformat()
-
-    # Collect the user's show TMDB IDs in one query
-    collected_q = await db.execute(
-        select(ShowModel.tmdb_id)
-        .join(Media, Media.show_id == ShowModel.id)
-        .join(Collection, Collection.media_id == Media.id)
-        .where(Collection.user_id == effective_user_id)
-        .distinct()
-    )
-    collected_tmdb_ids: set[int] = {row[0] for row in collected_q.all()}
-
-    if not collected_tmdb_ids:
-        return {"results": []}
-
-    # Fetch page 1 to discover total_pages, then fetch remaining pages concurrently.
-    # timezone forwarded to TMDB itself, not just the local air_date check below -
-    # otherwise TMDB pre-filters "airing today" against its own default timezone,
-    # which can miss (or wrongly include) shows relative to the user's real today.
-    try:
-        first = await tmdb.get_on_air_today(page=1, api_key=tmdb_key, timezone=timezone)
-    except Exception as e:
-        print(f"Error fetching airing-today from TMDB: {e}")
-        return {"results": []}
-    total_pages = min(first.get("total_pages", 1), 20)
-    all_shows = list(first.get("results", []))
-
-    if total_pages > 1:
-        pages = await asyncio.gather(
-            *[tmdb.get_on_air_today(page=p, api_key=tmdb_key, timezone=timezone) for p in range(2, total_pages + 1)],
-            return_exceptions=True,
-        )
-        for page_data in pages:
-            if isinstance(page_data, Exception):
-                continue
-            all_shows.extend(page_data.get("results", []))
-
-    collected_shows = [s for s in all_shows if s.get("id") in collected_tmdb_ids]
-
-    if not collected_shows:
-        return {"results": []}
-
-    semaphore = asyncio.Semaphore(10)
-
-    async def fetch_episode(show: dict) -> dict | None:
-        async with semaphore:
-            try:
-                detail = await tmdb.get_show_light(show["id"], api_key=tmdb_key)
-            except Exception:
-                detail = {}
-
-        episode: dict | None = None
-        for candidate in (detail.get("last_episode_to_air"), detail.get("next_episode_to_air")):
-            if candidate and candidate.get("air_date") == today:
-                episode = candidate
-                break
-
-        # TMDB's own /tv/airing_today list is a looser "has something airing
-        # around today" signal than an exact per-episode date match - a show
-        # can appear on it while its actual next/last episode is tomorrow (or
-        # yesterday). Without this check, that mismatch used to be masked by
-        # falling back to a generic "still airing" entry instead of excluding
-        # the show, which is how a show could show up here a day early/late.
-        if not episode:
-            return None
-
-        show_name = show.get("name")
-        return {
+    results = [
+        {
             "id": None,
-            "tmdb_id": show["id"],
+            "tmdb_id": e["show_tmdb_id"],
             "type": "episode",
-            "title": episode.get("name") or show_name,
-            "show_title": show_name,
-            "show_tmdb_id": show["id"],
-            "season_number": episode.get("season_number"),
-            "episode_number": episode.get("episode_number"),
-            "poster_path": tmdb.poster_url(episode.get("still_path"), size="w780")
-                or tmdb.poster_url(show.get("backdrop_path"), size="w780"),
-            "backdrop_path": tmdb.poster_url(show.get("backdrop_path"), size="w780"),
-            "tmdb_rating": show.get("vote_average"),
-            "release_date": episode.get("air_date"),
-            "adult": show.get("adult", False),
+            "title": e.get("episode_name") or e.get("show_title"),
+            "show_title": e.get("show_title"),
+            "show_tmdb_id": e.get("show_tmdb_id"),
+            "season_number": e.get("season_number"),
+            "episode_number": e.get("episode_number"),
+            "poster_path": e.get("poster_path"),
+            "backdrop_path": e.get("poster_path"),
+            "release_date": e.get("air_date"),
         }
-
-    fetched = await asyncio.gather(*[fetch_episode(s) for s in collected_shows])
-    results = [r for r in fetched if r is not None]
-    await enrich_with_state(db, current_user.id, results)
+        for e in calendar.get("entries", [])
+        if e.get("air_date") == today
+    ]
+    await enrich_with_state(db, effective_user_id, results)
     return {"results": results}
 
 
