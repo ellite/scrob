@@ -293,7 +293,40 @@ async def list_shows(
     elif sort == "release_date":
         q = base_query.order_by(ShowModel.first_air_date.desc().nulls_last())
     elif sort == "created_at":
-        q = base_query.order_by(ShowModel.created_at.desc().nulls_last())
+        added_at_sq = (
+            select(Media.show_id.label("show_id"), Collection.added_at.label("added_at"))
+            .join(Collection, Collection.media_id == Media.id)
+            .where(
+                Collection.user_id == current_user.id,
+                Media.show_id.isnot(None),
+                Media.media_type == MediaType.episode,
+                Media.season_number.isnot(None),
+                Media.season_number != 0,
+                Media.episode_number.isnot(None),
+            )
+            .union_all(
+                select(ShowModel.id.label("show_id"), Collection.added_at.label("added_at"))
+                .select_from(Media)
+                .join(Collection, Collection.media_id == Media.id)
+                .join(ShowModel, ShowModel.tmdb_id == Media.tmdb_id)
+                .where(
+                    Collection.user_id == current_user.id,
+                    Media.media_type == MediaType.series,
+                    Media.tmdb_id.isnot(None),
+                )
+            )
+            .subquery()
+        )
+        show_added_at_sq = (
+            select(added_at_sq.c.show_id, func.max(added_at_sq.c.added_at).label("max_added_at"))
+            .group_by(added_at_sq.c.show_id)
+            .subquery()
+        )
+        q = (
+            base_query
+            .outerjoin(show_added_at_sq, show_added_at_sq.c.show_id == ShowModel.id)
+            .order_by(show_added_at_sq.c.max_added_at.desc().nulls_last())
+        )
     elif sort == "last_watched":
         last_watched_sq = (
             select(Media.show_id, func.max(WatchEvent.watched_at).label("last_watched_at"))
