@@ -2822,7 +2822,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           })), currentFolder);
           populateSelect('radarr_quality_profile', data.radarr.quality_profiles ?? [], currentProfile);
           const tagContainer = document.getElementById('radarr_tags_list');
-          const selectedTags = Array.from(tagContainer?.querySelectorAll('input[name="radarr_tags"]') ?? []).map(i => parseInt(i.value));
+          const selectedTags = Array.from(tagContainer?.querySelectorAll('input[name="radarr_tags"]') ?? [])
+            .filter(i => i.type !== 'checkbox' || i.checked)
+            .map(i => parseInt(i.value));
           renderTags('radarr_tags_list', data.radarr.tags, selectedTags, 'radarr');
         }
       }
@@ -2837,7 +2839,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           })), currentFolder);
           populateSelect('sonarr_quality_profile', data.sonarr.quality_profiles ?? [], currentProfile);
           const tagContainer = document.getElementById('sonarr_tags_list');
-          const selectedTags = Array.from(tagContainer?.querySelectorAll('input[name="sonarr_tags"]') ?? []).map(i => parseInt(i.value));
+          const selectedTags = Array.from(tagContainer?.querySelectorAll('input[name="sonarr_tags"]') ?? [])
+            .filter(i => i.type !== 'checkbox' || i.checked)
+            .map(i => parseInt(i.value));
           renderTags('sonarr_tags_list', data.sonarr.tags, selectedTags, 'sonarr');
         }
       }
@@ -3279,7 +3283,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 const v = (document.getElementById('radarr_quality_profile') as HTMLSelectElement)?.value;
                 return v ? parseInt(v) : null;
               })(),
-              radarr_tags: Array.from(radarrTagInputs).map((i: any) => parseInt(i.value)),
+              radarr_tags: Array.from(radarrTagInputs)
+                .filter((i: any) => i.type !== 'checkbox' || i.checked)
+                .map((i: any) => parseInt(i.value)),
               radarr_customize_on_add: (document.getElementById('radarr_customize_on_add') as HTMLInputElement)?.checked ?? false,
             };
             const radarrRes = await fetch('/api/proxy/auth/settings', {
@@ -3303,7 +3309,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 const v = (document.getElementById('sonarr_quality_profile') as HTMLSelectElement)?.value;
                 return v ? parseInt(v) : null;
               })(),
-              sonarr_tags: Array.from(sonarrTagInputs).map((i: any) => parseInt(i.value)),
+              sonarr_tags: Array.from(sonarrTagInputs)
+                .filter((i: any) => i.type !== 'checkbox' || i.checked)
+                .map((i: any) => parseInt(i.value)),
               sonarr_season_folder: (document.getElementById('sonarr_season_folder') as HTMLInputElement)?.checked ?? true,
               sonarr_customize_on_add: (document.getElementById('sonarr_customize_on_add') as HTMLInputElement)?.checked ?? false,
             };
@@ -3452,7 +3460,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             
             // Populate tags
             const tagContainer = document.getElementById('radarr_tags_list');
-            const selectedTags = Array.from(tagContainer.querySelectorAll('input[name="radarr_tags"]')).map(i => parseInt(i.value));
+            const selectedTags = Array.from(tagContainer.querySelectorAll('input[name="radarr_tags"]'))
+              .filter(i => i.type !== 'checkbox' || i.checked)
+              .map(i => parseInt(i.value));
             renderTags('radarr_tags_list', profData.tags, selectedTags, 'radarr');
 
             setConnStatus('radarr-conn-status', 'connected');
@@ -3489,7 +3499,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
             // Populate tags
             const tagContainer = document.getElementById('sonarr_tags_list');
-            const selectedTags = Array.from(tagContainer.querySelectorAll('input[name="sonarr_tags"]')).map(i => parseInt(i.value));
+            const selectedTags = Array.from(tagContainer.querySelectorAll('input[name="sonarr_tags"]'))
+              .filter(i => i.type !== 'checkbox' || i.checked)
+              .map(i => parseInt(i.value));
             renderTags('sonarr_tags_list', profData.tags, selectedTags, 'sonarr');
 
             setConnStatus('sonarr-conn-status', 'connected');

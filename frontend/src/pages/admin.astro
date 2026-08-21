@@ -712,7 +712,9 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           `<option value="${esc(String(p.id))}" ${String(p.id) === currentProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
 
       const tagContainer = document.getElementById('radarr_tags_list')!;
-      const selectedTags = Array.from(tagContainer.querySelectorAll<HTMLInputElement>('input[name="radarr_tags"]')).map(i => parseInt(i.value));
+      const selectedTags = Array.from(tagContainer.querySelectorAll<HTMLInputElement>('input[name="radarr_tags"]'))
+        .filter(i => i.type !== 'checkbox' || i.checked)
+        .map(i => parseInt(i.value));
       renderTags('radarr_tags_list', profData.tags, selectedTags, 'radarr');
 
       setConnStatus('radarr-conn-status', 'connected');
@@ -746,7 +748,9 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           `<option value="${esc(String(p.id))}" ${String(p.id) === currentProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
 
       const tagContainer = document.getElementById('sonarr_tags_list')!;
-      const selectedTags = Array.from(tagContainer.querySelectorAll<HTMLInputElement>('input[name="sonarr_tags"]')).map(i => parseInt(i.value));
+      const selectedTags = Array.from(tagContainer.querySelectorAll<HTMLInputElement>('input[name="sonarr_tags"]'))
+        .filter(i => i.type !== 'checkbox' || i.checked)
+        .map(i => parseInt(i.value));
       renderTags('sonarr_tags_list', profData.tags, selectedTags, 'sonarr');
 
       setConnStatus('sonarr-conn-status', 'connected');
@@ -790,7 +794,9 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             profData.quality_profiles.map((p: { id: number; name: string }) =>
               `<option value="${esc(String(p.id))}" ${String(p.id) === currentProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
           const tagContainer = document.getElementById('radarr_tags_list')!;
-          const selectedTags = Array.from(tagContainer.querySelectorAll<HTMLInputElement>('input[name="radarr_tags"]')).map(i => parseInt(i.value));
+          const selectedTags = Array.from(tagContainer.querySelectorAll<HTMLInputElement>('input[name="radarr_tags"]'))
+            .filter(i => i.type !== 'checkbox' || i.checked)
+            .map(i => parseInt(i.value));
           renderTags('radarr_tags_list', profData.tags, selectedTags, 'radarr');
           setConnStatus('radarr-conn-status', 'connected');
         } catch { setConnStatus('radarr-conn-status', 'disconnected'); }
@@ -822,7 +828,9 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             profData.quality_profiles.map((p: { id: number; name: string }) =>
               `<option value="${esc(String(p.id))}" ${String(p.id) === currentProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
           const tagContainer = document.getElementById('sonarr_tags_list')!;
-          const selectedTags = Array.from(tagContainer.querySelectorAll<HTMLInputElement>('input[name="sonarr_tags"]')).map(i => parseInt(i.value));
+          const selectedTags = Array.from(tagContainer.querySelectorAll<HTMLInputElement>('input[name="sonarr_tags"]'))
+            .filter(i => i.type !== 'checkbox' || i.checked)
+            .map(i => parseInt(i.value));
           renderTags('sonarr_tags_list', profData.tags, selectedTags, 'sonarr');
           setConnStatus('sonarr-conn-status', 'connected');
         } catch { setConnStatus('sonarr-conn-status', 'disconnected'); }
