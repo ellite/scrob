@@ -1710,6 +1710,9 @@ async def refresh_show_metadata(
         "genres": [g["name"] for g in data.get("genres", [])],
         "external_ids": data.get("external_ids", {}),
         "original_language": data.get("original_language"),
+        # Kept so capped_season_episode_counts() can exclude unaired episodes
+        # from cache-only callers like Next Up, which have no tmdb_extra (#296).
+        "last_episode_to_air": data.get("last_episode_to_air"),
         "seasons": [
             {
                 "season_number": s["season_number"],
