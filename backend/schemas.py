@@ -445,6 +445,7 @@ class AdminUser(BaseModel):
     is_admin   : bool
     api_key    : str
     created_at : datetime
+    avatar_url : Optional[str] = None
 
     class Config:
         from_attributes = True

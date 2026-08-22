@@ -309,6 +309,7 @@ export interface AdminUser {
   is_admin: boolean;
   api_key: string;
   created_at: string;
+  avatar_url: string | null;
 }
 
 export interface GlobalSettings {
