@@ -6,6 +6,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _remaining_episode_stats
+from core.rewatch import capped_season_episode_counts
 
 
 class ComputeNextEpisodeTests(unittest.TestCase):
@@ -168,6 +169,38 @@ class RemainingEpisodeStatsTests(unittest.TestCase):
     def test_no_aired_episodes_returns_none(self):
         self.assertIsNone(_remaining_episode_stats({}, {}, avg_runtime=30.0))
         self.assertIsNone(_remaining_episode_stats({0: 3}, {}, avg_runtime=30.0))
+
+
+class CappedSeasonCountsFromCacheTests(unittest.TestCase):
+    """#296: unaired episodes must not be counted on the Next Up card."""
+
+    class _Show:
+        def __init__(self, tmdb_data):
+            self.tmdb_data = tmdb_data
+
+    def _show(self, last_ep):
+        data = {"seasons": [{"season_number": 1, "episode_count": 10},
+                            {"season_number": 2, "episode_count": 10}]}
+        if last_ep is not None:
+            data["last_episode_to_air"] = last_ep
+        return self._Show(data)
+
+    def test_current_season_capped_at_last_aired_episode(self):
+        # Season 2 is mid-flight: 8 of 10 episodes out.
+        counts = capped_season_episode_counts(
+            self._show({"season_number": 2, "episode_number": 8})
+        )
+        self.assertEqual(counts[2], 8)
+        # 7 watched of the 8 aired -> exactly 1 left, not 3.
+        stats = _remaining_episode_stats(counts, {1: 10, 2: 7}, avg_runtime=51.0)
+        self.assertEqual(stats["episodes_left"], 1)
+
+    def test_future_seasons_are_zeroed(self):
+        counts = capped_season_episode_counts(
+            self._show({"season_number": 1, "episode_number": 4})
+        )
+        self.assertEqual(counts[1], 4)
+        self.assertEqual(counts[2], 0)
 
     def test_fractional_average_runtime_rounds(self):
         stats = _remaining_episode_stats({1: 4}, {1: 1}, avg_runtime=42.5)

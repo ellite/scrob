@@ -759,9 +759,34 @@ async def _next_up_remaining_stats(
     )
     avg_by_show = {sid: float(avg) for sid, avg in avg_rows.all() if avg is not None}
 
+    # Shows still airing whose cached metadata has no last_episode_to_air can't
+    # be capped to aired episodes, so the count would include episodes that
+    # haven't aired yet (#296). Fetch it live for exactly those shows: Next Up
+    # is a short list, and finished shows never need it.
+    FINAL_STATUSES = {"Ended", "Canceled"}
+    needs_last_ep = [
+        sid for sid, show in shows_by_id.items()
+        if show.tmdb_id
+        and not (show.tmdb_data or {}).get("last_episode_to_air")
+        and (show.status or "") not in FINAL_STATUSES
+    ]
+    last_ep_by_show: dict[int, dict] = {}
+    if needs_last_ep:
+        tmdb_key = await get_user_tmdb_key(db, user_id)
+        if check_tmdb_key(tmdb_key):
+            async def _fetch_show_light(sid: int) -> tuple[int, dict | None]:
+                try:
+                    return sid, await tmdb.get_show_light(shows_by_id[sid].tmdb_id, api_key=tmdb_key)
+                except Exception:
+                    return sid, None
+
+            for sid, data in await asyncio.gather(*[_fetch_show_light(sid) for sid in needs_last_ep]):
+                if data:
+                    last_ep_by_show[sid] = data
+
     stats: dict[int, dict] = {}
     for sid, show in shows_by_id.items():
-        season_counts = capped_season_episode_counts(show)
+        season_counts = capped_season_episode_counts(show, last_ep_by_show.get(sid))
         avg_runtime = avg_by_show.get(sid)
         if not avg_runtime:
             run_times = (show.tmdb_data or {}).get("episode_run_time") or []
@@ -1805,6 +1830,7 @@ async def mark_show_watched(
             data = await tmdb.get_show(body.series_tmdb_id, api_key=api_key)
             show.tmdb_data = {
                 "genres": [g["name"] for g in data.get("genres", [])],
+                "last_episode_to_air": data.get("last_episode_to_air"),
                 "seasons": [
                     {
                         "season_number": s["season_number"],
