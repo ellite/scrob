@@ -914,22 +914,41 @@ async def get_next_up(
         if check_tmdb_key(api_key):
             shows_result = await db.execute(select(Show).where(Show.id.in_(missing_show_ids)))
             shows_by_id = {s.id: s for s in shows_result.scalars().all()}
+
+            # The TMDB fetch below is independent, read-only work per show -
+            # fetch them all concurrently instead of one HTTP round trip at a
+            # time. A show with no locally-synced next episode is commonly
+            # just a fully-watched one (this fetch confirms there's nothing
+            # left to watch), so a user with many completed shows could have
+            # dozens to hundreds of these on every cold Next Up load; done
+            # sequentially this was the entire ~15-25s a cold load cost (#294).
+            _fetch_sem = asyncio.Semaphore(10)
+
+            async def _fetch_seasons(show_id: int) -> tuple[int, list[dict]]:
+                show = shows_by_id.get(show_id)
+                if not show or not show.tmdb_id:
+                    return show_id, []
+                async with _fetch_sem:
+                    # show.tmdb_data's cached season list is only ever rewritten by an
+                    # explicit "Refresh Metadata" action, so trusting it here would leave
+                    # a newly-aired episode or season permanently invisible in Next Up
+                    # once that snapshot goes stale (#287). Fetch fresh instead - this
+                    # still goes through the normal shared TMDB cache (core/tmdb.py's
+                    # DEFAULT_CACHE_TTL), so it's not a live call on every request.
+                    try:
+                        fresh_show_data = await tmdb.get_show(show.tmdb_id, api_key=api_key)
+                        return show_id, fresh_show_data.get("seasons", [])
+                    except Exception:
+                        return show_id, (show.tmdb_data or {}).get("seasons", [])
+
+            seasons_by_show = dict(await asyncio.gather(*[_fetch_seasons(sid) for sid in missing_show_ids]))
+
             for show_id in missing_show_ids:
                 show = shows_by_id.get(show_id)
                 if not show or not show.tmdb_id:
                     continue
                 season, episode = last_per_show[show_id]
-                # show.tmdb_data's cached season list is only ever rewritten by an
-                # explicit "Refresh Metadata" action, so trusting it here would leave
-                # a newly-aired episode or season permanently invisible in Next Up
-                # once that snapshot goes stale (#287). Fetch fresh instead - this
-                # still goes through the normal shared TMDB cache (core/tmdb.py's
-                # DEFAULT_CACHE_TTL), so it's not a live call on every request.
-                try:
-                    fresh_show_data = await tmdb.get_show(show.tmdb_id, api_key=api_key)
-                    seasons = fresh_show_data.get("seasons", [])
-                except Exception:
-                    seasons = (show.tmdb_data or {}).get("seasons", [])
+                seasons = seasons_by_show.get(show_id, [])
                 next_ep = _compute_next_episode(seasons, season, episode)
                 if next_ep is None:
                     continue
