@@ -186,6 +186,36 @@ def extract_quality(media_streams: list) -> dict:
 
     return quality
 
+async def _scan_for_tmdb_match(url: str, token: str, item_type: str, tmdb_id: int) -> Optional[Dict]:
+    """Paged fallback for find_movie_by_tmdb_id/find_episode_by_ids's series lookup.
+
+    On some Jellyfin versions (10.11.11 confirmed) AnyProviderIdEquals is
+    silently ignored - the server returns the whole unfiltered library instead
+    of narrowing to the requested TMDB id, so a Limit=25 page is effectively
+    the first 25 items in default order and almost never contains the real
+    match (#300). Paging the whole library once and matching ProviderIds
+    client-side is the only way to find it when that happens.
+    """
+    start = 0
+    page_size = 500
+    while True:
+        data = await _get(url, token, "Items", params={
+            "Recursive": True,
+            "IncludeItemTypes": item_type,
+            "Fields": "ProviderIds",
+            "Limit": page_size,
+            "StartIndex": start,
+        })
+        items = data.get("Items", [])
+        match = next((i for i in items if get_jellyfin_tmdb_id(i.get("ProviderIds", {})) == tmdb_id), None)
+        if match:
+            return match
+        total = data.get("TotalRecordCount", 0)
+        start += page_size
+        if start >= total or not items:
+            return None
+
+
 async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int, user_id: Optional[str] = None) -> Optional[Dict]:
     """Search all Jellyfin libraries for a movie by TMDB ID. Returns the item with MediaStreams or None."""
     try:
@@ -203,11 +233,47 @@ async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int, user_id: Opt
         # match against the item's own ProviderIds instead of trusting the filter.
         match = next((i for i in items if get_jellyfin_tmdb_id(i.get("ProviderIds", {})) == tmdb_id), None)
         if not match:
-            return None
+            # TotalRecordCount exceeding what we already checked means the
+            # filter didn't narrow the result set - the 25-item page can't be
+            # trusted to be exhaustive, so fall back to a full scan (#300).
+            if data.get("TotalRecordCount", 0) > len(items):
+                match = await _scan_for_tmdb_match(url, token, "Movie", tmdb_id)
+            if not match:
+                return None
         # Fetch full detail with MediaStreams - user_id is required here, the
         # admin-only Items/{id} endpoint (no Users/ prefix) throws server-side
         # for a non-admin token (see #153).
         return await get_item(url, token, match["Id"], user_id=user_id)
+    except Exception:
+        return None
+
+
+async def find_episode_in_series(url: str, token: str, series_id: str, season: int, episode: int, user_id: Optional[str] = None) -> Optional[Dict]:
+    """Look up an episode within an already-known series.
+
+    Split out of find_episode_by_ids so a caller that already has the series'
+    Jellyfin item id (e.g. from a pre-built TMDB index - see build_tmdb_index,
+    #300) can skip straight to this step instead of repeating the (possibly
+    expensive) series resolution for every episode of the same show. Uses
+    SeriesId + season/episode number, which - unlike AnyProviderIdEquals -
+    reliably narrows the result server-side, so no fallback scan is needed
+    here.
+    """
+    try:
+        ep_data = await _get(url, token, "Items", params={
+            "SeriesId": series_id,
+            "Recursive": True,
+            "IncludeItemTypes": "Episode",
+            "ParentIndexNumber": season,
+            "IndexNumber": episode,
+            "Fields": "MediaStreams,Path,ProviderIds",
+            "Limit": 1,
+        })
+        ep_items = ep_data.get("Items", [])
+        if not ep_items or ep_items[0].get("SeriesId") != series_id:
+            return None
+        # user_id required - see #153.
+        return await get_item(url, token, ep_items[0]["Id"], user_id=user_id)
     except Exception:
         return None
 
@@ -231,26 +297,47 @@ async def find_episode_by_ids(url: str, token: str, series_tmdb_id: int, season:
             (s for s in series_items if get_jellyfin_tmdb_id(s.get("ProviderIds", {})) == series_tmdb_id), None
         )
         if not series_match:
-            return None
+            # See the matching comment in find_movie_by_tmdb_id (#300).
+            if series_data.get("TotalRecordCount", 0) > len(series_items):
+                series_match = await _scan_for_tmdb_match(url, token, "Series", series_tmdb_id)
+            if not series_match:
+                return None
         series_id = series_match["Id"]
-
-        # Then find the episode within that series
-        ep_data = await _get(url, token, "Items", params={
-            "SeriesId": series_id,
-            "Recursive": True,
-            "IncludeItemTypes": "Episode",
-            "ParentIndexNumber": season,
-            "IndexNumber": episode,
-            "Fields": "MediaStreams,Path,ProviderIds",
-            "Limit": 1,
-        })
-        ep_items = ep_data.get("Items", [])
-        if not ep_items or ep_items[0].get("SeriesId") != series_id:
-            return None
-        # user_id required - see #153.
-        return await get_item(url, token, ep_items[0]["Id"], user_id=user_id)
     except Exception:
         return None
+    return await find_episode_in_series(url, token, series_id, season, episode, user_id=user_id)
+
+
+async def build_tmdb_index(url: str, token: str, item_type: str) -> Dict[int, str]:
+    """Pages the whole library once, building a tmdb_id -> item_id index.
+
+    For a caller that needs many TMDB lookups in one job (e.g. a full push
+    over thousands of items), this replaces one AnyProviderIdEquals request
+    per item - which can't be trusted to narrow results on every Jellyfin
+    version and, when it doesn't, degrades into a full per-item fallback
+    scan (#300) - with exactly one paged scan for the whole job.
+    """
+    index: Dict[int, str] = {}
+    start = 0
+    page_size = 500
+    while True:
+        data = await _get(url, token, "Items", params={
+            "Recursive": True,
+            "IncludeItemTypes": item_type,
+            "Fields": "ProviderIds",
+            "Limit": page_size,
+            "StartIndex": start,
+        })
+        items = data.get("Items", [])
+        for item in items:
+            tid = get_jellyfin_tmdb_id(item.get("ProviderIds", {}))
+            if tid is not None and tid not in index:
+                index[tid] = item["Id"]
+        total = data.get("TotalRecordCount", 0)
+        start += page_size
+        if start >= total or not items:
+            break
+    return index
 
 
 async def scan_libraries(url: str, token: str) -> bool:

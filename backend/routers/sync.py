@@ -6273,6 +6273,23 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                         for row in show_rows.all():
                             show_tmdb_map[row[0]] = row[1]
 
+            # For Jellyfin/Emby, AnyProviderIdEquals can't be trusted to
+            # narrow results on every server version - a per-item lookup can
+            # silently degrade into a full library scan (#300). When this job
+            # actually needs live lookups against one of those connections,
+            # build a movie/series tmdb_id -> item_id index once up front
+            # instead, so every per-item lookup below is a dict lookup (or,
+            # for episodes, one cheap SeriesId-scoped request) rather than a
+            # request against the unreliable filter.
+            jellyfin_movie_index: dict[int, str] = {}
+            jellyfin_series_index: dict[int, str] = {}
+            if conn.type in ("jellyfin", "emby") and media_info:
+                client_mod = jellyfin if conn.type == "jellyfin" else emby
+                if any(m.media_type == MediaType.movie for m in media_info.values()):
+                    jellyfin_movie_index = await client_mod.build_tmdb_index(conn.url, conn.token, "Movie")
+                if any(m.media_type == MediaType.episode for m in media_info.values()):
+                    jellyfin_series_index = await client_mod.build_tmdb_index(conn.url, conn.token, "Series")
+
             # Build push list: (action, source_id, [rating])
             push_items: list[tuple] = []
 
@@ -6369,20 +6386,24 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 if m.media_type == MediaType.movie:
                     if conn.type == "plex":
                         found = await plex.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id)
-                    elif conn.type == "jellyfin":
-                        found = await jellyfin.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id, user_id=conn.server_user_id)
                     else:
-                        found = await emby.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id, user_id=conn.server_user_id)
+                        # Resolved from the job's pre-built index (#300) -
+                        # already the item id itself, no request needed.
+                        return jellyfin_movie_index.get(m.tmdb_id)
                 elif m.media_type == MediaType.episode:
                     show_tmdb = show_tmdb_map.get(m.show_id) if m.show_id else None
                     if not show_tmdb or m.season_number is None or m.episode_number is None:
                         return None
                     if conn.type == "plex":
                         found = await plex.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number)
-                    elif conn.type == "jellyfin":
-                        found = await jellyfin.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number, user_id=conn.server_user_id)
                     else:
-                        found = await emby.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number, user_id=conn.server_user_id)
+                        series_id = jellyfin_series_index.get(show_tmdb)
+                        if not series_id:
+                            return None
+                        client_mod = jellyfin if conn.type == "jellyfin" else emby
+                        found = await client_mod.find_episode_in_series(
+                            conn.url, conn.token, series_id, m.season_number, m.episode_number, user_id=conn.server_user_id
+                        )
                 else:
                     return None
                 return _extract_source_id(found)
@@ -6476,6 +6497,11 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             done = 0
             succeeded = 0
             failed_count = 0
+            # Items where the server-side item couldn't be resolved at all
+            # (as opposed to a transient push/network failure) - the "silent
+            # drop" the job's own stats.failed count doesn't call out on its
+            # own (#300).
+            lookup_warnings: list[dict] = []
 
             async with _httpx.AsyncClient(timeout=_httpx.Timeout(15.0), follow_redirects=False) as client:
                 if watched_lookup_mids:
@@ -6489,6 +6515,12 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             watched_sid_to_mids.setdefault(sid, set()).add(mid)
                         else:
                             newly_failed += 1
+                            m = media_info.get(mid)
+                            lookup_warnings.append({
+                                "type": "watched_lookup_failed",
+                                "media_id": mid,
+                                "title": m.title if m else None,
+                            })
                     if newly_failed:
                         done += newly_failed
                         failed_count += newly_failed
@@ -6525,9 +6557,11 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 status=SyncStatus.completed,
                 processed_items=total,
                 stats={"succeeded": succeeded, "failed": failed_count},
+                warnings=lookup_warnings or None,
             ))
             await db.commit()
-            print(f"Full push for connection {connection_id}: {succeeded}/{total} succeeded, {failed_count} failed")
+            print(f"Full push for connection {connection_id}: {succeeded}/{total} succeeded, {failed_count} failed"
+                  f"{f', {len(lookup_warnings)} unresolved lookups' if lookup_warnings else ''}")
 
         except SyncCancelled:
             print(f"Full push for connection {connection_id} cancelled")

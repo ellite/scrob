@@ -9,6 +9,8 @@ from core.jellyfin import (
     extract_quality,
     find_movie_by_tmdb_id,
     find_episode_by_ids,
+    find_episode_in_series,
+    build_tmdb_index,
     mark_watched,
     mark_unwatched,
     set_rating,
