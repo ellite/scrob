@@ -236,8 +236,19 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
 
       <!-- Add Items Search (owner only) -->
       {list.is_owner && (
-      <div class="mb-10 bg-zinc-900/40 border border-zinc-800/60 rounded-3xl p-6">
-        <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest mb-4">Add Items</h2>
+      <details class="mb-10 group bg-zinc-900/40 border border-zinc-800/60 rounded-2xl">
+        <summary class="flex items-center justify-between px-5 py-4 cursor-pointer list-none select-none">
+          <div class="flex items-center gap-2.5">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-400">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            <span class="text-sm font-black text-zinc-400 uppercase tracking-widest">Add Items</span>
+          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-500 transition-transform group-open:rotate-180">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+          </svg>
+        </summary>
+        <div class="px-5 pb-5 pt-1 border-t border-zinc-800/60 mt-0 bg-zinc-900/40 rounded-b-2xl p-6">
         <div class="flex flex-col sm:flex-row gap-3">
           <input
             type="text"
@@ -275,12 +286,38 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
           Searching…
         </div>
         <p id="search-empty" class="hidden mt-4 text-sm text-zinc-400 text-center py-4">No results found.</p>
-      </div>
+        </div>
+      </details>
       )}
 
       <!-- Items Grid -->
       <div>
-        <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest mb-6">Items</h2>
+        <div class="flex items-center justify-between gap-4 mb-6">
+          <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest">Items</h2>
+          {list.items.length > 0 && (
+            <div class="flex gap-1.5 bg-zinc-950 border border-zinc-800 rounded-xl p-1 shrink-0">
+              {[
+                { value: "all", label: "All" },
+                { value: "movie", label: "Movies" },
+                { value: "series", label: "Shows" },
+                { value: "person", label: "People" },
+              ].map(f => (
+                <button
+                  class="items-filter-btn px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                  class:list={[
+                    "items-filter-btn",
+                    f.value === "all"
+                      ? "bg-zinc-800 text-zinc-100"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  ]}
+                  data-items-filter={f.value}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         {list.items.length === 0 ? (
           <div id="empty-state" class="text-center py-16 bg-zinc-900/20 border border-zinc-800/50 border-dashed rounded-3xl">
             <div class="text-4xl mb-3">📋</div>
@@ -289,7 +326,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
         ) : (
           <div id="items-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
             {list.items.map((entry) => (
-              <div data-item-id={entry.id}>
+              <div data-item-id={entry.id} data-type={entry.media.type}>
                 <MediaCard item={entry.media}>
                   {list.is_owner && (
                     <button
@@ -307,6 +344,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
             ))}
           </div>
         )}
+        <p id="items-filter-empty" class="hidden text-sm text-zinc-500 text-center py-10">No items match this filter.</p>
         {list.items.length === 0 && <div id="items-grid" class="hidden grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6"></div>}
       </div>
 
@@ -495,6 +533,36 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
     });
   }
   bindRemoveButtons();
+
+  // --- Items type filter ---
+  let activeItemsFilter = 'all';
+  const itemsFilterEmpty = document.getElementById('items-filter-empty');
+
+  document.querySelectorAll('.items-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeItemsFilter = btn.getAttribute('data-items-filter');
+      document.querySelectorAll('.items-filter-btn').forEach(b => {
+        const isActive = b.getAttribute('data-items-filter') === activeItemsFilter;
+        b.classList.toggle('bg-zinc-800', isActive);
+        b.classList.toggle('text-zinc-100', isActive);
+        b.classList.toggle('text-zinc-500', !isActive);
+      });
+      applyItemsFilter();
+    });
+  });
+
+  function applyItemsFilter() {
+    const grid = document.getElementById('items-grid');
+    if (!grid) return;
+    let visible = 0;
+    grid.querySelectorAll('[data-item-id]').forEach(card => {
+      const type = card.getAttribute('data-type');
+      const show = activeItemsFilter === 'all' || type === activeItemsFilter;
+      card.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    itemsFilterEmpty?.classList.toggle('hidden', visible > 0);
+  }
 
   // --- Search & Add ---
   const searchInput = document.getElementById('search-input');
@@ -799,7 +867,12 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
 
       const wrapper = document.createElement('div');
       wrapper.setAttribute('data-item-id', String(entry.id));
+      wrapper.setAttribute('data-type', entry.media.type);
       wrapper.innerHTML = buildCard(cardMedia, entry.id);
+      // Hide newly added item if it doesn't match the active filter
+      if (activeItemsFilter !== 'all' && entry.media.type !== activeItemsFilter) {
+        wrapper.style.display = 'none';
+      }
       grid.appendChild(wrapper);
       bindRemoveButtons();
     } catch (err) {
