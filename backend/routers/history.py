@@ -774,11 +774,18 @@ async def _next_up_remaining_stats(
     if needs_last_ep:
         tmdb_key = await get_user_tmdb_key(db, user_id)
         if check_tmdb_key(tmdb_key):
+            # Next Up's full-page view (unlike the home widget) has no limit,
+            # so needs_last_ep can be every still-airing show a user follows -
+            # cap fan-out concurrency instead of firing one request per show
+            # at once (same pattern as routers/calendar.py's FETCH_CONCURRENCY).
+            sem = asyncio.Semaphore(8)
+
             async def _fetch_show_light(sid: int) -> tuple[int, dict | None]:
-                try:
-                    return sid, await tmdb.get_show_light(shows_by_id[sid].tmdb_id, api_key=tmdb_key)
-                except Exception:
-                    return sid, None
+                async with sem:
+                    try:
+                        return sid, await tmdb.get_show_light(shows_by_id[sid].tmdb_id, api_key=tmdb_key)
+                    except Exception:
+                        return sid, None
 
             for sid, data in await asyncio.gather(*[_fetch_show_light(sid) for sid in needs_last_ep]):
                 if data:
