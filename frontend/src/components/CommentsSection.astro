@@ -13,19 +13,24 @@ const token = Astro.cookies.get("token")?.value;
 const user = Astro.locals.user;
 const loginNextUrl = `/login?next=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
 
+const { disable_comments: commentsDisabled } = await api.profile.publicAccessStatus().catch(() => ({ disable_comments: false }));
+
 let comments: Comment[] = [];
-try {
-  comments = await api.comments.list({
-    media_type: mediaType,
-    tmdb_id: tmdbId,
-    season_number: seasonNumber,
-    episode_number: episodeNumber
-  }, token);
-} catch (e) {
-  console.error("Failed to load comments", e);
+if (!commentsDisabled) {
+  try {
+    comments = await api.comments.list({
+      media_type: mediaType,
+      tmdb_id: tmdbId,
+      season_number: seasonNumber,
+      episode_number: episodeNumber
+    }, token);
+  } catch (e) {
+    console.error("Failed to load comments", e);
+  }
 }
 ---
 
+{!commentsDisabled && (
 <div class="mt-24 border-zinc-900 pt-16 mb-20">
   <div class="flex items-center justify-between mb-10">
     <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase flex items-center gap-3">
@@ -185,7 +190,9 @@ try {
     </div>
   </div>
 </div>
+)}
 
+{!commentsDisabled && (
 <script define:vars={{ token, currentUserId: user?.id, isAdmin: user?.role === 'admin' }}>
   function esc(s) {
     if (s == null) return '';
@@ -461,3 +468,4 @@ try {
 
   attachListeners();
 </script>
+)}

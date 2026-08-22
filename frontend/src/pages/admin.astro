@@ -295,6 +295,19 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           </label>
         </div>
 
+        <!-- Comments -->
+        <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <label class="flex items-center justify-between gap-3 cursor-pointer">
+            <div>
+              <span class="block text-sm font-semibold text-zinc-200">Disable comments</span>
+              <span class="block text-xs text-zinc-500 mt-0.5">Hides the comments section from every media detail page for all users.</span>
+            </div>
+            <input type="checkbox" name="disable_comments" id="disable_comments" value="true" class="sr-only peer"
+              checked={globalSettings.disable_comments ?? false} />
+            <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
+          </label>
+        </div>
+
         <div class="pt-2">
           <button type="submit" id="save-settings-btn"
             class="w-full sm:w-auto bg-zinc-100 text-zinc-950 font-bold px-8 py-3 rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50">
@@ -878,6 +891,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     body['radarr_customize_on_add']   = fd.get('radarr_customize_on_add') === 'true';
     body['sonarr_customize_on_add']   = fd.get('sonarr_customize_on_add') === 'true';
     body['enable_logged_out_navigation'] = fd.get('enable_logged_out_navigation') === 'true';
+    body['disable_comments'] = fd.get('disable_comments') === 'true';
     const radarrTags = fd.getAll('radarr_tags').map(v => parseInt(v as string)).filter(n => !isNaN(n));
     body['radarr_tags'] = radarrTags.length ? radarrTags : null;
     const sonarrTags = fd.getAll('sonarr_tags').map(v => parseInt(v as string)).filter(n => !isNaN(n));

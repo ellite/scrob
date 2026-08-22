@@ -9,6 +9,7 @@ from db import get_db
 from models.comments import Comment
 from models.users import User
 from models.profile import UserProfileData, PrivacyLevel
+from models.global_settings import GlobalSettings
 from dependencies import get_current_user, get_optional_user
 
 router = APIRouter()
@@ -102,7 +103,13 @@ async def create_comment(
 ):
     if not body.content.strip():
         raise HTTPException(status_code=400, detail="Comment content cannot be empty")
-        
+
+    # The UI already hides the whole section when disabled (#301) - this is
+    # just so a direct API call can't post one anyway.
+    gs = (await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))).scalar_one_or_none()
+    if gs and gs.disable_comments:
+        raise HTTPException(status_code=403, detail="Comments are disabled on this server")
+
     comment = Comment(
         user_id=current_user.id,
         media_type=body.media_type,

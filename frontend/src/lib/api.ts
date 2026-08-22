@@ -330,6 +330,7 @@ export interface GlobalSettings {
   image_cache_enabled: boolean;
   image_cache_limit_gb: number | null;
   enable_logged_out_navigation: boolean;
+  disable_comments: boolean;
 }
 
 export interface MediaRequestItem {
@@ -1330,7 +1331,7 @@ export const api = {
     getPublic: (userId: number, token?: string) =>
       get<PublicProfile>(`/profile/${userId}`, undefined, token),
     publicAccessStatus: () =>
-      get<{ enable_logged_out_navigation: boolean }>("/profile/public-access-status"),
+      get<{ enable_logged_out_navigation: boolean; disable_comments: boolean }>("/profile/public-access-status"),
     update: (body: Partial<UserPreferences>, token: string) =>
       patch<UserPreferences>("/profile/me", body, token),
     uploadAvatar: (formData: FormData, token: string) =>

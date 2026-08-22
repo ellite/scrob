@@ -417,6 +417,7 @@ class GlobalSettings(BaseModel):
     image_cache_enabled         : bool = False
     image_cache_limit_gb        : Optional[int] = None
     enable_logged_out_navigation: bool = False
+    disable_comments            : bool = False
 
     class Config:
         from_attributes = True

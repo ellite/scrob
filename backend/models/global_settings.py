@@ -31,3 +31,4 @@ class GlobalSettings(Base):
     image_cache_enabled          : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
     image_cache_limit_gb         : Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     enable_logged_out_navigation : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
+    disable_comments             : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
