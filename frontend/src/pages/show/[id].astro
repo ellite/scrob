@@ -260,7 +260,7 @@ const originalLanguage = show?.original_language
             <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase">Seasons</h2>
           </div>
           
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div class="grid grid-cols-[repeat(auto-fit,minmax(380px,1fr))] gap-8">
             {(show.seasons_meta || seasons.map(([k]) => ({ season_number: Number(k.replace("season_","")), name: `Season ${k.replace("season_","")}`, overview: null, poster_path: null, episode_count: 0, air_date: null }))).map((s) => {
                 const seasonNum = s.season_number;
                 const episodes = show.seasons?.[`season_${seasonNum}`] || [];
