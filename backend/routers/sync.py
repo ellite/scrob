@@ -6283,12 +6283,28 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             # since the echo can arrive before an in-task registration would.
             echoes_watched = conn.type in ("jellyfin", "emby")
 
+            # A combined multi-episode file (Jellyfin/Emby's IndexNumber..
+            # IndexNumberEnd) is ONE server item shared by N local media rows.
+            # Pushing watched N times - once per row, as the code used to -
+            # makes the server echo N times, and each echo (correctly) expands
+            # over all N rows, since the payload can't say which sub-episode
+            # triggered it. N echoes x N rows raced the 5-minute duplicate
+            # guard below into writing spurious WatchEvent rows even though N
+            # tokens were armed for exactly N echoes (#298). Grouping every
+            # media row by its resolved server item id and sending exactly one
+            # mark_watched per group - after arming a token for every row in
+            # it - balances the books: one echo, expanded over exactly the
+            # rows whose tokens were armed for it.
+            watched_sid_to_mids: dict[str, set[int]] = {}
+
             if conn.push_watched:
                 for mid in watched_ids:
                     for sid in source_ids_map.get(mid, []):
                         if echoes_watched:
                             mark_pushed_watched(user_id, mid)
-                        push_items.append(("watched", sid))
+                            watched_sid_to_mids.setdefault(sid, set()).add(mid)
+                        else:
+                            push_items.append(("watched", sid))
 
             if conn.push_ratings:
                 for (mid, season_number), rating in ratings_map.items():
@@ -6299,12 +6315,20 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
 
             # Items that need live lookup: defer as coroutines resolved during push.
             lookup_items: list[tuple] = []
+            # Watched items still needing a live server-item lookup (Jellyfin/
+            # Emby only) - resolved up front, below, so a combined file with
+            # some rows already known and some still missing still lands in
+            # one shared group instead of being pushed twice.
+            watched_lookup_mids: list[int] = []
 
             if missing_ids:
                 if conn.push_watched:
                     for mid in watched_ids & missing_ids:
                         if mid in media_info:
-                            lookup_items.append(("watched", mid))
+                            if echoes_watched:
+                                watched_lookup_mids.append(mid)
+                            else:
+                                lookup_items.append(("watched", mid))
                 if conn.push_ratings:
                     for key, rating in ratings_map.items():
                         mid, season_number = key
@@ -6315,7 +6339,8 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     if season_number is not None and mid in media_info:
                         lookup_items.append(("season_rating", mid, season_number, rating))
 
-            total = len(push_items) + len(lookup_items)
+            watched_group_row_count = sum(len(mids) for mids in watched_sid_to_mids.values())
+            total = len(push_items) + len(lookup_items) + watched_group_row_count + len(watched_lookup_mids)
             if total == 0:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, total_items=0, processed_items=0))
                 await db.commit()
@@ -6324,7 +6349,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
 
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total, processed_items=0, current_step="Pushing watched status & ratings"))
             await db.commit()
-            print(f"Full push for connection {connection_id}: pushing {total} items ({len(push_items)} known, {len(lookup_items)} via live lookup)...")
+            print(f"Full push for connection {connection_id}: pushing {total} items ({len(push_items)} known, {len(lookup_items)} via live lookup, {watched_group_row_count} watched rows in {len(watched_sid_to_mids)} groups, {len(watched_lookup_mids)} watched rows pending lookup)...")
 
             sem = asyncio.Semaphore(10)
             _PROGRESS_INTERVAL = 20
@@ -6430,23 +6455,68 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     except Exception:
                         return False
 
+            async def _resolve_watched_lookup(mid: int) -> tuple[int, str | None]:
+                async with sem:
+                    return mid, await _find_source_id(mid)
+
+            async def _push_watched_group(client: _httpx.AsyncClient, sid: str, mids: set[int]) -> bool:
+                # Tokens for every mid here are already armed (at queue-build
+                # time for known items, right after resolution below for
+                # looked-up ones) - this call only needs to fire the single
+                # deduped mark_watched (#298).
+                async with sem:
+                    try:
+                        if conn.type == "jellyfin":
+                            return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                        else:
+                            return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                    except Exception:
+                        return False
+
             done = 0
             succeeded = 0
             failed_count = 0
 
             async with _httpx.AsyncClient(timeout=_httpx.Timeout(15.0), follow_redirects=False) as client:
-                coros = (
-                    [_push_known(client, item) for item in push_items]
-                    + [_push_lookup(client, item) for item in lookup_items]
+                if watched_lookup_mids:
+                    resolved = await asyncio.gather(*[_resolve_watched_lookup(mid) for mid in watched_lookup_mids])
+                    newly_failed = 0
+                    for mid, sid in resolved:
+                        if sid:
+                            # Armed before the actual mark_watched call below,
+                            # same as the known-item path (#298).
+                            mark_pushed_watched(user_id, mid)
+                            watched_sid_to_mids.setdefault(sid, set()).add(mid)
+                        else:
+                            newly_failed += 1
+                    if newly_failed:
+                        done += newly_failed
+                        failed_count += newly_failed
+                        await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=done))
+                        await db.commit()
+                        await _raise_if_cancelled(db, job_id)
+
+                # (coroutine, weight) pairs - a grouped watched push counts as
+                # every media row it covers once it resolves, not as 1, so
+                # processed_items still sums to total at completion.
+                weighted: list[tuple] = (
+                    [(_push_known(client, item), 1) for item in push_items]
+                    + [(_push_lookup(client, item), 1) for item in lookup_items]
+                    + [(_push_watched_group(client, sid, mids), len(mids)) for sid, mids in watched_sid_to_mids.items()]
                 )
-                for future in asyncio.as_completed(coros):
-                    result = await future
-                    done += 1
+
+                async def _weighted(coro, weight: int) -> tuple[bool, int]:
+                    return await coro, weight
+
+                for future in asyncio.as_completed([_weighted(c, w) for c, w in weighted]):
+                    result, weight = await future
+                    prev_done = done
+                    done += weight
                     if result is True:
-                        succeeded += 1
+                        succeeded += weight
                     else:
-                        failed_count += 1
-                    if done % _PROGRESS_INTERVAL == 0:
+                        failed_count += weight
+                    if done // _PROGRESS_INTERVAL != prev_done // _PROGRESS_INTERVAL:
                         await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=done))
                         await db.commit()
                         await _raise_if_cancelled(db, job_id)
