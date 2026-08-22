@@ -381,7 +381,18 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
               <>
                 <tr class="user-main-row border-b border-zinc-800/50 hover:bg-zinc-800/30 transition cursor-pointer select-none"
                     data-user-id={u.id} data-is-admin={u.is_admin} data-api-key={u.api_key}>
-                  <td class="px-4 py-3 text-zinc-100 font-medium">{u.username}</td>
+                  <td class="px-4 py-3 text-zinc-100 font-medium">
+                    <div class="flex items-center gap-3">
+                      <div class="w-8 h-8 shrink-0 rounded-full overflow-hidden bg-zinc-800 border border-zinc-700 flex items-center justify-center">
+                        {u.avatar_url ? (
+                          <img src={`/api/proxy${u.avatar_url}`} alt={u.username} class="w-full h-full object-cover" loading="lazy" />
+                        ) : (
+                          <span class="text-xs font-black text-zinc-400">{u.username[0].toUpperCase()}</span>
+                        )}
+                      </div>
+                      {u.username}
+                    </div>
+                  </td>
                   <td class="px-4 py-3 text-zinc-400 hidden md:table-cell">{u.email}</td>
                   <td class="px-4 py-3">
                     {u.is_admin
