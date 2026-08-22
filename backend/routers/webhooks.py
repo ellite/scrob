@@ -1537,7 +1537,10 @@ async def _handle_jellyfin_scrobble_webhook(
             for m in media_list:
                 await _ensure_collection_entry(
                     db, user.id, m.id, coll_source, data["jellyfin_id"], data.get("quality"),
-                    connection_id=None,
+                    # conn is guaranteed here (see the 404 check above) - a
+                    # hardcoded None left every scrobble-pushed CollectionFile
+                    # unmatchable by the full push's fast path (#299).
+                    connection_id=conn.id,
                 )
             # See the matching comment in _handle_jellyfin_webhook (#129).
             await db.commit()
@@ -2561,7 +2564,10 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
             quality = data.get("quality")
             await _ensure_collection_entry(
                 db, user.id, media.id, CollectionSource.plex, data["plex_rating_key"], quality,
-                connection_id=None,
+                # conn is guaranteed here (see the 404 check above) - a
+                # hardcoded None left every scrobble-pushed CollectionFile
+                # unmatchable by the full push's fast path (#299).
+                connection_id=conn.id,
             )
         await db.commit()
 
@@ -2573,7 +2579,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
             quality = data.get("quality")
             await _ensure_collection_entry(
                 db, user.id, media.id, CollectionSource.plex, data["plex_rating_key"], quality,
-                connection_id=None,
+                connection_id=conn.id,
             )
         await db.commit()
 
@@ -2590,7 +2596,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
                 quality = data.get("quality")
                 await _ensure_collection_entry(
                     db, user.id, media.id, CollectionSource.plex, data["plex_rating_key"], quality,
-                    connection_id=None,
+                    connection_id=conn.id,
                 )
                 await db.commit()
 
