@@ -594,9 +594,10 @@ async def _write_watch_event(
 
 
 async def _handle_unwatch_toggle(db: AsyncSession, user_id: int, media: Media) -> bool:
-    """Server-reported "mark unwatched" for one item (currently only Jellyfin's
-    webhook plugin reports this - see the UserDataSaved/TogglePlayed handling
-    below). While a rewatch is active for the media's show, this only undoes
+    """Server-reported "mark unwatched" for one item - Jellyfin's webhook
+    plugin reports this via UserDataSaved/TogglePlayed, Emby's via its own
+    MarkUnplayed event (see the handling for each below). While a rewatch is
+    active for the media's show, this only undoes
     that episode's progress on the current cycle - real watch history is left
     untouched either way. Without an active rewatch, it removes all watch
     history for the item, matching this connection's normal bidirectional
@@ -1299,10 +1300,27 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
     if not body:
         return {"status": "ignored", "reason": "empty body"}
 
-    try:
-        payload = await request.json()
-    except Exception:
-        return {"status": "ignored", "reason": "invalid JSON"}
+    # The Emby Webhooks plugin's default "Request content type" is
+    # multipart/form-data with the JSON payload in a form field named
+    # "data", not a raw JSON body (#295) - request.json() throws on that
+    # (the body starts with a MIME boundary, not "{"), so every Emby
+    # webhook event was silently swallowed by the except below and
+    # answered 200 OK having done nothing, not just mark-unwatched.
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/form-data"):
+        try:
+            form = await request.form()
+            raw = form.get("data")
+            payload = json.loads(raw) if raw else None
+        except Exception:
+            payload = None
+        if payload is None:
+            return {"status": "ignored", "reason": "invalid multipart payload"}
+    else:
+        try:
+            payload = await request.json()
+        except Exception:
+            return {"status": "ignored", "reason": "invalid JSON"}
 
     data = parse_jellyfin_payload(payload)
     if not data:
@@ -1327,8 +1345,12 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
         return {"status": "ignored", "reason": "episode could not be identified (no season/episode/tmdb_id)"}
     media = media_list[0]
 
-    # See the matching comment in _handle_jellyfin_webhook (#129).
-    if notification_type in ("PlaybackStart", "PlaybackProgress", "PlaybackStop", "MarkPlayed", "ItemAdded", "playback.start", "playback.progress", "playback.stop", "item.markplayed"):
+    # See the matching comment in _handle_jellyfin_webhook (#129). Emby's own
+    # plugin reports these as dotted-lowercase names (confirmed live, #295) -
+    # "library.new" here is its equivalent of Jellyfin's "ItemAdded", kept
+    # alongside the Jellyfin-style names since Emby's Webhooks plugin has used
+    # both conventions across versions.
+    if notification_type in ("PlaybackStart", "PlaybackProgress", "PlaybackStop", "MarkPlayed", "ItemAdded", "playback.start", "playback.progress", "playback.stop", "item.markplayed", "library.new"):
         if not conn or conn.sync_collection:
             allow_collection = True
             emby_item_id = data.get("jellyfin_id")
@@ -1362,8 +1384,9 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
                 # See the matching comment in _handle_jellyfin_webhook (#129).
                 await db.commit()
 
-    # See the matching comment in _handle_jellyfin_webhook (#129).
-    elif notification_type == "ItemDeleted":
+    # See the matching comment in _handle_jellyfin_webhook (#129). "library.deleted"
+    # is Emby's dotted-lowercase equivalent of "ItemDeleted" (confirmed live, #295).
+    elif notification_type in ("ItemDeleted", "library.deleted"):
         if (not conn or conn.sync_collection) and data.get("jellyfin_id"):
             for m in media_list:
                 await _remove_collection_entry(
@@ -1429,6 +1452,25 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
             await _maybe_bingebase_scrobble(settings, m, "stop", 1.0, db=db)
 
+    elif notification_type in ("MarkUnplayed", "item.markunplayed"):
+        # Emby's webhook plugin reports mark-unwatched as its own distinct
+        # event (unlike Jellyfin, which raises a generic UserDataSaved for
+        # every watched-state/rating/favorite toggle) - see the matching
+        # played-is-False branch in _handle_jellyfin_webhook for the same
+        # unwatch-toggle + cross-connection push reasoning (#295).
+        if not conn or conn.sync_watched:
+            changed_ids = [
+                m.id for m in media_list
+                if await _handle_unwatch_toggle(db, user.id, m)
+            ]
+            await db.commit()
+            if changed_ids:
+                from routers.history import _push_watch_state
+                await _push_watch_state(
+                    db, user.id, changed_ids, watched=False,
+                    exclude_connection_id=conn.id if conn else None,
+                )
+
     return {"status": "ok", "event": notification_type, "title": data["title"]}
 
 
@@ -1444,10 +1486,23 @@ async def _handle_jellyfin_scrobble_webhook(
     if not body:
         return {"status": "ignored", "reason": "empty body"}
 
-    try:
-        payload = await request.json()
-    except Exception:
-        return {"status": "ignored", "reason": "invalid JSON"}
+    # Same multipart/form-data quirk as _handle_emby_webhook (#295) - Emby's
+    # webhook plugin can send this shared scrobble endpoint the same way.
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/form-data"):
+        try:
+            form = await request.form()
+            raw = form.get("data")
+            payload = json.loads(raw) if raw else None
+        except Exception:
+            payload = None
+        if payload is None:
+            return {"status": "ignored", "reason": "invalid multipart payload"}
+    else:
+        try:
+            payload = await request.json()
+        except Exception:
+            return {"status": "ignored", "reason": "invalid JSON"}
 
     data = parse_jellyfin_payload(payload)
     if not data:
@@ -1473,8 +1528,11 @@ async def _handle_jellyfin_scrobble_webhook(
 
     coll_source = CollectionSource.jellyfin if source == "jellyfin" else CollectionSource.emby
 
-    # See the matching comment in _handle_jellyfin_webhook (#129).
-    if notification_type in ("PlaybackStart", "PlaybackProgress", "PlaybackStop", "MarkPlayed", "ItemAdded", "playback.start", "playback.progress", "playback.stop", "item.markplayed"):
+    # See the matching comment in _handle_jellyfin_webhook (#129). "library.new"/
+    # "library.deleted" are Emby's dotted-lowercase equivalents of Jellyfin's
+    # "ItemAdded"/"ItemDeleted" (confirmed live, #295) - this handler is shared
+    # by both providers, so both naming conventions need to be matched here.
+    if notification_type in ("PlaybackStart", "PlaybackProgress", "PlaybackStop", "MarkPlayed", "ItemAdded", "playback.start", "playback.progress", "playback.stop", "item.markplayed", "library.new"):
         if conn.sync_collection:
             for m in media_list:
                 await _ensure_collection_entry(
@@ -1484,7 +1542,7 @@ async def _handle_jellyfin_scrobble_webhook(
             # See the matching comment in _handle_jellyfin_webhook (#129).
             await db.commit()
 
-    elif notification_type == "ItemDeleted":
+    elif notification_type in ("ItemDeleted", "library.deleted"):
         if conn.sync_collection and data.get("jellyfin_id"):
             for m in media_list:
                 await _remove_collection_entry(
