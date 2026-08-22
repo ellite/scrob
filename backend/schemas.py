@@ -12,6 +12,16 @@ class UserCreate(UserBase):
     password: str
 
 class User(UserBase):
+    # Overrides UserBase's EmailStr - this is a response model, serializing
+    # an email address already stored in the DB, not validating one being
+    # submitted. OIDC auto-provisioning (routers/oidc.py) stores whatever the
+    # identity provider's claim contains with no format check at all (it's
+    # trusting an already-authenticated external identity, not collecting a
+    # deliverable address) - a self-hosted IdP on a reserved-use domain like
+    # .home.arpa is enough to fail EmailStr, which used to break every
+    # /auth/me call for that user - i.e. lock them out of the app entirely
+    # right after a successful login (#293).
+    email: str
     id: int
     api_key: str
     display_name: str
