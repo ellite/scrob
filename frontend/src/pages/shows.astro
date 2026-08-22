@@ -16,6 +16,7 @@ const collection = Astro.url.searchParams.getAll("collection");
 const watch = Astro.url.searchParams.getAll("watch");
 const arr = Astro.url.searchParams.getAll("arr");
 const langs = Astro.url.searchParams.getAll("lang");
+const inList = Astro.url.searchParams.getAll("in_list");
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -48,6 +49,7 @@ if (hasTmdbKey) {
       ...(watch.length ? { watch } : {}),
       ...(hasSonarr && arr.length ? { arr } : {}),
       ...(langs.length ? { original_language: langs.join("|") } : {}),
+      ...(inList.length ? { in_list: inList } : {}),
     }, token);
   } catch (e) {
     console.error("Failed to fetch TMDB show list:", e);
@@ -87,6 +89,7 @@ collection.forEach((v) => baseParams.append("collection", v));
 watch.forEach((v) => baseParams.append("watch", v));
 if (hasSonarr) arr.forEach((v) => baseParams.append("arr", v));
 langs.forEach((l) => baseParams.append("lang", l));
+inList.forEach((v) => baseParams.append("in_list", v));
 const baseUrl = `/shows?${baseParams.toString()}`;
 ---
 
@@ -132,6 +135,7 @@ const baseUrl = `/shows?${baseParams.toString()}`;
             ] : []),
             ...(hasSonarr ? [{ key: "arr", label: "Sonarr", options: [{ value: "added", label: "In Sonarr" }, { value: "notadded", label: "Not In Sonarr" }], selected: arr }] : []),
             { key: "lang", label: "Language", options: LANGUAGES, selected: langs },
+            { key: "in_list", label: "Lists", options: [{ value: "in", label: "In a List" }, { value: "out", label: "Not In a List" }], selected: inList },
           ]}
         />
       </div>
