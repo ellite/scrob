@@ -2,7 +2,7 @@ import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/site.webmanifest", "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
-const PUBLIC_PREFIXES = ["/auth/activate/", "/forgot-password", "/reset-password/", "/api/proxy/webhooks/", "/api/proxy/auth/has-users", "/api/proxy/auth/bootstrap-restore", "/api/proxy/media/stream/", "/api/proxy/radarr-compat/", "/api/proxy/sonarr-compat/"];
+const PUBLIC_PREFIXES = ["/auth/activate/", "/forgot-password", "/reset-password/", "/api/proxy/webhooks/", "/api/proxy/auth/has-users", "/api/proxy/auth/bootstrap-restore", "/api/proxy/auth/login", "/api/proxy/auth/register", "/api/proxy/auth/oidc/config", "/api/proxy/auth/oidc/authorize", "/api/proxy/auth/oidc/exchange", "/api/proxy/auth/forgot-password", "/api/proxy/auth/reset-password/", "/api/proxy/media/stream/", "/api/proxy/radarr-compat/", "/api/proxy/sonarr-compat/"];
 // Matches /profile/{id} (someone else's public profile page) but not the bare
 // /profile page (the logged-in user's own profile management), which must stay gated.
 const PUBLIC_PROFILE_PAGE_RE = /^\/profile\/\d+\/?$/;
