@@ -43,7 +43,7 @@ const PUBLIC_MEDIA_ROWS_PROXY_RE =
 // API docs reveal the full endpoint surface and exact app version - admin-only,
 // never public, regardless of the isStaticAsset check below (which would
 // otherwise treat /openapi.json as a public static file just from its extension).
-const ADMIN_ONLY_ROUTES = ["/docs", "/redoc", "/openapi.json"];
+const ADMIN_ONLY_ROUTES = ["/docs", "/redoc", "/openapi.json", "/docs/proxy", "/proxy-openapi.json"];
 
 // Security headers added to every response.
 // CSP is intentionally omitted — Astro's define:vars emits inline <script>

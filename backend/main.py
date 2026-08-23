@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
@@ -578,6 +579,61 @@ async def get_docs(_: User = Depends(require_admin)):
 @app.get("/redoc", include_in_schema=False)
 async def get_redoc(_: User = Depends(require_admin)):
     return get_redoc_html(openapi_url="/openapi.json", title=f"{app.title} - ReDoc")
+
+
+# Proxy-facing API docs. The browser never calls this backend directly - every
+# frontend request goes through the Astro catch-all at /api/proxy/, which
+# forwards paths 1:1 (session cookie -> Bearer header, X-Api-Key passed
+# through). This derived schema rewrites the real one so it documents what
+# clients actually call: every path prefixed with /api/proxy and resolved
+# against the public frontend origin. Same admin gate as /docs above.
+_PROXY_SCHEMA_EXCLUDED_PATHS = {"/health"}
+
+
+def _build_proxy_openapi() -> dict:
+    # app.openapi() returns its cached schema by reference - mutating it here
+    # would re-prefix the paths on every call (and corrupt the plain /docs
+    # schema, which shares the same dict), so work on a deep copy.
+    spec = deepcopy(app.openapi())
+    spec["info"]["title"] = f"{app.title} - Frontend Proxy API"
+    spec["info"]["description"] = (
+        "Browser-facing view of the Scrob API.\n\n"
+        "Every endpoint is reached through the frontend's generic proxy at "
+        "`/api/proxy/<path>` - the Astro server forwards each request 1:1 to the "
+        "internal backend - so all paths below carry that prefix and resolve "
+        "against the public frontend origin, not the backend port.\n\n"
+        "**Auth:** a logged-in browser session works automatically (the proxy "
+        "converts the session cookie into a Bearer token). For scripts, send "
+        "`Authorization: Bearer <JWT>` or an `X-Api-Key` header (the user API key "
+        "from Profile Settings); both are forwarded as-is. Webhook and "
+        "Radarr/Sonarr-compat endpoints additionally accept `?api_key=`."
+    )
+    spec["servers"] = [{"url": settings.server_url}]
+    spec["paths"] = {
+        f"/api/proxy{path}": ops
+        for path, ops in spec["paths"].items()
+        if path not in _PROXY_SCHEMA_EXCLUDED_PATHS
+    }
+    # Rewrite security scheme URLs so Swagger UI resolves them against the
+    # frontend origin (which already carries the /api/proxy prefix).
+    for scheme in spec.get("components", {}).get("securitySchemes", {}).values():
+        if scheme.get("type") == "oauth2":
+            for flow in scheme.get("flows", {}).values():
+                if "tokenUrl" in flow:
+                    flow["tokenUrl"] = "/api/proxy/" + flow["tokenUrl"].lstrip("/")
+                if "authorizationUrl" in flow:
+                    flow["authorizationUrl"] = "/api/proxy/" + flow["authorizationUrl"].lstrip("/")
+    return spec
+
+
+@app.get("/proxy-openapi.json", include_in_schema=False)
+async def get_proxy_openapi_schema(_: User = Depends(require_admin)):
+    return JSONResponse(_build_proxy_openapi())
+
+
+@app.get("/docs/proxy", include_in_schema=False)
+async def get_proxy_docs(_: User = Depends(require_admin)):
+    return get_swagger_ui_html(openapi_url="/proxy-openapi.json", title=f"{app.title} - Proxy Swagger UI")
 
 # The backend is internal-only (localhost), but lock CORS to the configured
 # frontend origin as defence-in-depth. The backend uses Bearer token auth only

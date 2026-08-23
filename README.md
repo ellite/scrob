@@ -85,7 +85,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **A
 - **Logged-out browsing (opt-in)**: Public profiles and lists require an account to view by default. An admin can enable **Allow browsing without an account** in the admin panel to let visitors browse without signing in.
 - **Progressive Web App**: Install Scrob on any device - Android, iOS, or desktop - for a native app feel.
 - **Single container**: Frontend and backend ship as one image on one port. No separate services to manage.
-- **API documentation**: Full interactive OpenAPI docs at `/docs` (Swagger UI) and `/redoc` (ReDoc), useful if you're scripting against Scrob directly.
+- **API documentation**: Full interactive OpenAPI docs at `/docs` (Swagger UI) and `/redoc` (ReDoc), useful if you're scripting against Scrob directly. Admins also get `/docs/proxy`, a Swagger UI of the same API as exposed through the frontend's `/api/proxy/` gateway - every path shown there is callable from the browser with a logged-in session (or a Bearer token / `X-Api-Key`).
 
 ## Screenshots
 
