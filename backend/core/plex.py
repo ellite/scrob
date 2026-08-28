@@ -1,4 +1,5 @@
 import logging
+import re
 import httpx
 import xmltodict
 from datetime import datetime, timezone
@@ -51,11 +52,9 @@ def extract_tvdb_id(guids: List[Dict]) -> Optional[str]:
     if not guids:
         return None
     for guid in guids:
-        id_str = guid.get("id", "")
-        for prefix in ("tvdb://", "com.plexapp.agents.thetvdb://"):
-            if id_str.startswith(prefix):
-                val = id_str[len(prefix):].split("/")[0].strip()
-                return val if val else None
+        id_match = re.search(r"tvdb(?:://|[2-5]?-)(?P<id>\d+)", guid.get("id", ""))
+        if id_match:
+            return id_match.group("id")
     return None
 
 
