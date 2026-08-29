@@ -267,5 +267,82 @@ class ResolveTmdbRatingkeyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(checked_metadata_paths), plex._RESOLVE_CANDIDATE_CHECK_LIMIT)
 
 
+def _g(*ids: str) -> list[dict]:
+    return [{"id": i} for i in ids]
+
+
+class GuidIdExtractionTests(unittest.TestCase):
+    """extract_{tmdb,tvdb,imdb}_id must read the plain scheme, the legacy
+    com.plexapp.agents.* form, and the HAMA / Absolute Series Scanner agent
+    form (com.plexapp.agents.hama://tvdb-73762/1/1), without mistaking an
+    unrelated GUID for an id (PR #337)."""
+
+    # ── TMDB ──────────────────────────────────────────────────────────────
+    def test_tmdb_plain_and_legacy_schemes(self):
+        self.assertEqual(plex.extract_tmdb_id(_g("tmdb://1396")), 1396)
+        self.assertEqual(
+            plex.extract_tmdb_id(_g("com.plexapp.agents.themoviedb://1396?lang=en")), 1396
+        )
+
+    def test_tmdb_hama_form(self):
+        self.assertEqual(
+            plex.extract_tmdb_id(_g("com.plexapp.agents.hama://tmdb-1396/1/1")), 1396
+        )
+
+    def test_tmdb_returns_int_or_none(self):
+        self.assertIsInstance(plex.extract_tmdb_id(_g("tmdb://5")), int)
+        self.assertIsNone(plex.extract_tmdb_id(_g("imdb://tt0111161", "plex://movie/abc")))
+        self.assertIsNone(plex.extract_tmdb_id([]))
+        self.assertIsNone(plex.extract_tmdb_id(_g("com.plexapp.agents.hama://anidb-999/1/1")))
+
+    # ── TVDB ──────────────────────────────────────────────────────────────
+    def test_tvdb_plain_and_legacy_schemes(self):
+        self.assertEqual(plex.extract_tvdb_id(_g("tvdb://73762")), "73762")
+        self.assertEqual(
+            plex.extract_tvdb_id(_g("com.plexapp.agents.thetvdb://73762/1/1")), "73762"
+        )
+
+    def test_tvdb_hama_form_including_alternate_order_suffix(self):
+        self.assertEqual(
+            plex.extract_tvdb_id(_g("com.plexapp.agents.hama://tvdb-73762/1/1")), "73762"
+        )
+        # HAMA uses tvdb2-/tvdb3-... for TheTVDB's alternate episode orders;
+        # we still want the series id.
+        self.assertEqual(
+            plex.extract_tvdb_id(_g("com.plexapp.agents.hama://tvdb2-73762/1/5")), "73762"
+        )
+
+    def test_tvdb_ignores_other_sources(self):
+        self.assertIsNone(plex.extract_tvdb_id(_g("tmdb://1396", "imdb://tt0903747")))
+        self.assertIsNone(plex.extract_tvdb_id(_g("com.plexapp.agents.hama://anidb-999/1/1")))
+        self.assertIsNone(plex.extract_tvdb_id([]))
+
+    # ── IMDB ──────────────────────────────────────────────────────────────
+    def test_imdb_all_forms(self):
+        self.assertEqual(plex.extract_imdb_id(_g("imdb://tt0111161")), "tt0111161")
+        self.assertEqual(
+            plex.extract_imdb_id(_g("com.plexapp.agents.imdb://tt0111161")), "tt0111161"
+        )
+        self.assertEqual(
+            plex.extract_imdb_id(_g("com.plexapp.agents.hama://imdb-tt0111161/1/1")), "tt0111161"
+        )
+
+    def test_imdb_requires_the_tt_prefix(self):
+        self.assertIsNone(plex.extract_imdb_id(_g("tmdb://1396")))
+        self.assertIsNone(plex.extract_imdb_id(_g("imdb://12345")))
+        self.assertIsNone(plex.extract_imdb_id([]))
+
+    # ── ordering / get_guids ─────────────────────────────────────────────
+    def test_first_matching_guid_in_the_list_wins(self):
+        guids = _g("plex://episode/5d9c", "tvdb://73762", "tvdb://99999")
+        self.assertEqual(plex.extract_tvdb_id(guids), "73762")
+
+    def test_get_guids_wraps_a_legacy_hama_string(self):
+        item = {"guid": "com.plexapp.agents.hama://tvdb-73762/1/1"}
+        guids = plex.get_guids(item)
+        self.assertEqual(guids, [{"id": "com.plexapp.agents.hama://tvdb-73762/1/1"}])
+        self.assertEqual(plex.extract_tvdb_id(guids), "73762")
+
+
 if __name__ == "__main__":
     unittest.main()
