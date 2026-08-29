@@ -25,6 +25,7 @@ def get_guids(item: Dict) -> List[Dict]:
     Modern Plex returns a 'Guid' array: [{"id": "tmdb://123"}, ...].
     Legacy items may have an empty/missing 'Guid' but a single lowercase 'guid'
     string like 'com.plexapp.agents.thetvdb://73762/1/1'.
+    HAMA items have a guid string like 'com.plexapp.agents.hama://tvdb-73762/1/1'.
     """
     guids = item.get("Guid") or []
     if not guids:
@@ -38,13 +39,12 @@ def extract_tmdb_id(guids: List[Dict]) -> Optional[int]:
     if not guids:
         return None
     for guid in guids:
-        id_str = guid.get("id", "")
-        for prefix in ("tmdb://", "com.plexapp.agents.themoviedb://"):
-            if id_str.startswith(prefix):
-                try:
-                    return int(id_str[len(prefix):].split("/")[0])
-                except ValueError:
-                    break
+        id_match = re.search(r"t(?:he)?m(?:ovie)?db(?:://|-)(?P<id>\d+)", guid.get("id", ""))
+        if id_match:
+            try:
+                return int(id_match.group("id"))
+            except ValueError:
+                continue
     return None
 
 
@@ -62,11 +62,9 @@ def extract_imdb_id(guids: List[Dict]) -> Optional[str]:
     if not guids:
         return None
     for guid in guids:
-        id_str = guid.get("id", "")
-        for prefix in ("imdb://", "com.plexapp.agents.imdb://"):
-            if id_str.startswith(prefix):
-                val = id_str[len(prefix):].split("/")[0].strip()
-                return val if val else None
+        id_match = re.search(r"imdb(?:://|-)(?P<id>tt\d+)", guid.get("id", ""))
+        if id_match:
+            return id_match.group("id")
     return None
 
 def extract_quality(media_list: List[Dict]) -> Dict:
