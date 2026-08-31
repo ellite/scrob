@@ -670,7 +670,7 @@ async def dismiss_continue_watching(
     return {"status": "ok"}
 
 
-def _format_media_item(media: Media) -> dict:
+def _format_media_item(media: Media, *, last_watched_at: datetime | None = None) -> dict:
     data = {
         "id": media.id,
         "tmdb_id": media.tmdb_id,
@@ -689,6 +689,7 @@ def _format_media_item(media: Media) -> dict:
         "in_library": False,
         "show_id": media.show_id,
         "tvdb_sourced": is_unmapped_tvdb_episode(media),
+        "last_watched_at": last_watched_at.isoformat() if last_watched_at else None,
     }
     if media.media_type == MediaType.episode and media.show:
         data["show_title"] = media.show.title
@@ -1289,7 +1290,10 @@ async def get_next_up(
         db, current_user.id, next_up, active_rewatch_by_show
     )
 
-    items = [_format_media_item(m) for m in next_up]
+    items = [
+        _format_media_item(m, last_watched_at=last_watched_at.get(m.show_id))
+        for m in next_up
+    ]
     for item in items:
         item["next_up_hidden"] = item.get("show_id") in hidden_set
         item["dropped"] = item.get("show_id") in dropped_show_ids

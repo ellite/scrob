@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _next_up_needs_live_fetch, _remaining_episode_stats, _stream_next_up_refresh
+from routers.history import _compute_next_episode, _format_media_item, _group_last_watched, _has_aired, _has_confirmed_air_date, _next_up_needs_live_fetch, _remaining_episode_stats, _stream_next_up_refresh
 from core.rewatch import capped_season_episode_counts
+from models.base import MediaType
 
 
 class ComputeNextEpisodeTests(unittest.TestCase):
@@ -88,6 +89,41 @@ class GroupLastWatchedTests(unittest.TestCase):
         rows = [(1, None, 1, None), (1, None, 2, None)]
         last_per_show, last_watched_at = _group_last_watched(rows)
         self.assertNotIn(1, last_per_show)
+
+
+class NextUpMediaFormattingTests(unittest.TestCase):
+    """Next Up exposes the timestamp used to order shows (#237)."""
+
+    def _media(self):
+        return SimpleNamespace(
+            id=7,
+            tmdb_id=42,
+            media_type=MediaType.episode,
+            title="Episode 3",
+            overview="Overview",
+            poster_path=None,
+            backdrop_path=None,
+            release_date="2026-01-01",
+            tmdb_rating=8.0,
+            season_number=1,
+            episode_number=3,
+            runtime=45,
+            tagline=None,
+            tmdb_data={},
+            show_id=9,
+            show=None,
+        )
+
+    def test_last_watched_at_is_serialized_as_iso_datetime(self):
+        payload = _format_media_item(
+            self._media(),
+            last_watched_at=datetime(2026, 8, 31, 9, 30),
+        )
+        self.assertEqual(payload["last_watched_at"], "2026-08-31T09:30:00")
+
+    def test_missing_last_watched_at_is_null(self):
+        payload = _format_media_item(self._media())
+        self.assertIsNone(payload["last_watched_at"])
 
 
 class HasAiredTests(unittest.TestCase):

@@ -650,6 +650,9 @@ export interface MediaItem {
   // for the show and their estimated total runtime in minutes.
   episodes_left?: number | null;
   remaining_runtime?: number | null;
+  // Most recent completed/significantly-viewed episode for this show, used by
+  // API clients to order Next Up consistently with the web app (#237).
+  last_watched_at?: string | null;
   known_for_department?: string | null;
   in_library?: boolean;
   playable?: boolean;
