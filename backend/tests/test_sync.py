@@ -773,9 +773,9 @@ class ProviderAddedAtTests(unittest.TestCase):
         )
         self.assertEqual(got, datetime(2026, 8, 1, 9, 30, 0))
 
-    def test_sources_without_a_library_date_return_none(self):
-        # Nuvio and Stremio items are synthesized with a fixed key set, so they
-        # must never be read as if they were a media browser payload.
+    def test_sources_ignore_unrecognized_library_date_fields(self):
+        # Stremio has no library date, and Nuvio's date is carried in its
+        # normalized AddedAt field rather than the media-browser DateCreated key.
         for source in (sync.CollectionSource.nuvio, sync.CollectionSource.stremio):
             self.assertIsNone(
                 sync.provider_added_at({"DateCreated": "2026-08-01T09:30:00Z"}, source)

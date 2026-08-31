@@ -11,7 +11,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from core import nuvio
-from models.base import MediaType
+from models.base import CollectionSource, MediaType
 from models.media import Media
 from models.playback_progress import PlaybackProgress
 from models.show import Show
@@ -25,6 +25,7 @@ from routers.sync import (
     _nuvio_watched_item,
     _push_nuvio_library_delta,
     _run_full_push,
+    provider_added_at,
 )
 
 
@@ -702,6 +703,41 @@ class NuvioWatchHistoryTests(unittest.IsolatedAsyncioTestCase):
         )
 
 class NuvioNormalizationTests(unittest.TestCase):
+    def test_library_added_at_survives_normalization_and_provider_parsing(self) -> None:
+        added_at = 1784419200000
+        normalized = _normalize_nuvio_item(
+            {
+                "content_id": "tmdb:550",
+                "content_type": "movie",
+                "name": "Fight Club",
+                "added_at": added_at,
+            },
+            profile_id=1,
+        )
+
+        self.assertIsNotNone(normalized)
+        _, item = normalized
+        self.assertEqual(item["AddedAt"], added_at)
+        self.assertEqual(
+            provider_added_at(item, CollectionSource.nuvio),
+            datetime(2026, 7, 19),
+        )
+
+    def test_missing_or_invalid_library_added_at_is_ignored(self) -> None:
+        for added_at in (None, "not-a-timestamp"):
+            normalized = _normalize_nuvio_item(
+                {
+                    "content_id": "tmdb:550",
+                    "content_type": "movie",
+                    "added_at": added_at,
+                },
+                profile_id=1,
+            )
+
+            self.assertIsNotNone(normalized)
+            _, item = normalized
+            self.assertIsNone(provider_added_at(item, CollectionSource.nuvio))
+
     def test_episode_history_maps_to_tmdb_series_and_watch_state(self) -> None:
         normalized = _normalize_nuvio_item(
             {

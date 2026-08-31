@@ -225,9 +225,13 @@ def provider_added_at(item: dict, source: CollectionSource) -> datetime | None:
     Returns None when the source has no such concept or the value is missing
     or unparseable, in which case the caller leaves the column on its server
     default. Sources are matched explicitly rather than through
-    _MEDIA_BROWSER_ITEM_SOURCES: Nuvio and Stremio items are synthesized with
-    a fixed key set and carry no date, and matching them here would only wait
-    for a key rename to start feeding in something wrong."""
+    _MEDIA_BROWSER_ITEM_SOURCES: Nuvio items carry an epoch-millisecond
+    ``AddedAt`` value after normalization, while Stremio items carry no date.
+    Sources are matched explicitly so a key rename cannot feed an unrelated
+    timestamp into this column."""
+    if source is CollectionSource.nuvio:
+        return _nuvio_datetime(item.get("AddedAt"))
+
     if source is CollectionSource.plex:
         raw = item.get("addedAt")
         if raw is None:
@@ -3980,6 +3984,10 @@ def _normalize_nuvio_item(
     item = {
         "Id": source_id,
         "Name": title,
+        # Keep Nuvio's epoch-millisecond library add date in the normalized
+        # media-browser shape. provider_added_at converts it to the naive UTC
+        # datetime Scrob stores on Collection/CollectionFile.
+        "AddedAt": record.get("added_at"),
         "ProviderIds": {} if is_episode else {"Tmdb": str(tmdb_id)},
         "MediaStreams": [],
         "Path": None,
