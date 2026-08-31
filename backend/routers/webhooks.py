@@ -2968,6 +2968,17 @@ def parse_kodi_payload(payload: dict) -> dict | None:
     }
 
 
+def _kodi_episode_matches(media: Media, data: dict, show: Show | None) -> bool:
+    """Is a tmdb_id hit really the episode Kodi is playing?"""
+    if show is not None and media.show_id is not None and media.show_id != show.id:
+        return False
+    for field, key in (("season_number", "season_number"), ("episode_number", "episode_number")):
+        want = data.get(key)
+        if want is not None and getattr(media, field) is not None and getattr(media, field) != want:
+            return False
+    return True
+
+
 async def find_or_create_media_kodi(
     data: dict, db: AsyncSession, api_key: str = None, user_id: int | None = None
 ) -> Media | None:
@@ -3003,6 +3014,19 @@ async def find_or_create_media_kodi(
                 except Exception:
                     pass
 
+    # Kodi stores the *show* TMDB id in an episode's uniqueid when its scraper
+    # has no episode-level id, so an episode payload's tmdb_id is only a hint.
+    episode_tmdb_id_unverified = data["media_type"] == "episode" and bool(data.get("tmdb_id"))
+    if episode_tmdb_id_unverified and not series_tmdb_id:
+        try:
+            candidate = int(data["tmdb_id"])
+        except (TypeError, ValueError):
+            candidate = None
+        if candidate:
+            local = await db.execute(select(Show).where(Show.tmdb_id == candidate))
+            if local.scalars().first() is not None:
+                series_tmdb_id = candidate
+
     show = None
     if series_tmdb_id:
         try:
@@ -3018,6 +3042,11 @@ async def find_or_create_media_kodi(
             )
         )
         media = result.scalars().first()
+        if media and episode_tmdb_id_unverified and not _kodi_episode_matches(media, data, show):
+            # Show and episode ids share one number space on TMDB, so an
+            # unverified id can land on an unrelated episode. Fall through to
+            # the show + season/episode lookup instead.
+            media = None
         if media:
             if media.media_type == MediaType.episode and media.show_id is None and show:
                 media.show_id = show.id
@@ -3067,12 +3096,14 @@ async def find_or_create_media_kodi(
         if media:
             return media
 
-    if data["media_type"] == "episode" and not data.get("tmdb_id") and data.get("season_number") is None:
-        return None
+    if data["media_type"] == "episode" and data.get("season_number") is None:
+        if not data.get("tmdb_id") or episode_tmdb_id_unverified:
+            return None
 
+    new_tmdb_id = None if episode_tmdb_id_unverified else data.get("tmdb_id")
     media, _created = await create_media_safely(
         db,
-        int(data["tmdb_id"]) if data.get("tmdb_id") else None,
+        int(new_tmdb_id) if new_tmdb_id else None,
         MediaType(data["media_type"]),
         title=data["title"],
         season_number=data.get("season_number"),

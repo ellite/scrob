@@ -27,6 +27,7 @@ from routers.webhooks import (
     _write_watch_event,
     find_or_create_media_jellyfin,
     find_or_create_media_jellyfin_multi,
+    find_or_create_media_kodi,
     mark_pushed_watched,
     parse_jellyfin_payload,
     parse_kodi_payload,
@@ -1390,6 +1391,94 @@ class ParseKodiPayloadTests(unittest.TestCase):
         self.assertTrue(data["ended"])
         self.assertEqual(data["progress_percent"], 1.0)
         self.assertEqual(data["session_id"], "7")
+
+
+class _QueueDB:
+    """Fakes just enough of AsyncSession for find_or_create_media_kodi: each
+    execute() pops the next queued row, so a test can script exactly what the
+    show lookup, the TMDB-ID match and the season/episode match each return."""
+
+    def __init__(self, *rows):
+        self._rows = list(rows)
+        self.calls = 0
+
+    async def execute(self, stmt):
+        self.calls += 1
+        row = self._rows.pop(0) if self._rows else None
+        return _FastPathResult(row)
+
+
+class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
+    """Kodi puts the *show* TMDB id in an episode's uniqueid whenever its
+    scraper has no episode-level id, and add-ons forward it as-is. Shows and
+    episodes are separate TMDB id spaces that reuse the same numbers, so
+    matching that id against Media.tmdb_id can land on a completely unrelated
+    episode - show 214546 (Sleepers) collides with episode 214546 (Law &
+    Order: SVU S04E10). Worse, that match was tried before the show +
+    season/episode lookup, so a payload carrying a perfectly good showtitle
+    and S/E still scrobbled the wrong episode."""
+
+    def _episode_data(self, **overrides):
+        data = {
+            "media_type": "episode",
+            "title": "Episode 6",
+            "series_name": "Sleepers",
+            "season_number": 3,
+            "episode_number": 6,
+            "tmdb_id": "214546",
+        }
+        data.update(overrides)
+        return data
+
+    async def test_colliding_tmdb_id_falls_through_to_season_episode(self):
+        wrong = SimpleNamespace(id=37092, media_type=MediaType.episode, show_id=2,
+                                season_number=4, episode_number=10)
+        right = SimpleNamespace(id=50001, media_type=MediaType.episode, show_id=1,
+                                season_number=3, episode_number=6)
+        show = SimpleNamespace(id=1, tmdb_id=214546)
+        db = _QueueDB(SimpleNamespace(tmdb_id=214546), wrong, right)
+
+        with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)):
+            result = await find_or_create_media_kodi(self._episode_data(), db)
+
+        self.assertIs(result, right)
+
+    async def test_matching_tmdb_id_is_still_accepted(self):
+        episode = SimpleNamespace(id=50001, media_type=MediaType.episode, show_id=1,
+                                  season_number=3, episode_number=6)
+        show = SimpleNamespace(id=1, tmdb_id=999)
+        db = _QueueDB(SimpleNamespace(tmdb_id=999), episode)
+
+        with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)):
+            result = await find_or_create_media_kodi(self._episode_data(), db)
+
+        self.assertIs(result, episode)
+
+    async def test_show_id_resolves_series_when_payload_has_no_showtitle(self):
+        # No showtitle/tvdb/imdb: the only hint is the uniqueid, which is the
+        # show's id - use it to resolve the series instead of as an episode id.
+        episode = SimpleNamespace(id=50001, media_type=MediaType.episode, show_id=1,
+                                  season_number=3, episode_number=6)
+        show = SimpleNamespace(id=1, tmdb_id=214546)
+        db = _QueueDB(SimpleNamespace(tmdb_id=214546), None, episode)
+
+        with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)) as find_show:
+            result = await find_or_create_media_kodi(self._episode_data(series_name=None), db)
+
+        self.assertIs(result, episode)
+        self.assertEqual(find_show.await_args.args[1], 214546)
+
+    async def test_unverified_show_id_is_not_stored_on_a_new_episode(self):
+        show = SimpleNamespace(id=1, tmdb_id=214546)
+        created = SimpleNamespace(id=60001, media_type=MediaType.episode, show_id=1,
+                                  season_number=3, episode_number=6)
+        db = _QueueDB(SimpleNamespace(tmdb_id=214546), None, None)
+
+        with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)),              patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(None, None, None))),              patch("routers.webhooks.enrich_media_safely", AsyncMock(return_value=created)),              patch("routers.webhooks.create_media_safely",
+                   AsyncMock(return_value=(created, True))) as create_mock:
+            await find_or_create_media_kodi(self._episode_data(), db)
+
+        self.assertIsNone(create_mock.await_args.args[1])
 
 
 if __name__ == "__main__":
