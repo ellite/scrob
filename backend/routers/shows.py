@@ -202,6 +202,7 @@ def format_show(show: ShowModel) -> dict:
         "genres": [g["name"] if isinstance(g, dict) else g for g in (show.tmdb_data or {}).get("genres", [])],
         "seasons_meta": (show.tmdb_data or {}).get("seasons", []),
         "original_language": (show.tmdb_data or {}).get("original_language"),
+        "imdb_id": (show.tmdb_data or {}).get("external_ids", {}).get("imdb_id"),
         "adult": (show.tmdb_data or {}).get("adult", False),
     }
 
@@ -1154,6 +1155,8 @@ async def get_show_season(
                 show_info = {
                     "id": None,
                     "tmdb_id": series_tmdb_id,
+                    "tvdb_id": tmdb_show_data.get("external_ids", {}).get("tvdb_id"),
+                    "imdb_id": tmdb_show_data.get("external_ids", {}).get("imdb_id"),
                     "title": tmdb_show_data.get("name"),
                     "poster_path": tmdb.poster_url(tmdb_show_data.get("poster_path")),
                     "backdrop_path": tmdb.poster_url(
@@ -1557,6 +1560,8 @@ async def get_episode_detail(
             show_info = {
                 "id": None,
                 "tmdb_id": series_tmdb_id,
+                "tvdb_id": show_tmdb.get("external_ids", {}).get("tvdb_id"),
+                "imdb_id": show_tmdb.get("external_ids", {}).get("imdb_id"),
                 "title": show_tmdb.get("name"),
                 "poster_path": tmdb.poster_url(show_tmdb.get("poster_path")),
                 "backdrop_path": tmdb.poster_url(
@@ -2576,6 +2581,7 @@ async def get_tvdb_season(
             "id": show.id if show else None,
             "tvdb_id": tvdb_id,
             "tmdb_id": series_tmdb_id,
+            "imdb_id": show_data.get("imdb_id"),
             "episode_order": "tvdb",
             "title": show_data["title"],
             "poster_path": show_data["poster_path"],
@@ -2864,6 +2870,7 @@ async def get_tvdb_episode(
             "id": show.id if show else None,
             "tvdb_id": tvdb_id,
             "tmdb_id": series_tmdb_id,
+            "imdb_id": show_data.get("imdb_id"),
             "episode_order": "tvdb",
             "title": show_data["title"],
             "poster_path": show_data["poster_path"],

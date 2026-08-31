@@ -131,6 +131,8 @@ export interface EpisodeItem {
 
 export interface ShowSummary {
   tmdb_id: number;
+  tvdb_id?: number | null;
+  imdb_id?: string | null;
   title: string;
   poster_path: string | null;
   backdrop_path: string | null;
@@ -139,6 +141,7 @@ export interface ShowSummary {
 
 export interface Season {
   show: ShowSummary;
+  tvdb_id?: number | null;
   name: string;
   overview: string | null;
   poster_path: string | null;
@@ -816,7 +819,7 @@ export interface TvdbEpisodeDetail {
   } | null;
   cast: { tmdb_id: null; person_id: number | null; name: string; character: string; profile_path: string | null }[];
   episodes: { episode_number: number; name: string | null }[];
-  show: { id: number | null; tvdb_id: number; tmdb_id: number | null; episode_order: "tvdb"; title: string; poster_path: string | null; backdrop_path: string | null };
+  show: { id: number | null; tvdb_id: number; tmdb_id: number | null; imdb_id: string | null; episode_order: "tvdb"; title: string; poster_path: string | null; backdrop_path: string | null };
   season: { name: string; season_number: number; poster_path: string | null };
 }
 
@@ -841,6 +844,7 @@ export interface TvdbSeason {
     id: number | null;
     tvdb_id: number;
     tmdb_id: number | null;
+    imdb_id: string | null;
     episode_order: "tvdb";
     title: string;
     poster_path: string | null;

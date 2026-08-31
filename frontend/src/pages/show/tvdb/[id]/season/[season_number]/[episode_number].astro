@@ -5,6 +5,7 @@ import CommentsSection from "../../../../../../components/CommentsSection.astro"
 import TvdbAttribution from "../../../../../../components/TvdbAttribution.astro";
 import ManualScrobble from "../../../../../../components/ManualScrobble.astro";
 import VideoPlayer from "../../../../../../components/VideoPlayer.astro";
+import ExternalProviderLinks from "../../../../../../components/ExternalProviderLinks.astro";
 import { api, type TvdbEpisodeDetail } from "../../../../../../lib/api";
 export const prerender = false;
 
@@ -155,6 +156,15 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
                 </span>
               )}
             </div>
+            <ExternalProviderLinks
+              tmdbId={episode.show_tmdb_id ?? show?.tmdb_id}
+              tmdbType="tv"
+              tvdbId={show?.tvdb_id ?? Number(id)}
+              imdbId={show?.imdb_id}
+              seasonNumber={episode.tmdb_season_number}
+              episodeNumber={episode.tmdb_episode_number}
+              class="mt-4"
+            />
 
             {user && (episode.unmatched ? (
               <div class="mb-4 p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl text-sm">

@@ -4,6 +4,7 @@ import ActionBar from "../../../components/ActionBar.astro";
 import CommentsSection from "../../../components/CommentsSection.astro";
 import EpisodeOrderSelector from "../../../components/EpisodeOrderSelector.astro";
 import TvdbAttribution from "../../../components/TvdbAttribution.astro";
+import ExternalProviderLinks from "../../../components/ExternalProviderLinks.astro";
 import { api, type TvdbShow } from "../../../lib/api";
 import { formatSeasonTitle } from "../../../lib/media-format";
 export const prerender = false;
@@ -111,11 +112,7 @@ const originalLanguage = show?.original_language
                     {show.age_rating}
                   </span>
                 )}
-                {show.imdb_id && (
-                  <a href={`https://www.imdb.com/title/${show.imdb_id}/`} target="_blank" rel="noopener noreferrer" class="px-2 py-0.5 bg-[#f5c518] rounded text-[10px] font-black text-black tracking-widest hover:bg-[#e6b800] transition-colors">
-                    IMDb
-                  </a>
-                )}
+
                 {show.status && (
                   <span class="capitalize px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-black text-zinc-400 tracking-widest">
                     {show.status}
@@ -130,6 +127,13 @@ const originalLanguage = show?.original_language
                   </span>
                 )}
               </div>
+              <ExternalProviderLinks
+                tmdbId={show.tmdb_id_cross}
+                tmdbType="tv"
+                tvdbId={show.tvdb_id}
+                imdbId={show.imdb_id}
+                class="mt-3"
+              />
               {show.network && (
                 <div class="bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm flex items-center">
                   <span class="text-zinc-400 text-xs font-semibold">{show.network}</span>

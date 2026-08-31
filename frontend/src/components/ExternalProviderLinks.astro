@@ -1,0 +1,71 @@
+---
+interface Props {
+  tmdbId?: number | null;
+  tmdbType?: "movie" | "tv";
+  tvdbId?: number | null;
+  tvdbRecordType?: "series" | "season" | "episode";
+  imdbId?: string | null;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+  class?: string;
+}
+
+const {
+  tmdbId,
+  tmdbType = "tv",
+  tvdbId,
+  tvdbRecordType = "series",
+  imdbId,
+  seasonNumber,
+  episodeNumber,
+  class: className = "",
+} = Astro.props;
+
+const tmdbHref = tmdbId
+  ? tmdbType === "movie"
+    ? `https://www.themoviedb.org/movie/${tmdbId}`
+    : seasonNumber != null && episodeNumber != null
+      ? `https://www.themoviedb.org/tv/${tmdbId}/season/${seasonNumber}/episode/${episodeNumber}`
+      : seasonNumber != null
+        ? `https://www.themoviedb.org/tv/${tmdbId}/season/${seasonNumber}`
+        : `https://www.themoviedb.org/tv/${tmdbId}`
+  : null;
+const tvdbHref = tvdbId
+  ? `https://thetvdb.com/dereferrer/${tvdbRecordType}/${tvdbId}`
+  : null;
+const imdbHref = imdbId ? `https://www.imdb.com/title/${imdbId}/` : null;
+
+---
+
+{(tmdbHref || tvdbHref || imdbHref) && <div class={`flex flex-wrap items-center gap-2 ${className}`} aria-label="External metadata links">
+  {tmdbHref && (
+    <a
+      href={tmdbHref}
+      target="_blank"
+      rel="noopener noreferrer"
+      class="inline-flex items-center rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-blue-300 transition-colors hover:border-blue-400/60 hover:bg-blue-500/20 hover:text-blue-200"
+    >
+      TMDB
+    </a>
+  )}
+  {tvdbHref && (
+    <a
+      href={tvdbHref}
+      target="_blank"
+      rel="noopener noreferrer"
+      class="inline-flex items-center rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-300 transition-colors hover:border-emerald-400/60 hover:bg-emerald-500/20 hover:text-emerald-200"
+    >
+      TVDB
+    </a>
+  )}
+  {imdbHref && (
+    <a
+      href={imdbHref}
+      target="_blank"
+      rel="noopener noreferrer"
+      class="inline-flex items-center rounded-lg border border-yellow-500/40 bg-yellow-400/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-yellow-300 transition-colors hover:border-yellow-400/70 hover:bg-yellow-400/20 hover:text-yellow-200"
+    >
+      IMDb
+    </a>
+  )}
+</div>}
