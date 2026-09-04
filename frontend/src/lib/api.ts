@@ -650,7 +650,7 @@ export interface MediaItem {
   // for the show and their estimated total runtime in minutes.
   episodes_left?: number | null;
   remaining_runtime?: number | null;
-  // Next Up only (#237) — the show's most recent watch (or, mid-rewatch, that
+  // Next Up only (#237) - the show's most recent watch (or, mid-rewatch, that
   // rewatch's own progress/start time), for interleaving this feed with
   // /continue-watching's own watched_at into one activity-sorted list.
   last_watched_at?: string | null;

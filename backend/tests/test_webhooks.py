@@ -1393,21 +1393,6 @@ class ParseKodiPayloadTests(unittest.TestCase):
         self.assertEqual(data["session_id"], "7")
 
 
-class _QueueDB:
-    """Fakes just enough of AsyncSession for find_or_create_media_kodi: each
-    execute() pops the next queued row, so a test can script exactly what the
-    show lookup, the TMDB-ID match and the season/episode match each return."""
-
-    def __init__(self, *rows):
-        self._rows = list(rows)
-        self.calls = 0
-
-    async def execute(self, stmt):
-        self.calls += 1
-        row = self._rows.pop(0) if self._rows else None
-        return _FastPathResult(row)
-
-
 class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
     """Kodi puts the *show* TMDB id in an episode's uniqueid whenever its
     scraper has no episode-level id, and add-ons forward it as-is. Shows and
@@ -1436,7 +1421,7 @@ class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
         right = SimpleNamespace(id=50001, media_type=MediaType.episode, show_id=1,
                                 season_number=3, episode_number=6)
         show = SimpleNamespace(id=1, tmdb_id=214546)
-        db = _QueueDB(SimpleNamespace(tmdb_id=214546), wrong, right)
+        db = _QueuedResultDB([SimpleNamespace(tmdb_id=214546), wrong, right])
 
         with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)):
             result = await find_or_create_media_kodi(self._episode_data(), db)
@@ -1447,7 +1432,7 @@ class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
         episode = SimpleNamespace(id=50001, media_type=MediaType.episode, show_id=1,
                                   season_number=3, episode_number=6)
         show = SimpleNamespace(id=1, tmdb_id=999)
-        db = _QueueDB(SimpleNamespace(tmdb_id=999), episode)
+        db = _QueuedResultDB([SimpleNamespace(tmdb_id=999), episode])
 
         with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)):
             result = await find_or_create_media_kodi(self._episode_data(), db)
@@ -1460,7 +1445,7 @@ class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
         episode = SimpleNamespace(id=50001, media_type=MediaType.episode, show_id=1,
                                   season_number=3, episode_number=6)
         show = SimpleNamespace(id=1, tmdb_id=214546)
-        db = _QueueDB(show, None, episode)
+        db = _QueuedResultDB([show, None, episode])
 
         with patch("routers.webhooks._find_or_create_show", AsyncMock()) as find_show:
             result = await find_or_create_media_kodi(self._episode_data(series_name=None), db)
@@ -1475,13 +1460,31 @@ class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
         show = SimpleNamespace(id=1, tmdb_id=214546)
         created = SimpleNamespace(id=60001, media_type=MediaType.episode, show_id=1,
                                   season_number=3, episode_number=6)
-        db = _QueueDB(SimpleNamespace(tmdb_id=214546), None, None)
+        db = _QueuedResultDB([SimpleNamespace(tmdb_id=214546), None, None])
 
         with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)),              patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(None, None, None))),              patch("routers.webhooks.enrich_media_safely", AsyncMock(return_value=created)),              patch("routers.webhooks.create_media_safely",
                    AsyncMock(return_value=(created, True))) as create_mock:
             await find_or_create_media_kodi(self._episode_data(), db)
 
         self.assertIsNone(create_mock.await_args.args[1])
+
+    async def test_unresolved_show_dedups_by_title_season_episode_before_creating(self):
+        # No showtitle/tvdb/imdb and the uniqueid doesn't match any local
+        # show - series_tmdb_id/show never resolve, so the row this same
+        # episode created on an earlier webhook call has show_id=None and
+        # tmdb_id=None (unverified ids are never stored). Without a
+        # season/episode dedup lookup here, every later webhook for this
+        # episode (pause/resume/stop, a repeat play) would mint a fresh
+        # duplicate instead of finding it.
+        existing = SimpleNamespace(id=70001, media_type=MediaType.episode, show_id=None,
+                                    season_number=3, episode_number=6)
+        db = _QueuedResultDB([None, None, existing])
+
+        with patch("routers.webhooks.create_media_safely", AsyncMock()) as create_mock:
+            result = await find_or_create_media_kodi(self._episode_data(series_name=None), db)
+
+        self.assertIs(result, existing)
+        create_mock.assert_not_awaited()
 
 
 if __name__ == "__main__":

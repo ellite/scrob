@@ -3107,6 +3107,30 @@ async def find_or_create_media_kodi(
             return None
 
     new_tmdb_id = None if episode_tmdb_id_unverified else data.get("tmdb_id")
+    if (
+        data["media_type"] == "episode"
+        and show is None
+        and new_tmdb_id is None
+        and data.get("season_number") is not None
+        and data.get("episode_number") is not None
+    ):
+        # create_media_safely's unique index skips a null tmdb_id entirely, so
+        # without this the next webhook for this same episode (pause/resume/
+        # stop, a repeat play) would fail the tmdb_id lookup above and mint a
+        # fresh duplicate row every time, forever.
+        result = await db.execute(
+            select(Media).where(
+                Media.media_type == MediaType.episode,
+                Media.show_id.is_(None),
+                Media.season_number == data["season_number"],
+                Media.episode_number == data["episode_number"],
+                Media.title.ilike(data["title"]),
+            )
+        )
+        media = result.scalars().first()
+        if media:
+            return media
+
     media, _created = await create_media_safely(
         db,
         int(new_tmdb_id) if new_tmdb_id else None,
