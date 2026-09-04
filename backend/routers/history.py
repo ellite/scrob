@@ -1293,6 +1293,14 @@ async def get_next_up(
     for item in items:
         item["next_up_hidden"] = item.get("show_id") in hidden_set
         item["dropped"] = item.get("show_id") in dropped_show_ids
+        # The show's most recent watch (or, mid-rewatch, the rewatch's own
+        # progress/start time) - already computed above for the sort just
+        # below, just not previously returned. Lets a client interleave this
+        # feed with /continue-watching (whose items already carry a
+        # comparable top-level watched_at) into one activity-sorted row, the
+        # way Stremio/Nuvio-style addons do (#237).
+        show_last_watched_at = last_watched_at.get(item.get("show_id"))
+        item["last_watched_at"] = show_last_watched_at.isoformat() if show_last_watched_at else None
         show_stats = remaining_stats.get(item.get("show_id"))
         if show_stats:
             item["episodes_left"] = show_stats["episodes_left"]
