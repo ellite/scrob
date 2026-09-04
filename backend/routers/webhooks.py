@@ -3017,6 +3017,7 @@ async def find_or_create_media_kodi(
     # Kodi stores the *show* TMDB id in an episode's uniqueid when its scraper
     # has no episode-level id, so an episode payload's tmdb_id is only a hint.
     episode_tmdb_id_unverified = data["media_type"] == "episode" and bool(data.get("tmdb_id"))
+    show = None
     if episode_tmdb_id_unverified and not series_tmdb_id:
         try:
             candidate = int(data["tmdb_id"])
@@ -3024,11 +3025,16 @@ async def find_or_create_media_kodi(
             candidate = None
         if candidate:
             local = await db.execute(select(Show).where(Show.tmdb_id == candidate))
-            if local.scalars().first() is not None:
+            candidate_show = local.scalars().first()
+            if candidate_show is not None:
                 series_tmdb_id = candidate
+                # Already fetched the row above - _find_or_create_show below
+                # would only repeat this exact query and hit its found-branch
+                # again, never its create-from-TMDB one, since a match is
+                # what was just confirmed.
+                show = candidate_show
 
-    show = None
-    if series_tmdb_id:
+    if series_tmdb_id and show is None:
         try:
             show = await _find_or_create_show(db, series_tmdb_id, api_key)
         except Exception:

@@ -1460,13 +1460,16 @@ class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
         episode = SimpleNamespace(id=50001, media_type=MediaType.episode, show_id=1,
                                   season_number=3, episode_number=6)
         show = SimpleNamespace(id=1, tmdb_id=214546)
-        db = _QueueDB(SimpleNamespace(tmdb_id=214546), None, episode)
+        db = _QueueDB(show, None, episode)
 
-        with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)) as find_show:
+        with patch("routers.webhooks._find_or_create_show", AsyncMock()) as find_show:
             result = await find_or_create_media_kodi(self._episode_data(series_name=None), db)
 
         self.assertIs(result, episode)
-        self.assertEqual(find_show.await_args.args[1], 214546)
+        # The local Show row is already in hand from the candidate-id lookup
+        # above - calling _find_or_create_show would just repeat that exact
+        # query for nothing.
+        find_show.assert_not_awaited()
 
     async def test_unverified_show_id_is_not_stored_on_a_new_episode(self):
         show = SimpleNamespace(id=1, tmdb_id=214546)
