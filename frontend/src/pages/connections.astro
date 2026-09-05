@@ -5229,7 +5229,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     try {
       // Remember which warning detail panes are currently open so we can restore them after rebuild
       const expandedDetails = new Set<string>();
-      document.querySelectorAll('[id^="conn-warnings-details-"]').forEach(el => {
+      document.querySelectorAll('[id^="conn-warnings-details-"], [id^="conn-warnings-lookup-"]').forEach(el => {
         if (!el.classList.contains('hidden')) expandedDetails.add(el.id);
       });
 
@@ -5255,20 +5255,40 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         overrideMap.set(`${o.source_show_tmdb_id}:${o.source_season_number}`, o);
       }
 
+      const formatJobDate = (job: any) => {
+        const raw = job.updated_at as string;
+        const stamped = raw.endsWith('Z') || raw.includes('+') ? raw : raw + 'Z';
+        return new Date(stamped).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+      };
+
+      // Pull unmatched-TMDB / enrichment vs push lookup-failed must not share a
+      // job: the latest completed job with warnings used to be the Push, which
+      // hid real Pull unmatched rows and painted lookup misses as Match-to-TMDB (#304).
+      const latestJobFor = (connId: string, push: boolean) =>
+        jobs.find((j: any) =>
+          String(j.connection_id) === connId
+          && j.status === 'completed'
+          && j.warnings?.length > 0
+          && (push ? j.job_type === 'push' : j.job_type === 'pull')
+        );
+
       // Find all connection warning containers on the page
-      const containers = document.querySelectorAll<HTMLElement>('[id^="conn-warnings-"]');
+      const containers = document.querySelectorAll<HTMLElement>('[id^="conn-warnings-"]:not([id*="details-"]):not([id*="lookup-"])');
       containers.forEach(container => {
         const connId = container.id.replace('conn-warnings-', '');
-        const job = jobs.find(j => String(j.connection_id) === connId && j.status === 'completed' && j.warnings?.length > 0);
-        if (!job) { container.classList.add('hidden'); container.innerHTML = ''; return; }
+        const pullJob = latestJobFor(connId, false);
+        const pushJob = latestJobFor(connId, true);
+        const pullWarnings: any[] = pullJob?.warnings ?? [];
+        const lookupWarnings: any[] = (pushJob?.warnings ?? []).filter((w: any) => w.type === 'watched_lookup_failed');
+        if (!pullJob && lookupWarnings.length === 0) { container.classList.add('hidden'); container.innerHTML = ''; return; }
 
-        const warnings: any[] = job.warnings;
-        const _updatedAt = job.updated_at.endsWith('Z') || job.updated_at.includes('+') ? job.updated_at : job.updated_at + 'Z';
-        const date = new Date(_updatedAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+        const date = pullJob ? formatJobDate(pullJob) : '';
+        const pushDate = pushJob ? formatJobDate(pushJob) : '';
         const detailsId = `conn-warnings-details-${connId}`;
+        const lookupDetailsId = `conn-warnings-lookup-${connId}`;
 
-        const enrichmentWarnings = warnings.filter((w: any) => w.tmdb_id !== undefined && w.season !== undefined);
-        const unmatchedWarnings = warnings.filter((w: any) => w.title !== undefined);
+        const enrichmentWarnings = pullWarnings.filter((w: any) => w.tmdb_id !== undefined && w.season !== undefined);
+        const unmatchedWarnings = pullWarnings.filter((w: any) => w.title !== undefined && w.type !== 'watched_lookup_failed');
 
         const renderEnrichment = enrichmentWarnings.length > 0 ? `
           <div class="space-y-1">
@@ -5417,8 +5437,14 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           </div>
         ` : '';
 
-        container.classList.remove('hidden');
-        container.innerHTML = `
+        const hasPullPanel = !!pullJob && (hasUnmatched || enrichmentWarnings.length > 0);
+        const hasLookupPanel = lookupWarnings.length > 0;
+        if (!hasPullPanel && !hasLookupPanel) { container.classList.add('hidden'); container.innerHTML = ''; return; }
+
+        const warnIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-400 shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
+        const chevron = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="warn-chevron w-4 h-4 text-amber-500/60 transition-transform shrink-0"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>`;
+
+        const pullBanner = hasPullPanel ? `
           <div class="rounded-xl border border-amber-500/20 bg-amber-500/5 overflow-hidden">
             <button
               type="button"
@@ -5426,25 +5452,62 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               onclick="const d=document.getElementById('${detailsId}');const c=this.querySelector('.warn-chevron');d.classList.toggle('hidden');c.classList.toggle('rotate-180');"
             >
               <div class="flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-400 shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                ${warnIcon}
                 <span class="text-xs font-semibold uppercase tracking-wider text-amber-400">${displayCount} item${displayCount > 1 ? 's' : ''} couldn't be fully synced</span>
                 <span class="text-xs text-zinc-500">· ${escapeHtml(date)}</span>
               </div>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="warn-chevron w-4 h-4 text-amber-500/60 transition-transform shrink-0">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-              </svg>
+              ${chevron}
             </button>
             <div id="${detailsId}" class="hidden border-t border-amber-500/15 px-4 py-3">
               ${renderEnrichment}
               ${renderUnmatched}
             </div>
           </div>
-        `;
+        ` : '';
+
+        const renderLookup = hasLookupPanel ? `
+          <div class="space-y-1">
+            <p class="text-xs text-zinc-500 mb-2">Watch history that has no matching item in this library. Nothing was marked watched here — this is not an unmatched TMDB title.</p>
+            ${lookupWarnings.map((w: any) => `
+              <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
+                <div class="flex-1 min-w-0">
+                  <span class="text-sm text-zinc-200 font-medium">${escapeHtml(w.title ?? 'Untitled')}</span>
+                  ${w.media_type ? `<span class="ml-2 text-xs text-zinc-600">${escapeHtml(w.media_type)}</span>` : ''}
+                  <p class="text-xs text-zinc-500 mt-0.5">${escapeHtml(w.reason ?? 'Not found on this server')}</p>
+                </div>
+              </div>`).join('')}
+          </div>
+        ` : '';
+
+        const lookupBanner = hasLookupPanel ? `
+          <div class="rounded-xl border border-amber-500/20 bg-amber-500/5 overflow-hidden">
+            <button
+              type="button"
+              class="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-amber-500/10 transition-colors cursor-pointer"
+              onclick="const d=document.getElementById('${lookupDetailsId}');const c=this.querySelector('.warn-chevron');d.classList.toggle('hidden');c.classList.toggle('rotate-180');"
+            >
+              <div class="flex items-center gap-2">
+                ${warnIcon}
+                <span class="text-xs font-semibold uppercase tracking-wider text-amber-400">${lookupWarnings.length} watched item${lookupWarnings.length > 1 ? 's' : ''} not found on this server</span>
+                <span class="text-xs text-zinc-500">· ${escapeHtml(pushDate)}</span>
+              </div>
+              ${chevron}
+            </button>
+            <div id="${lookupDetailsId}" class="hidden border-t border-amber-500/15 px-4 py-3">
+              ${renderLookup}
+            </div>
+          </div>
+        ` : '';
+
+        container.classList.remove('hidden');
+        container.innerHTML = `<div class="space-y-2">${pullBanner}${lookupBanner}</div>`;
 
         // Restore expanded state if this pane was open before the rebuild
-        if (expandedDetails.has(detailsId)) {
-          document.getElementById(detailsId)?.classList.remove('hidden');
-          container.querySelector('.warn-chevron')?.classList.add('rotate-180');
+        for (const id of [detailsId, lookupDetailsId]) {
+          if (!expandedDetails.has(id)) continue;
+          const pane = document.getElementById(id);
+          pane?.classList.remove('hidden');
+          pane?.previousElementSibling?.querySelector('.warn-chevron')?.classList.add('rotate-180');
         }
 
         container.querySelectorAll('.remap-season-btn').forEach((btn) => {

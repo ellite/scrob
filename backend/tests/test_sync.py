@@ -996,5 +996,33 @@ class MarkJobRunningUnlessCancelledTests(unittest.IsolatedAsyncioTestCase):
         db.commit.assert_awaited_once()
 
 
+class WatchedLookupFailedWarningTests(unittest.TestCase):
+    """#304: push lookup misses must carry reason + media_type so Connections
+    does not render them as unmatched TMDB (unknown reason, Match-as-show)."""
+
+    def test_copies_title_and_media_type_value(self):
+        for media_type in (sync.MediaType.movie, sync.MediaType.episode):
+            with self.subTest(media_type=media_type):
+                media = SimpleNamespace(title="Any Title", media_type=media_type)
+                self.assertEqual(
+                    sync.watched_lookup_failed_warning(1, media),
+                    {
+                        "type": "watched_lookup_failed",
+                        "media_id": 1,
+                        "title": "Any Title",
+                        "media_type": media_type.value,
+                        "reason": sync.WATCHED_LOOKUP_FAILED_REASON,
+                    },
+                )
+
+    def test_missing_media_still_has_type_and_reason(self):
+        warning = sync.watched_lookup_failed_warning(1, None)
+        self.assertEqual(warning["type"], "watched_lookup_failed")
+        self.assertEqual(warning["media_id"], 1)
+        self.assertIsNone(warning["title"])
+        self.assertIsNone(warning["media_type"])
+        self.assertEqual(warning["reason"], sync.WATCHED_LOOKUP_FAILED_REASON)
+
+
 if __name__ == "__main__":
     unittest.main()
