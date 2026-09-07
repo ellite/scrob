@@ -113,6 +113,22 @@ async def update_global_settings(
         if field in update_data and update_data[field]:
             update_data[field] = await validate_service_url(update_data[field], label)
 
+    # NULL/empty is meaningful here (it means aired order, the historical
+    # behaviour), so only a value that is actually set gets validated. Stored
+    # normalised so every reader compares order keys.
+    if update_data.get("default_episode_order"):
+        from core.episode_order import validate_episode_order
+
+        try:
+            order_key = validate_episode_order(update_data["default_episode_order"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        update_data["default_episode_order"] = order_key
+        if order_key.startswith("tvdb:") and not (
+            update_data.get("tvdb_api_key") or gs.tvdb_api_key
+        ):
+            raise HTTPException(status_code=400, detail="TVDB API key not configured")
+
     for field, value in update_data.items():
         if hasattr(gs, field):
             setattr(gs, field, value)
