@@ -1,0 +1,180 @@
+---
+import Base from "../layouts/Base.astro";
+import { api, type TrackerEntry, type TrackerMediaType, type TrackerStatus } from "../lib/api";
+export const prerender = false;
+
+const { token, user } = Astro.locals;
+const selectedType = (Astro.url.searchParams.get("type") ?? "all") as "all" | TrackerMediaType;
+const selectedStatus = (Astro.url.searchParams.get("status") ?? "all") as "all" | TrackerStatus;
+const search = Astro.url.searchParams.get("q") ?? "";
+
+let entries: TrackerEntry[] = [];
+let counts: Record<TrackerStatus, number> = { current: 0, completed: 0, planning: 0, paused: 0, dropped: 0, repeating: 0 };
+let error = "";
+if (token) {
+  try {
+    const data = await api.tracker.list({
+      ...(selectedType !== "all" ? { media_type: selectedType } : {}),
+      ...(selectedStatus !== "all" ? { status: selectedStatus } : {}),
+      ...(search ? { q: search } : {}),
+    }, token);
+    entries = data.entries;
+    counts = data.counts;
+  } catch (err) {
+    error = err instanceof Error ? err.message : "Could not load your tracker.";
+  }
+}
+
+const typeOptions: Array<{ value: "all" | TrackerMediaType; label: string }> = [
+  { value: "all", label: "All" }, { value: "movie", label: "Movies" }, { value: "series", label: "Series" },
+  { value: "anime", label: "Anime" }, { value: "manga", label: "Manga" }, { value: "book", label: "Books" },
+  { value: "game", label: "Games" }, { value: "comic", label: "Comics" }, { value: "boardgame", label: "Board games" },
+];
+const statusOptions: Array<{ value: "all" | TrackerStatus; label: string }> = [
+  { value: "all", label: "All" }, { value: "current", label: "Current" }, { value: "completed", label: "Completed" },
+  { value: "planning", label: "Planning" }, { value: "paused", label: "Paused" }, { value: "dropped", label: "Dropped" }, { value: "repeating", label: "Repeating" },
+];
+const hrefFor = (type: "all" | TrackerMediaType, status: "all" | TrackerStatus) => {
+  const params = new URLSearchParams();
+  if (type !== "all") params.set("type", type);
+  if (status !== "all") params.set("status", status);
+  if (search) params.set("q", search);
+  const query = params.toString();
+  return query ? `/tracker?${query}` : "/tracker";
+};
+const labelFor = (entry: TrackerEntry) => entry.item.media_type === "series" ? "episodes" : entry.item.media_type === "manga" ? "chapters" : entry.item.media_type === "book" ? "pages" : "progress";
+const coverFor = (entry: TrackerEntry) => entry.item.cover_url?.startsWith("/") ? `https://image.tmdb.org/t/p/w500${entry.item.cover_url}` : entry.item.cover_url;
+---
+
+<Base title="Tracker">
+  {!user ? (
+    <div class="max-w-lg mx-auto py-20 text-center">
+      <h1 class="page-title mb-3">Your tracker</h1>
+      <p class="text-zinc-400 mb-6">Sign in to track anime, books, games and more alongside Scrob.</p>
+      <a href="/login?next=/tracker" class="inline-flex rounded-xl bg-blue-600 px-5 py-3 font-bold text-white hover:bg-blue-500 transition">Sign in</a>
+    </div>
+  ) : (
+    <div>
+      <div class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between mb-8">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-[0.18em] text-blue-400 mb-2">Personal library</p>
+          <h1 class="page-title">Tracker</h1>
+          <p class="mt-2 max-w-2xl text-sm text-zinc-400">A focused, AniList-style home for anime, manga, books, games and manual entries. Playback sync stays in Scrob’s media library.</p>
+        </div>
+        <button id="open-add" class="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-500 active:scale-95 transition">
+          <span class="text-lg leading-none">+</span> Add entry
+        </button>
+      </div>
+
+      <form method="GET" class="mb-5 flex gap-2">
+        {selectedType !== "all" && <input type="hidden" name="type" value={selectedType} />}
+        {selectedStatus !== "all" && <input type="hidden" name="status" value={selectedStatus} />}
+        <input name="q" value={search} placeholder="Search your tracker" class="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-2.5 text-sm text-zinc-100 outline-none focus:border-blue-500" />
+        <button class="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-zinc-300 hover:text-zinc-100">Search</button>
+      </form>
+
+      <div class="mb-3 flex gap-2 overflow-x-auto pb-2 tracker-tabs">
+        {typeOptions.map((option) => <a href={hrefFor(option.value, selectedStatus)} class:list={["shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition", option.value === selectedType ? "bg-blue-600 text-white" : "bg-zinc-900 text-zinc-400 hover:text-zinc-100"]}>{option.label}</a>)}
+      </div>
+      <div class="mb-8 flex gap-2 overflow-x-auto pb-2 tracker-tabs">
+        {statusOptions.map((option) => <a href={hrefFor(selectedType, option.value)} class:list={["shrink-0 rounded-lg border px-3 py-1.5 text-sm transition", option.value === selectedStatus ? "border-blue-500/50 bg-blue-500/10 text-blue-400" : "border-zinc-800 text-zinc-500 hover:text-zinc-200"]}>{option.label}{option.value !== "all" && <span class="ml-1.5 text-xs opacity-70">{counts[option.value]}</span>}</a>)}
+      </div>
+
+      {error && <div class="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">{error}</div>}
+      {!error && entries.length === 0 && (
+        <div class="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/40 p-12 text-center">
+          <p class="font-semibold text-zinc-300">Nothing here yet</p>
+          <p class="mt-1 text-sm text-zinc-500">Add an entry to start building this list.</p>
+        </div>
+      )}
+      <div class="grid grid-cols-2 gap-x-3 gap-y-7 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+        {entries.map((entry) => (
+          <article class="group min-w-0">
+            <div class="relative aspect-[2/3] overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-sm">
+              {coverFor(entry) ? <img src={coverFor(entry)} alt="" loading="lazy" class="h-full w-full object-cover transition duration-300 group-hover:scale-105" /> : <div class="flex h-full items-center justify-center p-4 text-center text-xs font-bold uppercase tracking-widest text-zinc-600">{entry.item.media_type}</div>}
+              <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent px-2 pb-2 pt-10">
+                <div class="flex items-center justify-between gap-2 text-[11px] font-semibold text-zinc-200">
+                  <span data-progress={entry.progress}>{entry.progress} {labelFor(entry)}</span>
+                  {entry.item.total_units !== null && <span>/{entry.item.total_units}</span>}
+                </div>
+              </div>
+            </div>
+            <h2 class="mt-2 truncate text-sm font-semibold text-zinc-200" title={entry.item.title}>{entry.item.title}</h2>
+            <div class="mt-1 flex items-center justify-between gap-2 text-xs text-zinc-500">
+              <span class="capitalize">{entry.synced ? "Synced" : entry.status}</span>
+              {entry.score !== null && <span class="font-bold text-amber-400">★ {entry.score}</span>}
+            </div>
+            {!entry.synced && (
+              <div class="mt-2 flex gap-1.5">
+                <button class="tracker-progress rounded-md border border-zinc-800 px-2 py-1 text-[11px] font-bold text-zinc-400 hover:border-blue-500 hover:text-blue-400" data-id={entry.id}>+1</button>
+                <select class="tracker-status min-w-0 flex-1 rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-400 outline-none focus:border-blue-500" data-id={entry.id}>
+                  {statusOptions.filter((option) => option.value !== "all").map((option) => <option value={option.value} selected={option.value === entry.status}>{option.label}</option>)}
+                </select>
+              </div>
+            )}
+          </article>
+        ))}
+      </div>
+    </div>
+  )}
+
+  <div id="add-modal" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/65 p-4 backdrop-blur-sm">
+    <form id="add-form" class="w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
+      <div class="mb-5 flex items-center justify-between"><h2 class="text-lg font-bold">Add to tracker</h2><button type="button" id="close-add" class="text-xl text-zinc-500 hover:text-zinc-200">×</button></div>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <label class="sm:col-span-2 text-sm font-medium text-zinc-300">Title<input name="title" required maxlength="500" class="mt-1.5 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-zinc-100 outline-none focus:border-blue-500" /></label>
+        <label class="text-sm font-medium text-zinc-300">Type<select name="media_type" class="mt-1.5 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-zinc-100"><option value="anime">Anime</option><option value="manga">Manga</option><option value="book">Book</option><option value="game">Game</option><option value="comic">Comic</option><option value="boardgame">Board game</option><option value="movie">Movie</option><option value="series">Series</option></select></label>
+        <label class="text-sm font-medium text-zinc-300">Status<select name="status" class="mt-1.5 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-zinc-100"><option value="current">Current</option><option value="planning" selected>Planning</option><option value="completed">Completed</option><option value="paused">Paused</option><option value="dropped">Dropped</option><option value="repeating">Repeating</option></select></label>
+        <label class="text-sm font-medium text-zinc-300">Source<input name="source" value="manual" maxlength="32" class="mt-1.5 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-zinc-100 outline-none focus:border-blue-500" /></label>
+        <label class="text-sm font-medium text-zinc-300">Source ID <span class="font-normal text-zinc-500">(optional)</span><input name="external_id" maxlength="255" class="mt-1.5 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-zinc-100 outline-none focus:border-blue-500" /></label>
+        <label class="text-sm font-medium text-zinc-300">Progress<input name="progress" type="number" min="0" value="0" class="mt-1.5 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-zinc-100 outline-none focus:border-blue-500" /></label>
+        <label class="text-sm font-medium text-zinc-300">Total units<input name="total_units" type="number" min="0" class="mt-1.5 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-zinc-100 outline-none focus:border-blue-500" /></label>
+        <label class="text-sm font-medium text-zinc-300">Score <span class="font-normal text-zinc-500">0–100</span><input name="score" type="number" min="0" max="100" step="0.5" class="mt-1.5 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-zinc-100 outline-none focus:border-blue-500" /></label>
+        <label class="text-sm font-medium text-zinc-300">Cover URL <span class="font-normal text-zinc-500">(optional)</span><input name="cover_url" type="url" class="mt-1.5 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-zinc-100 outline-none focus:border-blue-500" /></label>
+      </div>
+      <p id="add-error" class="hidden mt-4 text-sm text-red-400"></p>
+      <div class="mt-6 flex justify-end gap-2"><button type="button" id="cancel-add" class="rounded-xl px-4 py-2.5 text-sm font-semibold text-zinc-400 hover:text-zinc-200">Cancel</button><button class="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-500">Add entry</button></div>
+    </form>
+  </div>
+
+  <script>
+    const modal = document.getElementById('add-modal');
+    const close = () => modal?.classList.add('hidden');
+    const open = () => modal?.classList.remove('hidden');
+    document.getElementById('open-add')?.addEventListener('click', open);
+    document.getElementById('close-add')?.addEventListener('click', close);
+    document.getElementById('cancel-add')?.addEventListener('click', close);
+    modal?.addEventListener('click', (event) => { if (event.target === modal) close(); });
+    document.getElementById('add-form')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget as HTMLFormElement);
+      const value = (name: string) => String(form.get(name) ?? '').trim();
+      const asNumber = (name: string) => { const raw = value(name); return raw === '' ? null : Number(raw); };
+      const item: Record<string, unknown> = { source: value('source') || 'manual', media_type: value('media_type'), title: value('title') };
+      for (const name of ['external_id', 'cover_url']) { const raw = value(name); if (raw) item[name] = raw; }
+      for (const name of ['total_units']) { const raw = asNumber(name); if (raw !== null) item[name] = raw; }
+      const payload: Record<string, unknown> = { item, status: value('status'), progress: asNumber('progress') ?? 0 };
+      const score = asNumber('score'); if (score !== null) payload.score = score;
+      const error = document.getElementById('add-error');
+      error?.classList.add('hidden');
+      const response = await fetch('/api/proxy/tracker', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (response.ok) { window.location.reload(); return; }
+      const body = await response.json().catch(() => ({}));
+      if (error) { error.textContent = body.detail || 'Could not add this entry.'; error.classList.remove('hidden'); }
+    });
+    const updateEntry = async (id: string, body: Record<string, unknown>) => {
+      const response = await fetch(`/api/proxy/tracker/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (response.ok) window.location.reload();
+    };
+    document.querySelectorAll<HTMLButtonElement>('.tracker-progress').forEach((button) => {
+      button.addEventListener('click', () => {
+        const card = button.closest('article');
+        const current = Number(card?.querySelector<HTMLElement>('[data-progress]')?.dataset.progress ?? 0);
+        updateEntry(button.dataset.id ?? '', { progress: current + 1 });
+      });
+    });
+    document.querySelectorAll<HTMLSelectElement>('.tracker-status').forEach((select) => {
+      select.addEventListener('change', () => updateEntry(select.dataset.id ?? '', { status: select.value }));
+    });
+  </script>
+</Base>

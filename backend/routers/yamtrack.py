@@ -12,13 +12,14 @@ from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
 from core.scrob_import import MAX_TOTAL_SIZE, ScrobImportData, apply_scrob_import
 from core.yamtrack_import import parse_yamtrack_csv
+from core.yamtrack_tracker_import import apply_yamtrack_tracker_import, parse_yamtrack_tracker_csv
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-async def run_yamtrack_import(user_id: int, job_id: int, data: ScrobImportData, include: dict) -> None:
+async def run_yamtrack_import(user_id: int, job_id: int, data: ScrobImportData, tracker_records: list, include: dict) -> None:
     """Applies a parsed Yamtrack/Floppy CSV export in the background.
 
     Structurally identical to routers/export.py's run_scrob_import - both
@@ -42,6 +43,7 @@ async def run_yamtrack_import(user_id: int, job_id: int, data: ScrobImportData, 
                 api_key = gs.tmdb_api_key if gs else None
 
             stats = await apply_scrob_import(db, job_id, user_id, data, api_key, **include)
+            stats["tracker"] = await apply_yamtrack_tracker_import(db, user_id, tracker_records)
 
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats))
             await db.commit()
@@ -97,6 +99,7 @@ async def yamtrack_import_upload(
 
     try:
         data = parse_yamtrack_csv(content)
+        tracker_records = parse_yamtrack_tracker_csv(content)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -107,7 +110,15 @@ async def yamtrack_import_upload(
         gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
         gs = gs_result.scalar_one_or_none()
         _tmdb_key = gs.tmdb_api_key if gs else None
-    if not _tmdb_key:
+    # A Yamtrack export containing only books/games/etc. can now be imported
+    # without a TMDB token.  Existing playback rows still need it for Scrob's
+    # legacy importer to resolve their canonical movie/show metadata.
+    has_playback_rows = any((
+        data.history_movies, data.history_episodes, data.collection_movies,
+        data.collection_episodes, data.ratings, data.watchlist, data.lists,
+        data.list_items, data.comments,
+    ))
+    if has_playback_rows and not _tmdb_key:
         raise HTTPException(status_code=400, detail="TMDB API key required for import")
 
     job = SyncJob(user_id=current_user.id, source=CollectionSource.yamtrack, status=SyncStatus.pending, job_type="import")
@@ -115,5 +126,5 @@ async def yamtrack_import_upload(
     await db.commit()
     await db.refresh(job)
 
-    background_tasks.add_task(run_yamtrack_import, current_user.id, job.id, data, include)
+    background_tasks.add_task(run_yamtrack_import, current_user.id, job.id, data, tracker_records, include)
     return {"status": "started", "job_id": job.id, "message": "Yamtrack import is running in the background"}

@@ -113,6 +113,35 @@ export interface SeasonState {
   user_rating: number | null;
 }
 
+export type TrackerMediaType = "movie" | "series" | "anime" | "manga" | "book" | "game" | "comic" | "boardgame";
+export type TrackerStatus = "current" | "completed" | "planning" | "paused" | "dropped" | "repeating";
+
+export interface TrackerEntry {
+  id: number;
+  status: TrackerStatus;
+  progress: number;
+  score: number | null;
+  notes: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  synced?: boolean;
+  item: {
+    id: number;
+    source: string;
+    external_id: string;
+    media_type: TrackerMediaType;
+    title: string;
+    original_title: string | null;
+    cover_url: string | null;
+    description: string | null;
+    release_date: string | null;
+    total_units: number | null;
+    metadata: Record<string, unknown> | null;
+  };
+}
+
 export interface EpisodeItem {
   id: number | null;
   tmdb_id: number;
@@ -1414,6 +1443,17 @@ export const api = {
       post<ListItemEntry>(`/lists/${listId}/items`, body, token),
     removeItem: (listId: number, itemId: number, token: string) =>
       del<{ message: string }>(`/lists/${listId}/items/${itemId}`, token),
+  },
+
+  tracker: {
+    list: (params?: { media_type?: TrackerMediaType; status?: TrackerStatus; q?: string }, token?: string) =>
+      get<{ entries: TrackerEntry[]; counts: Record<TrackerStatus, number> }>("/tracker", params, token),
+    create: (body: unknown, token: string) =>
+      post<TrackerEntry>("/tracker", body, token),
+    update: (entryId: number, body: unknown, token: string) =>
+      patch<TrackerEntry>(`/tracker/${entryId}`, body, token),
+    delete: (entryId: number, token: string) =>
+      del<{ message: string }>(`/tracker/${entryId}`, token),
   },
 
   sync: {

@@ -40,6 +40,7 @@ class User(Base):
     watch_events      : Mapped[list["WatchEvent"]]       = relationship(back_populates="user", cascade="all, delete-orphan")
     ratings           : Mapped[list["Rating"]]           = relationship(back_populates="user", cascade="all, delete-orphan")
     lists             : Mapped[list["List"]]             = relationship(back_populates="user", cascade="all, delete-orphan")
+    tracker_entries   : Mapped[list["TrackerEntry"]]     = relationship(back_populates="user", cascade="all, delete-orphan")
     totp_backup_codes : Mapped[list["TotpBackupCode"]]   = relationship(back_populates="user", cascade="all, delete-orphan")
 
 

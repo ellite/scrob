@@ -44,7 +44,8 @@ const activeMovies = pathname.startsWith('/movies') || pathname.startsWith('/col
 const activeShows  = pathname.startsWith('/shows') || pathname.startsWith('/collection/shows') || pathname.startsWith('/show') || pathname.startsWith('/trending/shows');
 const activeHistory = pathname.startsWith('/history') || pathname === '/next-up';
 const activeLists  = pathname.startsWith('/lists') || pathname.startsWith('/list/');
-const activeHome   = !activeMovies && !activeShows && !activeHistory && !activeLists;
+const activeTracker = pathname.startsWith('/tracker');
+const activeHome   = !activeMovies && !activeShows && !activeHistory && !activeLists && !activeTracker;
 
 const navLink = (active: boolean) =>
   active
@@ -151,6 +152,7 @@ const bottomNavItem = (active: boolean) =>
               <a href="/movies" class={navLink(activeMovies)}>Movies</a>
               <a href="/shows" class={navLink(activeShows)}>Shows</a>
               <a href="/lists" class={navLink(activeLists)}>Lists</a>
+              {user && <a href="/tracker" class={navLink(activeTracker)}>Tracker</a>}
               {user && (
                 <a href="/history" class={navLink(activeHistory)}>History</a>
               )}
