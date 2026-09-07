@@ -210,6 +210,10 @@ class UserSettings(BaseModel):
     hide_watched_from_recently_added: Optional[bool] = None
     rate_prompt_movies: Optional[bool] = None
     rate_prompt_episodes: Optional[bool] = None
+    # NULL inherits server_episode_order, the admin-configured default below
+    # (read-only, computed).
+    default_episode_order: Optional[str] = None
+    server_episode_order: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -474,6 +478,7 @@ class GlobalSettings(BaseModel):
     sonarr_require_approval     : bool = False
     radarr_customize_on_add     : bool = False
     sonarr_customize_on_add     : bool = False
+    default_episode_order       : Optional[str] = None
     image_cache_enabled         : bool = False
     image_cache_limit_gb        : Optional[float] = None
     enable_logged_out_navigation: bool = False

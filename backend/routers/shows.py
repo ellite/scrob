@@ -28,8 +28,11 @@ from core import tmdb
 from core import tvdb as tvdb_client
 from core.episode_order import (
     ensure_episode_order_mapping,
+    get_default_episode_order,
     get_episode_order,
     reconcile_divergent_episode_media,
+    series_tmdb_ids_with_preference,
+    user_series_tmdb_ids,
     validate_episode_order,
 )
 from core.enrichment import (
@@ -439,6 +442,165 @@ class EpisodeOrderRequest(BaseModel):
     force_refresh: bool = False
 
 
+async def _switch_show_to_tvdb_order(
+    db: AsyncSession,
+    user_id: int,
+    series_tmdb_id: int,
+    tmdb_api_key: str,
+    tvdb_api_key: str,
+    *,
+    force: bool = False,
+    on_progress=None,
+) -> dict:
+    """Build the show's TMDB<->TVDB position mapping and point the user's
+    preference at TVDB. Shared by the per-show switch and the bulk apply, so
+    both leave a show in exactly the same state."""
+    mapping_summary = await ensure_episode_order_mapping(
+        db, series_tmdb_id, tmdb_api_key, tvdb_api_key,
+        force=force, on_progress=on_progress,
+    )
+    tvdb_id = mapping_summary["tvdb_id"]
+
+    preference = await get_episode_order(db, user_id, series_tmdb_id)
+    if preference:
+        preference.episode_order = "tvdb"
+        preference.tvdb_id = tvdb_id
+    else:
+        db.add(UserShowEpisodeOrder(
+            user_id=user_id,
+            series_tmdb_id=series_tmdb_id,
+            episode_order="tvdb",
+            tvdb_id=tvdb_id,
+        ))
+
+    show_result = await db.execute(
+        select(ShowModel).where(ShowModel.tmdb_id == series_tmdb_id)
+    )
+    local_show = show_result.scalar_one_or_none()
+    if local_show:
+        local_show.tvdb_id = tvdb_id
+        # #162: this show's TMDB<->TVDB positions are now fully known -
+        # merge any episode that was previously tracked under the "wrong"
+        # (TVDB-native) numbering into its canonical TMDB-numbered row.
+        await reconcile_divergent_episode_media(db, local_show)
+
+    return mapping_summary
+
+
+async def _switch_show_to_tmdb_order(db: AsyncSession, user_id: int, series_tmdb_id: int) -> None:
+    """The counterpart for the "tmdb" default. Keeps the row rather than
+    deleting it - an explicit "tmdb" choice and no row mean the same thing to
+    every reader, and keeping it means a later bulk apply can tell the two
+    apart."""
+    preference = await get_episode_order(db, user_id, series_tmdb_id)
+    if preference:
+        preference.episode_order = "tmdb"
+    else:
+        db.add(UserShowEpisodeOrder(
+            user_id=user_id,
+            series_tmdb_id=series_tmdb_id,
+            episode_order="tmdb",
+            tvdb_id=None,
+        ))
+
+
+async def _run_default_episode_order(
+    user_id: int,
+    job_id: int,
+    series_tmdb_ids: list[int],
+    order: str,
+    tmdb_api_key: str | None,
+    tvdb_api_key: str | None,
+) -> None:
+    """Apply one episode order to many shows. Shows are done one at a time:
+    a single show's mapping already fans out a TMDB request per episode, so
+    this loop is the throttle. One show's failure (no TVDB match, a dead
+    request) is recorded and skipped rather than failing the whole run."""
+    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+    async with async_session() as db:
+        await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+            status=SyncStatus.running,
+            total_items=len(series_tmdb_ids),
+            processed_items=0,
+            current_step=f"Applying {order.upper()} episode order",
+        ))
+        await db.commit()
+
+        done = 0
+        switched = 0
+        failures: list[dict] = []
+
+        for series_tmdb_id in series_tmdb_ids:
+            try:
+                if order == "tvdb":
+                    await _switch_show_to_tvdb_order(
+                        db, user_id, series_tmdb_id, tmdb_api_key, tvdb_api_key,
+                    )
+                else:
+                    await _switch_show_to_tmdb_order(db, user_id, series_tmdb_id)
+                await db.commit()
+                switched += 1
+            except Exception as exc:
+                await db.rollback()
+                failures.append({"series_tmdb_id": series_tmdb_id, "error": str(exc)[:200]})
+
+            done += 1
+            if done % 5 == 0 or done == len(series_tmdb_ids):
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                    processed_items=done, updated_at=func.now(),
+                ))
+                await db.commit()
+
+        await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+            status=SyncStatus.completed,
+            processed_items=done,
+            stats={"episode_order": order, "switched": switched, "failed": len(failures)},
+            warnings=failures or None,
+        ))
+        await db.commit()
+
+
+async def apply_default_episode_order_to_new_shows(user_id: int) -> None:
+    """Fire-and-forget hook for the end of a sync: bring shows the user has no
+    explicit choice for in line with their global default. Shows that already
+    have a preference (including one set by an earlier run of this) are left
+    alone, so this is a no-op on every sync after the first."""
+    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    try:
+        async with async_session() as db:
+            order = await get_default_episode_order(db, user_id)
+            if order != "tvdb":
+                # "tmdb" is what a show without a preference row already
+                # behaves as - nothing to write.
+                return
+            tmdb_api_key, tvdb_api_key = await asyncio.gather(
+                get_user_tmdb_key(db, user_id), get_user_tvdb_key(db, user_id),
+            )
+            if not check_tmdb_key(tmdb_api_key) or not tvdb_api_key:
+                return
+            already_chosen = await series_tmdb_ids_with_preference(db, user_id)
+            pending = [
+                sid for sid in await user_series_tmdb_ids(db, user_id)
+                if sid not in already_chosen
+            ]
+            if not pending:
+                return
+
+        for series_tmdb_id in pending:
+            async with async_session() as db:
+                try:
+                    await _switch_show_to_tvdb_order(
+                        db, user_id, series_tmdb_id, tmdb_api_key, tvdb_api_key,
+                    )
+                    await db.commit()
+                except Exception as exc:
+                    await db.rollback()
+                    print(f"Default episode order: show tmdb={series_tmdb_id} skipped ({exc})")
+    except Exception as exc:
+        print(f"Default episode order for user {user_id} failed: {exc}")
+
+
 async def _run_episode_order_mapping(
     user_id: int,
     job_id: int,
@@ -464,38 +626,11 @@ async def _run_episode_order_mapping(
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.running))
             await db.commit()
 
-            mapping_summary = await ensure_episode_order_mapping(
-                db,
-                series_tmdb_id,
-                tmdb_api_key,
-                tvdb_api_key,
-                force=force_refresh,
-                on_progress=report_progress,
+            mapping_summary = await _switch_show_to_tvdb_order(
+                db, user_id, series_tmdb_id, tmdb_api_key, tvdb_api_key,
+                force=force_refresh, on_progress=report_progress,
             )
             tvdb_id = mapping_summary["tvdb_id"]
-
-            preference = await get_episode_order(db, user_id, series_tmdb_id)
-            if preference:
-                preference.episode_order = "tvdb"
-                preference.tvdb_id = tvdb_id
-            else:
-                db.add(UserShowEpisodeOrder(
-                    user_id=user_id,
-                    series_tmdb_id=series_tmdb_id,
-                    episode_order="tvdb",
-                    tvdb_id=tvdb_id,
-                ))
-
-            show_result = await db.execute(
-                select(ShowModel).where(ShowModel.tmdb_id == series_tmdb_id)
-            )
-            local_show = show_result.scalar_one_or_none()
-            if local_show:
-                local_show.tvdb_id = tvdb_id
-                # #162: this show's TMDB<->TVDB positions are now fully known -
-                # merge any episode that was previously tracked under the "wrong"
-                # (TVDB-native) numbering into its canonical TMDB-numbered row.
-                await reconcile_divergent_episode_media(db, local_show)
 
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
                 status=SyncStatus.completed,
@@ -514,6 +649,63 @@ async def _run_episode_order_mapping(
                 status=SyncStatus.failed, error_message=str(exc)[:900],
             ))
             await db.commit()
+
+
+class ApplyDefaultEpisodeOrderRequest(BaseModel):
+    # Defaults to the user's saved global default; passing it explicitly lets
+    # the settings page apply a just-picked order without saving it first.
+    order: str | None = None
+
+
+@router.post("/episode-order/apply-default")
+async def apply_default_episode_order(
+    body: ApplyDefaultEpisodeOrderRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Force every show the user collected or watched onto one episode order,
+    overriding per-show choices. The global default alone only covers shows
+    with no choice yet (see apply_default_episode_order_to_new_shows)."""
+    try:
+        order = validate_episode_order(
+            body.order or await get_default_episode_order(db, current_user.id)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    tmdb_api_key = tvdb_api_key = None
+    if order == "tvdb":
+        tmdb_api_key, tvdb_api_key = await asyncio.gather(
+            get_user_tmdb_key(db, current_user.id),
+            get_user_tvdb_key(db, current_user.id),
+        )
+        if not check_tmdb_key(tmdb_api_key):
+            raise HTTPException(status_code=400, detail="TMDB API key not configured")
+        if not tvdb_api_key:
+            raise HTTPException(status_code=400, detail="TVDB API key not configured")
+
+    series_tmdb_ids = await user_series_tmdb_ids(db, current_user.id)
+    if not series_tmdb_ids:
+        return {"status": "noop", "shows": 0, "episode_order": order}
+
+    job = SyncJob(
+        user_id=current_user.id,
+        source=CollectionSource.tmdb,
+        job_type="episode_order_bulk",
+        status=SyncStatus.pending,
+        total_items=len(series_tmdb_ids),
+        stats={"episode_order": order},
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    background_tasks.add_task(
+        _run_default_episode_order,
+        current_user.id, job.id, series_tmdb_ids, order, tmdb_api_key, tvdb_api_key,
+    )
+    return {"status": "started", "job_id": job.id, "shows": len(series_tmdb_ids), "episode_order": order}
 
 
 @router.get("/episode-order/jobs/{job_id}")
