@@ -2311,7 +2311,10 @@ async def sync_items(
                             existing_watched.add(media_id_for_watch)
                             if rewatch_eligible:
                                 rewatch_progressed_media_ids.add(media_id_for_watch)
-                            if new_watched_ids is not None:
+                            # Only finished plays fan out - mark_watched is
+                            # all-or-nothing, so pushing a merely started item
+                            # (#253) marks it fully watched on the other side.
+                            if new_watched_ids is not None and watch_state["completed"]:
                                 new_watched_ids.add(media_id_for_watch)
 
                     if sync_ratings and watch_state["user_rating"] is not None:
@@ -6357,8 +6360,14 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             ratings_map: RatingChanges = {}
 
             if conn.push_watched:
+                # completed only - a WatchEvent can also be a started-but-
+                # unfinished play (#253) or a manually logged partial watch,
+                # and pushing one of those marks the item fully watched.
                 watched_result = await db.execute(
-                    select(WatchEvent.media_id).where(WatchEvent.user_id == user_id).distinct()
+                    select(WatchEvent.media_id).where(
+                        WatchEvent.user_id == user_id,
+                        WatchEvent.completed == True,  # noqa: E712
+                    ).distinct()
                 )
                 watched_ids = {row[0] for row in watched_result.all()}
 
