@@ -6202,6 +6202,25 @@ async def _push_stremio_connection(
     return len(changes)
 
 
+# Shown on Connections when a full push cannot resolve a WatchEvent to a
+# server item (#304). Must not look like an unmatched-TMDB pull warning:
+# those have `title` + `reason` + `media_type` and a Match button.
+WATCHED_LOOKUP_FAILED_REASON = (
+    "Not found on this server — no matching library item for this watch"
+)
+
+
+def watched_lookup_failed_warning(media_id: int, media: Media | None) -> dict:
+    """Warning dict for a watch the full-push slow path could not resolve."""
+    return {
+        "type": "watched_lookup_failed",
+        "media_id": media_id,
+        "title": media.title if media else None,
+        "media_type": media.media_type.value if media and media.media_type else None,
+        "reason": WATCHED_LOOKUP_FAILED_REASON,
+    }
+
+
 async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
     import httpx as _httpx
     from routers.webhooks import mark_pushed_watched
@@ -6787,11 +6806,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                         else:
                             newly_failed += 1
                             m = media_info.get(mid)
-                            lookup_warnings.append({
-                                "type": "watched_lookup_failed",
-                                "media_id": mid,
-                                "title": m.title if m else None,
-                            })
+                            lookup_warnings.append(watched_lookup_failed_warning(mid, m))
                     if newly_failed:
                         done += newly_failed
                         failed_count += newly_failed
