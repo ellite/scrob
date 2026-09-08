@@ -1171,5 +1171,68 @@ class FullPushPartialWatchTests(_PartialWatchDB):
         self.assertEqual(armed_media_ids, [self.finished_media_id])
 
 
+class FullPushEchoTokenTimingTests(_PartialWatchDB):
+    """#372: the push-echo token is armed in _push_watched_group, right
+    before the mark_watched call - not once for the whole job up front,
+    where a large-library push runs past the token's 10-minute TTL and its
+    own echo comes back unprotected. A side effect of moving it: an item the
+    server already shows as watched (the push is skipped) no longer leaves a
+    stray token behind."""
+
+    async def _seed(self) -> tuple[int, int]:
+        from models.collection import Collection, CollectionFile, CollectionSource
+        from models.events import WatchEvent
+        from models.media import Media, MediaType
+        from models.sync import SyncJob, SyncStatus
+
+        async with self.Session() as db:
+            conn = MediaServerConnection(
+                user_id=1, type="jellyfin", name="Jellyfin", url="http://jf", token="tok",
+                server_user_id="jf-user", push_watched=True,
+            )
+            db.add(conn)
+            await db.flush()
+            job = SyncJob(
+                user_id=1, source=CollectionSource.jellyfin, status=SyncStatus.pending,
+                connection_id=conn.id, job_type="push",
+            )
+            db.add(job)
+            new_on_server = Media(tmdb_id=603, media_type=MediaType.movie, title="New on server")
+            already_on_server = Media(tmdb_id=604, media_type=MediaType.movie, title="Already on server")
+            db.add_all([new_on_server, already_on_server])
+            await db.flush()
+            for media, source_id in ((new_on_server, "jf-new"), (already_on_server, "jf-already")):
+                coll = Collection(user_id=1, media_id=media.id)
+                db.add(coll)
+                await db.flush()
+                db.add(CollectionFile(
+                    collection_id=coll.id, connection_id=conn.id,
+                    source=CollectionSource.jellyfin, source_id=source_id,
+                ))
+                db.add(WatchEvent(
+                    user_id=1, media_id=media.id, watched_at=datetime(2026, 1, 1),
+                    completed=True, play_count=1, progress_percent=1.0,
+                ))
+            await db.commit()
+            self.new_media_id = new_on_server.id
+            self.already_media_id = already_on_server.id
+            return conn.id, job.id
+
+    async def test_token_armed_only_when_the_push_actually_fires(self):
+        connection_id, job_id = await self._seed()
+        mark_watched = AsyncMock(return_value=True)
+        watched_state = AsyncMock(return_value={"jf-new": False, "jf-already": True})
+        with patch.object(sync, "engine", self.engine), \
+             patch.object(sync.jellyfin, "mark_watched", mark_watched), \
+             patch.object(sync.jellyfin, "get_items_watched_state", watched_state), \
+             patch("routers.webhooks.mark_pushed_watched") as mark_pushed:
+            await sync._run_full_push(1, connection_id, job_id)
+
+        pushed_source_ids = [call.args[3] for call in mark_watched.await_args_list]
+        self.assertEqual(pushed_source_ids, ["jf-new"])
+        armed_media_ids = [call.args[1] for call in mark_pushed.call_args_list]
+        self.assertEqual(armed_media_ids, [self.new_media_id])
+
+
 if __name__ == "__main__":
     unittest.main()

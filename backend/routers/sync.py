@@ -6502,9 +6502,12 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
 
             # Jellyfin/Emby's UserDataSaved webhook can echo a mark-watched push
             # straight back and, without this, land as a brand new WatchEvent
-            # stamped at push time (see #247/#251) - registered up front for
-            # every item about to be pushed, not inside the push call itself,
-            # since the echo can arrive before an in-task registration would.
+            # stamped at push time (see #247/#251). Its echo-suppression token
+            # is armed in _push_watched_group below, right before the actual
+            # mark_watched call - not here, up front: a full push of a large
+            # library runs well past the token's 10-minute TTL, so anything
+            # armed at the start of the job would have expired before its own
+            # echo came back (#372).
             echoes_watched = conn.type in ("jellyfin", "emby")
 
             # A combined multi-episode file (Jellyfin/Emby's IndexNumber..
@@ -6530,7 +6533,6 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 for mid in watched_ids:
                     for sid in source_ids_map.get(mid, []):
                         if echoes_watched:
-                            mark_pushed_watched(user_id, mid)
                             watched_sid_to_mids.setdefault(sid, set()).add(mid)
                         else:
                             push_items.append(("watched", sid, mid))
@@ -6743,13 +6745,13 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     return mid, await _find_source_id(mid)
 
             async def _push_watched_group(client: _httpx.AsyncClient, sid: str, mids: set[int]) -> bool:
-                # Tokens for every mid here are already armed (at queue-build
-                # time for known items, right after resolution below for
-                # looked-up ones) - this call only needs to fire the single
-                # deduped mark_watched (#298). A token that goes unconsumed
-                # because the check below skips the push is harmless - it
-                # just expires on its own TTL, same as one left over from a
-                # failed push call.
+                # One deduped mark_watched per server item, expanded over the N
+                # local rows that share it (#298). The echo-suppression token
+                # for every one of those rows is armed here, immediately before
+                # the call - not when this group was queued: on a long push
+                # that was minutes ago, past the token's 10-minute TTL (#372).
+                # Arming only once the already-watched checks have passed also
+                # means a skipped push leaves no stray token behind.
                 async with sem:
                     try:
                         already = await _already_watched_on_server(sid)
@@ -6757,6 +6759,8 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             return False
                         if already:
                             return True
+                        for mid in mids:
+                            mark_pushed_watched(user_id, mid)
                         if conn.type == "jellyfin":
                             return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
                         else:
@@ -6779,9 +6783,6 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     newly_failed = 0
                     for mid, sid in resolved:
                         if sid:
-                            # Armed before the actual mark_watched call below,
-                            # same as the known-item path (#298).
-                            mark_pushed_watched(user_id, mid)
                             watched_sid_to_mids.setdefault(sid, set()).add(mid)
                         else:
                             newly_failed += 1
