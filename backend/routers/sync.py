@@ -6206,7 +6206,7 @@ async def _push_stremio_connection(
 # server item (#304). Must not look like an unmatched-TMDB pull warning:
 # those have `title` + `reason` + `media_type` and a Match button.
 WATCHED_LOOKUP_FAILED_REASON = (
-    "Not found on this server — no matching library item for this watch"
+    "Not found on this server - no matching library item for this watch"
 )
 
 
