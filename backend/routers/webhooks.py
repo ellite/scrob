@@ -789,6 +789,11 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
             "jellyfin_id": item.get("Id"),
             "title": item.get("Name"),
             "year": item.get("ProductionYear"),
+            # Nested episode payloads carry SeriesProviderIds (resolved above),
+            # so the title+year fallback in _resolve_show_for_episode is rarely
+            # reached - and item.ProductionYear here is the episode's year, not
+            # the series', so it's not a safe disambiguator (#373).
+            "series_year": None,
             "media_type": "movie" if item.get("Type") == "Movie" else "episode",
             "tmdb_id": item.get("ProviderIds", {}).get("Tmdb"),
             "series_tmdb_id": item.get("SeriesProviderIds", {}).get("Tmdb"),
@@ -839,6 +844,11 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
         "jellyfin_id": payload.get("ItemId"),
         "title": payload.get("Name"),
         "year": payload.get("Year") or payload.get("ProductionYear"),
+        # For an episode, the Webhook plugin's flat format sets Year to the
+        # *series'* production year - the disambiguator when two shows share a
+        # title and neither the episode nor the payload carries a series TMDB
+        # id (#373). Movies don't need it (matched by their own tmdb_id).
+        "series_year": payload.get("Year") if item_type == "Episode" else None,
         "media_type": "movie" if item_type == "Movie" else "episode",
         "tmdb_id": str(tmdb_id) if tmdb_id else None,
         "series_tmdb_id": None,  # not exposed in flat format; resolved in find_or_create
@@ -1005,27 +1015,56 @@ async def _translate_plex_tvdb_episode_position(
         )
 
 
+def _parse_year(value) -> int | None:
+    """A four-digit year from an int, a bare "2016", or a "2016-05-13" date."""
+    if value is None:
+        return None
+    text = str(value)[:4]
+    return int(text) if text.isdigit() and len(text) == 4 else None
+
+
+def _pick_show_by_year(shows: list[Show], year: int | None) -> Show | None:
+    """From same-title candidates, the one whose first_air_date year is within
+    a year of `year`. Falls back to the first candidate when there's nothing
+    to match on or nothing lines up - a guess is still better than None, and
+    it's what the code did before the year check existed (#373)."""
+    shows = list(shows)
+    if not shows or len(shows) == 1 or year is None:
+        return shows[0] if shows else None
+    for show in shows:
+        show_year = _parse_year(show.first_air_date)
+        if show_year is not None and abs(show_year - year) <= 1:
+            return show
+    return shows[0]
+
+
 async def _resolve_show_for_episode(
     data: dict, db: AsyncSession, api_key: str = None
 ) -> tuple[Show | None, int | None]:
     """(show, series_tmdb_id) for a parsed Jellyfin/Emby webhook payload.
     Falls back to a series_name lookup (local Show table, then TMDB search)
     when the payload carries no series_tmdb_id - the flat plugin format never
-    has one, and Emby's nested webhooks omit it too (#192)."""
+    has one, and Emby's nested webhooks omit it too (#192). When two shows
+    share a title, the payload's series_year picks between them (#373)."""
     show = None
     series_tmdb_id = int(data["series_tmdb_id"]) if data.get("series_tmdb_id") else None
 
     if data["media_type"] == "episode" and not series_tmdb_id and data.get("series_name"):
         # Flat format: no series_tmdb_id — try local Show table first, then TMDB search
+        series_year = _parse_year(data.get("series_year"))
         local_result = await db.execute(
             select(Show).where(Show.title.ilike(data["series_name"]))
         )
-        local_show = local_result.scalars().first()
+        local_show = _pick_show_by_year(local_result.scalars().all(), series_year)
         if local_show:
             series_tmdb_id = local_show.tmdb_id
         else:
             try:
-                res = await tmdb.search_shows(data["series_name"], api_key=api_key)
+                res = None
+                if series_year:
+                    res = await tmdb.search_shows(data["series_name"], year=series_year, api_key=api_key)
+                if not res or not res.get("results"):
+                    res = await tmdb.search_shows(data["series_name"], api_key=api_key)
                 if res.get("results"):
                     series_tmdb_id = res["results"][0]["id"]
             except Exception:

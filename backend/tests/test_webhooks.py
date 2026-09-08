@@ -548,6 +548,110 @@ class ParseJellyfinMultiEpisodePayloadTests(unittest.TestCase):
         self.assertIsNone(data["episode_number_end"])
 
 
+class ParseJellyfinSeriesYearTests(unittest.TestCase):
+    """#373: the flat plugin sets Year to the series' production year on an
+    episode payload - carried as series_year so _resolve_show_for_episode can
+    pick between two shows that share a title."""
+
+    def test_flat_episode_carries_the_series_year(self):
+        data = parse_jellyfin_payload({
+            "NotificationType": "PlaybackStop", "ItemType": "Episode",
+            "Name": "The Holy Trinity", "SeriesName": "The Grand Tour",
+            "Year": 2026, "SeasonNumber": 1, "EpisodeNumber": 1,
+        })
+        self.assertEqual(data["series_year"], 2026)
+
+    def test_flat_movie_has_no_series_year(self):
+        data = parse_jellyfin_payload({
+            "NotificationType": "PlaybackStop", "ItemType": "Movie",
+            "Name": "The Matrix", "Year": 1999,
+        })
+        self.assertIsNone(data["series_year"])
+
+    def test_nested_episode_has_no_series_year(self):
+        # item.ProductionYear there is the episode's year, not the series'.
+        data = parse_jellyfin_payload({
+            "Event": "playback.stop",
+            "Item": {"Id": "ep1", "Name": "Ep", "Type": "Episode", "ProductionYear": 2026},
+            "Session": {"Id": "s", "PlayState": {}},
+        })
+        self.assertIsNone(data["series_year"])
+
+
+class PickShowByYearTests(unittest.TestCase):
+    """#373: from same-title Show candidates, pick the one matching the
+    payload's series year (within a year), else fall back to the first."""
+
+    def _show(self, tmdb_id, first_air_date):
+        return SimpleNamespace(tmdb_id=tmdb_id, first_air_date=first_air_date)
+
+    def test_single_candidate_is_returned_as_is(self):
+        s = self._show(1, "2016-01-01")
+        self.assertIs(webhooks._pick_show_by_year([s], 2020), s)
+
+    def test_no_year_returns_the_first(self):
+        a, b = self._show(1, "2016"), self._show(2, "2026")
+        self.assertIs(webhooks._pick_show_by_year([a, b], None), a)
+
+    def test_year_within_one_matches(self):
+        a, b = self._show(1, "2016-05-13"), self._show(2, "2025-12-31")
+        self.assertIs(webhooks._pick_show_by_year([a, b], 2026), b)
+
+    def test_no_match_falls_back_to_the_first(self):
+        a, b = self._show(1, "2016"), self._show(2, "2018")
+        self.assertIs(webhooks._pick_show_by_year([a, b], 2030), a)
+
+    def test_empty_is_none(self):
+        self.assertIsNone(webhooks._pick_show_by_year([], 2020))
+
+
+class ResolveShowForEpisodeYearTests(IsolatedAsyncioTestCase):
+    """#373: an episode of a show whose title collides with another show's
+    (a remake/reboot) was attributed to whichever row came back first."""
+
+    def _db(self, shows):
+        async def execute(_stmt):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: list(shows)))
+        return SimpleNamespace(execute=execute)
+
+    def _data(self, **over):
+        d = {
+            "media_type": "episode", "series_name": "The Grand Tour",
+            "series_year": 2026, "series_tmdb_id": None,
+        }
+        d.update(over)
+        return d
+
+    async def test_local_year_match_wins_over_the_first_row(self):
+        old = SimpleNamespace(id=1, tmdb_id=67557, first_air_date="2016-05-13")
+        new = SimpleNamespace(id=2, tmdb_id=329471, first_air_date="2026-01-01")
+        created = SimpleNamespace(id=2, tmdb_id=329471)
+        with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=created)) as find_show:
+            show, series_tmdb_id = await webhooks._resolve_show_for_episode(self._data(), self._db([old, new]))
+        self.assertEqual(series_tmdb_id, 329471)
+        self.assertIs(show, created)
+        self.assertEqual(find_show.await_args.args[1], 329471)
+
+    async def test_no_series_year_keeps_the_first_row(self):
+        old = SimpleNamespace(id=1, tmdb_id=67557, first_air_date="2016-05-13")
+        new = SimpleNamespace(id=2, tmdb_id=329471, first_air_date="2026-01-01")
+        with patch("routers.webhooks._find_or_create_show",
+                   AsyncMock(return_value=SimpleNamespace(id=1, tmdb_id=67557))):
+            _, series_tmdb_id = await webhooks._resolve_show_for_episode(
+                self._data(series_year=None), self._db([old, new])
+            )
+        self.assertEqual(series_tmdb_id, 67557)
+
+    async def test_tmdb_search_fallback_is_year_scoped_first(self):
+        search = AsyncMock(return_value={"results": [{"id": 329471}]})
+        with patch("routers.webhooks.tmdb.search_shows", search), \
+             patch("routers.webhooks._find_or_create_show",
+                   AsyncMock(return_value=SimpleNamespace(id=9, tmdb_id=329471))):
+            _, series_tmdb_id = await webhooks._resolve_show_for_episode(self._data(), self._db([]))
+        self.assertEqual(series_tmdb_id, 329471)
+        self.assertEqual(search.await_args_list[0].kwargs.get("year"), 2026)
+
+
 class FindOrCreateMediaJellyfinMultiTests(IsolatedAsyncioTestCase):
     """Regression tests for #138 follow-up (bittom's comment): scrobbling a
     combined multi-episode file previously only ever marked the first
