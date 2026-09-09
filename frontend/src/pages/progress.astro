@@ -1,0 +1,182 @@
+---
+import Base from "../layouts/Base.astro";
+import Pagination from "../components/Pagination.astro";
+import SortButton from "../components/SortButton.astro";
+import { api, tmdbImageUrl, type ShowProgress } from "../lib/api";
+export const prerender = false;
+
+const { token } = Astro.locals;
+Astro.response.headers.set("Cache-Control", "no-store");
+
+const view = Astro.url.searchParams.get("view") === "collection" ? "collection" : "watched";
+const page = Number(Astro.url.searchParams.get("page") || 1);
+const hideComplete = Astro.url.searchParams.get("hide_complete") === "true";
+const defaultSort = view === "collection" ? "collection_asc" : "recent";
+const sort = Astro.url.searchParams.get("sort") || defaultSort;
+
+const isCollection = view === "collection";
+const metricPct = (s: ShowProgress) => (isCollection ? s.collection_pct : s.watch_pct);
+const metricDone = (s: ShowProgress) => (isCollection ? s.episodes_collected : s.episodes_watched);
+const metricLabel = isCollection ? "Collected" : "Watched";
+// Bar: same green (watched) / purple (collected) as the media-card and
+// show-page action bars. The percentage: the user's theme accent (the
+// blue-* scale is remapped to --accent-* in global.css).
+const barColor = isCollection ? "bg-purple-500" : "bg-green-500";
+
+let shows: ShowProgress[] = [];
+let totalPages = 1;
+let total = 0;
+let failed = false;
+try {
+  const data = await api.history.progress(
+    { type: view, sort, hide_complete: hideComplete || undefined, page },
+    token,
+  );
+  shows = data.shows ?? [];
+  totalPages = data.total_pages;
+  total = data.total;
+} catch {
+  failed = true;
+}
+
+const showHref = (s: ShowProgress) =>
+  s.tmdb_id ? `/show/${s.tmdb_id}` : s.tvdb_id ? `/show/tvdb/${s.tvdb_id}` : "#";
+
+const fmtLastWatched = (iso: string | null) => {
+  if (!iso) return "";
+  return new Date(iso + (iso.endsWith("Z") || iso.includes("+") ? "" : "Z"))
+    .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+};
+
+// Page is always dropped here (Pagination re-adds it); a sort matching the
+// tab's own default and view=watched are dropped too, to keep URLs tidy.
+const urlFor = (v: string, s: string | null, hide: boolean) => {
+  const tabDefault = v === "collection" ? "collection_asc" : "recent";
+  const p = new URLSearchParams();
+  if (v !== "watched") p.set("view", v);
+  if (s && s !== tabDefault) p.set("sort", s);
+  if (hide) p.set("hide_complete", "true");
+  const qs = p.toString();
+  return `/progress${qs ? `?${qs}` : ""}`;
+};
+
+const tabs: [string, string][] = [["watched", "Watched"], ["collection", "Collection"]];
+const sortOptions = isCollection
+  ? [
+      { value: "collection_asc", label: "Least collected" },
+      { value: "collection_desc", label: "Most collected" },
+      { value: "remaining", label: "Episodes missing" },
+      { value: "title", label: "Title (A-Z)" },
+    ]
+  : [
+      { value: "recent", label: "Recently watched" },
+      { value: "watch_desc", label: "Most watched" },
+      { value: "watch_asc", label: "Least watched" },
+      { value: "remaining", label: "Episodes left" },
+      { value: "title", label: "Title (A-Z)" },
+    ];
+---
+
+<Base title="Progress">
+  <div class="mb-6">
+    <h1 class="page-title mb-2">Progress</h1>
+    <p class="text-zinc-500">
+      {isCollection
+        ? "How complete your library is for every show you have episodes of."
+        : "How far you are through every show you've started watching."}
+    </p>
+  </div>
+
+  <div class="flex flex-col md:flex-row md:items-center gap-3 mb-6">
+    <div class="flex gap-2">
+      {tabs.map(([value, label]) => (
+        <a
+          href={urlFor(value, null, hideComplete)}
+          class={`px-4 py-1.5 rounded-full text-sm font-medium transition ${
+            view === value ? "bg-zinc-100 text-zinc-900" : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+          }`}
+        >
+          {label}
+        </a>
+      ))}
+    </div>
+
+    {!failed && total > 0 && (
+      <div class="flex flex-wrap items-center gap-2 md:ml-auto">
+        <a
+          href={urlFor(view, sort, !hideComplete)}
+          class={`px-3 py-1.5 rounded-full text-sm font-medium border transition ${
+            hideComplete
+              ? "bg-blue-600/20 border-blue-500/40 text-blue-400"
+              : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+          }`}
+        >
+          Hide 100% {metricLabel.toLowerCase()}
+        </a>
+        <SortButton id="progress-sort" current={sort} options={sortOptions} paramKey="sort" />
+      </div>
+    )}
+  </div>
+
+  {failed && (
+    <div class="text-center py-20 text-zinc-500"><p class="text-lg">Couldn't load your progress.</p></div>
+  )}
+
+  {!failed && total === 0 && (
+    <div class="text-center py-20 text-zinc-500">
+      <p class="text-lg">
+        {isCollection ? "No shows in your library yet." : "Nothing started yet."}
+      </p>
+      <p class="text-sm mt-2">
+        {isCollection
+          ? "Add a show to your collection and it'll show up here."
+          : "Watch an episode of a show and it'll show up here."}
+      </p>
+    </div>
+  )}
+
+  {!failed && total > 0 && (
+    <>
+      <div class="space-y-2">
+        {shows.map((s) => {
+          const pct = metricPct(s);
+          const remaining = Math.max(0, s.episodes_total - metricDone(s));
+          const meta = `${metricDone(s)}/${s.episodes_total}`
+            + (remaining > 0 ? ` · ${remaining} ${isCollection ? "missing" : "left"}` : " · complete")
+            + (!isCollection && s.last_watched_at ? ` · ${fmtLastWatched(s.last_watched_at)}` : "");
+          return (
+            <a
+              href={showHref(s)}
+              class="flex items-center gap-3 sm:gap-4 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-blue-500/40 hover:bg-zinc-900/60 transition-colors p-2.5 sm:p-3"
+            >
+              <div class="w-11 sm:w-12 shrink-0 aspect-[2/3] rounded-md overflow-hidden bg-zinc-950 ring-1 ring-white/5">
+                {tmdbImageUrl(s.poster_path, "w500") ? (
+                  <img src={tmdbImageUrl(s.poster_path, "w500")} alt={s.title} class="w-full h-full object-cover" loading="lazy" decoding="async" />
+                ) : (
+                  <div class="w-full h-full flex items-center justify-center text-zinc-700 text-lg">📺</div>
+                )}
+              </div>
+
+              <div class="min-w-0 flex-1">
+                <div class="flex items-baseline gap-3">
+                  <h3 class="text-sm font-bold text-zinc-100 truncate flex-1">{s.title}</h3>
+                  <span class="hidden sm:block shrink-0 text-[11px] text-zinc-500 tabular-nums">{meta}</span>
+                </div>
+                <div class="mt-1.5 h-2 rounded-full bg-zinc-800 overflow-hidden">
+                  <div class={`h-full rounded-full ${barColor}`} style={`width:${pct}%`}></div>
+                </div>
+                <span class="sm:hidden block mt-1 text-[11px] text-zinc-500 tabular-nums">{meta}</span>
+              </div>
+
+              <span class="w-11 shrink-0 text-right text-sm font-medium tabular-nums leading-none text-blue-400">
+                {pct}%
+              </span>
+            </a>
+          );
+        })}
+      </div>
+
+      <Pagination currentPage={page} totalPages={totalPages} baseUrl={urlFor(view, sort, hideComplete)} />
+    </>
+  )}
+</Base>

@@ -753,6 +753,21 @@ export interface DroppedShow {
   status: string | null;
 }
 
+export interface ShowProgress {
+  show_id: number;
+  tmdb_id: number | null;
+  tvdb_id: number | null;
+  title: string;
+  poster_path: string | null;
+  status: string | null;
+  episodes_total: number;
+  episodes_watched: number;
+  episodes_collected: number;
+  watch_pct: number;
+  collection_pct: number;
+  last_watched_at: string | null;
+}
+
 export interface DroppedMovie {
   id: number;
   tmdb_id: number | null;
@@ -1395,6 +1410,14 @@ export const api = {
 
     dropped: (token?: string) =>
       get<{ shows: DroppedShow[]; movies: DroppedMovie[] }>("/history/dropped", undefined, token),
+
+    progress: (
+      params: { type?: "watched" | "collection"; sort?: string; hide_complete?: boolean; page?: number },
+      token?: string,
+    ) =>
+      get<{ shows: ShowProgress[]; page: number; page_size: number; total: number; total_pages: number }>(
+        "/history/progress", params, token,
+      ),
   },
 
   lists: {

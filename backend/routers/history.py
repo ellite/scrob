@@ -856,6 +856,39 @@ class _NextUpEpisodeNotOnTmdb(Exception):
     doesn't actually have it — not a real error, never raised past get_next_up."""
 
 
+def _progress_percentages(
+    season_ep_counts: dict[int, int],
+    watched_per_season: dict[int, int],
+    collected_per_season: dict[int, int],
+) -> dict | None:
+    """Watched / collected episode counts and percentages for one show's
+    Progress row (#374). season_ep_counts is capped_season_episode_counts
+    output; per-season counts are themselves capped at that so a provider
+    numbering mismatch (more local rows than TMDB says a season has) can't
+    push a percentage past 100. Specials (season 0) are excluded, matching
+    total_aired_episodes. Returns None for a show with no usable season
+    metadata at all - a "0 / 0" row is just noise.
+    """
+    total = sum(cnt for sn, cnt in season_ep_counts.items() if sn != 0)
+    if total == 0:
+        return None
+    watched = sum(
+        min(watched_per_season.get(sn, 0), cnt)
+        for sn, cnt in season_ep_counts.items() if sn != 0
+    )
+    collected = sum(
+        min(collected_per_season.get(sn, 0), cnt)
+        for sn, cnt in season_ep_counts.items() if sn != 0
+    )
+    return {
+        "episodes_total": total,
+        "episodes_watched": watched,
+        "episodes_collected": collected,
+        "watch_pct": min(100, round(watched / total * 100)),
+        "collection_pct": min(100, round(collected / total * 100)),
+    }
+
+
 def _remaining_episode_stats(
     season_ep_counts: dict[int, int],
     watched_per_season: dict[int, int],
@@ -1723,6 +1756,177 @@ async def list_dropped(
             })
 
     return {"shows": shows_out, "movies": movies_out}
+
+
+_PROGRESS_SORTS = (
+    "recent", "watch_asc", "watch_desc",
+    "collection_asc", "collection_desc", "remaining", "title",
+)
+
+
+@router.get("/progress")
+async def get_progress(
+    type: str = Query("watched", pattern="^(watched|collection)$"),
+    sort: str = Query("recent"),
+    hide_complete: bool = Query(False),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(60, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    """Per-show progress for the Progress dashboard (#374), as two independent
+    lists picked by `type`:
+
+    - `watched`: every show with at least one watched episode.
+    - `collection`: every show with at least one collected episode.
+
+    The two are deliberately not linked - a show you have every episode of
+    but have never watched belongs on the collection list and nowhere near
+    the watched one, and vice versa. Both `watch_pct` and `collection_pct`
+    are still returned for each row as context. Dropped shows are left out
+    (same as Next Up); sorting and the hide-completed filter are client-side.
+
+    Episode totals come from stored TMDB metadata only (capped at the last
+    aired episode) - no live TMDB call per show, so a still-airing show whose
+    cached metadata lags may briefly read a few episodes short. That's the
+    same trade-off total_aired_episodes() already documents.
+    """
+    user_id = current_user.id
+    settings = (await db.execute(
+        select(UserSettings).where(UserSettings.user_id == user_id)
+    )).scalar_one_or_none()
+    dropped_show_ids = set(settings.dropped_shows or []) if settings else set()
+
+    if type == "collection":
+        membership_join = (Collection, Collection.media_id == Media.id)
+        membership_where = Collection.user_id == user_id
+    else:
+        membership_join = (WatchEvent, WatchEvent.media_id == Media.id)
+        membership_where = WatchEvent.user_id == user_id
+
+    started_result = await db.execute(
+        select(func.distinct(Media.show_id))
+        .join(*membership_join)
+        .where(
+            membership_where,
+            Media.media_type == MediaType.episode,
+            Media.show_id.isnot(None),
+        )
+    )
+    show_ids = {row[0] for row in started_result.all()} - dropped_show_ids
+    if not show_ids:
+        return {"shows": [], "page": 1, "page_size": page_size, "total": 0, "total_pages": 1}
+
+    shows_by_id = {
+        s.id: s for s in (
+            await db.execute(select(Show).where(Show.id.in_(show_ids)))
+        ).scalars().all()
+    }
+
+    # One pass over every episode row of these shows: distinct watched and
+    # distinct collected episode numbers per season (same shape the show
+    # detail page's season_stats query produces, just batched across shows).
+    watch_a = aliased(WatchEvent)
+    coll_a = aliased(Collection)
+    season_rows = await db.execute(
+        select(
+            Media.show_id,
+            Media.season_number,
+            func.count(func.distinct(
+                case((watch_a.id.isnot(None), Media.episode_number), else_=None)
+            )),
+            func.count(func.distinct(
+                case((coll_a.id.isnot(None), Media.episode_number), else_=None)
+            )),
+        )
+        .select_from(Media)
+        .outerjoin(watch_a, and_(watch_a.media_id == Media.id, watch_a.user_id == user_id))
+        .outerjoin(coll_a, and_(coll_a.media_id == Media.id, coll_a.user_id == user_id))
+        .where(
+            Media.show_id.in_(show_ids),
+            Media.media_type == MediaType.episode,
+            Media.season_number.isnot(None),
+            Media.episode_number.isnot(None),
+        )
+        .group_by(Media.show_id, Media.season_number)
+    )
+    watched_per_show: dict[int, dict[int, int]] = {}
+    collected_per_show: dict[int, dict[int, int]] = {}
+    for sid, season_number, watched_count, collected_count in season_rows.all():
+        watched_per_show.setdefault(sid, {})[season_number] = watched_count
+        collected_per_show.setdefault(sid, {})[season_number] = collected_count
+
+    last_watched_rows = await db.execute(
+        select(Media.show_id, func.max(WatchEvent.watched_at))
+        .join(WatchEvent, WatchEvent.media_id == Media.id)
+        .where(WatchEvent.user_id == user_id, Media.show_id.in_(show_ids))
+        .group_by(Media.show_id)
+    )
+    last_watched = {sid: ts for sid, ts in last_watched_rows.all()}
+
+    shows_out: list[dict] = []
+    for sid, show in shows_by_id.items():
+        stats = _progress_percentages(
+            capped_season_episode_counts(show),
+            watched_per_show.get(sid, {}),
+            collected_per_show.get(sid, {}),
+        )
+        if stats is None:
+            continue
+        ts = last_watched.get(sid)
+        shows_out.append({
+            "show_id": sid,
+            "tmdb_id": show.tmdb_id,
+            "tvdb_id": show.tvdb_id,
+            "title": show.title,
+            "poster_path": show.poster_path,
+            "status": show.status,
+            **stats,
+            "last_watched_at": ts.isoformat() if ts else None,
+        })
+
+    done_key = "episodes_collected" if type == "collection" else "episodes_watched"
+    pct_key = "collection_pct" if type == "collection" else "watch_pct"
+
+    # A show reaches the "started" query above on any episode row - including a
+    # Special, or an episode in a season the cached TMDB metadata doesn't list.
+    # _progress_percentages counts neither, so those would show as "0 / 85".
+    # Keep a row only if it has real progress on this list's own metric.
+    shows_out = [s for s in shows_out if s[done_key] > 0]
+
+    if hide_complete:
+        shows_out = [s for s in shows_out if s[pct_key] < 100]
+
+    # "remaining" is episodes left to reach 100% of whichever list this is.
+    def _remaining(s: dict) -> int:
+        return s["episodes_total"] - s[done_key]
+
+    if sort not in _PROGRESS_SORTS:
+        sort = "recent"
+    sort_keys = {
+        "recent": (lambda s: s["last_watched_at"] or "", True),
+        "watch_asc": (lambda s: s["watch_pct"], False),
+        "watch_desc": (lambda s: s["watch_pct"], True),
+        "collection_asc": (lambda s: s["collection_pct"], False),
+        "collection_desc": (lambda s: s["collection_pct"], True),
+        "remaining": (_remaining, True),
+        "title": (lambda s: s["title"].lower(), False),
+    }
+    key_fn, reverse = sort_keys[sort]
+    # Stable secondary sort by title so equal percentages have a predictable order.
+    shows_out.sort(key=lambda s: s["title"].lower())
+    shows_out.sort(key=key_fn, reverse=reverse)
+
+    total = len(shows_out)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    offset = (page - 1) * page_size
+    return {
+        "shows": shows_out[offset:offset + page_size],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+    }
 
 
 class SeasonWatchRequest(BaseModel):

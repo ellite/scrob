@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _next_up_needs_live_fetch, _remaining_episode_stats, _stream_next_up_refresh
+from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _next_up_needs_live_fetch, _progress_percentages, _remaining_episode_stats, _stream_next_up_refresh
 from core.rewatch import capped_season_episode_counts
 
 
@@ -172,6 +172,52 @@ class RemainingEpisodeStatsTests(unittest.TestCase):
     def test_no_aired_episodes_returns_none(self):
         self.assertIsNone(_remaining_episode_stats({}, {}, avg_runtime=30.0))
         self.assertIsNone(_remaining_episode_stats({0: 3}, {}, avg_runtime=30.0))
+
+
+class ProgressPercentagesTests(unittest.TestCase):
+    """#374: per-show watched/collected counts and percentages for the
+    Progress dashboard."""
+
+    def test_basic_counts_and_percentages(self):
+        stats = _progress_percentages({1: 10, 2: 10}, {1: 10, 2: 5}, {1: 10, 2: 10})
+        self.assertEqual(stats["episodes_total"], 20)
+        self.assertEqual(stats["episodes_watched"], 15)
+        self.assertEqual(stats["episodes_collected"], 20)
+        self.assertEqual(stats["watch_pct"], 75)
+        self.assertEqual(stats["collection_pct"], 100)
+
+    def test_specials_excluded_from_every_count(self):
+        stats = _progress_percentages({0: 4, 1: 8}, {0: 4, 1: 4}, {0: 4, 1: 8})
+        self.assertEqual(stats["episodes_total"], 8)
+        self.assertEqual(stats["episodes_watched"], 4)
+        self.assertEqual(stats["episodes_collected"], 8)
+
+    def test_counts_capped_per_season_so_pct_never_exceeds_100(self):
+        # Provider numbering mismatch: 14 local watched rows in a 10-episode
+        # season must still read 100%, not 140%.
+        stats = _progress_percentages({1: 10}, {1: 14}, {1: 12})
+        self.assertEqual(stats["episodes_watched"], 10)
+        self.assertEqual(stats["episodes_collected"], 10)
+        self.assertEqual(stats["watch_pct"], 100)
+        self.assertEqual(stats["collection_pct"], 100)
+
+    def test_no_season_metadata_returns_none(self):
+        self.assertIsNone(_progress_percentages({}, {1: 3}, {1: 3}))
+        self.assertIsNone(_progress_percentages({0: 5}, {0: 5}, {0: 5}))
+
+    def test_progress_only_in_specials_or_unknown_seasons_counts_as_zero(self):
+        # A show can reach the endpoint's "started" gate on a Special or an
+        # episode in a season the cached metadata doesn't list; neither counts
+        # here, so the row reads 0 - which is why the endpoint then drops it.
+        stats = _progress_percentages({1: 8, 2: 8}, {0: 3, 9: 2}, {0: 3, 9: 2})
+        self.assertEqual(stats["episodes_total"], 16)
+        self.assertEqual(stats["episodes_watched"], 0)
+        self.assertEqual(stats["episodes_collected"], 0)
+
+    def test_rounds_to_nearest_whole_percent(self):
+        stats = _progress_percentages({1: 3}, {1: 1}, {1: 2})
+        self.assertEqual(stats["watch_pct"], 33)
+        self.assertEqual(stats["collection_pct"], 67)
 
 
 class CappedSeasonCountsFromCacheTests(unittest.TestCase):
