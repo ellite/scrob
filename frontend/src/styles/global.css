@@ -33,9 +33,16 @@
   --color-text-base: #f4f4f5;     /* zinc-100 */
   --color-text-primary: #e4e4e7;  /* zinc-200 */
   --color-text-secondary: #d4d4d8;/* zinc-300 */
-  --color-text-description: #a1a1aa; /* zinc-400 */
-  --color-text-muted: #71717a;    /* zinc-500 */
-  --color-text-dim: #52525b;      /* zinc-600 */
+  /* On this near-black background the three secondary tiers were too dark:
+     zinc-400 (#a1a1aa ~6.8:1), zinc-500 (#71717a ~3.6:1), zinc-600
+     (#52525b ~2.3:1) - only the first cleared WCAG AA, and none read
+     comfortably. They were never far enough apart here to be worth it, so
+     all three now share one readable grey (~8.5:1, between zinc-300 and
+     zinc-400). The bright end (base/primary/secondary) still carries the
+     hierarchy. */
+  --color-text-description: #b4b4bb;
+  --color-text-muted: #b4b4bb;
+  --color-text-dim: #b4b4bb;
 
   --color-brand-jellyfin: #a855f7; /* purple-500 */
   --color-brand-plex: #eab308;    /* yellow-500 */
@@ -99,8 +106,10 @@ html.light {
   --color-text-primary: #1f2937;  /* gray-800 */
   --color-text-secondary: #374151;/* gray-700 */
   --color-text-description: #4b5563; /* gray-600 */
+  /* dim was gray-400 (#9ca3af, ~2.6:1 on white) - below WCAG AA. Matched to
+     muted (gray-500), same as the dark theme above. */
   --color-text-muted: #6b7280;    /* gray-500 */
-  --color-text-dim: #9ca3af;      /* gray-400 */
+  --color-text-dim: #6b7280;      /* gray-500 */
   
   --color-brand-jellyfin: #7e22ce; /* purple-700 */
   --color-brand-plex: #a16207;    /* yellow-700 (darker yellow for contrast) */
