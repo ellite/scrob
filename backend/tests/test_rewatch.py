@@ -1,6 +1,6 @@
 import os
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -70,6 +70,43 @@ class CappedSeasonEpisodeCountsTests(unittest.TestCase):
     def test_no_tmdb_data_gives_zero_total(self):
         show = SimpleNamespace(tmdb_data=None)
         self.assertEqual(total_aired_episodes(show), 0)
+
+    def test_excludes_a_whole_season_with_a_future_premiere(self):
+        # #385: Silo's next season airs next July - no last_episode_to_air on
+        # a TVDB-sourced show, so the future season must be dropped by its date.
+        show = SimpleNamespace(tmdb_data={
+            "seasons": [
+                {"season_number": 1, "episode_count": 10, "air_date": "2023-05-05"},
+                {"season_number": 2, "episode_count": 10, "air_date": "2024-11-15"},
+                {"season_number": 3, "episode_count": 10, "air_date": "2026-01-01"},
+                {"season_number": 4, "episode_count": 10, "air_date": "2027-07-01"},
+            ],
+        })
+        counts = capped_season_episode_counts(show, today=date(2026, 9, 9))
+        self.assertEqual(counts[3], 10)
+        self.assertEqual(counts[4], 0)
+
+    def test_ignores_last_episode_to_air_that_has_not_aired_yet(self):
+        show = SimpleNamespace(tmdb_data={
+            "seasons": [{"season_number": 1, "episode_count": 10}],
+            "last_episode_to_air": {
+                "season_number": 1, "episode_number": 6, "air_date": "2026-09-20",
+            },
+        })
+        counts = capped_season_episode_counts(show, today=date(2026, 9, 9))
+        self.assertEqual(counts[1], 5)
+
+    def test_next_episode_to_air_caps_the_current_season(self):
+        show = SimpleNamespace(tmdb_data={
+            "seasons": [
+                {"season_number": 1, "episode_count": 10},
+                {"season_number": 2, "episode_count": 10},
+            ],
+            "next_episode_to_air": {"season_number": 2, "episode_number": 5},
+        })
+        counts = capped_season_episode_counts(show, today=date(2026, 9, 9))
+        self.assertEqual(counts[1], 10)
+        self.assertEqual(counts[2], 4)
 
 
 class _Result:

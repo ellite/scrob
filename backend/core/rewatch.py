@@ -1,3 +1,5 @@
+from datetime import date
+
 from sqlalchemy import select, func, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,24 +11,53 @@ from models.show import Show as ShowModel
 from models.base import MediaType
 
 
-def capped_season_episode_counts(show: ShowModel, tmdb_extra: dict | None = None) -> dict[int, int]:
+def capped_season_episode_counts(
+    show: ShowModel, tmdb_extra: dict | None = None, today: date | None = None
+) -> dict[int, int]:
     """Per-season episode counts from cached (or freshly-fetched) TMDB metadata,
     capped at the last aired episode for shows still airing. Mirrors the
-    season_ep_counts calculation in routers.shows.get_show."""
-    season_ep_counts: dict[int, int] = {
-        s["season_number"]: s.get("episode_count", 0)
-        for s in (show.tmdb_data or {}).get("seasons", [])
-    }
+    season_ep_counts calculation in routers.shows.get_show.
 
-    last_ep = (tmdb_extra or show.tmdb_data or {}).get("last_episode_to_air")
-    if last_ep:
-        last_sn = last_ep.get("season_number")
-        last_en = last_ep.get("episode_number")
-        if last_sn in season_ep_counts:
-            season_ep_counts[last_sn] = last_en
+    Unaired episodes are excluded three ways, so a still-airing (or between-
+    seasons) show doesn't inflate a total (#385):
+    - cap the current season at last_episode_to_air, but only if it has
+      actually aired - TMDB's copy often runs a day or two ahead;
+    - if next_episode_to_air is set, everything from it onward is unaired;
+    - drop any whole season whose premiere date is still in the future, which
+      also covers TVDB-sourced shows that carry neither *_episode_to_air field.
+    """
+    seasons = (show.tmdb_data or {}).get("seasons", [])
+    season_ep_counts: dict[int, int] = {
+        s["season_number"]: s.get("episode_count", 0) for s in seasons
+    }
+    today_str = (today or date.today()).isoformat()
+    data = tmdb_extra or show.tmdb_data or {}
+    last_ep = data.get("last_episode_to_air") or {}
+    next_ep = data.get("next_episode_to_air") or {}
+
+    cap: tuple[int, int] | None = None
+    if last_ep.get("season_number") is not None and last_ep.get("episode_number") is not None:
+        aired = not last_ep.get("air_date") or last_ep["air_date"] <= today_str
+        cap = (
+            last_ep["season_number"],
+            last_ep["episode_number"] if aired else last_ep["episode_number"] - 1,
+        )
+    if next_ep.get("season_number") is not None and next_ep.get("episode_number") is not None:
+        before_next = (next_ep["season_number"], next_ep["episode_number"] - 1)
+        cap = before_next if cap is None else min(cap, before_next)
+
+    if cap is not None:
+        cap_sn, cap_en = cap
+        if cap_sn in season_ep_counts:
+            season_ep_counts[cap_sn] = max(0, min(season_ep_counts[cap_sn], cap_en))
         for sn in season_ep_counts:
-            if sn > last_sn:
+            if sn > cap_sn:
                 season_ep_counts[sn] = 0
+
+    for s in seasons:
+        air = s.get("air_date")
+        if air and air > today_str:
+            season_ep_counts[s["season_number"]] = 0
 
     return season_ep_counts
 

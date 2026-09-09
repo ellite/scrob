@@ -1802,9 +1802,10 @@ async def get_progress(
     (same as Next Up); sorting and the hide-completed filter are client-side.
 
     Episode totals come from stored TMDB metadata only (capped at the last
-    aired episode) - no live TMDB call per show, so a still-airing show whose
-    cached metadata lags may briefly read a few episodes short. That's the
-    same trade-off total_aired_episodes() already documents.
+    aired episode, unaired seasons dropped by their premiere date) - no live
+    TMDB call per show, so a still-airing show whose cached metadata lags may
+    briefly read a few episodes short. That's the same trade-off
+    total_aired_episodes() already documents.
     """
     user_id = current_user.id
     settings = (await db.execute(
