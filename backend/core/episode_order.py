@@ -562,10 +562,22 @@ async def reconcile_divergent_episode_media(
     return stats
 
 
-async def _merge_episode_media(db: AsyncSession, canonical: Media, divergent: Media) -> None:
+async def _merge_episode_media(
+    db: AsyncSession,
+    canonical: Media,
+    divergent: Media,
+    *,
+    keep_divergent_files: bool = False,
+) -> None:
     """Moves every reference to `divergent` onto `canonical`, deduplicating
     against rows canonical already has where a table's uniqueness would
-    otherwise be violated, then deletes the now-empty divergent row."""
+    otherwise be violated, then deletes the now-empty divergent row.
+
+    With `keep_divergent_files=True`, a Collection clash moves divergent's
+    CollectionFile rows onto canonical's collection entry instead of dropping
+    them - for when the two rows are genuinely distinct physical files the
+    user wants to keep (e.g. a colour and a black-and-white cut of the same
+    show, matched to one episode)."""
     # WatchEvent: no uniqueness on media_id - every play is real and distinct,
     # re-point them all directly.
     await db.execute(update(WatchEvent).where(WatchEvent.media_id == divergent.id).values(media_id=canonical.id))
@@ -624,7 +636,21 @@ async def _merge_episode_media(db: AsyncSession, canonical: Media, divergent: Me
             select(Collection).where(Collection.user_id == row.user_id, Collection.media_id == canonical.id)
         )).scalars().first()
         if clash:
-            await db.delete(row)  # cascades to its CollectionFile rows
+            if keep_divergent_files:
+                have = set((await db.execute(
+                    select(CollectionFile.source, CollectionFile.source_id)
+                    .where(CollectionFile.collection_id == clash.id)
+                )).all())
+                for cf in (await db.execute(
+                    select(CollectionFile).where(CollectionFile.collection_id == row.id)
+                )).scalars().all():
+                    if (cf.source, cf.source_id) in have:
+                        await db.delete(cf)
+                    else:
+                        cf.collection_id = clash.id
+                        have.add((cf.source, cf.source_id))
+                await db.flush()
+            await db.delete(row)  # cascades to any CollectionFile rows left on it
         else:
             row.media_id = canonical.id
 

@@ -7596,6 +7596,7 @@ async def match_unmatched_show(
             sa_func.lower(Media.tmdb_data["show_title"].astext) == body.show_title.lower(),
         )
         .distinct()
+        .order_by(Media.id)
     )
     episodes = ep_result.scalars().all()
     if not episodes:
@@ -7710,6 +7711,26 @@ async def match_unmatched_show(
     skipped = 0
     sem = asyncio.Semaphore(10)
 
+    from core.episode_order import _merge_episode_media
+
+    async def _apply_episode(media: Media, mutate) -> None:
+        """Apply one episode match. If another stub already owns this episode's
+        id - which happens when the user keeps two library versions of the same
+        show (a colour and a B&W cut, say) - fold this stub's files and history
+        into that row instead of leaving it stranded as 'unmatched'."""
+        loser_id = media.id
+        result = await apply_media_change_safely(db, media, mutate)
+        if result is not None and result is not media:
+            try:
+                async with db.begin_nested():
+                    await db.refresh(media)
+                    await _merge_episode_media(db, result, media, keep_divergent_files=True)
+            except Exception:
+                logger.exception(
+                    "match-unmatched-show: could not fold duplicate stub media %s into %s",
+                    loser_id, result.id,
+                )
+
     if body.tvdb_id:
         # ── TVDB path ──────────────────────────────────────────────────────
         from core import tvdb as tvdb_client
@@ -7801,7 +7822,7 @@ async def match_unmatched_show(
                 continue
             for media in season_episodes:
                 ep = ep_map.get(media.episode_number)
-                await apply_media_change_safely(db, media, lambda media=media, ep=ep: apply_tvdb_episode(media, ep))
+                await _apply_episode(media, lambda media=media, ep=ep: apply_tvdb_episode(media, ep))
                 if ep:
                     matched += 1
                 else:
@@ -7851,8 +7872,17 @@ async def match_unmatched_show(
                     await db.execute(
                         update(Media).where(Media.show_id == displaced_show.id).values(show_id=target_show.id)
                     )
+                    # Release the unique tmdb_id on the displaced row *in the database*
+                    # before target_show claims it. Both writes otherwise stay pending
+                    # until the first episode flush, which emits them in primary-key
+                    # order - and when target_show.id sorts first it hits
+                    # shows_tmdb_id_key while the displaced row still holds the value.
+                    await db.execute(
+                        update(Show).where(Show.id == displaced_show.id).values(tmdb_id=None)
+                    )
                     displaced_show.tmdb_id = None
             target_show.tmdb_id = body.tmdb_id
+            await db.flush()
         else:
             tmdb_show_result = await db.execute(select(Show).where(Show.tmdb_id == body.tmdb_id))
             target_show = tmdb_show_result.scalar_one_or_none()
@@ -7919,7 +7949,7 @@ async def match_unmatched_show(
                 continue
             for media in season_episodes:
                 ep = ep_map.get(media.episode_number)
-                await apply_media_change_safely(db, media, lambda media=media, ep=ep: apply_tmdb_episode(media, ep))
+                await _apply_episode(media, lambda media=media, ep=ep: apply_tmdb_episode(media, ep))
                 if ep:
                     matched += 1
                 else:
