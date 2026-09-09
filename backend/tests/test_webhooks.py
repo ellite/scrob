@@ -13,6 +13,7 @@ from models.base import MediaType
 from routers import webhooks
 from routers.webhooks import (
     _backfill_credits_stingers,
+    _backfill_jellyfin_runtimes,
     _backfill_plex_runtime,
     _commit_playback_session_update,
     _consume_recently_pushed_watched,
@@ -52,6 +53,7 @@ class _FakeDB:
         self._queued = list(queued_scalars)
         self.added = []
         self.executed_statements = []
+        self.commits = 0
 
     async def execute(self, stmt):
         self.executed_statements.append(stmt)
@@ -63,6 +65,9 @@ class _FakeDB:
 
     async def flush(self):
         pass
+
+    async def commit(self):
+        self.commits += 1
 
 
 class DuplicateWebhookDeliveryTests(unittest.TestCase):
@@ -1379,6 +1384,100 @@ class BackfillPlexRuntimeTests(IsolatedAsyncioTestCase):
         # rather than also exercising the TMDB fallback that follows it.
         await _backfill_plex_runtime(db, media, {"duration_ms": "not-a-number"}, None, None)
         self.assertIsNone(media.runtime)
+
+
+class ParseJellyfinRuntimeTicksTests(unittest.TestCase):
+    """#383: the parser now surfaces RunTimeTicks so the handler can backfill
+    Media.runtime from it, instead of only using it for the progress ratio."""
+
+    _MIN = 600_000_000  # RunTimeTicks per minute
+
+    def test_nested_payload_carries_runtime_ticks(self):
+        data = parse_jellyfin_payload({
+            "Event": "playback.progress",
+            "Item": {"Id": "m1", "Name": "Heat", "Type": "Movie", "RunTimeTicks": 170 * self._MIN},
+            "Session": {"Id": "s", "PlayState": {"PositionTicks": 0}},
+        })
+        self.assertEqual(data["runtime_ticks"], 170 * self._MIN)
+
+    def test_flat_payload_carries_runtime_ticks(self):
+        data = parse_jellyfin_payload({
+            "NotificationType": "PlaybackProgress", "ItemType": "Episode", "ItemId": "e1",
+            "Name": "Ep", "SeasonNumber": 1, "EpisodeNumber": 1, "RunTimeTicks": 22 * self._MIN,
+        })
+        self.assertEqual(data["runtime_ticks"], 22 * self._MIN)
+
+    def test_absent_runtime_ticks_is_none(self):
+        data = parse_jellyfin_payload({
+            "NotificationType": "PlaybackStop", "ItemType": "Movie", "ItemId": "m2", "Name": "x",
+        })
+        self.assertIsNone(data["runtime_ticks"])
+
+
+class BackfillJellyfinRuntimesTests(IsolatedAsyncioTestCase):
+    """#383: Jellyfin/Emby used RunTimeTicks only for the progress ratio and
+    never wrote Media.runtime, so an item enriched before #169 kept the
+    column NULL however many times it was replayed - freezing the Now
+    Playing bar. Mirrors what Plex already does."""
+
+    _MIN = 600_000_000
+
+    def _movie(self, **overrides):
+        defaults = dict(runtime=None, media_type=MediaType.movie, tmdb_id=550,
+                        show_id=None, season_number=None, episode_number=None)
+        return SimpleNamespace(**{**defaults, **overrides})
+
+    def _episode(self, **overrides):
+        defaults = dict(runtime=None, media_type=MediaType.episode, tmdb_id=None,
+                        show_id=1, season_number=2, episode_number=3)
+        return SimpleNamespace(**{**defaults, **overrides})
+
+    async def test_fills_from_runtime_ticks_and_commits(self):
+        media = self._movie()
+        db = _FakeDB([])
+        await _backfill_jellyfin_runtimes(db, [media], {"runtime_ticks": 53 * self._MIN}, "tmdb-key")
+        self.assertEqual(media.runtime, 53)
+        self.assertEqual(db.commits, 1)
+
+    async def test_noop_when_runtime_already_set(self):
+        media = self._movie(runtime=90)
+        db = _FakeDB([])
+        with patch("core.tmdb.get_movie", new_callable=AsyncMock) as get_movie:
+            await _backfill_jellyfin_runtimes(db, [media], {"runtime_ticks": 10 * self._MIN}, "tmdb-key")
+        self.assertEqual(media.runtime, 90)
+        self.assertEqual(db.commits, 0)
+        get_movie.assert_not_called()
+
+    async def test_falls_back_to_tmdb_when_no_ticks(self):
+        media = self._episode(show_id=7)
+        show = SimpleNamespace(id=7, tmdb_id=999)
+        db = _FakeDB([show])
+        with patch("core.tmdb.get_episode", new_callable=AsyncMock, return_value={"runtime": 45}) as get_episode:
+            await _backfill_jellyfin_runtimes(db, [media], {"runtime_ticks": None}, "tmdb-key")
+        get_episode.assert_awaited_once_with(999, 2, 3, api_key="tmdb-key")
+        self.assertEqual(media.runtime, 45)
+
+    async def test_multi_episode_file_fills_every_row(self):
+        a, b = self._episode(id=1, episode_number=3), self._episode(id=2, episode_number=4)
+        db = _FakeDB([])
+        await _backfill_jellyfin_runtimes(db, [a, b], {"runtime_ticks": 44 * self._MIN}, "tmdb-key")
+        # Each row of a combined file gets the file duration (the Now Playing
+        # bar divides it across episodes at display time), same as Plex.
+        self.assertEqual((a.runtime, b.runtime), (44, 44))
+        self.assertEqual(db.commits, 1)
+
+    async def test_only_the_missing_rows_are_touched(self):
+        got, missing = self._episode(id=1, runtime=30), self._episode(id=2, runtime=None)
+        db = _FakeDB([])
+        await _backfill_jellyfin_runtimes(db, [got, missing], {"runtime_ticks": 22 * self._MIN}, "tmdb-key")
+        self.assertEqual((got.runtime, missing.runtime), (30, 22))
+
+    async def test_nothing_resolvable_leaves_runtime_none_without_committing(self):
+        media = self._movie(tmdb_id=None)
+        db = _FakeDB([])
+        await _backfill_jellyfin_runtimes(db, [media], {"runtime_ticks": None}, "tmdb-key")
+        self.assertIsNone(media.runtime)
+        self.assertEqual(db.commits, 0)
 
 
 class ResolvePlexProgressTests(IsolatedAsyncioTestCase):

@@ -860,5 +860,28 @@ class ManualSessionEpisodeShowLinkTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(media.show_id)
 
 
+class EffectiveRuntimeTests(unittest.TestCase):
+    """#383: a NULL Media.runtime freezes the Now Playing bar - fall back to
+    the cached tmdb_data.runtime for rows enriched before #169."""
+
+    def _media(self, runtime, tmdb_runtime):
+        return SimpleNamespace(runtime=runtime, tmdb_data={"runtime": tmdb_runtime} if tmdb_runtime is not None else {})
+
+    def test_column_value_wins(self):
+        self.assertEqual(history._effective_runtime(self._media(45, 50)), 45)
+
+    def test_falls_back_to_tmdb_data(self):
+        self.assertEqual(history._effective_runtime(self._media(None, 53)), 53)
+
+    def test_tmdb_data_runtime_as_string_is_coerced(self):
+        self.assertEqual(history._effective_runtime(self._media(None, "22")), 22)
+
+    def test_zero_or_missing_or_junk_is_none(self):
+        self.assertIsNone(history._effective_runtime(self._media(None, 0)))
+        self.assertIsNone(history._effective_runtime(self._media(None, None)))
+        self.assertIsNone(history._effective_runtime(self._media(None, "n/a")))
+        self.assertIsNone(history._effective_runtime(SimpleNamespace(runtime=None, tmdb_data=None)))
+
+
 if __name__ == "__main__":
     unittest.main()

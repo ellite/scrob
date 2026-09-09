@@ -331,6 +331,21 @@ async def _push_watch_state(
         await db.commit()
 
 
+def _effective_runtime(media: Media) -> int | None:
+    """Media.runtime, falling back to the cached tmdb_data.runtime for rows
+    enriched before #169 populated the column - a NULL there freezes the
+    Now Playing bar's live progress (#383). The migration backfills existing
+    rows; this covers anything that still slips through."""
+    if media.runtime:
+        return media.runtime
+    raw = (media.tmdb_data or {}).get("runtime")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def format_event(event: WatchEvent | PlaybackProgress, media: Media) -> dict:
     # PlaybackProgress has no watched_at; its updated_at remains the display timestamp.
     # A WatchEvent's watched_at may be None (unknown watch date) — preserve that as-is.
@@ -351,7 +366,7 @@ def format_event(event: WatchEvent | PlaybackProgress, media: Media) -> dict:
             "user_rating": (media.tmdb_data or {}).get("user_rating"), # Placeholder, will be enriched
             "season_number": media.season_number,
             "episode_number": media.episode_number,
-            "runtime": media.runtime,
+            "runtime": _effective_runtime(media),
             "tagline": media.tagline,
             "genres": (media.tmdb_data or {}).get("genres", []),
             "tvdb_sourced": is_unmapped_tvdb_episode(media),
@@ -493,7 +508,7 @@ async def get_now_playing(
                 "backdrop_path": media.backdrop_path,
                 "season_number": media.season_number,
                 "episode_number": media.episode_number,
-                "runtime": media.runtime,
+                "runtime": _effective_runtime(media),
                 "tvdb_sourced": is_unmapped_tvdb_episode(media),
                 "has_mid_credits_scene": (media.tmdb_data or {}).get("has_mid_credits_scene", False),
                 "has_post_credits_scene": (media.tmdb_data or {}).get("has_post_credits_scene", False),
@@ -706,7 +721,7 @@ def _format_media_item(media: Media) -> dict:
         "tmdb_rating": media.tmdb_rating,
         "season_number": media.season_number,
         "episode_number": media.episode_number,
-        "runtime": media.runtime,
+        "runtime": _effective_runtime(media),
         "genres": (media.tmdb_data or {}).get("genres", []),
         "library": None,
         "in_library": False,

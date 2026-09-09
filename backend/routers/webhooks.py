@@ -811,6 +811,7 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
             "episode_number_end": item.get("IndexNumberEnd"),
             "progress_percent": round(position_ticks / runtime_ticks, 4) if runtime_ticks else 0.0,
             "progress_seconds": int(position_ticks / 10_000_000) if position_ticks else 0,
+            "runtime_ticks": runtime_ticks or None,
             "is_paused": bool(play_state.get("IsPaused", False)),
             "session_id": session.get("Id") or session.get("PlaySessionId"),
             "username": session.get("UserName") or payload.get("NotificationUsername", ""),
@@ -861,6 +862,7 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
         "episode_number_end": payload.get("EpisodeNumberEnd"),
         "progress_percent": round(position_ticks / runtime_ticks, 4) if runtime_ticks else 0.0,
         "progress_seconds": int(position_ticks / 10_000_000) if position_ticks else 0,
+        "runtime_ticks": runtime_ticks or None,
         "is_paused": bool(payload.get("IsPaused", False)),
         "session_id": payload.get("PlaySessionId") or payload.get("DeviceId"),
         "username": payload.get("UserName") or payload.get("NotificationUsername", ""),
@@ -1300,6 +1302,9 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
         return {"status": "ignored", "reason": "episode could not be identified (no season/episode/tmdb_id)"}
     media = media_list[0]
 
+    if notification_type in _RUNTIME_BACKFILL_EVENTS:
+        await _backfill_jellyfin_runtimes(db, media_list, data, tmdb_key)
+
     # ItemAdded fires once, right when a title lands in the library — often
     # long before anyone plays it, so "add to collection" can't wait on a
     # playback event to piggy-back on (see #129: an added-but-unwatched item
@@ -1558,6 +1563,9 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
         return {"status": "ignored", "reason": "episode could not be identified (no season/episode/tmdb_id)"}
     media = media_list[0]
 
+    if notification_type in _RUNTIME_BACKFILL_EVENTS:
+        await _backfill_jellyfin_runtimes(db, media_list, data, tmdb_key)
+
     # See the matching comment in _handle_jellyfin_webhook (#129). Emby's own
     # plugin reports these as dotted-lowercase names (confirmed live, #295) -
     # "library.new" here is its equivalent of Jellyfin's "ItemAdded", kept
@@ -1745,6 +1753,9 @@ async def _handle_jellyfin_scrobble_webhook(
     if not media_list:
         return {"status": "ignored", "reason": "episode could not be identified (no season/episode/tmdb_id)"}
     media = media_list[0]
+
+    if notification_type in _RUNTIME_BACKFILL_EVENTS:
+        await _backfill_jellyfin_runtimes(db, media_list, data, tmdb_key)
 
     coll_source = CollectionSource.jellyfin if source == "jellyfin" else CollectionSource.emby
 
@@ -2184,28 +2195,73 @@ async def _backfill_plex_runtime(
         except (TypeError, ValueError) as e:
             print(f"  Could not compute runtime from duration_ms={duration_ms!r}: {e}")
 
-    if not tmdb_key:
-        return
+    from_tmdb = await _runtime_from_tmdb(db, media, tmdb_key)
+    if from_tmdb:
+        media.runtime = from_tmdb
 
+
+async def _runtime_from_tmdb(db: AsyncSession, media: Media, tmdb_key: str | None) -> int | None:
+    """Runtime in minutes from TMDB for a movie or episode, or None. Shared
+    last-resort source for the Plex and Jellyfin/Emby runtime backfills -
+    best-effort, never raises."""
+    if not tmdb_key:
+        return None
     try:
         if media.media_type == MediaType.movie and media.tmdb_id:
-            tmdb_data = await tmdb.get_movie(media.tmdb_id, api_key=tmdb_key)
-            media.runtime = tmdb_data.get("runtime") or media.runtime
-        elif (
+            data = await tmdb.get_movie(media.tmdb_id, api_key=tmdb_key)
+            return data.get("runtime") or None
+        if (
             media.media_type == MediaType.episode
             and media.show_id
             and media.season_number is not None
             and media.episode_number is not None
         ):
-            show_result = await db.execute(select(Show).where(Show.id == media.show_id))
-            show = show_result.scalar_one_or_none()
+            show = (await db.execute(select(Show).where(Show.id == media.show_id))).scalar_one_or_none()
             if show and show.tmdb_id:
-                tmdb_data = await tmdb.get_episode(
+                data = await tmdb.get_episode(
                     show.tmdb_id, media.season_number, media.episode_number, api_key=tmdb_key,
                 )
-                media.runtime = tmdb_data.get("runtime") or media.runtime
+                return data.get("runtime") or None
     except Exception as e:
         print(f"  Could not backfill runtime from TMDB for media_id={getattr(media, 'id', None)}: {e}")
+    return None
+
+
+_RUNTIME_BACKFILL_EVENTS = (
+    "PlaybackStart", "PlaybackProgress", "PlaybackStop",
+    "playback.start", "playback.progress", "playback.stop",
+)
+
+
+async def _backfill_jellyfin_runtimes(
+    db: AsyncSession, media_list: list["Media"], data: dict, tmdb_key: str | None,
+) -> None:
+    """Fill Media.runtime for any row in media_list still missing it, from the
+    payload's RunTimeTicks (exact for the file) or, failing that, TMDB - then
+    commit. Without it the Now Playing bar's live progress interpolation never
+    engages for that item (#383). The Plex path already does this via
+    _backfill_plex_runtime; Jellyfin/Emby dropped RunTimeTicks after using it
+    for the progress ratio.
+    """
+    changed = False
+    for media in media_list:
+        if media.runtime:
+            continue
+        minutes: int | None = None
+        ticks = data.get("runtime_ticks")
+        if ticks:
+            try:
+                # RunTimeTicks is 100-nanosecond units: 6e8 ticks per minute.
+                minutes = round(int(ticks) / 600_000_000) or None
+            except (TypeError, ValueError):
+                minutes = None
+        if not minutes:
+            minutes = await _runtime_from_tmdb(db, media, tmdb_key)
+        if minutes and minutes > 0:
+            media.runtime = minutes
+            changed = True
+    if changed:
+        await db.commit()
 
 
 async def _backfill_credits_stingers(db: AsyncSession, media: Media, tmdb_key: str | None) -> None:
