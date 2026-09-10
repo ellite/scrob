@@ -102,20 +102,26 @@ const href = media.type === 'movie' ? `/media/movie/${media.tmdb_id}` : episodeH
 </div>
 
 <script>
-  document.querySelectorAll<HTMLElement>('[data-event-id]').forEach(card => {
-    const btn = card.querySelector<HTMLButtonElement>('.delete-history-event');
+  // Delegated from document, not bound per-card on mount: the /history live
+  // search swaps #history-results in place, and those fresh cards must stay
+  // clickable/deletable without this script re-running.
+  if (!(window as any).__historyCardBound) {
+    (window as any).__historyCardBound = true;
 
-    card.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('.delete-history-event')) return;
-      const href = card.dataset.href;
-      if (href) window.location.href = href;
-    });
+    const TRASH_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
 
-    if (!btn) return;
+    document.addEventListener('click', async (e) => {
+      const card = (e.target as HTMLElement).closest<HTMLElement>('[data-event-id]');
+      if (!card) return;
 
-    btn.addEventListener('click', async (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.delete-history-event');
+      if (!btn) {
+        const href = card.dataset.href;
+        if (href) window.location.href = href;
+        return;
+      }
+
       e.stopPropagation();
-
       const title = card.querySelector('p.text-lg')?.textContent?.trim() || 'this entry';
       const ok = await (window as any).showConfirm(`Delete "${title}"?`, 'This removes it from your watch history. This cannot be undone.');
       if (!ok) return;
@@ -147,10 +153,10 @@ const href = media.type === 'movie' ? `/media/movie/${media.tmdb_id}` : episodeH
         }, 250);
       } catch {
         btn.disabled = false;
-        btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
+        btn.innerHTML = TRASH_SVG;
         btn.classList.add('text-red-400', 'border-red-500/40');
         setTimeout(() => btn.classList.remove('text-red-400', 'border-red-500/40'), 1500);
       }
     });
-  });
+  }
 </script>
