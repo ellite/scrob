@@ -9,6 +9,9 @@ const [settings, me] = await Promise.all([
   api.auth.me(token!),
 ]);
 const hasTmdbKey = settings.has_effective_tmdb_key;
+const hasTvdbKey = settings.has_effective_tvdb_key;
+const defaultEpisodeOrder = settings.default_episode_order ?? '';
+const serverEpisodeOrder = settings.server_episode_order === 'tvdb' ? 'TVDB' : 'TMDB';
 let backupCodes: TotpBackupCode[] = [];
 if (me.totp_enabled) {
   try {
@@ -312,6 +315,57 @@ if (me.totp_enabled) {
                   {label}
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Episode Order -->
+      <section>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Episode Order</h2>
+        <div class="space-y-3 max-w-xl">
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+            <div class="flex items-start justify-between gap-6 px-5 py-4">
+              <div>
+                <p class="text-sm font-medium text-zinc-200">Default for new shows</p>
+                <p class="text-xs text-zinc-500 mt-0.5">Whose season/episode numbering shows use. TVDB is the order Sonarr names files by and needs a TVDB API key. A per-show choice always wins over this default, and leaving this on the server default follows whatever the admin configured.</p>
+              </div>
+              <select
+                id="default-episode-order"
+                data-server-order={settings.server_episode_order ?? 'tmdb'}
+                disabled={!hasTvdbKey && defaultEpisodeOrder !== 'tvdb'}
+                title={!hasTvdbKey ? "A TVDB API key is required for TVDB ordering" : ""}
+                class="ml-4 shrink-0 text-sm px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer disabled:opacity-50"
+              >
+                <option value="" selected={defaultEpisodeOrder === ''}>Server default ({serverEpisodeOrder})</option>
+                <option value="tmdb" selected={defaultEpisodeOrder === 'tmdb'}>TMDB</option>
+                <option value="tvdb" selected={defaultEpisodeOrder === 'tvdb'}>TVDB</option>
+              </select>
+            </div>
+            <div class="flex items-start justify-between gap-6 px-5 py-4 border-t border-zinc-800">
+              <div>
+                <p class="text-sm font-medium text-zinc-200">Apply to all existing shows</p>
+                <p class="text-xs text-zinc-500 mt-0.5">Re-maps every show you collected or watched to the order above, overriding per-show choices. Shows are done one at a time — building a missing TVDB mapping takes a moment per show.</p>
+              </div>
+              <button
+                id="apply-episode-order-btn"
+                type="button"
+                class="ml-4 shrink-0 text-sm px-4 py-2 rounded-lg transition-colors cursor-pointer disabled:opacity-50 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30"
+              >
+                Apply
+              </button>
+            </div>
+            <div id="episode-order-progress" class="hidden border-t border-zinc-800 px-5 py-3">
+              <div class="flex justify-between items-center mb-1.5">
+                <span id="episode-order-label" class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Working…</span>
+                <span id="episode-order-pct" class="text-xs font-bold text-zinc-400"></span>
+              </div>
+              <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                <div id="episode-order-bar" class="h-1.5 rounded-full transition-all duration-500 bg-blue-600 animate-pulse" style="width: 100%"></div>
+              </div>
+              <div class="flex justify-between text-xs text-zinc-500 mt-1">
+                <span id="episode-order-items"></span>
+              </div>
             </div>
           </div>
         </div>
@@ -1642,6 +1696,127 @@ if (me.totp_enabled) {
   setupPasswordToggles();
   setupSettingsForm();
   setupPasswordForm();
+
+  // ── Episode order: global default + bulk apply ─────────────────────────────
+  const episodeOrderSelect = document.getElementById('default-episode-order') as HTMLSelectElement | null;
+  const applyEpisodeOrderBtn = document.getElementById('apply-episode-order-btn') as HTMLButtonElement | null;
+  let episodeOrderPoller: ReturnType<typeof setTimeout> | null = null;
+
+  function renderEpisodeOrderJob(job: any) {
+    const strip = document.getElementById('episode-order-progress');
+    const bar = document.getElementById('episode-order-bar');
+    const pctEl = document.getElementById('episode-order-pct');
+    const label = document.getElementById('episode-order-label');
+    const items = document.getElementById('episode-order-items');
+    if (!strip) return;
+
+    if (!job) { strip.classList.add('hidden'); return; }
+    strip.classList.remove('hidden');
+
+    const total = job.total_items || 0;
+    const done = job.processed_items || 0;
+    const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+
+    if (job.status === 'failed') {
+      if (bar) { bar.className = 'h-1.5 rounded-full bg-red-500'; bar.style.width = '100%'; }
+      if (label) label.textContent = 'Failed';
+      if (pctEl) pctEl.textContent = '';
+      if (items) items.textContent = job.error_message || 'Unknown error';
+      return;
+    }
+
+    if (job.status === 'completed') {
+      const failed = job.stats?.failed || 0;
+      if (bar) { bar.className = 'h-1.5 rounded-full bg-blue-600'; bar.style.width = '100%'; }
+      if (label) label.textContent = 'Done';
+      if (pctEl) pctEl.textContent = '100%';
+      if (items) items.textContent = `${job.stats?.switched ?? done} show${(job.stats?.switched ?? done) !== 1 ? 's' : ''} re-mapped`
+        + (failed ? `, ${failed} skipped` : '');
+      return;
+    }
+
+    if (bar) {
+      bar.className = `h-1.5 rounded-full transition-all duration-500 bg-blue-600${pct === 0 ? ' animate-pulse' : ''}`;
+      bar.style.width = pct === 0 ? '100%' : `${pct}%`;
+    }
+    if (label) label.textContent = job.status === 'pending' ? 'Queued…' : 'Re-mapping shows…';
+    if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
+    if (items) items.textContent = total > 0 ? `${done} / ${total} shows` : 'Loading…';
+  }
+
+  async function pollEpisodeOrderJob(jobId: number) {
+    try {
+      const res = await fetch(`/api/proxy/shows/episode-order/jobs/${jobId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const job = await res.json();
+      renderEpisodeOrderJob(job);
+      if (job.status === 'pending' || job.status === 'running') {
+        episodeOrderPoller = setTimeout(() => pollEpisodeOrderJob(jobId), 2000);
+      } else {
+        episodeOrderPoller = null;
+        if (applyEpisodeOrderBtn) { applyEpisodeOrderBtn.disabled = false; applyEpisodeOrderBtn.textContent = 'Apply'; }
+      }
+    } catch {
+      episodeOrderPoller = null;
+    }
+  }
+
+  // What the "server default" option resolves to (see server_episode_order).
+  const serverEpisodeOrderValue = episodeOrderSelect?.dataset.serverOrder || 'tmdb';
+
+  if (episodeOrderSelect) {
+    let lastSavedOrder = episodeOrderSelect.value;
+    episodeOrderSelect.addEventListener('change', async () => {
+      const order = episodeOrderSelect.value;
+      const res = await fetch('/api/proxy/auth/settings', {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_episode_order: order || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showMessage(data.detail || 'Could not save the episode order', 'error');
+        episodeOrderSelect.value = lastSavedOrder;
+        return;
+      }
+      lastSavedOrder = order;
+      const effective = order || serverEpisodeOrderValue;
+      showMessage(effective === 'tvdb'
+        ? 'New shows will use TVDB ordering. Use "Apply to all existing shows" for the ones you already have.'
+        : 'New shows will use TMDB ordering.');
+    });
+  }
+
+  if (applyEpisodeOrderBtn) {
+    applyEpisodeOrderBtn.addEventListener('click', async () => {
+      if (episodeOrderPoller != null) return;
+      applyEpisodeOrderBtn.disabled = true;
+      applyEpisodeOrderBtn.textContent = '...';
+      try {
+        const res = await fetch('/api/proxy/shows/episode-order/apply-default', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: episodeOrderSelect?.value || serverEpisodeOrderValue }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Could not start the re-mapping');
+        if (data.status === 'noop') {
+          showMessage('No shows to re-map yet.');
+          applyEpisodeOrderBtn.disabled = false;
+          applyEpisodeOrderBtn.textContent = 'Apply';
+          return;
+        }
+        renderEpisodeOrderJob({ status: 'pending', total_items: data.shows, processed_items: 0 });
+        pollEpisodeOrderJob(data.job_id);
+      } catch (err: any) {
+        showMessage(err.message || 'Could not start the re-mapping', 'error');
+        applyEpisodeOrderBtn.disabled = false;
+        applyEpisodeOrderBtn.textContent = 'Apply';
+      }
+    });
+  }
 
   const shuffleNextUpToggle = document.getElementById('shuffle-next-up-toggle') as HTMLInputElement | null;
   if (shuffleNextUpToggle) {

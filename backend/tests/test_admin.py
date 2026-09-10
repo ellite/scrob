@@ -7,11 +7,12 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+import schemas
 from db import get_db
 from dependencies import require_admin
 from routers import admin
@@ -95,6 +96,72 @@ class AdminHealTmdbKeyResolutionTests(unittest.IsolatedAsyncioTestCase):
         detail = res.json()["detail"]
         self.assertIn("TMDB", detail)
         self.assertIn("Settings", detail)  # points the user somewhere
+
+
+class _GlobalSettingsDB:
+    """AsyncSession stand-in for update_global_settings: every lookup returns
+    the same GlobalSettings row."""
+
+    def __init__(self, gs):
+        self.gs = gs
+        self.committed = False
+
+    async def execute(self, _stmt):
+        return _Result(self.gs)
+
+    def add(self, obj):
+        pass
+
+    async def flush(self):
+        pass
+
+    async def commit(self):
+        self.committed = True
+
+    async def refresh(self, obj):
+        pass
+
+
+class AdminDefaultEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
+    """The server-wide episode order is the fallback for users who picked
+    none, so it is validated the same way the per-user and per-show switches
+    are - an unusable value must not be storable."""
+
+    async def _patch(self, gs, **fields):
+        db = _GlobalSettingsDB(gs)
+        result = await admin.update_global_settings(
+            body=schemas.GlobalSettings(**fields), db=db, _=SimpleNamespace(id=1, is_admin=True),
+        )
+        return result, db
+
+    async def test_tvdb_is_stored_when_a_server_key_exists(self):
+        gs = SimpleNamespace(default_episode_order=None, tvdb_api_key="key")
+        _, db = await self._patch(gs, default_episode_order="tvdb")
+        self.assertEqual(gs.default_episode_order, "tvdb")
+        self.assertTrue(db.committed)
+
+    async def test_tvdb_without_any_key_is_rejected(self):
+        gs = SimpleNamespace(default_episode_order=None, tvdb_api_key=None)
+        with self.assertRaises(HTTPException) as ctx:
+            await self._patch(gs, default_episode_order="tvdb")
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIsNone(gs.default_episode_order)
+
+    async def test_a_key_saved_in_the_same_request_counts(self):
+        gs = SimpleNamespace(default_episode_order=None, tvdb_api_key=None)
+        await self._patch(gs, default_episode_order="tvdb", tvdb_api_key="key")
+        self.assertEqual(gs.default_episode_order, "tvdb")
+
+    async def test_an_unknown_order_is_rejected(self):
+        gs = SimpleNamespace(default_episode_order=None, tvdb_api_key="key")
+        with self.assertRaises(HTTPException) as ctx:
+            await self._patch(gs, default_episode_order="imdb")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    async def test_tmdb_needs_no_key(self):
+        gs = SimpleNamespace(default_episode_order="tvdb", tvdb_api_key=None)
+        await self._patch(gs, default_episode_order="tmdb")
+        self.assertEqual(gs.default_episode_order, "tmdb")
 
 
 class AdminCreateUserTests(unittest.IsolatedAsyncioTestCase):

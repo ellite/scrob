@@ -148,6 +148,12 @@ class UserSettings(Base):
     rate_prompt_movies   : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     rate_prompt_episodes : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
+    # Episode order ("tmdb" | "tvdb") applied to shows the user has no explicit
+    # per-show choice for - see UserShowEpisodeOrder, which always wins. NULL
+    # inherits the server-wide default from GlobalSettings, the same override
+    # chain as tvdb_api_key above.
+    default_episode_order : Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
     # MDBList — API key authentication
     mdblist_api_key: Mapped[Optional[str]] = mapped_column(String(255))
     mdblist_sync_watched: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")

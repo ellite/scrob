@@ -329,6 +329,7 @@ export interface GlobalSettings {
   sonarr_season_folder: boolean;
   radarr_require_approval: boolean;
   sonarr_require_approval: boolean;
+  default_episode_order: "tmdb" | "tvdb" | null;
   image_cache_enabled: boolean;
   image_cache_limit_gb: number | null;
   enable_logged_out_navigation: boolean;
@@ -479,6 +480,9 @@ export interface UserSettings {
   minimalist_next_up: boolean;
   rate_prompt_movies: boolean;
   rate_prompt_episodes: boolean;
+  default_episode_order: "tmdb" | "tvdb" | null;
+  /** What default_episode_order = null resolves to (admin-configured). */
+  server_episode_order: "tmdb" | "tvdb";
 }
 
 export interface MediaServerConnection {
@@ -1360,6 +1364,22 @@ export const api = {
         { episode_order: episodeOrder, force_refresh: forceRefresh },
         token,
       ),
+
+    applyDefaultEpisodeOrder: (episodeOrder: "tmdb" | "tvdb", token: string) =>
+      post<{
+        status: "started" | "noop";
+        job_id?: number;
+        shows: number;
+        episode_order: "tmdb" | "tvdb";
+      }>(`/shows/episode-order/apply-default`, { order: episodeOrder }, token),
+
+    getEpisodeOrderJob: (jobId: number, token: string) =>
+      get<{
+        status: string;
+        total_items: number | null;
+        processed_items: number | null;
+        stats: { episode_order?: string; switched?: number; failed?: number } | null;
+      }>(`/shows/episode-order/jobs/${jobId}`, undefined, token),
 
     getTvdb: (tvdbId: number, token?: string) =>
       get<TvdbShow>(`/shows/tvdb/${tvdbId}`, undefined, token),

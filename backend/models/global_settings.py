@@ -29,6 +29,10 @@ class GlobalSettings(Base):
     sonarr_customize_on_add      : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
     tvdb_api_key                 : Mapped[Optional[str]] = mapped_column(String(255))
     tvdb_subscriber_pin          : Mapped[Optional[str]] = mapped_column(String(255))
+    # Server-wide episode order ("tmdb" | "tvdb") for users who haven't picked
+    # one themselves - same override chain as the API keys above. NULL means
+    # "tmdb", the historical behaviour.
+    default_episode_order        : Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     image_cache_enabled          : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
     image_cache_limit_gb         : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     enable_logged_out_navigation : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")

@@ -373,6 +373,9 @@ async def _settings_response(settings: UserSettings, db: AsyncSession) -> schema
     data.has_effective_tmdb_key = bool(settings.tmdb_api_key) or data.has_global_tmdb_key
     data.has_global_tvdb_key = bool(gs and gs.tvdb_api_key)
     data.has_effective_tvdb_key = bool(settings.tvdb_api_key) or data.has_global_tvdb_key
+    # What default_episode_order = NULL resolves to, so the settings page can
+    # label its "server default" option with the order it actually inherits.
+    data.server_episode_order = (gs.default_episode_order if gs else None) or "tmdb"
     # Same "all 4 fields set, user config first" rule as _effective_radarr/
     # _effective_sonarr in routers/media.py - inlined rather than imported to
     # avoid a routers.media <-> routers.auth cross-import.
@@ -422,7 +425,7 @@ async def update_user_settings(
         db.add(settings)
 
     # Computed read-only fields; never write them back
-    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected", "mdblist_connected", "bingebase_connected", "has_global_tmdb_key", "has_effective_tmdb_key", "has_global_tvdb_key", "has_effective_tvdb_key"}
+    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected", "mdblist_connected", "bingebase_connected", "has_global_tmdb_key", "has_effective_tmdb_key", "has_global_tvdb_key", "has_effective_tvdb_key", "server_episode_order"}
     update_data = {k: v for k, v in settings_in.model_dump(exclude_unset=True).items() if k not in READ_ONLY_FIELDS}
 
     if "tmdb_api_key" in update_data and update_data["tmdb_api_key"]:
@@ -443,6 +446,22 @@ async def update_user_settings(
                 detail="TVDB rejected the key" + (" / PIN" if new_tvdb_pin else "")
                 + ". A subscriber-supported key needs its account PIN; a free project key needs no PIN.",
             )
+
+    # Switching the default to TVDB is only useful with both keys present -
+    # the mapping job needs TMDB for the episode lists and TVDB for the
+    # positions, same requirement as the per-show switch in routers/shows.py.
+    if update_data.get("default_episode_order"):
+        from core.episode_order import validate_episode_order
+
+        try:
+            validate_episode_order(update_data["default_episode_order"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if update_data["default_episode_order"] == "tvdb":
+            from routers.shows import get_user_tvdb_key
+
+            if not await get_user_tvdb_key(db, current_user.id):
+                raise HTTPException(status_code=400, detail="TVDB API key not configured")
 
     if "mdblist_api_key" in update_data and update_data["mdblist_api_key"]:
         from core import mdblist
