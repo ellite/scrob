@@ -1,6 +1,7 @@
 ---
 import type { ContinueWatchingItem } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
+import { ratingPosterUrl } from "../lib/posters";
 import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
 
@@ -17,10 +18,10 @@ const sxe = isEpisode ? episodeCode(media) : null;
 const progressPct =
   progress_percent != null ? Math.round(progress_percent * 100) : 0;
 
-const posterSrc = tmdbImageUrl(
+const posterSrc = ratingPosterUrl(tmdbImageUrl(
   isEpisode && media.show_poster_path ? media.show_poster_path : media.poster_path,
   "w500"
-);
+), media, Astro.locals.rpdbApiKey);
 
 const href = episodeHref(media) ?? `/media/${media.type}/${media.tmdb_id}`;
 ---

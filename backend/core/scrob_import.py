@@ -619,8 +619,17 @@ async def apply_scrob_import(
         settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
         settings = settings_result.scalar_one_or_none()
         if settings:
-            for field_name in ("tmdb_api_key", "tvdb_api_key", "tvdb_subscriber_pin"):
+            for field_name in ("tmdb_api_key", "tvdb_api_key", "tvdb_subscriber_pin", "rpdb_api_key"):
                 value = data.api_keys.get(field_name)
+                if field_name == "rpdb_api_key":
+                    from core.rpdb import normalize_api_key
+                    try:
+                        if value is not None and not isinstance(value, str):
+                            raise ValueError("Invalid RPDB API key")
+                        value = normalize_api_key(value)
+                    except ValueError:
+                        stats["errors"] += 1
+                        continue
                 if value and not getattr(settings, field_name):
                     setattr(settings, field_name, value)
                     stats["connections"] += 1

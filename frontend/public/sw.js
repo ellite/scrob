@@ -1,7 +1,7 @@
 // Scrob — Service Worker
 // Strategy:
 //   - Static assets (JS/CSS/fonts/icons): NetworkFirst, cached for offline fallback
-//   - TMDB / Proxy images: bypass service worker (fall through to native network/disk cache)
+//   - TMDB / RPDB / Proxy images: bypass service worker (native HTTP cache)
 //   - /api/proxy/*: NetworkOnly — library data must always be fresh
 //   - Navigation (HTML pages): NetworkFirst, offline fallback if all fail
 
@@ -33,8 +33,8 @@ self.addEventListener('fetch', (event) => {
   // Only handle GET — leave POST/PATCH/DELETE to the network
   if (request.method !== 'GET') return;
 
-  // TMDB images and proxy images: bypass service worker entirely to use native browser HTTP cache (much faster)
-  if (url.hostname === 'image.tmdb.org' || url.pathname.startsWith('/api/proxy/media/image/')) {
+  // Poster images use native HTTP caching, not the app-shell cache.
+  if (url.hostname === 'image.tmdb.org' || url.hostname === 'api.ratingposterdb.com' || url.pathname.startsWith('/api/proxy/media/image/')) {
     return; // fall through to browser default (native network/disk cache)
   }
 

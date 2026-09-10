@@ -17,7 +17,7 @@ if (user?.is_admin && token) {
     pendingRequestCount = data.pending;
   } catch {}
   try {
-    const settings = await api.auth.getSettings(token);
+    const settings = Astro.locals.settings ?? await api.auth.getSettings(token);
     radarrCustomizeOnAdd = settings.radarr_customize_on_add === true;
     sonarrCustomizeOnAdd = settings.sonarr_customize_on_add === true;
   } catch {}
@@ -105,26 +105,43 @@ const bottomNavItem = (active: boolean) =>
 
     // Poster/backdrop image fallback — registered here (head, inline) so the
     // capture-phase listener is active before any <img> tags are parsed and
-    // start loading. Covers TMDB/TheTVDB images loaded directly and via the
-    // backend image proxy/cache.
+    // start loading. RPDB images carry the existing artwork in a URL fragment
+    // so a failed request can recover without another server round-trip.
     (function () {
-      var svgIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.25"><rect width="20" height="20" x="2" y="2" rx="2.18" ry="2.18"/><line x1="7" x2="7" y1="2" y2="22"/><line x1="17" x2="17" y1="2" y2="22"/><line x1="2" x2="22" y1="7" y2="7"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="2" x2="22" y1="17" y2="17"/></svg>';
+      var svgIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.25"><rect width="20" height="20" x="2" y="2" rx="2.18"/><line x1="7" x2="7" y1="2" y2="22"/><line x1="17" x2="17" y1="2" y2="22"/><line x1="2" x2="22" y1="7" y2="7"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="2" x2="22" y1="17" y2="17"/></svg>';
       function applyFallback(img) {
-        if (!img.src.includes('image.tmdb.org') && !img.src.includes('artworks.thetvdb.com') && !img.src.includes('/api/proxy/media/image/')) return;
+        var source = img.currentSrc || img.src;
+        var isRpdb = source.startsWith('https://api.ratingposterdb.com/');
+        if (isRpdb) {
+          var hash = '';
+          try { hash = new URL(source, window.location.href).hash; } catch { /* malformed source */ }
+          if (hash.startsWith('#scrob-fallback=')) {
+            try {
+              img.src = decodeURIComponent(hash.slice('#scrob-fallback='.length));
+              return true;
+            } catch { /* use the normal placeholder below */ }
+          }
+        }
+        if (!isRpdb && !source.includes('image.tmdb.org') && !source.includes('artworks.thetvdb.com') && !source.includes('/api/proxy/media/image/')) return false;
         img.style.display = 'none';
         // Decorative images (alt="") — just hide, no placeholder needed
-        if (!img.alt) return;
+        if (!img.alt) return true;
         var parent = img.parentElement;
-        if (!parent || parent.querySelector('.tmdb-img-fallback')) return;
+        if (!parent || parent.querySelector('.tmdb-img-fallback')) return true;
         // Ensure parent is a positioning context so absolute inset-0 stays contained
         if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
         var fb = document.createElement('div');
         fb.className = 'tmdb-img-fallback';
         fb.innerHTML = svgIcon;
         parent.appendChild(fb);
+        return true;
       }
       document.addEventListener('error', function (e) {
-        if (e.target && e.target.tagName === 'IMG') applyFallback(e.target);
+        if (e.target && e.target.tagName === 'IMG') {
+          var img = e.target;
+          var isRpdb = (img.currentSrc || img.src).startsWith('https://api.ratingposterdb.com/');
+          if (applyFallback(img) && isRpdb) e.stopPropagation();
+        }
       }, true);
       // Safety net: catch images that already failed by the time DOM is ready
       document.addEventListener('DOMContentLoaded', function () {
@@ -133,6 +150,40 @@ const bottomNavItem = (active: boolean) =>
         });
       });
     })();
+  </script>
+
+  <script define:vars={{ __rpdbApiKey: Astro.locals.rpdbApiKey ?? null }}>
+    // Only this viewer's key is used. Direct RPDB image requests expose it to
+    // their browser, never through shared media metadata or public profiles.
+    window.__RPDB_API_KEY__ = __rpdbApiKey;
+
+    // Inline counterpart of lib/posters.ts, for define:vars scripts.
+    window.ratingPosterUrl = function (fallback, item, apiKey) {
+      if (!apiKey) return fallback ?? null;
+      var type = item.type ?? item.media_type;
+      var isEpisode = type === 'episode';
+      if (type !== 'movie' && type !== 'series' && !isEpisode) return fallback ?? null;
+      if (type === 'series' && item.season_number != null) return fallback ?? null;
+      var tmdbId = isEpisode ? item.show_tmdb_id : item.tmdb_id;
+      var tvdbId = isEpisode ? item.show_tvdb_id : item.tvdb_id;
+      var mediaType = type === 'movie' ? 'movie' : 'series';
+      var provider;
+      var id;
+      if (Number.isInteger(tmdbId) && tmdbId > 0) {
+        provider = 'tmdb';
+        id = mediaType + '-' + tmdbId;
+      } else if (Number.isInteger(tvdbId) && tvdbId > 0) {
+        provider = 'tvdb';
+        id = mediaType + '-' + tvdbId;
+      } else if (!isEpisode && /^tt\d+$/.test(item.imdb_id || '')) {
+        provider = 'imdb';
+        id = item.imdb_id;
+      } else {
+        return fallback ?? null;
+      }
+      var recovery = fallback ? '#scrob-fallback=' + encodeURIComponent(fallback) : '';
+      return 'https://api.ratingposterdb.com/' + encodeURIComponent(apiKey) + '/' + provider + '/poster-default/' + id + '.jpg?fallback=true' + recovery;
+    };
   </script>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen overflow-x-hidden">
@@ -753,7 +804,7 @@ const bottomNavItem = (active: boolean) =>
           : `<span class="relative shrink-0 flex w-2 h-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full ${dotColor} opacity-75"></span><span class="relative inline-flex rounded-full w-2 h-2 ${dotColor}"></span></span>`;
 
         const rawPoster = isEpisode ? (m.show_poster_path ?? m.poster_path) : m.poster_path;
-        const posterUrl = tmdbImageUrl(rawPoster, 'w185');
+        const posterUrl = window.ratingPosterUrl(tmdbImageUrl(rawPoster, 'w185'), m, window.__RPDB_API_KEY__);
 
         // #319 - movie-only mid/post-credits scene indicator. Movies never
         // use the subtitle line (that's episode-only), so it doubles as a
@@ -1169,7 +1220,9 @@ const bottomNavItem = (active: boolean) =>
       openRatingPopover(null, String(m.tmdb_id), m.type, null, null, 'tmdb', {
         title: isEpisode ? (m.show_title ?? m.title) : m.title,
         subtitle: isEpisode ? [sxe, m.title].filter(Boolean).join(' · ') : undefined,
-        posterUrl: ratingPosterUrl(m.poster_path),
+        posterUrl: isEpisode
+          ? ratingPosterUrl(m.poster_path)
+          : window.ratingPosterUrl(ratingPosterUrl(m.poster_path), m, window.__RPDB_API_KEY__) ?? undefined,
         landscape: isEpisode,
       });
     }

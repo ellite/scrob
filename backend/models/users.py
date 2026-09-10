@@ -49,6 +49,7 @@ class UserSettings(Base):
     id             : Mapped[int]            = mapped_column(Integer, primary_key=True)
     user_id        : Mapped[int]            = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
     tmdb_api_key   : Mapped[Optional[str]]  = mapped_column(String(255))
+    rpdb_api_key   : Mapped[Optional[str]]  = mapped_column(String(255))
 
     # Radarr integration
     radarr_url             : Mapped[Optional[str]] = mapped_column(String(500))
