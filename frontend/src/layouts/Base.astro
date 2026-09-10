@@ -663,15 +663,38 @@ const bottomNavItem = (active: boolean) =>
       return `/api/proxy/media/image/${size}${path.startsWith('/') ? path : '/' + path}`;
     }
 
-    function calcLivePct(progressSeconds, updatedAt, runtime, playing) {
-      if (!runtime || runtime <= 0) return 0;
+    // Live playhead position in seconds: the server's progress_seconds plus
+    // the wall-clock time elapsed since that reading, while playing.
+    function calcLiveSeconds(progressSeconds, updatedAt, runtime, playing) {
       const runtimeSeconds = runtime * 60;
+      if (!updatedAt) return Math.min(progressSeconds, runtimeSeconds);
       const dateStr = updatedAt.includes('Z') || updatedAt.includes('+') ? updatedAt : updatedAt + 'Z';
       const updatedMs = new Date(dateStr).getTime();
-      if (isNaN(updatedMs)) return 0;
+      if (isNaN(updatedMs)) return Math.min(progressSeconds, runtimeSeconds);
       const elapsed = playing ? (Date.now() - updatedMs) / 1000 : 0;
-      const current = Math.max(0, Math.min(progressSeconds + elapsed, runtimeSeconds));
-      return Math.min(100, (current / runtimeSeconds) * 100);
+      return Math.max(0, Math.min(progressSeconds + elapsed, runtimeSeconds));
+    }
+
+    function calcLivePct(progressSeconds, updatedAt, runtime, playing) {
+      if (!runtime || runtime <= 0) return 0;
+      const current = calcLiveSeconds(progressSeconds, updatedAt, runtime, playing);
+      return Math.min(100, (current / (runtime * 60)) * 100);
+    }
+
+    // "38 min left" / "1h 5m left" / "<1 min left"
+    function fmtRemaining(seconds) {
+      const mins = Math.round(seconds / 60);
+      if (mins < 1) return '<1 min left';
+      if (mins < 60) return mins + ' min left';
+      const h = Math.floor(mins / 60), m = mins % 60;
+      return (m ? h + 'h ' + m + 'm' : h + 'h') + ' left';
+    }
+
+    // Local end time in the viewer's own timezone - "ends 22:47".
+    function fmtEta(ms) {
+      return 'ends ' + new Date(ms).toLocaleTimeString([], {
+        hour: '2-digit', minute: '2-digit', hour12: !window.__USE_24H__,
+      });
     }
 
     function renderNowPlaying(sessions) {
@@ -708,6 +731,17 @@ const bottomNavItem = (active: boolean) =>
           : Math.round((session.progress_percent ?? 0) * 100);
         const pctDisplay = Math.floor(pct);
         const sessionKey = esc(session.session_key);
+
+        // #384 - time remaining and, while playing, the local end time.
+        const remainingSeconds = runtime > 0
+          ? runtime * 60 - calcLiveSeconds(progressSeconds, session.updated_at, runtime, !isPaused)
+          : null;
+        const remainingLine = remainingSeconds != null
+          ? `<span data-npremain="${sessionKey}" class="text-[10px] text-zinc-500 tabular-nums leading-tight">${esc(fmtRemaining(remainingSeconds))}</span>`
+          : '';
+        const etaLine = remainingSeconds != null && !isPaused
+          ? `<span data-npeta="${sessionKey}" class="text-[10px] text-zinc-500 tabular-nums leading-tight">${esc(fmtEta(Date.now() + remainingSeconds * 1000))}</span>`
+          : '';
 
         const statusLabel = isPaused ? 'Paused' : 'Now Playing';
         const dotColor = isPaused ? 'bg-yellow-400' : 'bg-green-400';
@@ -755,7 +789,11 @@ const bottomNavItem = (active: boolean) =>
                 ${subtitle ? `<p class="text-[10px] text-zinc-400 truncate leading-tight mt-0.5">${esc(subtitle)}</p>` : ''}
                 ${creditsLine}
               </div>
-              <span data-nppct="${sessionKey}" class="text-xs font-bold text-zinc-300 tabular-nums shrink-0">${esc(String(pctDisplay))}%</span>
+              <div class="flex flex-col items-end shrink-0 gap-0.5">
+                <span data-nppct="${sessionKey}" class="text-xs font-bold text-zinc-300 tabular-nums">${esc(String(pctDisplay))}%</span>
+                ${remainingLine}
+                ${etaLine}
+              </div>
             ${href ? '</a>' : '</div>'}
             <div class="absolute bottom-0 left-0 right-0" style="height:2px;background:rgba(0,0,0,0.12)">
               <div data-npbar="${sessionKey}"
@@ -775,10 +813,17 @@ const bottomNavItem = (active: boolean) =>
         if (bar.dataset.playing !== '1') return;
         const rt = parseFloat(bar.dataset.rt);
         if (!rt || rt <= 0) return;
-        const pct = calcLivePct(parseFloat(bar.dataset.ps), bar.dataset.ua, rt, true);
+        const key = bar.dataset.npbar;
+        const ps = parseFloat(bar.dataset.ps);
+        const pct = calcLivePct(ps, bar.dataset.ua, rt, true);
         bar.style.width = pct + '%';
-        const pctEl = document.querySelector(`[data-nppct="${bar.dataset.npbar}"]`);
+        const pctEl = document.querySelector(`[data-nppct="${key}"]`);
         if (pctEl) pctEl.textContent = Math.floor(pct) + '%';
+        const remainingSeconds = rt * 60 - calcLiveSeconds(ps, bar.dataset.ua, rt, true);
+        const remainEl = document.querySelector(`[data-npremain="${key}"]`);
+        if (remainEl) remainEl.textContent = fmtRemaining(remainingSeconds);
+        const etaEl = document.querySelector(`[data-npeta="${key}"]`);
+        if (etaEl) etaEl.textContent = fmtEta(Date.now() + remainingSeconds * 1000);
       });
     }
 
