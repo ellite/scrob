@@ -34,7 +34,7 @@ const cardTitle = isSeason ? `Season ${item.season_number}` : item.title;
 const posterPath = ratingPosterUrl(tmdbImageUrl(
   (isEpisode || isSeason) && item.show_poster_path ? item.show_poster_path : item.poster_path,
   "w500"
-), item, Astro.locals.rpdbApiKey);
+), item, Astro.locals.hasRpdbKey);
 
 const showActionBar = !isPerson && !isCollection && !!user;
 // Seasons get the same percentage-style Watched/Collected labels as a whole show

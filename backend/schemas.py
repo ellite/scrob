@@ -120,6 +120,7 @@ class TotpBackupCodesResponse(BaseModel):
 class UserSettings(BaseModel):
     tmdb_api_key: Optional[str] = None
     rpdb_api_key: Optional[str] = Field(default=None, max_length=255)
+    has_rpdb_key: bool = False
     has_effective_tmdb_key: bool = False
     has_global_tmdb_key: bool = False
 

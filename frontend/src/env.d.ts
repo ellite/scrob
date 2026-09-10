@@ -12,11 +12,11 @@ declare namespace App {
     } | null;
     token: string | undefined;
     settings?: import('./lib/api').UserSettings;
-    rpdbApiKey?: string | null;
+    hasRpdbKey?: boolean;
   }
 }
 
 interface Window {
-  __RPDB_API_KEY__: string | null;
+  __HAS_RPDB__: boolean;
   ratingPosterUrl: typeof import('./lib/posters').ratingPosterUrl;
 }

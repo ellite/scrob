@@ -123,3 +123,84 @@ class RpdbSettingsTests(unittest.IsolatedAsyncioTestCase):
                                    ("POST", "/auth/test-rpdb", {"key": "key"})]:
             response = await self.client.request(method, path, json=body)
             self.assertIn(response.status_code, (401, 403))
+
+
+class ServeRatingPosterTests(unittest.IsolatedAsyncioTestCase):
+    """The rating-poster proxy keeps the key server-side (#377): it streams the
+    RPDB image or 302s to the caller's already-proxied TMDB poster."""
+
+    async def asyncSetUp(self):
+        from routers import media as media_router
+        from models.users import UserSettings as US
+
+        self.settings_row = US(user_id=1, rpdb_api_key="secret-key")
+        self.user_id = 1
+
+        async def execute(query):
+            return SimpleNamespace(scalar_one_or_none=lambda: self.settings_row)
+
+        self.db = SimpleNamespace(execute=execute)
+        app = FastAPI()
+        app.include_router(media_router.router, prefix="/media")
+        app.dependency_overrides[get_db] = lambda: self.db
+        app.dependency_overrides[media_router.verify_image_token] = lambda: self.user_id
+        self.app = app
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test", follow_redirects=False,
+        )
+        self.addAsyncCleanup(self.client.aclose)
+
+    async def test_rejects_a_non_proxy_fallback(self):
+        r = await self.client.get(
+            "/media/rating-poster/tmdb/movie-603", params={"fallback": "https://evil.test/x.jpg"}
+        )
+        self.assertEqual(r.status_code, 400)
+
+    async def test_no_key_redirects_to_the_fallback(self):
+        self.settings_row.rpdb_api_key = None
+        r = await self.client.get(
+            "/media/rating-poster/tmdb/movie-603",
+            params={"fallback": "/api/proxy/media/image/w500/x.jpg"},
+        )
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r.headers["location"], "/api/proxy/media/image/w500/x.jpg")
+
+    async def test_bad_provider_redirects_to_the_fallback(self):
+        r = await self.client.get(
+            "/media/rating-poster/bogus/movie-603",
+            params={"fallback": "/api/proxy/media/image/w500/x.jpg"},
+        )
+        self.assertEqual(r.status_code, 302)
+
+    async def test_streams_the_rpdb_image_when_the_key_resolves(self):
+        img = httpx.Response(200, content=b"\xff\xd8jpegbytes", headers={"content-type": "image/jpeg"},
+                             request=httpx.Request("GET", "https://api.ratingposterdb.com/x"))
+        import httpx as _h
+        client = AsyncMock()
+        client.get.return_value = img
+        with patch.object(_h, "AsyncClient") as factory:
+            factory.return_value.__aenter__.return_value = client
+            r = await self.client.get(
+                "/media/rating-poster/tmdb/movie-603",
+                params={"fallback": "/api/proxy/media/image/w500/x.jpg"},
+            )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.content, b"\xff\xd8jpegbytes")
+        self.assertEqual(r.headers["content-type"], "image/jpeg")
+        sent = client.get.call_args[0][0]
+        self.assertIn("api.ratingposterdb.com/secret-key/tmdb/poster-default/movie-603.jpg", sent)
+
+    async def test_rpdb_failure_redirects_to_the_fallback(self):
+        import httpx as _h
+        client = AsyncMock()
+        client.get.return_value = httpx.Response(
+            500, request=httpx.Request("GET", "https://api.ratingposterdb.com/x")
+        )
+        with patch.object(_h, "AsyncClient") as factory:
+            factory.return_value.__aenter__.return_value = client
+            r = await self.client.get(
+                "/media/rating-poster/tmdb/movie-603",
+                params={"fallback": "/api/proxy/media/image/w500/x.jpg"},
+            )
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r.headers["location"], "/api/proxy/media/image/w500/x.jpg")

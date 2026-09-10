@@ -32,7 +32,7 @@ const isEpisode = item?.type === "episode";
 const isMovie = item?.type === "movie";
 const collection = item?.collection;
 const posterPath = item && !isEpisode
-  ? ratingPosterUrl(item.poster_path, item, Astro.locals.rpdbApiKey)
+  ? ratingPosterUrl(item.poster_path, item, Astro.locals.hasRpdbKey)
   : item?.poster_path;
 
 // Header for the shared rating popover (shown once the modal dims the page).

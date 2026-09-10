@@ -242,7 +242,7 @@ Recently Watched Movies
                 </div>
                 <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none">
                   {profile.recently_watched_movies.map((item) => {
-                    const thumb = ratingPosterUrl(posterUrl(item.poster_path), item, Astro.locals.rpdbApiKey);
+                    const thumb = ratingPosterUrl(posterUrl(item.poster_path), item, Astro.locals.hasRpdbKey);
                     const href = mediaUrl(item.media_type, item.tmdb_id);
                     return (
                       <a href={href} class="flex-shrink-0 w-32 group active:scale-95 active:opacity-70 transition-all duration-150">
@@ -325,7 +325,7 @@ Top Rated Movies
                 </div>
                 <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none">
                   {profile.top_rated_movies.map((item) => {
-                    const thumb = ratingPosterUrl(posterUrl(item.poster_path), item, Astro.locals.rpdbApiKey);
+                    const thumb = ratingPosterUrl(posterUrl(item.poster_path), item, Astro.locals.hasRpdbKey);
                     const href = mediaUrl(item.media_type, item.tmdb_id);
                     return (
                       <a href={href} class="flex-shrink-0 w-32 group active:scale-95 active:opacity-70 transition-all duration-150">
@@ -361,7 +361,7 @@ Top Rated Shows
                 </div>
                 <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none">
                   {profile.top_rated_shows.map((item) => {
-                    const thumb = ratingPosterUrl(posterUrl(item.poster_path), item, Astro.locals.rpdbApiKey);
+                    const thumb = ratingPosterUrl(posterUrl(item.poster_path), item, Astro.locals.hasRpdbKey);
                     const href = mediaUrl(item.media_type, item.tmdb_id);
                     return (
                       <a href={href} class="flex-shrink-0 w-32 group active:scale-95 active:opacity-70 transition-all duration-150">
@@ -394,7 +394,7 @@ Recent Comments
                   {profile.recent_comments.map((comment) => {
                     const href = commentUrl(comment);
                     const label = commentLabel(comment);
-                    const thumb = ratingPosterUrl(posterUrl(comment.poster_path, "w92"), comment, Astro.locals.rpdbApiKey);
+                    const thumb = ratingPosterUrl(posterUrl(comment.poster_path, "w92"), comment, Astro.locals.hasRpdbKey);
                     return (
                       <div
                         class="flex gap-4 bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 hover:border-zinc-600 transition-all group"

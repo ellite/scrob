@@ -140,7 +140,7 @@ const sortOptions = isCollection
     <>
       <div class="space-y-2">
         {shows.map((s) => {
-          const posterPath = ratingPosterUrl(tmdbImageUrl(s.poster_path, "w500"), { type: "series", tmdb_id: s.tmdb_id, tvdb_id: s.tvdb_id }, Astro.locals.rpdbApiKey);
+          const posterPath = ratingPosterUrl(tmdbImageUrl(s.poster_path, "w500"), { type: "series", tmdb_id: s.tmdb_id, tvdb_id: s.tvdb_id }, Astro.locals.hasRpdbKey);
           const pct = metricPct(s);
           const remaining = Math.max(0, s.episodes_total - metricDone(s));
           const meta = `${metricDone(s)}/${s.episodes_total}`

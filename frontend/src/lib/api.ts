@@ -434,6 +434,7 @@ export interface UserSettings {
   has_global_tvdb_key: boolean;
 
   rpdb_api_key: string | null;
+  has_rpdb_key: boolean;
 
   radarr_url: string | null;
   radarr_token: string | null;

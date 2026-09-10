@@ -92,7 +92,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
         : m.tmdb_id ? `/media/${m.type}/${m.tmdb_id}` : '#';
 
     const originalPosterSrc = tmdbImageUrl(isEpisode && m.show_poster_path ? m.show_poster_path : m.poster_path, 'w500');
-    const posterSrc = window.ratingPosterUrl(originalPosterSrc, m, window.__RPDB_API_KEY__);
+    const posterSrc = window.ratingPosterUrl(originalPosterSrc, m, window.__HAS_RPDB__);
     const sxe = isEpisode && m.season_number != null && m.episode_number != null
       ? `S${String(m.season_number).padStart(2, '0')}E${String(m.episode_number).padStart(2, '0')}`
       : null;

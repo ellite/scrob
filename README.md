@@ -350,7 +350,7 @@ To enable [RatingPosterDB](https://ratingposterdb.com/) posters, enter your RPDB
 
 Choose poster styles and rating sources in the [RPDB manager](https://manager.ratingposterdb.com/); available customizations depend on your RPDB plan. Scrob uses RPDB's account-default posters and falls back to the original artwork when an RPDB image cannot load. Movie and show portraits, including parent-show portraits in history and Next Up, can use RPDB. Episode stills, season-specific artwork, backdrops, people and collection artwork stay unchanged.
 
-Images load directly from RPDB, so your key is visible in your own browser's image requests. It is not written into shared media metadata, and data exports include it only when you explicitly select **API Keys**. Existing metadata and the server's TMDB/TheTVDB image cache are unchanged.
+Rating posters are fetched server-side through the same image proxy as TMDB and TheTVDB artwork, so your key stays on the server and is never placed in the page. It is not written into shared media metadata, and data exports include it only when you explicitly select **API Keys**. Existing metadata and the server's image cache are unchanged.
 
 ## ARVIO Cloud Synchronization
 

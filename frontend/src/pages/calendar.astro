@@ -65,7 +65,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
           type: 'series',
           tmdb_id: e.show_tmdb_id ?? null,
           tvdb_id: e.show_tvdb_id ?? null,
-        }, window.__RPDB_API_KEY__)
+        }, window.__HAS_RPDB__)
       : e.poster_path;
     return `
       <a href="${esc(href)}" class="flex items-center gap-4 p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-blue-500/50 transition-colors">

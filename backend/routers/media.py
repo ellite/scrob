@@ -5925,3 +5925,69 @@ async def serve_image(
         background=bg_tasks,
     )
 
+
+_RPDB_PROVIDERS = {"tmdb", "tvdb", "imdb"}
+_RPDB_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,64}$")
+
+
+@router.get("/rating-poster/{provider}/{rpdb_id}")
+async def serve_rating_poster(
+    provider: str,
+    rpdb_id: str,
+    fallback: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    user_id: int | None = Depends(verify_image_token),
+):
+    """RatingPosterDB rating-overlay poster for a movie/show portrait slot
+    (#377). The API key stays server-side - Scrob fetches the RPDB image and
+    streams it back, exactly like the TMDB proxy above. Any failure (no key,
+    RPDB down, non-image response) falls back to the already-proxied TMDB
+    poster the caller passed in `fallback`."""
+    # `fallback` is always an internal proxied-poster path built by the
+    # frontend's tmdbImageUrl(); never an arbitrary URL.
+    if not fallback.startswith("/api/proxy/media/image/") or "\n" in fallback:
+        raise HTTPException(status_code=400, detail="Invalid fallback")
+
+    def _to_fallback() -> RedirectResponse:
+        return RedirectResponse(
+            fallback, status_code=302,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    if provider not in _RPDB_PROVIDERS or not _RPDB_ID_RE.match(rpdb_id):
+        return _to_fallback()
+    if user_id is None:
+        return _to_fallback()
+
+    settings_row = (await db.execute(
+        select(UserSettings).where(UserSettings.user_id == user_id)
+    )).scalar_one_or_none()
+
+    from core.rpdb import normalize_api_key
+    try:
+        key = normalize_api_key(settings_row.rpdb_api_key) if settings_row else None
+    except ValueError:
+        key = None
+    if not key:
+        return _to_fallback()
+
+    url = (
+        f"https://api.ratingposterdb.com/{urllib.parse.quote(key, safe='')}"
+        f"/{provider}/poster-default/{rpdb_id}.jpg?fallback=true"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+    except httpx.HTTPError:
+        return _to_fallback()
+
+    content_type = resp.headers.get("content-type", "")
+    if resp.status_code != 200 or not content_type.startswith("image/"):
+        return _to_fallback()
+
+    return Response(
+        content=resp.content,
+        media_type=content_type or "image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+

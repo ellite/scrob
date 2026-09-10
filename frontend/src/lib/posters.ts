@@ -9,18 +9,27 @@ export interface PosterMedia {
   season_number?: number | null;
 }
 
-// Keep the inline counterpart in Base.astro in sync: define:vars scripts cannot
-// import this module. Only call for portrait slots, never episode stills.
+// #377: for a movie/show portrait poster, route through the backend
+// rating-poster proxy so the RPDB image (rating overlay) is served with the
+// user's key kept server-side - exactly like `/api/proxy/media/image/` for
+// TMDB. `enabled` is a plain boolean (the viewer has an RPDB key); when false
+// or the slot isn't eligible, the caller's already-proxied poster is returned
+// unchanged. Never call for episode stills or season artwork.
+//
+// Keep the inline counterpart in Base.astro's <head> script in sync -
+// define:vars scripts cannot import this module.
 export function ratingPosterUrl(
   fallback: string | null | undefined,
   item: PosterMedia,
-  apiKey?: string | null,
+  enabled?: boolean,
 ): string | null {
-  if (!apiKey) return fallback ?? null;
+  const fb = fallback ?? null;
+  if (!enabled || !fb || !fb.startsWith("/api/proxy/media/image/")) return fb;
+
   const type = item.type ?? item.media_type;
   const isEpisode = type === "episode";
-  if (type !== "movie" && type !== "series" && !isEpisode) return fallback ?? null;
-  if (type === "series" && item.season_number != null) return fallback ?? null;
+  if (type !== "movie" && type !== "series" && !isEpisode) return fb;
+  if (type === "series" && item.season_number != null) return fb;
 
   const tmdbId = isEpisode ? item.show_tmdb_id : item.tmdb_id;
   const tvdbId = isEpisode ? item.show_tvdb_id : item.tvdb_id;
@@ -37,11 +46,8 @@ export function ratingPosterUrl(
     provider = "imdb";
     id = item.imdb_id!;
   } else {
-    return fallback ?? null;
+    return fb;
   }
 
-  // The fragment stays in the browser, so the original artwork is available
-  // on failure without leaking that URL to RPDB or adding a proxy request.
-  const recovery = fallback ? `#scrob-fallback=${encodeURIComponent(fallback)}` : "";
-  return `https://api.ratingposterdb.com/${encodeURIComponent(apiKey)}/${provider}/poster-default/${id}.jpg?fallback=true${recovery}`;
+  return `/api/proxy/media/rating-poster/${provider}/${id}?fallback=${encodeURIComponent(fb)}`;
 }

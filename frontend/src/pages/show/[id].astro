@@ -48,7 +48,7 @@ const originalLanguage = show?.original_language
   ? langNames.of(show.original_language) ?? show.original_language
   : null;
 const posterPath = show
-  ? ratingPosterUrl(show.poster_path, { type: "series", tmdb_id: show.tmdb_id, tvdb_id: show.tvdb_id, imdb_id: show.imdb_id }, Astro.locals.rpdbApiKey)
+  ? ratingPosterUrl(show.poster_path, { type: "series", tmdb_id: show.tmdb_id, tvdb_id: show.tvdb_id, imdb_id: show.imdb_id }, Astro.locals.hasRpdbKey)
   : null;
 ---
 

@@ -23,7 +23,7 @@ const showOrMovieTitle = isEpisode ? (media.show_title || media.title) : media.t
 const year = media.release_date?.slice(0, 4);
 
 const rawPoster = isEpisode ? (media.show_poster_path || media.poster_path) : media.poster_path;
-const posterPath = ratingPosterUrl(tmdbImageUrl(rawPoster, "w500"), media, Astro.locals.rpdbApiKey);
+const posterPath = ratingPosterUrl(tmdbImageUrl(rawPoster, "w500"), media, Astro.locals.hasRpdbKey);
 
 // Watch history is movie/episode only (enforced server-side, see #358).
 // Anything else still routes through episodeHref rather than a movie URL that
