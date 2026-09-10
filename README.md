@@ -27,6 +27,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **A
   - [Updating](#updating)
 - [Configuration](#configuration)
   - [TheTVDB metadata](#thetvdb-metadata)
+  - [RPDB rating posters](#rpdb-rating-posters)
 - [ARVIO Cloud Synchronization](#arvio-cloud-synchronization)
 - [Nuvio Cloud Synchronization](#nuvio-cloud-synchronization)
   - [Connect Nuvio](#connect-nuvio)
@@ -70,6 +71,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **A
 - **Social**: Follow other users and see their activity.
 - **Release schedule**: Movie pages show the full release schedule - theatrical, digital, and physical dates - sourced from TMDB.
 - **TMDB integration**: Rich metadata for every title - posters, backdrops, cast, crew, trailers, collections, and more.
+- **RPDB rating posters**: Optionally use RatingPosterDB movie and show posters with embedded ratings. Configure your own key and customize the artwork and rating sources through RPDB.
 - **Metadata language**: Set a preferred display language per profile - titles, overviews, and episode names show translated where available, independent of the rest of the UI's language.
 - **Search**: Search TMDB across movies, shows, people, and collections, merged with your local library data.
 - **Pick a Movie / Pick a Show**: Get a suggestion on what to watch next from your library or your streaming services based on your preferences.
@@ -340,6 +342,14 @@ With no key configured, all of the above fall back to TMDB-only behaviour; nothi
 Configure it per-user in **Settings → General → TVDB API Key** (with the **Subscriber PIN** field for a subscriber key), or server-wide in **Admin → Settings → TVDB** as a fallback for all users. Use **Test key** to verify the pair before saving.
 
 **Rotation / revocation.** Scrob caches the TheTVDB login token in memory for up to 29 days per key. After changing or removing the key or PIN in settings, the new credential takes effect on the next lookup; a stale token for the old credential is discarded on restart.
+
+### RPDB rating posters
+
+To enable [RatingPosterDB](https://ratingposterdb.com/) posters, enter your RPDB API key in **Settings → General → RPDB API Key**, test it, and save. This is a personal display preference: it applies only to your browsing, including when viewing another user's public profile or list. Clear the key and save to return to the original artwork.
+
+Choose poster styles and rating sources in the [RPDB manager](https://manager.ratingposterdb.com/); available customizations depend on your RPDB plan. Scrob uses RPDB's account-default posters and falls back to the original artwork when an RPDB image cannot load. Movie and show portraits, including parent-show portraits in history and Next Up, can use RPDB. Episode stills, season-specific artwork, backdrops, people and collection artwork stay unchanged.
+
+Images load directly from RPDB, so your key is visible in your own browser's image requests. It is not written into shared media metadata, and data exports include it only when you explicitly select **API Keys**. Existing metadata and the server's TMDB/TheTVDB image cache are unchanged.
 
 ## ARVIO Cloud Synchronization
 
