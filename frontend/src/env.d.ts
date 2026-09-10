@@ -11,5 +11,12 @@ declare namespace App {
       role: string;
     } | null;
     token: string | undefined;
+    settings?: import('./lib/api').UserSettings;
+    rpdbApiKey?: string | null;
   }
+}
+
+interface Window {
+  __RPDB_API_KEY__: string | null;
+  ratingPosterUrl: typeof import('./lib/posters').ratingPosterUrl;
 }

@@ -6,6 +6,7 @@ import CommentsSection from "../../components/CommentsSection.astro";
 import EpisodeOrderSelector from "../../components/EpisodeOrderSelector.astro";
 import { api, type Show } from "../../lib/api";
 import { countAiredRegularSeasons } from "../../lib/seasonCount";
+import { ratingPosterUrl } from "../../lib/posters";
 export const prerender = false;
 
 const { id } = Astro.params;
@@ -53,6 +54,9 @@ const langNames = new Intl.DisplayNames(["en"], { type: "language" });
 const originalLanguage = show?.original_language
   ? langNames.of(show.original_language) ?? show.original_language
   : null;
+const posterPath = show
+  ? ratingPosterUrl(show.poster_path, { type: "series", tmdb_id: show.tmdb_id, tvdb_id: show.tvdb_id, imdb_id: show.imdb_id }, Astro.locals.rpdbApiKey)
+  : null;
 ---
 
 <Base title={show?.title || "Show Details"}>
@@ -93,10 +97,10 @@ const originalLanguage = show?.original_language
           <!-- Poster -->
           <div class="w-64 shrink-0 mx-auto md:mx-0">
             <div class="aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 bg-zinc-900 ring-1 ring-white/10 relative" data-adult={show.adult ? "true" : undefined}>
-              {show.poster_path ? (
+              {posterPath ? (
                 <button id="poster-zoom-btn" class="w-full h-full group/poster block cursor-zoom-in" aria-label={`Enlarge poster for ${show.title}`}>
                   <img
-                    src={show.poster_path}
+                    src={posterPath}
                     alt={show.title}
                     class="w-full h-full object-cover transition-transform duration-300 group-hover/poster:scale-105"
                     loading="eager"
@@ -200,7 +204,7 @@ const originalLanguage = show?.original_language
                   requestStatus={show.request_status ?? null}
                   userRating={show.user_rating ?? null}
                   ratingTitle={show.title}
-                  ratingPosterPath={show.poster_path}
+                  ratingPosterPath={posterPath}
                   showRewatch={true}
                   rewatch={show.rewatch ?? null}
                   showDrop={true}
@@ -396,11 +400,11 @@ const originalLanguage = show?.original_language
   )}
 </Base>
 
-{show?.poster_path && (
+{show && posterPath && (
   <div id="poster-modal" class="fixed inset-0 z-[999] flex items-center justify-center hidden" role="dialog" aria-modal="true">
     <div id="poster-modal-backdrop" class="absolute inset-0 bg-black/90 backdrop-blur-sm cursor-pointer"></div>
     <img
-      src={show.poster_path}
+      src={posterPath}
       alt={show.title}
       class="relative max-h-[90vh] max-w-[85vw] md:max-w-[50vw] object-contain rounded-2xl shadow-2xl ring-1 ring-white/10"
     />

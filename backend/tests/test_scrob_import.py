@@ -293,6 +293,30 @@ class ApiKeysImportTests(unittest.IsolatedAsyncioTestCase):
         # scrob_api_key was never even an attribute the import touches.
         self.assertFalse(hasattr(settings, "scrob_api_key"))
 
+    async def test_rpdb_import_requires_opt_in_and_never_overwrites(self) -> None:
+        for include, existing, expected in ((False, None, None), (True, None, "imported"), (True, "existing", "existing")):
+            with self.subTest(include=include, existing=existing):
+                settings = SimpleNamespace(rpdb_api_key=existing)
+                db = _FakeSession([[], [settings], []] if include else [[], []])
+                await apply_scrob_import(
+                    db, job_id=1, user_id=1,
+                    data=ScrobImportData(api_keys={"rpdb_api_key": "  imported  "}), api_key=None,
+                    **{**_EMPTY_INCLUDE, "include_api_keys": include},
+                )
+                self.assertEqual(settings.rpdb_api_key, expected)
+
+    async def test_rpdb_import_skips_malformed_or_overlong_credentials(self) -> None:
+        for value in ("x" * 256, {"key": "not-a-string"}):
+            settings = SimpleNamespace(rpdb_api_key=None)
+            db = _FakeSession([[], [settings], []])
+            stats = await apply_scrob_import(
+                db, job_id=1, user_id=1,
+                data=ScrobImportData(api_keys={"rpdb_api_key": value}), api_key=None,
+                **{**_EMPTY_INCLUDE, "include_api_keys": True},
+            )
+            self.assertIsNone(settings.rpdb_api_key)
+            self.assertEqual(stats["errors"], 1)
+
 
 class MediaConnectionsImportTests(unittest.IsolatedAsyncioTestCase):
     async def test_creates_new_connection_when_none_matches(self) -> None:

@@ -60,9 +60,16 @@ Astro.response.headers.set("Cache-Control", "no-store");
       e.collected ? '<span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400">Collected</span>' : '',
       e.watched ? '<span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">Watched</span>' : '',
     ].filter(Boolean).join('');
+    const poster = (e.show_tmdb_id || e.show_tvdb_id)
+      ? window.ratingPosterUrl(e.poster_path, {
+          type: 'series',
+          tmdb_id: e.show_tmdb_id ?? null,
+          tvdb_id: e.show_tvdb_id ?? null,
+        }, window.__RPDB_API_KEY__)
+      : e.poster_path;
     return `
       <a href="${esc(href)}" class="flex items-center gap-4 p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-blue-500/50 transition-colors">
-        ${e.poster_path ? `<img src="${esc(e.poster_path)}" alt="" class="w-10 rounded-md object-cover shrink-0" loading="lazy" style="height:60px"/>`
+        ${poster ? `<img src="${esc(poster)}" alt="" class="w-10 rounded-md object-cover shrink-0" loading="lazy" style="height:60px"/>`
               : '<div class="w-10 shrink-0 text-2xl text-center opacity-30" style="height:60px;line-height:60px">📺</div>'}
         <div class="min-w-0 flex-1">
           <div class="flex items-center gap-2">

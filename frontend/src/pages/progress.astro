@@ -3,6 +3,7 @@ import Base from "../layouts/Base.astro";
 import Pagination from "../components/Pagination.astro";
 import SortButton from "../components/SortButton.astro";
 import { api, tmdbImageUrl, type ShowProgress } from "../lib/api";
+import { ratingPosterUrl } from "../lib/posters";
 export const prerender = false;
 
 const { token } = Astro.locals;
@@ -139,6 +140,7 @@ const sortOptions = isCollection
     <>
       <div class="space-y-2">
         {shows.map((s) => {
+          const posterPath = ratingPosterUrl(tmdbImageUrl(s.poster_path, "w500"), { type: "series", tmdb_id: s.tmdb_id, tvdb_id: s.tvdb_id }, Astro.locals.rpdbApiKey);
           const pct = metricPct(s);
           const remaining = Math.max(0, s.episodes_total - metricDone(s));
           const meta = `${metricDone(s)}/${s.episodes_total}`
@@ -150,8 +152,8 @@ const sortOptions = isCollection
               class="flex items-center gap-3 sm:gap-4 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-blue-500/40 hover:bg-zinc-900/60 transition-colors p-2.5 sm:p-3"
             >
               <div class="w-11 sm:w-12 shrink-0 aspect-[2/3] rounded-md overflow-hidden bg-zinc-950 ring-1 ring-white/5">
-                {tmdbImageUrl(s.poster_path, "w500") ? (
-                  <img src={tmdbImageUrl(s.poster_path, "w500")} alt={s.title} class="w-full h-full object-cover" loading="lazy" decoding="async" />
+                {posterPath ? (
+                  <img src={posterPath} alt={s.title} class="w-full h-full object-cover" loading="lazy" decoding="async" />
                 ) : (
                   <div class="w-full h-full flex items-center justify-center text-zinc-700 text-lg">📺</div>
                 )}

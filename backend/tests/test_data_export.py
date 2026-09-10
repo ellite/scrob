@@ -192,6 +192,7 @@ class SecretCategoryTests(unittest.IsolatedAsyncioTestCase):
         user = SimpleNamespace(api_key="scrob-secret")
         settings = SimpleNamespace(
             tmdb_api_key="tmdb-secret", tvdb_api_key=None, tvdb_subscriber_pin="sub-pin",
+            rpdb_api_key="rpdb-secret",
         )
 
         out = data_export.build_api_keys(user, settings)
@@ -200,6 +201,7 @@ class SecretCategoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out["tmdb_api_key"], "tmdb-secret")
         self.assertIsNone(out["tvdb_api_key"])
         self.assertEqual(out["tvdb_subscriber_pin"], "sub-pin")
+        self.assertEqual(out["rpdb_api_key"], "rpdb-secret")
 
     async def test_media_connection_includes_token(self) -> None:
         conn = SimpleNamespace(type="plex", name="Plex", url="http://x", token="plex-token",
@@ -245,6 +247,24 @@ class SecretCategoryTests(unittest.IsolatedAsyncioTestCase):
         names = zipfile.ZipFile(io.BytesIO(payload)).namelist()
         for secret_file in ("api-keys.json", "media-connections.json", "scrobble-connections.json", "connections.json"):
             self.assertNotIn(secret_file, names)
+
+    async def test_rpdb_secret_requires_api_keys_opt_in(self) -> None:
+        user = SimpleNamespace(id=1, username="alice", api_key="scrob-secret", created_at=datetime(2026, 1, 1))
+        settings = SimpleNamespace(**{field: None for field in data_export._SAFE_SETTINGS_FIELDS},
+                                   tmdb_api_key=None, tvdb_api_key=None, tvdb_subscriber_pin=None,
+                                   rpdb_api_key="rpdb-secret")
+        for include in (False, True):
+            payload = await data_export.build_export_zip(
+                _FakeSession([[None]]), user, settings,
+                include_watched=False, include_ratings=False, include_collection=False,
+                include_lists=False, include_comments=False, include_api_keys=include,
+            )
+            with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+                self.assertNotIn("rpdb-secret", archive.read("user-settings.json").decode())
+                if include:
+                    self.assertEqual(json.loads(archive.read("api-keys.json"))["rpdb_api_key"], "rpdb-secret")
+                else:
+                    self.assertNotIn("api-keys.json", archive.namelist())
 
 
 class ZipRoundTripTests(unittest.TestCase):

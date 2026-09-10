@@ -1,6 +1,7 @@
 ---
 import type { MediaItem } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
+import { ratingPosterUrl } from "../lib/posters";
 import CardActionBar from "./CardActionBar.astro";
 import { episodeHref } from "../lib/episodeHref";
 
@@ -31,10 +32,10 @@ const href = isPerson
     : episodeHref(item);
 
 const cardTitle = isSeason ? `Season ${item.season_number}` : item.title;
-const posterPath = tmdbImageUrl(
+const posterPath = ratingPosterUrl(tmdbImageUrl(
   (isEpisode || isSeason) && item.show_poster_path ? item.show_poster_path : item.poster_path,
   "w500"
-);
+), item, Astro.locals.rpdbApiKey);
 
 const showActionBar = !isPerson && !isCollection && !!user;
 // Seasons get the same percentage-style Watched/Collected labels as a whole show

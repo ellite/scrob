@@ -144,7 +144,17 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
   }
 
+  // Resolve once per page/partial, not per image or proxied API request. A
+  // failed preference lookup leaves the normal artwork and session intact.
+  if (context.locals.user && token && !isStaticAsset && !pathname.startsWith('/api/')) {
+    context.locals.settings = await api.auth.getSettings(token).catch(() => undefined);
+    context.locals.rpdbApiKey = context.locals.settings?.rpdb_api_key ?? null;
+  }
+
   const response = await next();
+  if (context.locals.rpdbApiKey) {
+    response.headers.set('Cache-Control', 'private, no-store');
+  }
   for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
     response.headers.set(header, value);
   }

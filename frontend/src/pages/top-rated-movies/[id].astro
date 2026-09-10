@@ -2,6 +2,7 @@
 import Base from "../../layouts/Base.astro";
 import Pagination from "../../components/Pagination.astro";
 import { api, type ProfileRatedItem, tmdbImageUrl } from "../../lib/api";
+import { ratingPosterUrl } from "../../lib/posters";
 
 export const prerender = false;
 
@@ -76,7 +77,7 @@ function posterUrl(path: string | null): string | null {
       ) : (
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
           {data.results.map((item) => {
-            const thumb = posterUrl(item.poster_path);
+            const thumb = ratingPosterUrl(posterUrl(item.poster_path), item, Astro.locals.rpdbApiKey);
             const href = `/media/movie/${item.tmdb_id}`;
             return (
               <a href={href} class="group active:scale-95 active:opacity-70 transition-all duration-150">

@@ -644,7 +644,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       searchResults.classList.remove('hidden');
 
       items.slice(0, 12).forEach(item => {
-        const poster = tmdbImageUrl(item.poster_path, 'w300');
+        const poster = window.ratingPosterUrl(tmdbImageUrl(item.poster_path, 'w300'), item, window.__RPDB_API_KEY__);
         const year = item.release_date?.slice(0, 4) || '';
         const isPerson = item.type === 'person';
         const rating = item.tmdb_rating ? Number(item.tmdb_rating).toFixed(1) : '';
@@ -709,7 +709,8 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       ? `/person/${media.tmdb_id}`
       : `/media/${media.type}/${media.tmdb_id}`;
 
-    const poster = tmdbImageUrl(isSeason && media.show_poster_path ? media.show_poster_path : media.poster_path, 'w500');
+    const originalPoster = tmdbImageUrl(isSeason && media.show_poster_path ? media.show_poster_path : media.poster_path, 'w500');
+    const poster = window.ratingPosterUrl(originalPoster, media, window.__RPDB_API_KEY__);
 
     const rating = media.tmdb_rating ? Number(media.tmdb_rating).toFixed(1) : null;
     const year = media.release_date?.slice(0, 4) ?? '';

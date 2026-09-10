@@ -6,6 +6,7 @@ import CommentsSection from "../../../components/CommentsSection.astro";
 import VideoPlayer from "../../../components/VideoPlayer.astro";
 import ManualScrobble from "../../../components/ManualScrobble.astro";
 import { api, type MediaItem } from "../../../lib/api";
+import { ratingPosterUrl } from "../../../lib/posters";
 export const prerender = false;
 
 const { type, id } = Astro.params;
@@ -30,6 +31,9 @@ const rating = item?.tmdb_rating ? item.tmdb_rating.toFixed(1) : null;
 const isEpisode = item?.type === "episode";
 const isMovie = item?.type === "movie";
 const collection = item?.collection;
+const posterPath = item && !isEpisode
+  ? ratingPosterUrl(item.poster_path, item, Astro.locals.rpdbApiKey)
+  : item?.poster_path;
 
 // Header for the shared rating popover (shown once the modal dims the page).
 // ActionBar prefixes the SxxExx itself, so pass just the episode name here.
@@ -37,7 +41,7 @@ const rateTitle = isEpisode ? (item?.show_title ?? item?.title) : item?.title;
 const rateSubtitle = isEpisode ? (item?.title ?? "") : "";
 // Episode: the landscape still (ActionBar flags episodes landscape), show
 // poster as fallback. Movie: its poster.
-const ratePosterPath = isEpisode ? (item?.poster_path ?? item?.show_poster_path) : item?.poster_path;
+const ratePosterPath = isEpisode ? (item?.poster_path ?? item?.show_poster_path) : posterPath;
 const showRefreshBtn = !!user && item?.in_library && (item.type === "movie" || (isEpisode && !!item.show_tmdb_id));
 
 const today = new Date();
@@ -101,10 +105,10 @@ const refreshUrl = isEpisode
           <!-- Poster -->
           <div class="w-64 shrink-0 mx-auto md:mx-0">
             <div class="aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 bg-zinc-900 ring-1 ring-white/10 relative" data-adult={item.adult ? "true" : undefined}>
-              {item.poster_path ? (
+              {posterPath ? (
                 <button id="poster-zoom-btn" class="w-full h-full group/poster block cursor-zoom-in" aria-label={`Enlarge poster for ${item.title}`}>
                   <img
-                    src={item.poster_path}
+                    src={posterPath}
                     alt={item.title}
                     class="w-full h-full object-cover transition-transform duration-300 group-hover/poster:scale-105"
                     loading="eager"
@@ -484,11 +488,11 @@ const refreshUrl = isEpisode
   }
 </script>
 
-{item?.poster_path && (
+{item && posterPath && (
   <div id="poster-modal" class="fixed inset-0 z-[999] flex items-center justify-center hidden" role="dialog" aria-modal="true">
     <div id="poster-modal-backdrop" class="absolute inset-0 bg-black/90 backdrop-blur-sm cursor-pointer"></div>
     <img
-      src={item.poster_path}
+      src={posterPath}
       alt={item.title}
       class="relative max-h-[90vh] max-w-[85vw] md:max-w-[50vw] object-contain rounded-2xl shadow-2xl ring-1 ring-white/10"
     />
