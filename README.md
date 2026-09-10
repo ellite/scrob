@@ -78,6 +78,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **A
 - **Continue Watching & Next Up**: Dashboard cards showing in-progress items and the next episode to watch in each series.
 - **Statistics**: A per-user stats page - watch time, activity charts, ratings breakdown, and most-watched people/networks - filterable by all-time, year, month, week, or a custom period.
 - **Season & episode tracking**: Detailed season views with per-episode watched state and progress.
+- **Episode ordering**: Watch a show in an alternate episode order - DVD, absolute, alternate or regional order from TheTVDB, or any TMDB episode group (story arc, production, digital). Chosen per show from the **Episode order** control on the show page; every surface the show's episodes appear on - show, season and episode pages, Next Up, Now Playing, the calendar, history and cards - renumbers to match. TheTVDB-sourced orders need a TheTVDB key; TMDB episode groups don't.
 - **Cast & crew pages**: Full filmography for any person, linked to your library.
 - **Radarr & Sonarr integration**: Add movies and shows to Radarr/Sonarr directly from the Scrob UI.
 - **Plex watchlist automation**: Automatically send items from your Plex watchlist (and selected friends' watchlists) to Radarr or Sonarr.
@@ -325,7 +326,7 @@ DATABASE_URL: postgresql+asyncpg://user:password@your-db-host:5432/scrob
 TMDB covers the great majority of titles. A **TheTVDB** key is optional and only affects TVDB-specific paths:
 
 - shows and episodes that exist on TheTVDB but not on TMDB;
-- TVDB-ordered episode mapping (absolute numbering, common for anime and long-running shows) and TVDB season metadata;
+- alternate episode orderings from TheTVDB - DVD, absolute (common for anime), alternate, regional - plus TVDB season metadata, selectable per show under **Episode order** (TMDB episode groups work without a key);
 - matching otherwise-unmatched local episodes through TheTVDB.
 
 With no key configured, all of the above fall back to TMDB-only behaviour; nothing else is affected.

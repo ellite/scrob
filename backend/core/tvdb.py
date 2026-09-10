@@ -271,9 +271,13 @@ async def get_series_episodes(
     api_key: str,
     language: str | None = None,
     cache_ttl: float | None = DEFAULT_CACHE_TTL,
+    season_type: str = "official",
 ) -> list[dict]:
-    """Fetch episodes for a specific season (season_type=official), or every
-    episode in the series if season_number is None.
+    """Fetch episodes for a specific season in the given season type
+    ("official" = aired order; also "dvd", "absolute", "alternate", "regional",
+    or a numbered custom/streaming type id - see #174), or every episode in the
+    series in that type if season_number is None. Each episode's `seasonNumber`
+    and `number` are that type's values.
 
     TVDB v4 has no `language` query param on this endpoint — it's silently
     ignored if passed. Translated episode name/overview require the separate
@@ -285,7 +289,7 @@ async def get_series_episodes(
     """
     episodes = []
     page = 0
-    path = f"/series/{tvdb_id}/episodes/official/{language}" if language else f"/series/{tvdb_id}/episodes/official"
+    path = f"/series/{tvdb_id}/episodes/{season_type}/{language}" if language else f"/series/{tvdb_id}/episodes/{season_type}"
     while True:
         params: dict = {"page": page}
         if season_number is not None:

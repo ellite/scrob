@@ -2,6 +2,7 @@
 import type { ContinueWatchingItem } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import { episodeHref } from "../lib/episodeHref";
+import { episodeCode } from "../lib/media-format";
 
 interface Props {
   item: ContinueWatchingItem;
@@ -11,10 +12,7 @@ const { item } = Astro.props;
 const { media, progress_percent } = item;
 
 const isEpisode = media.type === "episode";
-const sxe =
-  isEpisode && media.season_number != null && media.episode_number != null
-    ? `S${String(media.season_number).padStart(2, "0")}E${String(media.episode_number).padStart(2, "0")}`
-    : null;
+const sxe = isEpisode ? episodeCode(media) : null;
 
 const progressPct =
   progress_percent != null ? Math.round(progress_percent * 100) : 0;

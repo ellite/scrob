@@ -22,6 +22,13 @@ try {
   error = e.message;
 }
 
+// #174: the TVDB show pages are now only the canonical home for shows with no
+// TMDB counterpart. A TMDB-matched show renders on /show/{tmdb_id} with the
+// TVDB aired ordering applied.
+if (show?.tmdb_id_cross) {
+  return Astro.redirect(`/show/${show.tmdb_id_cross}`, 301);
+}
+
 if (!show && !error) {
   return Astro.redirect("/404");
 }

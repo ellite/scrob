@@ -12,7 +12,7 @@ interface Props {
   seasonNumber?: number;
   episodeNumber?: number;
   displaySeasonNumber?: number;
-  episodeOrder?: "tmdb" | "tvdb";
+  episodeOrder?: string;
   tvdbId?: number;
   hideRequest?: boolean;
   hideLists?: boolean;
@@ -48,7 +48,7 @@ const {
   seasonNumber,
   episodeNumber,
   displaySeasonNumber,
-  episodeOrder = "tmdb",
+  episodeOrder = "tmdb:aired",
   tvdbId,
   hideRequest = false,
   hideLists = false,

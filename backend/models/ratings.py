@@ -18,7 +18,7 @@ class Rating(Base):
     user_id       : Mapped[int]             = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     media_id      : Mapped[int]             = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
     season_number : Mapped[Optional[int]]   = mapped_column(Integer, nullable=True)
-    episode_order : Mapped[Optional[str]]   = mapped_column(String(20), nullable=True)
+    episode_order : Mapped[Optional[str]]   = mapped_column(String(40), nullable=True)
     rating        : Mapped[Optional[float]] = mapped_column(Float)
     review        : Mapped[Optional[str]]   = mapped_column(Text)
     rated_at      : Mapped[datetime]        = mapped_column(DateTime, server_default=func.now(), nullable=False)

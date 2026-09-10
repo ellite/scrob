@@ -2,6 +2,7 @@
 import type { WatchEvent } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import { episodeHref } from "../lib/episodeHref";
+import { displaySeasonEpisode } from "../lib/media-format";
 
 interface Props {
   event: WatchEvent;
@@ -16,6 +17,7 @@ const timeString = watched_at
   : 'Unknown';
 
 const isEpisode = media.type === 'episode';
+const { season: dispSeason, episode: dispEpisode } = displaySeasonEpisode(media);
 const showOrMovieTitle = isEpisode ? (media.show_title || media.title) : media.title;
 const year = media.release_date?.slice(0, 4);
 
@@ -86,7 +88,7 @@ const href = media.type === 'movie' ? `/media/movie/${media.tmdb_id}` : episodeH
       {isEpisode ? (
         <p class="text-xs font-bold text-zinc-400 flex items-center gap-2">
           <span class="text-blue-500 tracking-tighter uppercase bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20 shrink-0">
-            S{media.season_number?.toString().padStart(2, '0')}E{media.episode_number?.toString().padStart(2, '0')}
+            S{dispSeason?.toString().padStart(2, '0')}E{dispEpisode?.toString().padStart(2, '0')}
           </span>
           <span class="truncate font-medium text-zinc-500">{media.title}</span>
         </p>

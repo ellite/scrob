@@ -14,6 +14,7 @@ from models.users import UserSettings
 from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
 from core.enrichment import enrich_media, create_media_safely
+from core.episode_order import validate_episode_order, normalize_order_key, is_aired_order
 
 router = APIRouter()
 
@@ -104,13 +105,15 @@ async def submit_rating(
             raise HTTPException(status_code=404, detail=f"TMDB Media not found: {e}")
 
     effective_season = None if media_type == MediaType.episode else body.season_number
-    effective_episode_order = (
-        body.episode_order
-        if media_type == MediaType.series and effective_season is not None
-        else None
-    )
-    if effective_episode_order not in (None, "tvdb"):
-        raise HTTPException(status_code=400, detail="Invalid episode order")
+    # A season rating carries the ordering it was made under (#174) so
+    # "Season 3" of DVD order and of aired order stay distinct. NULL = aired.
+    effective_episode_order = None
+    if media_type == MediaType.series and effective_season is not None and body.episode_order:
+        try:
+            key = validate_episode_order(body.episode_order)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid episode order")
+        effective_episode_order = None if is_aired_order(key) else key
 
     result2 = await db.execute(
         select(Rating).where(
@@ -139,7 +142,10 @@ async def submit_rating(
 
     await db.commit()
     await db.refresh(rating)
-    if effective_episode_order == "tvdb":
+    # A rating made under a non-aired ordering isn't pushed to external
+    # services - they'd misread the season number (same rule as the
+    # Rating.episode_order.is_(None) push filters in trakt/simkl/mdblist).
+    if effective_episode_order is not None:
         return format_rating(rating, media)
 
     settings_result = await db.execute(
@@ -210,11 +216,10 @@ async def delete_rating(
         raise HTTPException(status_code=404, detail="Media not found")
 
     effective_season = None if mt == MediaType.episode else season_number
-    effective_episode_order = (
-        episode_order
-        if mt == MediaType.series and effective_season is not None
-        else None
-    )
+    effective_episode_order = None
+    if mt == MediaType.series and effective_season is not None and episode_order:
+        key = normalize_order_key(episode_order)
+        effective_episode_order = None if is_aired_order(key) else key
 
     result = await db.execute(
         select(Rating).where(
@@ -229,7 +234,7 @@ async def delete_rating(
         raise HTTPException(status_code=404, detail="Rating not found")
     await db.delete(rating)
     await db.commit()
-    if effective_episode_order == "tvdb":
+    if effective_episode_order is not None:
         return {"status": "deleted"}
 
     settings_result = await db.execute(

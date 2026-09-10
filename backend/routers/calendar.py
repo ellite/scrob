@@ -25,6 +25,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import settings
+from core.episode_order import get_order_keys_for_series, get_positions_for_series
 from db import get_db
 from dependencies import get_current_user_or_api_key
 from models.base import MediaType
@@ -204,6 +205,28 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
             e["collected"] = media_id in collected_ids if media_id else False
             e["watched"] = media_id in watched_ids if media_id else False
             del e["show_id"]
+
+    # #174: render each entry in the ordering the user picked for that show.
+    order_keys = await get_order_keys_for_series(
+        db, user_id, list({e["show_tmdb_id"] for e in entries if e.get("show_tmdb_id")})
+    )
+    if order_keys:
+        by_pair = await get_positions_for_series(
+            db, [(sid, key) for sid, key in order_keys.items()]
+        )
+        flat: dict[tuple[int, int, int], object] = {}
+        for (sid, _key), canon_map in by_pair.items():
+            for (cs, ce), pos in canon_map.items():
+                flat[(sid, cs, ce)] = pos
+        for e in entries:
+            key = order_keys.get(e.get("show_tmdb_id"))
+            if not key:
+                continue
+            e["show_episode_order"] = key
+            pos = flat.get((e["show_tmdb_id"], e["season_number"], e["episode_number"]))
+            if pos:
+                e["display_season_number"] = pos.display_season
+                e["display_episode_number"] = pos.display_episode
 
     entries.sort(key=lambda e: (
         e["air_date"], e["show_title"] or "",

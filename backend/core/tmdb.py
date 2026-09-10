@@ -231,6 +231,45 @@ async def get_episode_external_ids(
     )
 
 
+# TMDB episode-group type ids -> a human label (see #174). 1 is the show's
+# regular aired order and is offered separately, so it's excluded by callers.
+EPISODE_GROUP_TYPE_LABELS = {
+    1: "Original Air Date",
+    2: "Absolute Order",
+    3: "DVD Order",
+    4: "Digital Order",
+    5: "Story Arc",
+    6: "Production Order",
+    7: "TV Order",
+}
+
+
+async def get_episode_groups(
+    tmdb_id: int, api_key: str = None, cache_ttl: float | None = DEFAULT_CACHE_TTL
+) -> dict:
+    """`GET /tv/{id}/episode_groups` - the alternate orderings TMDB has for a
+    show. Returns `{"results": [{id, name, type, episode_count, group_count, ...}]}`."""
+    return await _get(
+        f"{TMDB_BASE}/tv/{tmdb_id}/episode_groups",
+        headers=get_headers(api_key),
+        cache_ttl=cache_ttl,
+    )
+
+
+async def get_episode_group(
+    group_id: str, api_key: str = None, cache_ttl: float | None = DEFAULT_CACHE_TTL
+) -> dict:
+    """`GET /tv/episode_group/{id}` - one ordering's full structure:
+    `{id, name, type, groups: [{order, name, episodes: [{id, season_number,
+    episode_number, order, ...}]}]}`. Each episode's season_number/episode_number
+    are the canonical TMDB values; `order` is its 0-based slot in the group."""
+    return await _get(
+        f"{TMDB_BASE}/tv/episode_group/{group_id}",
+        headers=get_headers(api_key),
+        cache_ttl=cache_ttl,
+    )
+
+
 async def get_trending_movies(time_window: str = "day", page: int = 1, api_key: str = None, language: str | None = None) -> dict:
     params: dict = {"page": page}
     if language:

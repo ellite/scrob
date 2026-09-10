@@ -10,7 +10,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from fastapi import HTTPException
 
 from models.base import MediaType, CollectionSource
-from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
+from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder, ShowEpisodePosition
 from models.events import WatchEvent
 from models.media import Media
 from models.playback_progress import PlaybackProgress
@@ -415,12 +415,11 @@ class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GetNowPlayingEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
-    """Regression test for #186: get_now_playing builds its media dict
-    inline rather than going through enrich_with_state, so it needs its own
-    wiring for the episode-order preference / TVDB position translation used
-    by the Now Playing bar's link building."""
+    """#174: get_now_playing builds its media dict inline rather than through
+    enrich_with_state, so it needs its own wiring for the episode-order
+    preference / display-position translation the Now Playing bar renders."""
 
-    async def test_tvdb_preference_session_gets_translated_position(self) -> None:
+    async def test_non_aired_order_session_gets_display_position(self) -> None:
         media = Media(
             id=10, tmdb_id=550, media_type=MediaType.episode,
             title="Ep", season_number=4, episode_number=12, show_id=1,
@@ -431,27 +430,27 @@ class GetNowPlayingEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
             state="playing", progress_percent=0.1, progress_seconds=60,
             started_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 1),
         )
-        preference = UserShowEpisodeOrder(user_id=7, series_tmdb_id=550, episode_order="tvdb")
-        mapping = EpisodeOrderMapping(
-            series_tmdb_id=550, tmdb_season_number=4, tmdb_episode_number=12,
-            tmdb_episode_id=1, tvdb_id=1, tvdb_season_number=3, tvdb_episode_number=8,
-            match_method="external_id",
+        preference = UserShowEpisodeOrder(user_id=7, series_tmdb_id=550, episode_order="tvdb:dvd")
+        pos = ShowEpisodePosition(
+            series_tmdb_id=550, order_key="tvdb:dvd",
+            display_season=3, display_episode=8,
+            tmdb_episode_id=1, tmdb_season_number=4, tmdb_episode_number=12,
         )
         db = _FakeSession([
             [(session, media)],  # main PlaybackSession+Media query
             show,                # per-session Show lookup
-            [preference],        # get_episode_orders_for_series
-            [mapping],           # get_tmdb_to_tvdb_positions
+            [preference],        # get_order_keys_for_series
+            [pos],               # get_positions_for_series
         ])
 
         result = await history.get_now_playing(db=db, current_user=SimpleNamespace(id=7))
 
         item = result["now_playing"][0]["media"]
-        self.assertEqual(item["show_episode_order"], "tvdb")
-        self.assertEqual(item["tvdb_season_number"], 3)
-        self.assertEqual(item["tvdb_episode_number"], 8)
+        self.assertEqual(item["show_episode_order"], "tvdb:dvd")
+        self.assertEqual(item["display_season_number"], 3)
+        self.assertEqual(item["display_episode_number"], 8)
 
-    async def test_tmdb_preference_session_is_untouched(self) -> None:
+    async def test_aired_preference_session_is_untouched(self) -> None:
         media = Media(
             id=10, tmdb_id=550, media_type=MediaType.episode,
             title="Ep", season_number=4, episode_number=12, show_id=1,
@@ -465,14 +464,14 @@ class GetNowPlayingEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeSession([
             [(session, media)],  # main PlaybackSession+Media query
             show,                # per-session Show lookup
-            [],                  # get_episode_orders_for_series - no preference row
+            [],                  # get_order_keys_for_series - no non-aired pref
         ])
 
         result = await history.get_now_playing(db=db, current_user=SimpleNamespace(id=7))
 
         item = result["now_playing"][0]["media"]
         self.assertNotIn("show_episode_order", item)
-        self.assertNotIn("tvdb_season_number", item)
+        self.assertNotIn("display_season_number", item)
 
 
 class GetNowPlayingCreditsStingerTests(unittest.IsolatedAsyncioTestCase):

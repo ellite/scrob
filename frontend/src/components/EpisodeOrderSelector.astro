@@ -1,53 +1,63 @@
 ---
 interface Props {
   tmdbId: number;
-  tvdbId: number;
-  selected: "tmdb" | "tvdb";
+  selected: string;
+  selectedLabel?: string | null;
   token: string;
 }
 
-const { tmdbId, tvdbId, selected, token } = Astro.props;
+const { tmdbId, selected, selectedLabel, token } = Astro.props;
+const provider = selected.startsWith("tvdb:") ? "tvdb" : "tmdb";
+const pill =
+  "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50";
+const pillOn = "bg-blue-600 text-white";
+const pillOff = "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800";
 ---
 
 <div
   data-episode-order-selector
   data-tmdb-id={String(tmdbId)}
-  data-tvdb-id={String(tvdbId)}
   data-selected={selected}
   data-token={token}
   class="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-4 py-3"
 >
   <div>
     <p class="text-xs font-black uppercase tracking-wider text-zinc-300">Episode order</p>
-    <p class="text-[11px] text-zinc-500">Choose how seasons are grouped for this show.</p>
+    <p class="text-[11px] text-zinc-500">Choose how this show's episodes are grouped and numbered.</p>
   </div>
-  <div class="ml-auto flex rounded-xl border border-zinc-700 bg-zinc-950 p-1" role="group" aria-label="Episode order">
-    <button
-      type="button"
-      data-order="tmdb"
-      aria-pressed={selected === "tmdb"}
-      class:list={[
-        "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
-        selected === "tmdb" ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800",
-      ]}
-    >
-      TMDB
-    </button>
-    <button
-      type="button"
-      data-order="tvdb"
-      aria-pressed={selected === "tvdb"}
-      class:list={[
-        "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
-        selected === "tvdb" ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800",
-      ]}
-    >
-      TVDB
-    </button>
+
+  <div class="ml-auto flex items-center gap-2">
+    <div data-provider-group class="flex rounded-xl border border-zinc-700 bg-zinc-950 p-1" role="group" aria-label="Metadata source">
+      <button type="button" data-provider="tmdb" aria-pressed={provider === "tmdb"}
+        class:list={[pill, provider === "tmdb" ? pillOn : pillOff]}>TMDB</button>
+      <button type="button" data-provider="tvdb" aria-pressed={provider === "tvdb"} hidden
+        class:list={[pill, provider === "tvdb" ? pillOn : pillOff]}>TVDB</button>
+    </div>
+    <div data-order-toggle-wrap class="flex rounded-xl border border-zinc-700 bg-zinc-950 p-1" hidden>
+      <button
+        type="button"
+        data-order-toggle
+        aria-expanded="false"
+        aria-label="Show all orderings"
+        class:list={[pill, "flex items-center gap-1.5 !pr-2", pillOff]}
+      >
+        <span data-order-toggle-label>{selectedLabel || (selected === "tmdb:aired" ? "Aired Order" : selected)}</span>
+        <svg data-order-chevron xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+    </div>
   </div>
+
+  <div data-order-row class="flex w-full justify-end" hidden>
+    <div data-order-group class="flex flex-wrap justify-end gap-1 rounded-xl border border-zinc-700 bg-zinc-950 p-1" role="group" aria-label="Episode order">
+      <button type="button" data-order-key={selected} aria-pressed="true" class:list={[pill, pillOn]}>
+        {selectedLabel || (selected === "tmdb:aired" ? "Aired Order" : selected)}
+      </button>
+    </div>
+  </div>
+
   <div data-order-progress class="hidden w-full">
     <div class="flex justify-between items-center mb-1.5">
-      <span data-order-progress-label class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Mapping…</span>
+      <span data-order-progress-label class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Building order…</span>
       <span data-order-progress-pct class="text-xs font-bold text-zinc-400"></span>
     </div>
     <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
@@ -61,19 +71,45 @@ const { tmdbId, tvdbId, selected, token } = Astro.props;
 </div>
 
 <script>
+  interface OrderOption { key: string; label: string; provider: string }
+
   document.querySelectorAll<HTMLElement>('[data-episode-order-selector]').forEach((selector) => {
     if (selector.dataset.bound === 'true') return;
     selector.dataset.bound = 'true';
 
-    const buttons = selector.querySelectorAll<HTMLButtonElement>('[data-order]');
+    const tmdbId = selector.dataset.tmdbId!;
+    const token = selector.dataset.token!;
+    const providerGroup = selector.querySelector<HTMLElement>('[data-provider-group]')!;
+    const orderToggleWrap = selector.querySelector<HTMLElement>('[data-order-toggle-wrap]')!;
+    const orderToggle = selector.querySelector<HTMLButtonElement>('[data-order-toggle]')!;
+    const orderToggleLabel = selector.querySelector<HTMLElement>('[data-order-toggle-label]')!;
+    const orderChevron = selector.querySelector<HTMLElement>('[data-order-chevron]')!;
+    const orderRow = selector.querySelector<HTMLElement>('[data-order-row]')!;
+    const orderGroup = selector.querySelector<HTMLElement>('[data-order-group]')!;
     const error = selector.querySelector<HTMLElement>('[data-order-error]');
     const progress = selector.querySelector<HTMLElement>('[data-order-progress]');
     const progressBar = selector.querySelector<HTMLElement>('[data-order-progress-bar]');
     const progressPct = selector.querySelector<HTMLElement>('[data-order-progress-pct]');
     const progressItems = selector.querySelector<HTMLElement>('[data-order-progress-items]');
 
+    const PILL = 'rounded-lg px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50';
+    const ON = 'bg-blue-600 text-white';
+    const OFF = 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800';
+
+    let orders: OrderOption[] = [];
+    const providerOf = (key: string) => (key.startsWith('tvdb:') ? 'tvdb' : 'tmdb');
+    const optionsFor = (p: string) => orders.filter((o) => o.provider === p);
+    const defaultKeyFor = (p: string) => {
+      if (p === 'tmdb') return 'tmdb:aired';
+      const opts = optionsFor('tvdb');
+      return opts.find((o) => o.key === 'tvdb:official')?.key ?? opts[0]?.key ?? 'tvdb:official';
+    };
+
+    // The options row always starts collapsed - it only opens on an arrow click.
+    let expanded = false;
+
     function setBusy(busy: boolean) {
-      buttons.forEach((item) => { item.disabled = busy; });
+      selector.querySelectorAll('button').forEach((b) => { (b as HTMLButtonElement).disabled = busy; });
     }
 
     function renderProgress(job: any) {
@@ -96,24 +132,24 @@ const { tmdbId, tvdbId, selected, token } = Astro.props;
     function fail(message: string) {
       setBusy(false);
       progress?.classList.add('hidden');
+      render();
       if (error) {
         error.textContent = message;
         error.classList.remove('hidden');
       }
     }
 
-    // TVDB mapping can take minutes for long-running shows (one TMDB request per
-    // episode), so it runs as a background job — poll until it finishes instead
-    // of blocking the request and risking a reverse-proxy gateway timeout.
-    async function pollEpisodeOrderJob(jobId: number) {
+    // A tvdb:official mapping fans out one TMDB request per episode, so builds
+    // run as a background job - poll it, then navigate to its redirect.
+    async function pollJob(jobId: number) {
       try {
         const response = await fetch(`/api/proxy/shows/episode-order/jobs/${jobId}`, {
-          headers: { Authorization: `Bearer ${selector.dataset.token}` },
+          headers: { Authorization: `Bearer ${token}` },
         });
         if (!response.ok) throw new Error('Unable to check episode order progress');
         const job = await response.json();
         if (job.status === 'completed') {
-          window.location.href = job.stats?.redirect ?? `/show/${selector.dataset.tmdbId}`;
+          window.location.href = job.stats?.redirect ?? `/show/${tmdbId}`;
           return;
         }
         if (job.status === 'failed' || job.status === 'cancelled') {
@@ -121,55 +157,117 @@ const { tmdbId, tvdbId, selected, token } = Astro.props;
         }
         setBusy(true);
         renderProgress(job);
-        setTimeout(() => pollEpisodeOrderJob(jobId), 1500);
+        setTimeout(() => pollJob(jobId), 1500);
       } catch (exception) {
         fail(exception instanceof Error ? exception.message : 'Unable to update episode order');
       }
     }
 
-    buttons.forEach((button) => {
-      button.addEventListener('click', async () => {
-        const episodeOrder = button.dataset.order as 'tmdb' | 'tvdb';
-        if (episodeOrder === selector.dataset.selected) return;
-
-        setBusy(true);
-        if (error) error.classList.add('hidden');
-
-        try {
-          const response = await fetch(`/api/proxy/shows/${selector.dataset.tmdbId}/episode-order`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${selector.dataset.token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ episode_order: episodeOrder }),
-          });
-          const data = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(data.detail || 'Unable to update episode order');
-          if (data.status === 'started' && data.job_id) {
-            pollEpisodeOrderJob(data.job_id);
-            return;
-          }
-          window.location.href = data.redirect;
-        } catch (exception) {
-          fail(exception instanceof Error ? exception.message : 'Unable to update episode order');
+    async function apply(orderKey: string) {
+      if (orderKey === selector.dataset.selected) return;
+      setBusy(true);
+      error?.classList.add('hidden');
+      const label = orders.find((o) => o.key === orderKey)?.label ?? null;
+      try {
+        const response = await fetch(`/api/proxy/shows/${tmdbId}/episode-order`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ episode_order: orderKey, order_label: label }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || 'Unable to update episode order');
+        if (data.status === 'started' && data.job_id) {
+          pollJob(data.job_id);
+          return;
         }
+        window.location.href = data.redirect ?? `/show/${tmdbId}`;
+      } catch (exception) {
+        fail(exception instanceof Error ? exception.message : 'Unable to update episode order');
+      }
+    }
+
+    function mkButton(key: string, label: string, active: boolean, onClick: () => void) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `${PILL} ${active ? ON : OFF}`;
+      b.setAttribute('aria-pressed', String(active));
+      b.textContent = label;
+      b.addEventListener('click', onClick);
+      return b;
+    }
+
+    function render() {
+      const applied = selector.dataset.selected!;
+      const appliedProvider = providerOf(applied);
+
+      // Nothing to choose - a show with only aired order. Keep it hidden.
+      if (orders.length <= 1) {
+        selector.hidden = true;
+        return;
+      }
+      selector.hidden = false;
+
+      // Provider toggle: shown only when the show actually has both TMDB and
+      // TVDB orderings to switch between.
+      const hasTvdb = optionsFor('tvdb').length > 0;
+      providerGroup.hidden = !hasTvdb;
+      providerGroup.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+        const p = b.dataset.provider!;
+        b.hidden = p === 'tvdb' && !hasTvdb;
+        b.className = `${PILL} ${p === appliedProvider ? ON : OFF}`;
+        b.setAttribute('aria-pressed', String(p === appliedProvider));
       });
+
+      // Order options for the applied provider. The toggle only appears when
+      // there's more than one to choose from; its label is the applied order.
+      const opts = optionsFor(appliedProvider);
+      orderToggleWrap.hidden = opts.length <= 1;
+      if (orderToggleWrap.hidden) expanded = false;
+      orderToggleLabel.textContent =
+        orders.find((o) => o.key === applied)?.label
+        ?? (applied === 'tmdb:aired' ? 'Aired Order' : applied);
+      orderToggle.setAttribute('aria-expanded', String(expanded));
+      orderChevron.classList.toggle('rotate-180', expanded);
+
+      orderRow.hidden = !expanded;
+      orderGroup.innerHTML = '';
+      for (const o of opts) {
+        orderGroup.appendChild(mkButton(o.key, o.label, o.key === applied, () => apply(o.key)));
+      }
+    }
+
+    orderToggle.addEventListener('click', () => { expanded = !expanded; render(); });
+
+    providerGroup.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+      // Clicking a provider always applies that provider's default ordering.
+      b.addEventListener('click', () => apply(defaultKeyFor(b.dataset.provider!)));
     });
 
-    // Resume polling if a mapping job for this show is already in flight — e.g.
-    // the page was refreshed mid-run — instead of silently losing track of it.
     (async () => {
       try {
-        const response = await fetch(`/api/proxy/shows/${selector.dataset.tmdbId}/episode-order/job`, {
-          headers: { Authorization: `Bearer ${selector.dataset.token}` },
+        const response = await fetch(`/api/proxy/shows/${tmdbId}/episode-orders`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        orders = data.orders ?? [];
+        if (data.selected) selector.dataset.selected = data.selected;
+        render();
+      } catch {}
+    })();
+
+    // Resume a build already in flight (page refreshed mid-run).
+    (async () => {
+      try {
+        const response = await fetch(`/api/proxy/shows/${tmdbId}/episode-order/job`, {
+          headers: { Authorization: `Bearer ${token}` },
         });
         if (!response.ok) return;
         const job = await response.json();
         if (job && (job.status === 'pending' || job.status === 'running')) {
           setBusy(true);
           renderProgress(job);
-          pollEpisodeOrderJob(job.id);
+          pollJob(job.id);
         }
       } catch {}
     })();

@@ -417,10 +417,15 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["season_collection_pct"], 50)
 
     def test_rejects_unknown_episode_order(self) -> None:
-        self.assertEqual(validate_episode_order("tmdb"), "tmdb")
-        self.assertEqual(validate_episode_order("tvdb"), "tvdb")
+        # Legacy values normalise to the new key grammar (#174 compat shim).
+        self.assertEqual(validate_episode_order("tmdb"), "tmdb:aired")
+        self.assertEqual(validate_episode_order("tvdb"), "tvdb:official")
+        self.assertEqual(validate_episode_order("tvdb:dvd"), "tvdb:dvd")
+        self.assertEqual(validate_episode_order("tmdb:group:12345"), "tmdb:group:12345")
         with self.assertRaisesRegex(ValueError, "Unsupported episode order"):
             validate_episode_order("absolute")
+        with self.assertRaisesRegex(ValueError, "Unsupported episode order"):
+            validate_episode_order("tvdb:bogus")
 
 
 class EnsureEpisodeOrderMappingForSeasonTests(unittest.IsolatedAsyncioTestCase):
@@ -726,9 +731,41 @@ class RunEpisodeOrderMappingReconciliationTests(unittest.IsolatedAsyncioTestCase
     ordering, or Refresh Metadata), the show's divergent episode Media rows
     must get reconciled too - not just newly-mapped episodes going forward."""
 
-    async def test_reconcile_called_with_local_show_after_mapping_succeeds(self) -> None:
+    async def test_reconcile_called_with_local_show_after_tvdb_order_built(self) -> None:
         local_show = SimpleNamespace(id=9, tmdb_id=127532, tvdb_id=None)
 
+        fake_db = SimpleNamespace(
+            execute=AsyncMock(return_value=_ScalarOneResult(local_show)),
+            commit=AsyncMock(),
+            add=MagicMock(),
+        )
+
+        class _FakeSessionCtx:
+            async def __aenter__(self):
+                return fake_db
+
+            async def __aexit__(self, *exc):
+                return False
+
+        async def _build(*a, **kw):
+            # build_order_positions resolves + sets the tvdb id on the show.
+            local_show.tvdb_id = 389597
+            return {"order_key": "tvdb:official", "positions": 12}
+
+        reconcile_mock = AsyncMock()
+        with (
+            patch("routers.shows.async_sessionmaker", MagicMock(return_value=lambda: _FakeSessionCtx())),
+            patch("routers.shows.build_order_positions", AsyncMock(side_effect=_build)),
+            patch("routers.shows.get_episode_order", AsyncMock(return_value=None)),
+            patch("routers.shows.reconcile_divergent_episode_media", reconcile_mock),
+        ):
+            await _run_episode_order_mapping(1, 55, 127532, "tvdb:official", "TVDB Aired Order", "tmdb-key", "tvdb-key", False)
+
+        reconcile_mock.assert_awaited_once_with(fake_db, local_show)
+        self.assertEqual(local_show.tvdb_id, 389597)
+
+    async def test_reconcile_skipped_for_a_tmdb_group_order(self) -> None:
+        local_show = SimpleNamespace(id=9, tmdb_id=127532, tvdb_id=None)
         fake_db = SimpleNamespace(
             execute=AsyncMock(return_value=_ScalarOneResult(local_show)),
             commit=AsyncMock(),
@@ -745,46 +782,11 @@ class RunEpisodeOrderMappingReconciliationTests(unittest.IsolatedAsyncioTestCase
         reconcile_mock = AsyncMock()
         with (
             patch("routers.shows.async_sessionmaker", MagicMock(return_value=lambda: _FakeSessionCtx())),
-            patch(
-                "routers.shows.ensure_episode_order_mapping",
-                AsyncMock(return_value={"tvdb_id": 389597, "matched": 1, "tmdb_episodes": 1, "unmatched": 0}),
-            ),
+            patch("routers.shows.build_order_positions", AsyncMock(return_value={"positions": 5})),
             patch("routers.shows.get_episode_order", AsyncMock(return_value=None)),
             patch("routers.shows.reconcile_divergent_episode_media", reconcile_mock),
         ):
-            await _run_episode_order_mapping(1, 55, 127532, "tmdb-key", "tvdb-key", False)
-
-        reconcile_mock.assert_awaited_once_with(fake_db, local_show)
-        # local_show.tvdb_id must already be set to the resolved value by
-        # the time reconciliation runs, since it's needed to find the
-        # canonical/divergent Media pairs.
-        self.assertEqual(local_show.tvdb_id, 389597)
-
-    async def test_reconcile_skipped_when_show_not_found_locally(self) -> None:
-        fake_db = SimpleNamespace(
-            execute=AsyncMock(return_value=_ScalarOneResult(None)),
-            commit=AsyncMock(),
-            add=MagicMock(),
-        )
-
-        class _FakeSessionCtx:
-            async def __aenter__(self):
-                return fake_db
-
-            async def __aexit__(self, *exc):
-                return False
-
-        reconcile_mock = AsyncMock()
-        with (
-            patch("routers.shows.async_sessionmaker", MagicMock(return_value=lambda: _FakeSessionCtx())),
-            patch(
-                "routers.shows.ensure_episode_order_mapping",
-                AsyncMock(return_value={"tvdb_id": 389597, "matched": 1, "tmdb_episodes": 1, "unmatched": 0}),
-            ),
-            patch("routers.shows.get_episode_order", AsyncMock(return_value=None)),
-            patch("routers.shows.reconcile_divergent_episode_media", reconcile_mock),
-        ):
-            await _run_episode_order_mapping(1, 55, 127532, "tmdb-key", "tvdb-key", False)
+            await _run_episode_order_mapping(1, 55, 127532, "tmdb:group:abc", "DVD Order", "tmdb-key", None, False)
 
         reconcile_mock.assert_not_awaited()
 
@@ -842,6 +844,194 @@ class BatchedLookupTests(unittest.IsolatedAsyncioTestCase):
         result = await get_tmdb_to_tvdb_positions(db, series_tmdb_ids=[])
         self.assertEqual(result, {})
         db.execute.assert_not_called()
+
+
+import os
+
+os.environ.setdefault("SECRET_KEY", "test-secret")
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+
+from sqlalchemy import select as _sa_select
+from sqlalchemy.dialects.postgresql import JSONB as _JSONB
+from sqlalchemy.ext.asyncio import async_sessionmaker as _async_sessionmaker, create_async_engine as _create_async_engine
+from sqlalchemy.ext.compiler import compiles as _compiles
+from sqlalchemy.pool import StaticPool as _StaticPool
+
+from core import episode_order as _eo
+from core import tmdb as _tmdb, tvdb as _tvdb
+from models.episode_order import ShowEpisodePosition
+
+
+@_compiles(_JSONB, "sqlite")
+def _jsonb_as_json_on_sqlite(type_, compiler, **kw):  # pragma: no cover - dialect shim
+    return "JSON"
+
+
+class OrderKeyHelpersTests(unittest.TestCase):
+    def test_normalize_order_key(self) -> None:
+        self.assertEqual(_eo.normalize_order_key(None), "tmdb:aired")
+        self.assertEqual(_eo.normalize_order_key(""), "tmdb:aired")
+        self.assertEqual(_eo.normalize_order_key("tmdb"), "tmdb:aired")
+        self.assertEqual(_eo.normalize_order_key("tvdb"), "tvdb:official")
+        self.assertEqual(_eo.normalize_order_key("tvdb:dvd"), "tvdb:dvd")
+        self.assertEqual(_eo.normalize_order_key("tmdb:group:9"), "tmdb:group:9")
+
+    def test_is_aired_order(self) -> None:
+        self.assertTrue(_eo.is_aired_order(None))
+        self.assertTrue(_eo.is_aired_order("tmdb"))
+        self.assertFalse(_eo.is_aired_order("tvdb"))
+        self.assertFalse(_eo.is_aired_order("tvdb:dvd"))
+
+    def test_tvdb_season_type(self) -> None:
+        self.assertEqual(_eo._tvdb_season_type("tvdb:dvd"), "dvd")
+        self.assertEqual(_eo._tvdb_season_type("tvdb:official"), "official")
+        self.assertEqual(_eo._tvdb_season_type("tvdb:type:4271"), "4271")
+
+
+class OrderPositionsFromTmdbGroupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_maps_group_and_episode_order_to_display_numbers(self) -> None:
+        payload = {
+            "groups": [
+                {"order": 1, "episodes": [
+                    {"id": 20, "season_number": 1, "episode_number": 2, "order": 1},
+                    {"id": 10, "season_number": 1, "episode_number": 1, "order": 0},
+                ]},
+                {"order": 0, "episodes": [
+                    {"id": 30, "season_number": 2, "episode_number": 1, "order": 0},
+                ]},
+            ],
+        }
+        with patch.object(_tmdb, "get_episode_group", AsyncMock(return_value=payload)):
+            rows = await _eo._order_positions_from_tmdb_group(
+                99, "tmdb:group:abc", "k", None
+            )
+
+        by_eid = {r.tmdb_episode_id: r for r in rows}
+        # groups sorted by .order -> the order:0 group is display season 1
+        self.assertEqual((by_eid[30].display_season, by_eid[30].display_episode), (1, 1))
+        self.assertEqual((by_eid[10].display_season, by_eid[10].display_episode), (2, 1))
+        self.assertEqual((by_eid[20].display_season, by_eid[20].display_episode), (2, 2))
+        self.assertEqual((by_eid[20].tmdb_season_number, by_eid[20].tmdb_episode_number), (1, 2))
+
+
+class _PositionsDB(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        import models  # noqa: F401
+        from models.base import Base
+
+        self.engine = _create_async_engine(
+            "sqlite+aiosqlite://", connect_args={"check_same_thread": False}, poolclass=_StaticPool,
+        )
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        self.Session = _async_sessionmaker(self.engine, expire_on_commit=False)
+        self.addAsyncCleanup(self.engine.dispose)
+
+
+class BuildOrderPositionsTests(_PositionsDB):
+    async def test_tmdb_group_build_persists_positions_and_translates(self) -> None:
+        payload = {
+            "groups": [
+                {"order": 0, "episodes": [
+                    {"id": 10, "season_number": 1, "episode_number": 1, "order": 0},
+                    {"id": 11, "season_number": 1, "episode_number": 3, "order": 1},
+                ]},
+                {"order": 1, "episodes": [
+                    {"id": 12, "season_number": 1, "episode_number": 2, "order": 0},
+                ]},
+            ],
+        }
+        with patch.object(_tmdb, "get_episode_group", AsyncMock(return_value=payload)):
+            async with self.Session() as db:
+                summary = await _eo.build_order_positions(
+                    db, 555, "tmdb:group:xyz", tmdb_api_key="k",
+                )
+                await db.commit()
+
+        self.assertEqual(summary["positions"], 3)
+
+        async with self.Session() as db:
+            # display (1,2) is canonical S1E3
+            self.assertEqual(
+                await _eo.resolve_display_to_canonical(db, 555, "tmdb:group:xyz", 1, 2),
+                (1, 3),
+            )
+            # aired order is identity
+            self.assertEqual(
+                await _eo.resolve_display_to_canonical(db, 555, "tmdb:aired", 4, 4),
+                (4, 4),
+            )
+            # unknown position -> None
+            self.assertIsNone(
+                await _eo.resolve_display_to_canonical(db, 555, "tmdb:group:xyz", 9, 9)
+            )
+
+            by_canonical, by_display = await _eo.get_position_maps(db, 555, "tmdb:group:xyz")
+            self.assertEqual(by_canonical[(1, 3)].display_episode, 2)
+            self.assertEqual(by_display[(2, 1)].tmdb_episode_number, 2)
+
+            batched = await _eo.get_positions_for_series(db, [(555, "tmdb:group:xyz")])
+            self.assertEqual(batched[(555, "tmdb:group:xyz")][(1, 1)].display_season, 1)
+
+    async def test_rebuild_is_skipped_without_force(self) -> None:
+        payload = {"groups": [{"order": 0, "episodes": [
+            {"id": 1, "season_number": 1, "episode_number": 1, "order": 0},
+        ]}]}
+        mock = AsyncMock(return_value=payload)
+        with patch.object(_tmdb, "get_episode_group", mock):
+            async with self.Session() as db:
+                await _eo.build_order_positions(db, 7, "tmdb:group:a", tmdb_api_key="k")
+                await db.commit()
+            async with self.Session() as db:
+                out = await _eo.build_order_positions(db, 7, "tmdb:group:a", tmdb_api_key="k")
+        self.assertTrue(out.get("cached"))
+        self.assertEqual(mock.await_count, 1)
+
+    async def test_aired_order_is_a_noop(self) -> None:
+        async with self.Session() as db:
+            out = await _eo.build_order_positions(db, 1, "tmdb:aired")
+        self.assertEqual(out["positions"], 0)
+
+
+class GetOrderKeysForSeriesTests(_PositionsDB):
+    async def test_only_non_aired_shows_returned(self) -> None:
+        async with self.Session() as db:
+            db.add_all([
+                UserShowEpisodeOrder(user_id=1, series_tmdb_id=100, episode_order="tvdb"),
+                UserShowEpisodeOrder(user_id=1, series_tmdb_id=200, episode_order="tmdb:aired"),
+                UserShowEpisodeOrder(user_id=1, series_tmdb_id=300, episode_order="tvdb:dvd"),
+            ])
+            await db.commit()
+        async with self.Session() as db:
+            keys = await _eo.get_order_keys_for_series(db, 1, [100, 200, 300, 400])
+        self.assertEqual(keys, {100: "tvdb:official", 300: "tvdb:dvd"})
+
+
+class ListAvailableOrdersTests(unittest.IsolatedAsyncioTestCase):
+    async def test_combines_tmdb_groups_and_tvdb_types_with_aired_first(self) -> None:
+        groups = {"results": [
+            {"id": "g1", "name": "DVD Order", "type": 3, "episode_count": 40},
+            {"id": "g2", "name": "Aired", "type": 1, "episode_count": 40},   # skipped (type 1)
+            {"id": "g3", "name": "Empty", "type": 5, "episode_count": 0},    # skipped (empty)
+        ]}
+        series = {"seasons": [
+            {"type": {"id": 1, "name": "Aired Order", "type": "official"}},
+            {"type": {"id": 2, "name": "DVD Order", "type": "dvd"}},
+            {"type": {"id": 4271, "name": "Netflix Order", "type": "netflixorder"}},
+        ]}
+        show = SimpleNamespace(tvdb_id=121361)
+        with patch.object(_tmdb, "get_episode_groups", AsyncMock(return_value=groups)), \
+             patch.object(_tvdb, "get_series", AsyncMock(return_value=series)):
+            orders = await _eo.list_available_orders(AsyncMock(), 1399, show, "tk", "vk")
+
+        keys = [o["key"] for o in orders]
+        self.assertEqual(keys[0], "tmdb:aired")
+        self.assertIn("tmdb:group:g1", keys)
+        self.assertIn("tvdb:official", keys)
+        self.assertIn("tvdb:dvd", keys)
+        self.assertIn("tvdb:type:4271", keys)
+        self.assertNotIn("tmdb:group:g2", keys)
+        self.assertNotIn("tmdb:group:g3", keys)
 
 
 if __name__ == "__main__":

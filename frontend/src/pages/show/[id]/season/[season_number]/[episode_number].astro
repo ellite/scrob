@@ -26,6 +26,11 @@ if (!episode && !error) {
 }
 
 const show = episode?.show;
+// Under a non-aired order (#174) the URL carries *display* numbers; the
+// numbers ActionBar needs for its API calls are the canonical ones the
+// response echoes back.
+const apiSeason = episode?.canonical_season_number ?? Number(season_number);
+const apiEpisode = episode?.canonical_episode_number ?? Number(episode_number);
 const rating = episode?.tmdb_rating ? episode.tmdb_rating.toFixed(1) : null;
 const thumbnail = episode?.still_path || show?.poster_path || null;
 ---
@@ -175,8 +180,8 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
                   inLibrary={episode.in_library ?? false}
                   collectionPct={episode.collection_pct ?? (episode.in_library ? 100 : 0)}
                   showTmdbId={Number(id)}
-                  seasonNumber={Number(season_number)}
-                  episodeNumber={Number(episode_number)}
+                  seasonNumber={apiSeason}
+                  episodeNumber={apiEpisode}
                   mediaId={episode.id ?? null}
                   userRating={episode.user_rating ?? null}
                   ratingTitle={show?.title}
@@ -193,8 +198,8 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
                 runtime={episode.runtime}
                 title={episode.title}
                 showTmdbId={Number(id)}
-                seasonNumber={Number(season_number)}
-                episodeNumber={Number(episode_number)}
+                seasonNumber={apiSeason}
+                episodeNumber={apiEpisode}
               />
             )}
 
@@ -271,8 +276,8 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
         <CommentsSection
           mediaType="series"
           tmdbId={Number(id)}
-          seasonNumber={Number(season_number)}
-          episodeNumber={Number(episode_number)}
+          seasonNumber={apiSeason}
+          episodeNumber={apiEpisode}
         />
 
         <!-- Cast -->

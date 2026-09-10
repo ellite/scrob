@@ -23,6 +23,8 @@ if (!season && !error) {
 }
 
 const show = season?.show;
+// Active ordering (#174) - stored per-show preference, resolved server-side.
+const activeOrder = season?.episode_order ?? "tmdb:aired";
 ---
 
 <Base title={season ? `${show?.title} - ${season.name}` : "Season Details"}>
@@ -149,6 +151,8 @@ const show = season?.show;
                   watchPct={season.season_watch_pct ?? 0}
                   watchStarted={season.season_watch_started ?? false}
                   seasonNumber={Number(season_number)}
+                  episodeOrder={activeOrder}
+                  tvdbId={show?.tvdb_id ?? undefined}
                   isMonitored={season.show_is_monitored ?? false}
                   requestEnabled={false}
                   hideLists={false}
@@ -268,8 +272,10 @@ const show = season?.show;
                       inLibrary={ep.in_library}
                       collectionPct={ep.in_library ? 100 : 0}
                       showTmdbId={Number(id)}
-                      seasonNumber={Number(season_number)}
-                      episodeNumber={ep.episode_number}
+                      seasonNumber={ep.canonical_season_number ?? Number(season_number)}
+                      episodeNumber={ep.canonical_episode_number ?? ep.episode_number}
+                      displaySeasonNumber={Number(season_number)}
+                      episodeOrder={activeOrder}
                       hideRequest={true}
                       userRating={ep.user_rating}
                       airDate={ep.air_date}

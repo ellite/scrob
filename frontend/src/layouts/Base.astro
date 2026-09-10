@@ -703,18 +703,19 @@ const bottomNavItem = (active: boolean) =>
         const m = session.media;
         const isEpisode = m.type === 'episode';
         const title = isEpisode ? (m.show_title ?? m.title) : m.title;
+        const dispSeason = (m.show_episode_order && m.show_episode_order !== 'tmdb:aired' && m.display_season_number != null) ? m.display_season_number : m.season_number;
+        const dispEpisode = (m.show_episode_order && m.show_episode_order !== 'tmdb:aired' && m.display_episode_number != null) ? m.display_episode_number : m.episode_number;
         const subtitle = isEpisode
-          ? `S${String(m.season_number).padStart(2,'0')}E${String(m.episode_number).padStart(2,'0')} · ${m.title}`
+          ? `S${String(dispSeason).padStart(2,'0')}E${String(dispEpisode).padStart(2,'0')} · ${m.title}`
           : null;
-        // Local copy of lib/episodeHref's episode branch - this
-        // define:vars script can't import (see lib/episodeHref.ts's header
-        // comment for the full list of duplicate sites to keep in sync).
-        // #186: route to /show/tvdb/... using the translated position when
-        // the show is set to TVDB numbering, instead of guessing off
-        // tvdb_sourced alone (which only means "no TMDB counterpart").
+        // Local copy of lib/episodeHref's episode branch - this define:vars
+        // script can't import (see lib/episodeHref.ts's header comment for the
+        // full list of duplicate sites to keep in sync). #174: use the display
+        // position when the show is on a non-aired ordering.
+        const orderedEp = m.show_episode_order && m.show_episode_order !== 'tmdb:aired';
         const href = isEpisode
-          ? (!m.tvdb_sourced && m.show_episode_order === 'tvdb' && m.show_tvdb_id && m.tvdb_season_number != null && m.tvdb_episode_number != null
-              ? `/show/tvdb/${m.show_tvdb_id}/season/${m.tvdb_season_number}/${m.tvdb_episode_number}`
+          ? (!m.tvdb_sourced && orderedEp && m.show_tmdb_id && m.display_season_number != null && m.display_episode_number != null
+              ? `/show/${m.show_tmdb_id}/season/${m.display_season_number}/${m.display_episode_number}`
               : !m.tvdb_sourced && m.show_tmdb_id && m.season_number && m.episode_number
               ? `/show/${m.show_tmdb_id}/season/${m.season_number}/${m.episode_number}`
               : m.show_tvdb_id && m.season_number && m.episode_number
@@ -875,6 +876,12 @@ const bottomNavItem = (active: boolean) =>
     // ── Card action bar ────────────────────────────────────────────────────────
     const API = '/api/proxy';
     const TOKEN = () => (window as any).__AUTH_TOKEN__ ?? '';
+
+    // #174: an "aired" order needs no translation; any other key is forwarded to
+    // the season/show bulk endpoints so they map the display season to the real
+    // canonical episodes. Returns the key to send, or null.
+    const nonAiredOrder = (o: string | null | undefined): string | null =>
+      (o && o !== 'tmdb' && o !== 'tmdb:aired') ? o : null;
 
     function esc(s: unknown): string {
       if (s == null) return '';
@@ -1083,7 +1090,7 @@ const bottomNavItem = (active: boolean) =>
           try {
             const ratingBody: Record<string, unknown> = { tmdb_id: Number(tmdbId), media_type: mediaType, rating: i };
             if (seasonNumber !== null) ratingBody.season_number = seasonNumber;
-            if (seasonNumber !== null && episodeOrder === 'tvdb') ratingBody.episode_order = 'tvdb';
+            if (seasonNumber !== null && nonAiredOrder(episodeOrder)) ratingBody.episode_order = episodeOrder;
             await apiFetch('/ratings', 'POST', ratingBody);
             if (btn) {
               btn.dataset.userRating = String(i);
@@ -1114,7 +1121,7 @@ const bottomNavItem = (active: boolean) =>
       removeBtn.onclick = async () => {
         try {
           const seasonQuery = seasonNumber !== null ? `&season_number=${seasonNumber}` : '';
-          const orderQuery = seasonNumber !== null && episodeOrder === 'tvdb' ? '&episode_order=tvdb' : '';
+          const orderQuery = seasonNumber !== null && nonAiredOrder(episodeOrder) ? '&episode_order=' + encodeURIComponent(episodeOrder) : '';
           await apiFetch(`/ratings?tmdb_id=${tmdbId}&media_type=${mediaType}${seasonQuery}${orderQuery}`, 'DELETE');
           if (btn) {
             btn.dataset.userRating = '';
@@ -1769,9 +1776,12 @@ const bottomNavItem = (active: boolean) =>
         });
       }
 
-      // If marking a season as watched/unwatched, update all episodes for that season on the page
+      // If marking a season as watched/unwatched, update all episodes for that season on the page.
+      // Under a non-aired order (#174) an episode card's `data-season` is the *canonical* season
+      // (what its tracking calls need) while `data-display-season` is what the user sees - match
+      // on the latter, since `season` here is the display season from the season control.
       if (mediaType === 'series' && season) {
-        const seasonAttribute = episodeOrder === 'tvdb' ? 'data-display-season' : 'data-season';
+        const seasonAttribute = nonAiredOrder(episodeOrder) ? 'data-display-season' : 'data-season';
         const allEpCards = document.querySelectorAll(`[data-card][data-media-type="episode"][data-show-tmdb-id="${seriesId}"][${seasonAttribute}="${season}"]`);
         allEpCards.forEach(c => {
           const eBtn = c.querySelector('[data-action="watched"]');
@@ -1919,7 +1929,7 @@ const bottomNavItem = (active: boolean) =>
                 season_number: Number(season),
                 watched_at: watchedAt,
               };
-              if (episodeOrder === 'tvdb') body.episode_order = 'tvdb';
+              if (nonAiredOrder(episodeOrder)) body.episode_order = episodeOrder;
               if (bulkTvdbId) body.series_tvdb_id = Number(bulkTvdbId);
               await apiFetch('/history/season', 'POST', body);
               cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, season, episodeOrder, true);
@@ -2030,7 +2040,7 @@ const bottomNavItem = (active: boolean) =>
 
         try {
           if (mediaType === 'series' && season) {
-            const orderQuery = episodeOrder === 'tvdb' ? '&episode_order=tvdb' : '';
+            const orderQuery = nonAiredOrder(episodeOrder) ? '&episode_order=' + encodeURIComponent(episodeOrder) : '';
             await apiFetch(`/history/season?series_tmdb_id=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
           } else if (mediaType === 'series') {
             await apiFetch(`/history/show-all?series_tmdb_id=${tmdbId}`, 'DELETE');
@@ -2069,14 +2079,14 @@ const bottomNavItem = (active: boolean) =>
             if (inLibrary) {
               const ok = await showConfirm('Remove season from collection?', 'This will remove all collection entries for this season.');
               if (!ok) return;
-              const orderQuery = episodeOrder === 'tvdb' ? '&episode_order=tvdb' : '';
+              const orderQuery = nonAiredOrder(episodeOrder) ? '&episode_order=' + encodeURIComponent(episodeOrder) : '';
               await apiFetch(`/media/collect-season?series_tmdb_id=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
             } else {
               const collectSeasonBody: Record<string, number | string> = {
                 series_tmdb_id: Number(seriesId),
                 season_number: Number(season),
               };
-              if (episodeOrder === 'tvdb') collectSeasonBody.episode_order = 'tvdb';
+              if (nonAiredOrder(episodeOrder)) collectSeasonBody.episode_order = episodeOrder;
               await apiFetch('/media/collect-season', 'POST', collectSeasonBody);
             }
           } else {

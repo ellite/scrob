@@ -323,6 +323,13 @@ class DiscoverStudioParamsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(req.url.path, "/3/search/company")
         self.assertEqual(req.url.params.get("query"), "A24")
 
+    async def test_episode_group_paths(self) -> None:
+        req = await self._run(lambda: tmdb.get_episode_groups(1399, api_key="k"))
+        self.assertEqual(req.url.path, "/3/tv/1399/episode_groups")
+
+        req = await self._run(lambda: tmdb.get_episode_group("5f9abcd", api_key="k"))
+        self.assertEqual(req.url.path, "/3/tv/episode_group/5f9abcd")
+
 
 if __name__ == "__main__":
     unittest.main()

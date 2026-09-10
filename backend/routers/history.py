@@ -22,6 +22,7 @@ from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.rewatch import ShowRewatch, RewatchProgress
 from models.ratings import Rating
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, _attach_episode_order_fields
+from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, resolve_display_to_canonical, normalize_order_key, is_aired_order
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
 from core.enrichment import create_media_safely
@@ -539,15 +540,17 @@ async def get_now_playing(
         s["media"]["show_tmdb_id"] for s in sessions if s["media"].get("show_tmdb_id")
     }
     if series_ids:
-        episode_orders = await get_episode_orders_for_series(db, current_user.id, list(series_ids))
-        tvdb_series_ids = [
-            sid for sid, pref in episode_orders.items() if pref.episode_order == "tvdb"
-        ]
-        tmdb_to_tvdb = (
-            await get_tmdb_to_tvdb_positions(db, tvdb_series_ids) if tvdb_series_ids else {}
-        )
+        order_keys = await get_order_keys_for_series(db, current_user.id, list(series_ids))
+        order_positions: dict[tuple[int, int, int], object] = {}
+        if order_keys:
+            by_pair = await get_positions_for_series(
+                db, [(sid, key) for sid, key in order_keys.items()]
+            )
+            for (sid, _key), canon_map in by_pair.items():
+                for (cs, ce), pos in canon_map.items():
+                    order_positions[(sid, cs, ce)] = pos
         for s in sessions:
-            _attach_episode_order_fields(s["media"], episode_orders, tmdb_to_tvdb)
+            _attach_episode_order_fields(s["media"], order_keys, order_positions)
 
     return {"now_playing": sessions}
 
@@ -2374,25 +2377,21 @@ async def mark_season_watched(
     target_positions: set[tuple[int, int]] | None = None
     canonical_seasons = [body.season_number]
     tvdb_fallback_episodes: list[dict] | None = None
-    if body.episode_order == "tvdb":
-        mapping_result = await db.execute(
-            select(EpisodeOrderMapping).where(
-                EpisodeOrderMapping.series_tmdb_id == body.series_tmdb_id,
-                EpisodeOrderMapping.tvdb_season_number == body.season_number,
-            )
+    _watch_order = normalize_order_key(body.episode_order)
+    if not is_aired_order(_watch_order):
+        target_positions = await canonical_pairs_for_display_season(
+            db, body.series_tmdb_id, _watch_order, body.season_number
         )
-        mappings = list(mapping_result.scalars().all())
-        if not mappings:
-            # No computed mapping — if TMDB doesn't even have a season with
-            # this number, it's confidently absent (see #101): fetch straight
-            # from TVDB instead of guessing or 400ing. If TMDB DOES have a
-            # season here, stay conservative — don't guess positions.
+        if not target_positions:
+            target_positions = None
+            # No positions - tvdb:official with a TVDB-only season can fetch
+            # straight from TVDB (#101); other orders must be built first.
             season_on_tmdb = any(
                 s.get("season_number") == body.season_number
                 for s in (show.tmdb_data or {}).get("seasons", [])
             )
-            if season_on_tmdb or not show.tvdb_id:
-                raise HTTPException(status_code=400, detail="TVDB episode mapping is not available")
+            if _watch_order != "tvdb:official" or season_on_tmdb or not show.tvdb_id:
+                raise HTTPException(status_code=400, detail="This episode order is not available for this show")
             from routers.shows import get_user_tvdb_key
             import core.tvdb as tvdb_client
 
@@ -2406,10 +2405,6 @@ async def mark_season_watched(
                 raise HTTPException(status_code=404, detail=f"TVDB season fetch failed: {e}")
             tvdb_fallback_episodes = [tvdb_client.format_episode(e) for e in raw_eps]
         else:
-            target_positions = {
-                (mapping.tmdb_season_number, mapping.tmdb_episode_number)
-                for mapping in mappings
-            }
             canonical_seasons = sorted({season for season, _ in target_positions})
 
     now = datetime.utcnow()
@@ -2591,34 +2586,24 @@ async def unwatch_season(
         Media.show_id == show.id,
         Media.media_type == MediaType.episode,
     ]
-    if episode_order == "tvdb":
-        mapping_result = await db.execute(
-            select(EpisodeOrderMapping).where(
-                EpisodeOrderMapping.series_tmdb_id == series_tmdb_id,
-                EpisodeOrderMapping.tvdb_season_number == season_number,
-            )
+    _unwatch_order = normalize_order_key(episode_order)
+    if not is_aired_order(_unwatch_order):
+        pairs = await canonical_pairs_for_display_season(
+            db, series_tmdb_id, _unwatch_order, season_number
         )
-        positions = [
-            and_(
-                Media.season_number == mapping.tmdb_season_number,
-                Media.episode_number == mapping.tmdb_episode_number,
-            )
-            for mapping in mapping_result.scalars().all()
-        ]
-        if not positions:
-            # No computed mapping. If TMDB doesn't have a season with this
-            # number at all, these episodes were tracked via the raw TVDB
-            # numbers (see #101) — fall back to that. Otherwise stay
-            # conservative and no-op rather than guess positions.
+        if not pairs:
             season_on_tmdb = any(
                 s.get("season_number") == season_number
                 for s in (show.tmdb_data or {}).get("seasons", [])
             )
-            if season_on_tmdb:
+            if season_on_tmdb or _unwatch_order != "tvdb:official":
                 return {"status": "ok", "count": 0}
             media_filters.append(Media.season_number == season_number)
         else:
-            media_filters.append(or_(*positions))
+            media_filters.append(or_(*[
+                and_(Media.season_number == cs, Media.episode_number == ce)
+                for cs, ce in pairs
+            ]))
     else:
         media_filters.append(Media.season_number == season_number)
 

@@ -21,19 +21,12 @@ try {
   error = e.message;
 }
 
-let hasTvdbKey = false;
-try {
-  const settings = await api.auth.getSettings(token!);
-  hasTvdbKey = !!settings?.has_effective_tvdb_key;
-} catch {}
-
 if (!show && !error) {
     return Astro.redirect("/404");
 }
 
-if (show?.episode_order === "tvdb" && show.tvdb_id) {
-  return Astro.redirect(`/show/tvdb/${show.tvdb_id}`);
-}
+// The active ordering (#174) is the user's stored per-show preference.
+const activeOrder = show?.episode_order ?? "tmdb:aired";
 
 const seasons = Object.entries(show?.seasons ?? {}).sort(
   ([a], [b]) => Number(a.replace("season_", "")) - Number(b.replace("season_", ""))
@@ -209,12 +202,12 @@ const originalLanguage = show?.original_language
                 />
               </div>
             )}
-            {user && show.tvdb_id && hasTvdbKey && (
+            {user && show.id && (
               <div class="mb-6">
                 <EpisodeOrderSelector
                   tmdbId={show.tmdb_id}
-                  tvdbId={show.tvdb_id}
-                  selected="tmdb"
+                  selected={activeOrder}
+                  selectedLabel={show.episode_order_label}
                   token={token}
                 />
               </div>
@@ -337,6 +330,8 @@ const originalLanguage = show?.original_language
                         watchPct={seasonState.watch_pct ?? 0}
                         watchStarted={seasonState.watch_started ?? false}
                         seasonNumber={seasonNum}
+                        episodeOrder={activeOrder}
+                        tvdbId={show.tvdb_id ?? undefined}
                         hideRequest={true}
                         hideLists={false}
                         userRating={seasonState.user_rating ?? null}

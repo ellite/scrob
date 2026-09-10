@@ -86,6 +86,27 @@ class GetSeriesCacheBypassTests(unittest.IsolatedAsyncioTestCase):
         # and the (path, params) cache key wasn't served from a prior test.
         self.assertEqual(len(requests), 1)
 
+    async def test_season_type_is_threaded_into_the_path(self) -> None:
+        # #174: get_series_episodes fetches a non-aired ordering via the
+        # season-type path segment.
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/login"):
+                return httpx.Response(200, json={"data": {"token": "tok"}})
+            seen.append(request.url.path)
+            return httpx.Response(200, json={"data": {"episodes": []}})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            tvdb.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
+        ):
+            await tvdb.get_series_episodes(121361, 1, "key", cache_ttl=None)
+            await tvdb.get_series_episodes(121361, None, "key", season_type="dvd", cache_ttl=None)
+
+        self.assertTrue(seen[0].endswith("/series/121361/episodes/official"))
+        self.assertTrue(seen[1].endswith("/series/121361/episodes/dvd"))
+
 
 class SubscriberPinTests(unittest.IsolatedAsyncioTestCase):
     """#322/#325: a subscriber-supported TVDB key must be sent to /login with

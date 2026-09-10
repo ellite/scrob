@@ -81,8 +81,9 @@ class GetEpisodeDetailTvdbFallbackMappingTests(unittest.IsolatedAsyncioTestCase)
     async def test_mapped_episode_translates_to_real_tvdb_position(self) -> None:
         show = SimpleNamespace(tmdb_id=980001, tvdb_id=980002)
         mapping = SimpleNamespace(tvdb_season_number=4, tvdb_episode_number=12)
-        # Query order: 1) show lookup, 2) EpisodeOrderMapping lookup.
-        db = _FakeSession([show, mapping])
+        # Query order: 1) show lookup, 2) episode-order preference (none),
+        # 3) EpisodeOrderMapping lookup.
+        db = _FakeSession([show, None, mapping])
 
         tvdb_calls = []
 
@@ -102,8 +103,9 @@ class GetEpisodeDetailTvdbFallbackMappingTests(unittest.IsolatedAsyncioTestCase)
 
     async def test_unmapped_episode_raises_instead_of_guessing(self) -> None:
         show = SimpleNamespace(tmdb_id=980001, tvdb_id=980002)
-        # Query order: 1) show lookup, 2) EpisodeOrderMapping lookup (none found).
-        db = _FakeSession([show, None])
+        # Query order: 1) show lookup, 2) episode-order preference (none),
+        # 3) EpisodeOrderMapping lookup (none found).
+        db = _FakeSession([show, None, None])
 
         with patch("routers.shows.get_user_tmdb_key", AsyncMock(return_value="key")), \
              patch("routers.shows.check_tmdb_key", lambda k: True), \
@@ -182,6 +184,55 @@ class RefreshShowMetadataTvdbFallbackCorruptionTests(unittest.IsolatedAsyncioTes
             await shows.refresh_show_metadata(980001, db, SimpleNamespace(id=7))
 
         self.assertEqual(tvdb_ep.title, "Refreshed Title")
+
+
+class RemapShowSeasonsTests(unittest.TestCase):
+    """#174: _remap_show_seasons rewrites a show payload's season structures
+    into a non-aired ordering."""
+
+    def _pos(self, ds, de, cs, ce, eid):
+        return SimpleNamespace(
+            display_season=ds, display_episode=de,
+            tmdb_season_number=cs, tmdb_episode_number=ce, tmdb_episode_id=eid,
+        )
+
+    def test_regroups_and_renumbers_episodes_and_meta(self):
+        by_canonical = {
+            (1, 1): self._pos(1, 1, 1, 1, 10),
+            (1, 2): self._pos(1, 3, 1, 2, 11),  # aired S1E2 -> display S1E3
+            (2, 1): self._pos(1, 2, 2, 1, 20),  # aired S2E1 -> display S1E2
+        }
+        payload = {
+            "poster_path": "/p.jpg",
+            "seasons": {
+                "season_1": [
+                    {"tmdb_id": 10, "season_number": 1, "episode_number": 1, "title": "A"},
+                    {"tmdb_id": 11, "season_number": 1, "episode_number": 2, "title": "B"},
+                ],
+                "season_2": [
+                    {"tmdb_id": 20, "season_number": 2, "episode_number": 1, "title": "C"},
+                ],
+            },
+        }
+        shows._remap_show_seasons(payload, by_canonical)
+
+        s1 = payload["seasons"]["season_1"]
+        self.assertEqual([(e["episode_number"], e["title"]) for e in s1], [(1, "A"), (2, "C"), (3, "B")])
+        self.assertEqual(s1[1]["canonical_season_number"], 2)
+        self.assertEqual(s1[1]["canonical_episode_number"], 1)
+        self.assertEqual(payload["seasons_meta"], [
+            {"season_number": 1, "name": "Season 1", "overview": None,
+             "poster_path": "/p.jpg", "episode_count": 3, "air_date": None},
+        ])
+
+    def test_drops_episodes_the_order_does_not_place(self):
+        by_canonical = {(1, 1): self._pos(1, 1, 1, 1, 10)}
+        payload = {"seasons": {"season_1": [
+            {"tmdb_id": 10, "season_number": 1, "episode_number": 1},
+            {"tmdb_id": 99, "season_number": 1, "episode_number": 9},
+        ]}}
+        shows._remap_show_seasons(payload, by_canonical)
+        self.assertEqual(len(payload["seasons"]["season_1"]), 1)
 
 
 if __name__ == "__main__":

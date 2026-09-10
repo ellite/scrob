@@ -21,6 +21,13 @@ try {
   error = e.message;
 }
 
+// #174: TMDB-matched shows render on /show/{tmdb_id} with the TVDB aired order.
+if (episode?.show?.tmdb_id) {
+  return Astro.redirect(
+    `/show/${episode.show.tmdb_id}/season/${season_number}/${episode_number}`, 301,
+  );
+}
+
 if (!episode && !error) {
   return Astro.redirect("/404");
 }
