@@ -663,19 +663,28 @@ const bottomNavItem = (active: boolean) =>
       return `/api/proxy/media/image/${size}${path.startsWith('/') ? path : '/' + path}`;
     }
 
-    function calcLivePct(progressSeconds, updatedAt, runtime, playing) {
+    function calcLiveProgressSeconds(progressSeconds, updatedAt, runtime, playing, now) {
       if (!runtime || runtime <= 0) return 0;
       const runtimeSeconds = runtime * 60;
       const dateStr = updatedAt.includes('Z') || updatedAt.includes('+') ? updatedAt : updatedAt + 'Z';
       const updatedMs = new Date(dateStr).getTime();
       if (isNaN(updatedMs)) return 0;
-      const elapsed = playing ? (Date.now() - updatedMs) / 1000 : 0;
-      const current = Math.max(0, Math.min(progressSeconds + elapsed, runtimeSeconds));
-      return Math.min(100, (current / runtimeSeconds) * 100);
+      const elapsed = playing ? (now - updatedMs) / 1000 : 0;
+      return Math.max(0, Math.min(progressSeconds + elapsed, runtimeSeconds));
+    }
+
+    function formatNowPlayingTime(remainingSeconds, playing, now) {
+      const remaining = `${Math.ceil(remainingSeconds / 60)} min left`;
+      if (!playing) return remaining;
+      const endTime = new Date(now + remainingSeconds * 1000).toLocaleTimeString([], {
+        hour: '2-digit', minute: '2-digit', hour12: !window.__USE_24H__,
+      });
+      return `${remaining} · Ends at ${endTime}`;
     }
 
     function renderNowPlaying(sessions) {
       if (!sessions || !sessions.length) return '';
+      const now = Date.now();
       const rows = sessions.map(session => {
         const m = session.media;
         const isEpisode = m.type === 'episode';
@@ -703,10 +712,12 @@ const bottomNavItem = (active: boolean) =>
         const sourceLabel = sourceLabels[session.source] ?? session.source;
         const progressSeconds = session.progress_seconds ?? 0;
         const runtime = m.runtime ?? 0;
+        const current = calcLiveProgressSeconds(progressSeconds, session.updated_at, runtime, !isPaused, now);
         const pct = runtime > 0
-          ? calcLivePct(progressSeconds, session.updated_at, runtime, !isPaused)
+          ? (current / (runtime * 60)) * 100
           : Math.round((session.progress_percent ?? 0) * 100);
         const pctDisplay = Math.floor(pct);
+        const timing = runtime > 0 ? formatNowPlayingTime(runtime * 60 - current, !isPaused, now) : '';
         const sessionKey = esc(session.session_key);
 
         const statusLabel = isPaused ? 'Paused' : 'Now Playing';
@@ -754,6 +765,7 @@ const bottomNavItem = (active: boolean) =>
                 <p class="text-xs font-semibold text-zinc-100 truncate leading-tight">${esc(title)}</p>
                 ${subtitle ? `<p class="text-[10px] text-zinc-400 truncate leading-tight mt-0.5">${esc(subtitle)}</p>` : ''}
                 ${creditsLine}
+                ${timing ? `<p data-nptime="${sessionKey}" class="text-[10px] text-zinc-400 tabular-nums leading-tight mt-0.5">${esc(timing)}</p>` : ''}
               </div>
               <span data-nppct="${sessionKey}" class="text-xs font-bold text-zinc-300 tabular-nums shrink-0">${esc(String(pctDisplay))}%</span>
             ${href ? '</a>' : '</div>'}
@@ -771,14 +783,18 @@ const bottomNavItem = (active: boolean) =>
     }
 
     function tickNowPlaying() {
+      const now = Date.now();
       document.querySelectorAll('[data-npbar]').forEach(bar => {
         if (bar.dataset.playing !== '1') return;
         const rt = parseFloat(bar.dataset.rt);
         if (!rt || rt <= 0) return;
-        const pct = calcLivePct(parseFloat(bar.dataset.ps), bar.dataset.ua, rt, true);
+        const current = calcLiveProgressSeconds(parseFloat(bar.dataset.ps), bar.dataset.ua, rt, true, now);
+        const pct = (current / (rt * 60)) * 100;
         bar.style.width = pct + '%';
         const pctEl = document.querySelector(`[data-nppct="${bar.dataset.npbar}"]`);
         if (pctEl) pctEl.textContent = Math.floor(pct) + '%';
+        const timeEl = document.querySelector(`[data-nptime="${bar.dataset.npbar}"]`);
+        if (timeEl) timeEl.textContent = formatNowPlayingTime(rt * 60 - current, true, now);
       });
     }
 
