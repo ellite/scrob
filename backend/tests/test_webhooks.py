@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from models.base import MediaType
@@ -16,6 +17,7 @@ from routers.webhooks import (
     _backfill_jellyfin_runtimes,
     _backfill_plex_runtime,
     _commit_playback_session_update,
+    _get_or_open_session,
     _consume_recently_pushed_watched,
     _ensure_collection_entry,
     _episode_for_progress,
@@ -1089,6 +1091,100 @@ class CommitPlaybackSessionUpdateTests(IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await _commit_playback_session_update(db)
         self.assertFalse(db.rollback_called)
+
+
+class _FakeNestedTxn:
+    def __init__(self, db):
+        self._db = db
+
+    async def __aenter__(self):
+        self._db.events.append("begin_nested")
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False  # let the failed flush propagate, like a real SAVEPOINT rollback
+
+
+class _FakeSessionOpenDB:
+    """Fakes just enough of AsyncSession for _get_or_open_session: each
+    execute() returns the next queued scalar_one_or_none() value, flush()
+    optionally raises, and begin_nested()/add() are logged in order so the
+    savepoint discipline (add() *inside* begin_nested(), see
+    create_media_safely) is asserted as a regression guard."""
+
+    def __init__(self, queued_scalars, flush_raises=None):
+        self._queued = list(queued_scalars)
+        self._flush_raises = flush_raises
+        self.added = []
+        self.events = []
+        self.execute_calls = 0
+
+    async def execute(self, stmt):
+        self.execute_calls += 1
+        value = self._queued.pop(0) if self._queued else None
+        return _ScalarResult(value)
+
+    def begin_nested(self):
+        return _FakeNestedTxn(self)
+
+    def add(self, obj):
+        self.events.append("add")
+        self.added.append(obj)
+
+    async def flush(self):
+        if self._flush_raises is not None:
+            raise self._flush_raises
+
+
+class GetOrOpenSessionTests(IsolatedAsyncioTestCase):
+    """Regression tests for #392: Jellyfin/Emby fire PlaybackStart and the
+    first PlaybackProgress back to back, so two requests for a brand-new
+    session can both SELECT nothing and both INSERT. The loser blocks on the
+    session_key unique index until the winner commits, then its flush raises
+    IntegrityError and the whole request 500s. It must instead pick up the
+    row the winner created and carry on."""
+
+    _KEY = "jellyfin:1:abc"
+
+    async def test_returns_existing_session_without_inserting(self):
+        existing = SimpleNamespace(session_key=self._KEY)
+        db = _FakeSessionOpenDB([existing])
+        session = await _get_or_open_session(db, self._KEY, "jellyfin", 1, 42)
+        self.assertIs(session, existing)
+        self.assertEqual(db.added, [])
+        self.assertEqual(db.events, [])
+
+    async def test_creates_session_inside_savepoint(self):
+        db = _FakeSessionOpenDB([None])
+        session = await _get_or_open_session(db, self._KEY, "jellyfin", 1, 42)
+        self.assertEqual(session.session_key, self._KEY)
+        self.assertEqual(session.source, "jellyfin")
+        self.assertEqual(session.user_id, 1)
+        self.assertEqual(session.media_id, 42)
+        self.assertEqual(db.added, [session])
+        # add() must happen *after* the savepoint is entered - see _FakeSessionOpenDB.
+        self.assertEqual(db.events, ["begin_nested", "add"])
+        self.assertEqual(db.execute_calls, 1)
+
+    async def test_lost_race_returns_the_winners_row(self):
+        winner = SimpleNamespace(session_key=self._KEY)
+        db = _FakeSessionOpenDB(
+            [None, winner],
+            flush_raises=IntegrityError("stmt", {}, Exception("duplicate key")),
+        )
+        session = await _get_or_open_session(db, self._KEY, "jellyfin", 1, 42)
+        self.assertIs(session, winner)
+        self.assertEqual(db.execute_calls, 2)
+        self.assertEqual(db.events, ["begin_nested", "add"])
+
+    async def test_integrity_error_with_no_winner_still_propagates(self):
+        db = _FakeSessionOpenDB(
+            [None, None],
+            flush_raises=IntegrityError("stmt", {}, Exception("some other constraint")),
+        )
+        with self.assertRaises(IntegrityError):
+            await _get_or_open_session(db, self._KEY, "jellyfin", 1, 42)
+        self.assertEqual(db.execute_calls, 2)
 
 
 class EpisodeForProgressTests(unittest.TestCase):
