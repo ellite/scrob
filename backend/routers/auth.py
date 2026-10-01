@@ -460,10 +460,10 @@ async def update_user_settings(
     # the legacy "tmdb"/"tvdb" spellings. A TVDB order needs a TVDB key, same
     # requirement as the per-show switch in routers/shows.py.
     if update_data.get("default_episode_order"):
-        from core.episode_order import validate_episode_order
+        from core.episode_order import validate_default_episode_order
 
         try:
-            order_key = validate_episode_order(update_data["default_episode_order"])
+            order_key = validate_default_episode_order(update_data["default_episode_order"])
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         update_data["default_episode_order"] = order_key

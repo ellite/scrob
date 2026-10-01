@@ -205,6 +205,15 @@ class AdminDefaultEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
         await self._patch(gs, default_episode_order="tvdb", tvdb_api_key="key")
         self.assertEqual(gs.default_episode_order, "tvdb:official")
 
+    async def test_a_show_specific_tmdb_group_is_rejected_as_a_default(self):
+        # A valid per-show order key, but a group id belongs to exactly one
+        # show - as a server-wide default it would do nothing for every other.
+        gs = SimpleNamespace(default_episode_order=None, tvdb_api_key="key")
+        with self.assertRaises(HTTPException) as ctx:
+            await self._patch(gs, default_episode_order="tmdb:group:5f8a")
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIsNone(gs.default_episode_order)
+
     async def test_an_unknown_order_is_rejected(self):
         gs = SimpleNamespace(default_episode_order=None, tvdb_api_key="key")
         with self.assertRaises(HTTPException) as ctx:

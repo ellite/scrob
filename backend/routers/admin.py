@@ -117,10 +117,10 @@ async def update_global_settings(
     # behaviour), so only a value that is actually set gets validated. Stored
     # normalised so every reader compares order keys.
     if update_data.get("default_episode_order"):
-        from core.episode_order import validate_episode_order
+        from core.episode_order import validate_default_episode_order
 
         try:
-            order_key = validate_episode_order(update_data["default_episode_order"])
+            order_key = validate_default_episode_order(update_data["default_episode_order"])
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         update_data["default_episode_order"] = order_key

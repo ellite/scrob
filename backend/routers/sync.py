@@ -350,13 +350,12 @@ def extract_jellyfin_quality(item: dict) -> dict:
     return quality
 
 
-def _apply_default_episode_order_bg(user_id: int) -> None:
-    """Bring shows this sync just pulled in line with the user's global
-    episode-order default. A no-op unless that default is TVDB and the show
-    has no per-show choice yet - see routers/shows.py."""
+def _apply_default_episode_order_bg(user_id: int, new_media_ids: set[int]) -> None:
+    """Put the shows this sync just added on the user's default episode order.
+    A no-op unless that default is a non-aired order - see routers/shows.py."""
     from routers.shows import apply_default_episode_order_to_new_shows
 
-    asyncio.create_task(apply_default_episode_order_to_new_shows(user_id))
+    asyncio.create_task(apply_default_episode_order_to_new_shows(user_id, set(new_media_ids)))
 
 
 async def sync_shows_batch(
@@ -2826,7 +2825,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
-            _apply_default_episode_order_bg(user_id)
+            _apply_default_episode_order_bg(user_id, _new_collected)
         except SyncCancelled:
             print(f"Jellyfin sync job {job_id} cancelled")
             await db.rollback()
@@ -3042,7 +3041,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
-            _apply_default_episode_order_bg(user_id)
+            _apply_default_episode_order_bg(user_id, _new_collected)
         except SyncCancelled:
             print(f"Emby sync job {job_id} cancelled")
             await db.rollback()
@@ -4197,7 +4196,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
-            _apply_default_episode_order_bg(user_id)
+            _apply_default_episode_order_bg(user_id, _new_collected)
         except SyncCancelled:
             print(f"Plex sync job {job_id} cancelled")
             await db.rollback()
@@ -4827,7 +4826,7 @@ async def _run_nuvio_sync(
             )
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
-            _apply_default_episode_order_bg(user_id)
+            _apply_default_episode_order_bg(user_id, new_collected_ids)
             logger.info("Nuvio sync job %s completed. Stats: %s", job_id, stats)
         except SyncCancelled:
             logger.info("Nuvio sync job %s cancelled", job_id)
@@ -5328,7 +5327,7 @@ async def _run_stremio_sync(
             )
             await db.commit()
             asyncio.create_task(pre_cache_all_collected_bg())
-            _apply_default_episode_order_bg(user_id)
+            _apply_default_episode_order_bg(user_id, new_collected_ids)
         except Exception as exc:
             logger.exception("Stremio sync job %s failed", job_id)
             await db.rollback()

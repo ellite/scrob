@@ -1,4 +1,5 @@
 import asyncio
+import time
 from datetime import datetime, date, timezone
 from pydantic import BaseModel
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException
@@ -29,6 +30,8 @@ from core import tvdb as tvdb_client
 from core.episode_order import (
     ensure_episode_order_mapping,
     get_default_episode_order,
+    series_tmdb_ids_for_media,
+    validate_default_episode_order,
     get_episode_order,
     reconcile_divergent_episode_media,
     series_tmdb_ids_with_preference,
@@ -491,11 +494,24 @@ async def _apply_order_to_show(
     same state. Returns (position summary, tvdb id), both None for aired
     order, which needs neither."""
     if is_aired_order(order_key):
-        # Aired order needs no positions, and its preference row is the
-        # absence of one - same representation set_show_episode_order writes.
+        # Aired order needs no positions, but it is still stored as a row
+        # rather than as the absence of one: "deliberately put back on aired
+        # order" has to be distinguishable from "never chose", or the
+        # post-sync default would re-map the first case behind the user's
+        # back (#379 review). Every reader normalises, so an aired row and no
+        # row behave identically everywhere else.
         preference = await get_episode_order(db, user_id, series_tmdb_id)
         if preference:
-            await db.delete(preference)
+            preference.episode_order = ORDER_AIRED
+            preference.order_label = order_label
+        else:
+            db.add(UserShowEpisodeOrder(
+                user_id=user_id,
+                series_tmdb_id=series_tmdb_id,
+                episode_order=ORDER_AIRED,
+                order_label=order_label,
+                tvdb_id=None,
+            ))
         return None, None
 
     show_result = await db.execute(
@@ -594,11 +610,46 @@ async def _run_default_episode_order(
         await db.commit()
 
 
-async def apply_default_episode_order_to_new_shows(user_id: int) -> None:
-    """Fire-and-forget hook for the end of a sync: bring shows the user has no
-    explicit choice for in line with their default. Shows that already have a
-    preference (including one set by an earlier run of this) are left alone,
-    so this is a no-op on every sync after the first."""
+# One attempt per (user, show) per TTL for the post-sync hook below, whatever
+# its outcome. A show the default can't be applied to - TVDB has no match for
+# it, a request died - would otherwise re-run its whole per-episode resolution
+# on the next sync that sees it, for a result that is not going to change
+# within minutes. Per-process, like the webhook guards in core/episode_order.
+_DEFAULT_ORDER_ATTEMPT_TTL = 24 * 60 * 60
+_default_order_attempts: dict[tuple[int, int], float] = {}
+
+
+def _reset_default_order_attempts() -> None:
+    """Test hook - forget recent attempts."""
+    _default_order_attempts.clear()
+
+
+def _claim_default_order_attempt(user_id: int, series_tmdb_id: int) -> bool:
+    """True if this (user, show) hasn't been tried within the TTL, claiming it
+    for this run."""
+    now = time.monotonic()
+    for key, deadline in list(_default_order_attempts.items()):
+        if deadline <= now:
+            _default_order_attempts.pop(key, None)
+    key = (user_id, series_tmdb_id)
+    if _default_order_attempts.get(key, 0) > now:
+        return False
+    _default_order_attempts[key] = now + _DEFAULT_ORDER_ATTEMPT_TTL
+    return True
+
+
+async def apply_default_episode_order_to_new_shows(user_id: int, new_media_ids: set[int]) -> None:
+    """Fire-and-forget hook for the end of a sync: put the shows this sync just
+    added on the user's default order.
+
+    Scoped to what the sync added rather than to "every show without a
+    preference row", because those are not the same thing: a show explicitly
+    set back to aired order has no row either (set_show_episode_order deletes
+    it), and re-mapping that show to TVDB behind the user's back would undo a
+    choice they made on purpose."""
+    if not new_media_ids:
+        return
+
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with async_session() as db:
@@ -616,8 +667,8 @@ async def apply_default_episode_order_to_new_shows(user_id: int) -> None:
                 return
             already_chosen = await series_tmdb_ids_with_preference(db, user_id)
             pending = [
-                sid for sid in await user_series_tmdb_ids(db, user_id)
-                if sid not in already_chosen
+                sid for sid in await series_tmdb_ids_for_media(db, new_media_ids)
+                if sid not in already_chosen and _claim_default_order_attempt(user_id, sid)
             ]
             if not pending:
                 return
@@ -709,7 +760,7 @@ async def apply_default_episode_order(
     overriding per-show choices. The global default alone only covers shows
     with no choice yet (see apply_default_episode_order_to_new_shows)."""
     try:
-        order_key = validate_episode_order(
+        order_key = validate_default_episode_order(
             body.order or await get_default_episode_order(db, current_user.id)
         )
     except ValueError as exc:
@@ -966,11 +1017,13 @@ async def set_show_episode_order(
         raise HTTPException(status_code=400, detail=str(exc))
 
     if is_aired_order(order_key):
-        # Aired order needs no positions - just drop the preference row.
-        preference = await get_episode_order(db, current_user.id, series_tmdb_id)
-        if preference:
-            await db.delete(preference)
-            await db.commit()
+        # Aired order needs no positions, so it is applied inline rather than
+        # as a background job - but through the same helper as every other
+        # order, so the row it leaves behind is the same one.
+        await _apply_order_to_show(
+            db, current_user.id, series_tmdb_id, order_key, order_label=body.order_label,
+        )
+        await db.commit()
         return {
             "episode_order": ORDER_AIRED,
             "series_tmdb_id": series_tmdb_id,

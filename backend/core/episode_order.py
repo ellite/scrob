@@ -466,6 +466,41 @@ async def get_default_episode_order(db: AsyncSession, user_id: int) -> str:
     return normalize_order_key(gs_result.scalar_one_or_none())
 
 
+def validate_default_episode_order(value: str) -> str:
+    """Like validate_episode_order, but for the server-wide/per-user default,
+    which has to mean something for *every* show. Only aired order and TVDB's
+    official order do: a `tmdb:group:<id>` key names one specific show's
+    episode group, and the other TVDB season types (dvd, absolute, ...) exist
+    for some shows and not others, so as a default they would be stored and
+    then fail per show at position-building time."""
+    key = validate_episode_order(value)
+    if key not in (ORDER_AIRED, "tvdb:official"):
+        raise ValueError(
+            f"Unsupported default episode order: {value} - a default has to be "
+            f"{ORDER_AIRED} or tvdb:official, the two orders every show has"
+        )
+    return key
+
+
+async def series_tmdb_ids_for_media(db: AsyncSession, media_ids: set[int]) -> list[int]:
+    """The series TMDB ids behind a set of Media ids - how the post-sync hook
+    turns "these items are new" into "these shows are new"."""
+    if not media_ids:
+        return []
+    out: set[int] = set()
+    ids = list(media_ids)
+    step = 10_000  # stay well under the 32767 bind-parameter limit
+    for i in range(0, len(ids), step):
+        rows = await db.execute(
+            select(Show.tmdb_id)
+            .join(Media, Media.show_id == Show.id)
+            .where(Media.id.in_(ids[i : i + step]), Show.tmdb_id.isnot(None))
+            .distinct()
+        )
+        out.update(row[0] for row in rows.all())
+    return sorted(out)
+
+
 async def user_series_tmdb_ids(db: AsyncSession, user_id: int) -> list[int]:
     """Every show the user collected or watched, by series TMDB id - the set the
     global default applies to. Watch history is included because a show can be
