@@ -20,8 +20,11 @@ from models.events import WatchEvent
 from models.lists import ListItem
 from models.media import Media
 from models.playback_progress import PlaybackProgress
+from models.global_settings import GlobalSettings
 from models.ratings import Rating
 from models.rewatch import RewatchProgress
+from models.show import Show
+from models.users import UserSettings
 
 logger = logging.getLogger(__name__)
 
@@ -442,6 +445,90 @@ async def get_episode_order(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def get_default_episode_order(db: AsyncSession, user_id: int) -> str:
+    """The order key new shows start on for this user: their own default, else
+    the server-wide one an admin set, else aired order. Same override chain as
+    the TVDB API key (see routers/shows.py:get_user_tvdb_key).
+
+    Only a fallback for shows the user made no choice for - an explicit
+    per-show UserShowEpisodeOrder row always wins over it."""
+    result = await db.execute(
+        select(UserSettings.default_episode_order).where(UserSettings.user_id == user_id)
+    )
+    own = result.scalar_one_or_none()
+    if own:
+        return normalize_order_key(own)
+    gs_result = await db.execute(
+        select(GlobalSettings.default_episode_order).where(GlobalSettings.id == 1)
+    )
+    return normalize_order_key(gs_result.scalar_one_or_none())
+
+
+def validate_default_episode_order(value: str) -> str:
+    """Like validate_episode_order, but for the server-wide/per-user default,
+    which has to mean something for *every* show. Only aired order and TVDB's
+    official order do: a `tmdb:group:<id>` key names one specific show's
+    episode group, and the other TVDB season types (dvd, absolute, ...) exist
+    for some shows and not others, so as a default they would be stored and
+    then fail per show at position-building time."""
+    key = validate_episode_order(value)
+    if key not in (ORDER_AIRED, "tvdb:official"):
+        raise ValueError(
+            f"Unsupported default episode order: {value} - a default has to be "
+            f"{ORDER_AIRED} or tvdb:official, the two orders every show has"
+        )
+    return key
+
+
+async def series_tmdb_ids_for_media(db: AsyncSession, media_ids: set[int]) -> list[int]:
+    """The series TMDB ids behind a set of Media ids - how the post-sync hook
+    turns "these items are new" into "these shows are new"."""
+    if not media_ids:
+        return []
+    out: set[int] = set()
+    ids = list(media_ids)
+    step = 10_000  # stay well under the 32767 bind-parameter limit
+    for i in range(0, len(ids), step):
+        rows = await db.execute(
+            select(Show.tmdb_id)
+            .join(Media, Media.show_id == Show.id)
+            .where(Media.id.in_(ids[i : i + step]), Show.tmdb_id.isnot(None))
+            .distinct()
+        )
+        out.update(row[0] for row in rows.all())
+    return sorted(out)
+
+
+async def user_series_tmdb_ids(db: AsyncSession, user_id: int) -> list[int]:
+    """Every show the user collected or watched, by series TMDB id - the set the
+    global default applies to. Watch history is included because a show can be
+    tracked (Trakt/Simkl import, manual log) without any local file."""
+    collected = (
+        select(Show.tmdb_id)
+        .join(Media, Media.show_id == Show.id)
+        .join(Collection, Collection.media_id == Media.id)
+        .where(Collection.user_id == user_id, Show.tmdb_id.isnot(None))
+    )
+    watched = (
+        select(Show.tmdb_id)
+        .join(Media, Media.show_id == Show.id)
+        .join(WatchEvent, WatchEvent.media_id == Media.id)
+        .where(WatchEvent.user_id == user_id, Show.tmdb_id.isnot(None))
+    )
+    result = await db.execute(collected.union(watched))
+    return [row[0] for row in result.all()]
+
+
+async def series_tmdb_ids_with_preference(db: AsyncSession, user_id: int) -> set[int]:
+    """Shows the user already made an explicit episode-order choice for."""
+    result = await db.execute(
+        select(UserShowEpisodeOrder.series_tmdb_id).where(
+            UserShowEpisodeOrder.user_id == user_id
+        )
+    )
+    return {row[0] for row in result.all()}
 
 
 async def get_mappings_for_tvdb_season(

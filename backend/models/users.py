@@ -187,6 +187,11 @@ class UserSettings(Base):
     # (#390). NULL/0 means "use the built-in minimum only" - see
     # core.watch_dedup.DEFAULT_DEDUP_WINDOW_MINUTES.
     duplicate_watch_window_minutes : Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Order key new shows start on when this user has made no per-show choice
+    # - see UserShowEpisodeOrder, which always wins. NULL inherits the
+    # server-wide default from GlobalSettings, the same override chain as
+    # tvdb_api_key above.
+    default_episode_order : Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
 
     # MDBList — API key authentication
     mdblist_api_key: Mapped[Optional[str]] = mapped_column(String(255))

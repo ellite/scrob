@@ -1,16 +1,20 @@
 import asyncio
+import contextlib
 import unittest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
 
+from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
 from core.episode_order import (
+    ORDER_AIRED,
     _match_tmdb_to_tvdb_episodes,
     _merge_episode_media,
     _reset_season_mapping_guards,
     ensure_episode_order_mapping,
+    get_default_episode_order,
     ensure_episode_order_mapping_for_season,
     get_episode_orders_for_series,
     get_tmdb_to_tvdb_positions,
@@ -28,8 +32,19 @@ from models.playback_progress import PlaybackProgress
 from models.ratings import Rating
 from models.rewatch import RewatchProgress
 from models.show import Show as ShowModel
+from models.sync import SyncStatus
 from routers.ratings import RatingIn, submit_rating
-from routers.shows import _enrich_tvdb_seasons, _run_episode_order_mapping, get_tvdb_season
+from routers.shows import (
+    ApplyDefaultEpisodeOrderRequest,
+    _apply_order_to_show,
+    _reset_default_order_attempts,
+    _enrich_tvdb_seasons,
+    _run_default_episode_order,
+    _run_episode_order_mapping,
+    apply_default_episode_order,
+    apply_default_episode_order_to_new_shows,
+    get_tvdb_season,
+)
 
 
 class _EmptyResult:
@@ -1358,6 +1373,369 @@ class LoadTvdbEpisodeIdPositionsTests(_PositionsDB):
         async with self.Session() as db:
             self.assertEqual(await _eo.load_tvdb_episode_id_positions(db, [], [1]), {})
             self.assertEqual(await _eo.load_tvdb_episode_id_positions(db, [1], []), {})
+
+
+class _DefaultOrderResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+class GetDefaultEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
+    """Resolution order: the user's own setting, else the admin's server-wide
+    one, else aired order - the same override chain as the TVDB API key. The
+    result is a normalised order key, and it only applies to shows with no
+    UserShowEpisodeOrder row of their own."""
+
+    def _db(self, own, server):
+        """First query reads user_settings, second global_settings."""
+        return SimpleNamespace(execute=AsyncMock(side_effect=[
+            _DefaultOrderResult(own), _DefaultOrderResult(server),
+        ]))
+
+    async def test_nothing_configured_anywhere_means_aired_order(self) -> None:
+        self.assertEqual(await get_default_episode_order(self._db(None, None), 1), ORDER_AIRED)
+
+    async def test_the_users_own_choice_wins(self) -> None:
+        db = self._db("tmdb:aired", "tvdb:official")
+        self.assertEqual(await get_default_episode_order(db, 1), ORDER_AIRED)
+        # The server-wide value isn't even read once the user has their own.
+        self.assertEqual(db.execute.await_count, 1)
+
+    async def test_the_server_default_is_inherited_when_the_user_has_none(self) -> None:
+        self.assertEqual(
+            await get_default_episode_order(self._db(None, "tvdb:official"), 1), "tvdb:official"
+        )
+
+    async def test_a_legacy_value_is_normalised_on_the_way_out(self) -> None:
+        # Rows written before #174 still say "tvdb"; every caller compares
+        # order keys, so the resolver has to hand one back.
+        self.assertEqual(await get_default_episode_order(self._db("tvdb", None), 1), "tvdb:official")
+
+
+class _BulkJobDB:
+    def __init__(self):
+        self.executed = []
+        self.commit = AsyncMock()
+        self.rollback = AsyncMock()
+        self.add = MagicMock()
+
+    async def execute(self, stmt, *args, **kwargs):
+        self.executed.append(stmt)
+        return _EmptyResult()
+
+    def job_values(self):
+        """The bound values of every SyncJob UPDATE this run issued."""
+        return [stmt.compile().params for stmt in self.executed]
+
+
+class RunDefaultEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
+    """The bulk apply behind the settings action: one order for every show the
+    user has, overriding per-show choices."""
+
+    def _patches(self, db, apply_order):
+        class _Ctx:
+            async def __aenter__(self):
+                return db
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return (
+            patch("routers.shows.async_sessionmaker", MagicMock(return_value=lambda: _Ctx())),
+            patch("routers.shows._apply_order_to_show", apply_order),
+        )
+
+    async def test_every_show_is_switched_and_the_job_reports_the_count(self) -> None:
+        db = _BulkJobDB()
+        apply_order = AsyncMock(return_value=({"matched": 1}, 389597))
+        p1, p2 = self._patches(db, apply_order)
+        with p1, p2:
+            await _run_default_episode_order(7, 99, [10, 20, 30], "tvdb:official", "tmdb-key", "tvdb-key")
+
+        self.assertEqual([call.args[2] for call in apply_order.await_args_list], [10, 20, 30])
+        # The order key reaches the per-show helper unchanged - an earlier
+        # version compared it against "tvdb" and silently applied aired order.
+        self.assertEqual({call.args[3] for call in apply_order.await_args_list}, {"tvdb:official"})
+        final = db.job_values()[-1]
+        self.assertEqual(final["status"], SyncStatus.completed)
+        self.assertEqual(final["stats"], {"episode_order": "tvdb:official", "switched": 3, "failed": 0})
+
+    async def test_one_unmappable_show_does_not_abort_the_rest(self) -> None:
+        db = _BulkJobDB()
+        apply_order = AsyncMock(side_effect=[
+            ({"matched": 1}, 1),
+            ValueError("No TMDB episodes could be matched to TVDB"),
+            ({"matched": 1}, 3),
+        ])
+        p1, p2 = self._patches(db, apply_order)
+        with p1, p2:
+            await _run_default_episode_order(7, 99, [10, 20, 30], "tvdb:official", "tmdb-key", "tvdb-key")
+
+        final = db.job_values()[-1]
+        self.assertEqual(final["status"], SyncStatus.completed)
+        self.assertEqual(final["stats"], {"episode_order": "tvdb:official", "switched": 2, "failed": 1})
+        # The failure is reported per show rather than swallowed silently.
+        self.assertEqual(final["warnings"][0]["series_tmdb_id"], 20)
+        db.rollback.assert_awaited_once()
+
+    async def test_aired_order_goes_through_the_same_helper(self) -> None:
+        db = _BulkJobDB()
+        apply_order = AsyncMock(return_value=(None, None))
+        p1, p2 = self._patches(db, apply_order)
+        with p1, p2:
+            await _run_default_episode_order(7, 99, [10, 20], ORDER_AIRED, None, None)
+
+        self.assertEqual([call.args[3] for call in apply_order.await_args_list], [ORDER_AIRED, ORDER_AIRED])
+
+
+class ApplyDefaultToNewShowsTests(unittest.IsolatedAsyncioTestCase):
+    """The post-sync hook: puts the shows a sync just added on the user's
+    default, and leaves every show that was already there alone."""
+
+    def setUp(self) -> None:
+        _reset_default_order_attempts()
+
+    def _session(self, db):
+        class _Ctx:
+            async def __aenter__(self):
+                return db
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return patch("routers.shows.async_sessionmaker", MagicMock(return_value=lambda: _Ctx()))
+
+    @contextlib.contextmanager
+    def _patches(self, db, apply_order, *, order="tvdb:official", tvdb_key="tvdb-key", new_shows=(10, 20, 30), chosen=frozenset()):
+        patches = (
+            self._session(db),
+            patch("routers.shows.get_default_episode_order", AsyncMock(return_value=order)),
+            patch("routers.shows.get_user_tmdb_key", AsyncMock(return_value="tmdb-key")),
+            patch("routers.shows.get_user_tvdb_key", AsyncMock(return_value=tvdb_key)),
+            patch("routers.shows.check_tmdb_key", MagicMock(return_value=True)),
+            patch("routers.shows.series_tmdb_ids_for_media", AsyncMock(return_value=list(new_shows))),
+            patch("routers.shows.series_tmdb_ids_with_preference", AsyncMock(return_value=set(chosen))),
+            patch("routers.shows._apply_order_to_show", apply_order),
+        )
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            yield
+
+    async def test_a_sync_that_added_nothing_does_no_work(self) -> None:
+        db = _BulkJobDB()
+        apply_order = AsyncMock()
+        with self._session(db), patch("routers.shows.get_default_episode_order", AsyncMock()) as order:
+            await apply_default_episode_order_to_new_shows(7, set())
+        order.assert_not_awaited()
+        apply_order.assert_not_awaited()
+
+    async def test_aired_default_touches_nothing(self) -> None:
+        db = _BulkJobDB()
+        apply_order = AsyncMock()
+        with (
+            self._session(db),
+            patch("routers.shows.get_default_episode_order", AsyncMock(return_value=ORDER_AIRED)),
+            patch("routers.shows.series_tmdb_ids_for_media", AsyncMock(return_value=[10])) as ids,
+            patch("routers.shows._apply_order_to_show", apply_order),
+        ):
+            await apply_default_episode_order_to_new_shows(7, {1})
+
+        # A show with no preference row already behaves as aired order - the
+        # hook must not write a row (or fetch anything) just to say so.
+        ids.assert_not_awaited()
+        apply_order.assert_not_awaited()
+
+    async def test_only_the_shows_this_sync_added_are_switched(self) -> None:
+        # The decisive case (#379 review): a show the user had set back to
+        # aired order has no preference row either, so "every show without a
+        # row" would silently re-map it. Only what the sync actually added is
+        # eligible.
+        db = _BulkJobDB()
+        apply_order = AsyncMock(return_value=({"matched": 1}, 1))
+        with self._patches(db, apply_order, new_shows=(10, 30)):
+            await apply_default_episode_order_to_new_shows(7, {101, 102})
+
+        self.assertEqual([call.args[2] for call in apply_order.await_args_list], [10, 30])
+
+    async def test_a_show_with_its_own_choice_is_left_alone(self) -> None:
+        # Including a show deliberately put back on aired order: that writes a
+        # tmdb:aired row, so it shows up as "already chosen" here rather than
+        # looking like a show nobody ever decided on (#379 review).
+        db = _BulkJobDB()
+        apply_order = AsyncMock(return_value=({"matched": 1}, 1))
+        with self._patches(db, apply_order, new_shows=(10, 20, 30), chosen={20}):
+            await apply_default_episode_order_to_new_shows(7, {101})
+
+        self.assertEqual([call.args[2] for call in apply_order.await_args_list], [10, 30])
+
+    async def test_a_show_is_not_retried_within_the_attempt_ttl(self) -> None:
+        # A show whose order can't be built would otherwise re-run its whole
+        # per-episode resolution on every later sync that sees it.
+        db = _BulkJobDB()
+        failing = AsyncMock(side_effect=ValueError("no TVDB match"))
+        with self._patches(db, failing, new_shows=(10,)):
+            await apply_default_episode_order_to_new_shows(7, {101})
+        self.assertEqual(failing.await_count, 1)
+
+        again = AsyncMock(return_value=({"matched": 1}, 1))
+        with self._patches(db, again, new_shows=(10,)):
+            await apply_default_episode_order_to_new_shows(7, {101})
+        again.assert_not_awaited()
+
+        # ... but another user's copy of that show is not blocked by it.
+        other = AsyncMock(return_value=({"matched": 1}, 1))
+        with self._patches(db, other, new_shows=(10,)):
+            await apply_default_episode_order_to_new_shows(8, {101})
+        self.assertEqual(other.await_count, 1)
+
+    async def test_missing_tvdb_key_is_not_an_error(self) -> None:
+        db = _BulkJobDB()
+        apply_order = AsyncMock()
+        with self._patches(db, apply_order, tvdb_key=None):
+            await apply_default_episode_order_to_new_shows(7, {101})
+
+        apply_order.assert_not_awaited()
+
+
+class ApplyOrderToShowAiredTests(unittest.IsolatedAsyncioTestCase):
+    """#379 review: aired order is stored as a row, not as the absence of one,
+    so "put back on aired order" stays distinguishable from "never chose"."""
+
+    def _db(self, preference):
+        return SimpleNamespace(
+            execute=AsyncMock(return_value=_ScalarOneResult(None)),
+            delete=AsyncMock(),
+            add=MagicMock(),
+        ), preference
+
+    async def test_an_existing_row_is_updated_not_deleted(self) -> None:
+        preference = UserShowEpisodeOrder(
+            user_id=7, series_tmdb_id=100, episode_order="tvdb:official", tvdb_id=900,
+        )
+        db, _ = self._db(preference)
+        with patch("routers.shows.get_episode_order", AsyncMock(return_value=preference)):
+            summary, tvdb_id = await _apply_order_to_show(db, 7, 100, "tmdb")
+
+        self.assertEqual((summary, tvdb_id), (None, None))
+        self.assertEqual(preference.episode_order, ORDER_AIRED)
+        db.delete.assert_not_awaited()
+        db.add.assert_not_called()
+
+    async def test_a_show_without_a_row_gets_one(self) -> None:
+        db, _ = self._db(None)
+        with patch("routers.shows.get_episode_order", AsyncMock(return_value=None)):
+            await _apply_order_to_show(db, 7, 100, ORDER_AIRED)
+
+        db.add.assert_called_once()
+        added = db.add.call_args.args[0]
+        self.assertEqual(added.episode_order, ORDER_AIRED)
+        self.assertEqual(added.series_tmdb_id, 100)
+        db.delete.assert_not_awaited()
+
+
+class ApplyDefaultEpisodeOrderEndpointTests(unittest.IsolatedAsyncioTestCase):
+    """POST /shows/episode-order/apply-default - the settings action."""
+
+    async def test_tvdb_without_a_key_is_rejected_before_any_job_is_queued(self) -> None:
+        db = _BulkJobDB()
+        tasks = SimpleNamespace(add_task=MagicMock())
+        with (
+            patch("routers.shows.get_user_tmdb_key", AsyncMock(return_value="tmdb-key")),
+            patch("routers.shows.get_user_tvdb_key", AsyncMock(return_value=None)),
+            patch("routers.shows.check_tmdb_key", MagicMock(return_value=True)),
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                await apply_default_episode_order(
+                    ApplyDefaultEpisodeOrderRequest(order="tvdb"),
+                    tasks, db=db, current_user=SimpleNamespace(id=7),
+                )
+        self.assertEqual(ctx.exception.status_code, 400)
+        tasks.add_task.assert_not_called()
+
+    async def test_an_unknown_order_is_rejected(self) -> None:
+        db = _BulkJobDB()
+        tasks = SimpleNamespace(add_task=MagicMock())
+        with self.assertRaises(HTTPException) as ctx:
+            await apply_default_episode_order(
+                ApplyDefaultEpisodeOrderRequest(order="imdb"),
+                tasks, db=db, current_user=SimpleNamespace(id=7),
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    async def test_a_per_show_only_order_is_rejected_as_a_default(self) -> None:
+        # tvdb:dvd is a valid per-show order, but only some shows have a DVD
+        # season type - as a default it would fail show by show.
+        db = _BulkJobDB()
+        tasks = SimpleNamespace(add_task=MagicMock())
+        with self.assertRaises(HTTPException) as ctx:
+            await apply_default_episode_order(
+                ApplyDefaultEpisodeOrderRequest(order="tvdb:dvd"),
+                tasks, db=db, current_user=SimpleNamespace(id=7),
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        tasks.add_task.assert_not_called()
+
+    async def test_a_show_specific_tmdb_group_is_rejected_as_a_default(self) -> None:
+        # Valid as a per-show order, meaningless as a default: the group id
+        # belongs to exactly one show.
+        db = _BulkJobDB()
+        tasks = SimpleNamespace(add_task=MagicMock())
+        with self.assertRaises(HTTPException) as ctx:
+            await apply_default_episode_order(
+                ApplyDefaultEpisodeOrderRequest(order="tmdb:group:5f8a"),
+                tasks, db=db, current_user=SimpleNamespace(id=7),
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        tasks.add_task.assert_not_called()
+
+    async def test_a_user_with_no_shows_starts_no_job(self) -> None:
+        db = _BulkJobDB()
+        tasks = SimpleNamespace(add_task=MagicMock())
+        with patch("routers.shows.user_series_tmdb_ids", AsyncMock(return_value=[])):
+            result = await apply_default_episode_order(
+                ApplyDefaultEpisodeOrderRequest(order="tmdb"),
+                tasks, db=db, current_user=SimpleNamespace(id=7),
+            )
+        self.assertEqual(result, {"status": "noop", "shows": 0, "episode_order": ORDER_AIRED})
+        tasks.add_task.assert_not_called()
+
+    async def test_the_queued_job_gets_the_normalised_order_key(self) -> None:
+        db = _BulkJobDB()
+        db.refresh = AsyncMock()
+        tasks = SimpleNamespace(add_task=MagicMock())
+        with (
+            patch("routers.shows.get_user_tmdb_key", AsyncMock(return_value="tmdb-key")),
+            patch("routers.shows.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")),
+            patch("routers.shows.check_tmdb_key", MagicMock(return_value=True)),
+            patch("routers.shows.user_series_tmdb_ids", AsyncMock(return_value=[10, 20])),
+        ):
+            result = await apply_default_episode_order(
+                ApplyDefaultEpisodeOrderRequest(order="tvdb"),
+                tasks, db=db, current_user=SimpleNamespace(id=7),
+            )
+        self.assertEqual(result["episode_order"], "tvdb:official")
+        self.assertEqual(result["shows"], 2)
+        self.assertEqual(tasks.add_task.call_args.args[3], [10, 20])
+        self.assertEqual(tasks.add_task.call_args.args[4], "tvdb:official")
+
+    async def test_the_saved_default_is_used_when_no_order_is_passed(self) -> None:
+        db = _BulkJobDB()
+        db.refresh = AsyncMock()
+        tasks = SimpleNamespace(add_task=MagicMock())
+        with (
+            patch("routers.shows.get_default_episode_order", AsyncMock(return_value=ORDER_AIRED)),
+            patch("routers.shows.user_series_tmdb_ids", AsyncMock(return_value=[10, 20])),
+        ):
+            result = await apply_default_episode_order(
+                ApplyDefaultEpisodeOrderRequest(),
+                tasks, db=db, current_user=SimpleNamespace(id=7),
+            )
+        self.assertEqual(result["episode_order"], ORDER_AIRED)
+        self.assertEqual(tasks.add_task.call_args.args[4], ORDER_AIRED)
 
 
 if __name__ == "__main__":
