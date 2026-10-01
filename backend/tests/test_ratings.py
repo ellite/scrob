@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import datetime
 from unittest.mock import AsyncMock
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
@@ -10,7 +11,7 @@ os.environ.setdefault(
 
 from core.identity import find_media
 from models.base import MediaType
-from routers import ratings as ratings_router  # noqa: F401 - import smoke test for the router module
+from routers import ratings as ratings_router
 
 
 class _FakeScalars:
@@ -74,6 +75,49 @@ class FindMediaDeduplicationTests(unittest.IsolatedAsyncioTestCase):
         media = await find_media(db, MediaType.episode, tmdb_id=7079819)
         self.assertIsNotNone(media)
         self.assertIn(media, (dup_a, dup_b))
+
+
+class _FakeRatedMedia:
+    def __init__(self, **attrs) -> None:
+        self.id = 1
+        self.tmdb_id = None
+        self.tvdb_id = None
+        self.imdb_id = None
+        self.media_type = MediaType.movie
+        self.title = "Title"
+        self.poster_path = None
+        self.release_date = None
+        self.__dict__.update(attrs)
+
+
+class _FakeRating:
+    def __init__(self, **attrs) -> None:
+        self.id = 1
+        self.season_number = None
+        self.episode_order = None
+        self.user_id = 1
+        self.rating = 8.0
+        self.review = None
+        self.rated_at = datetime(2026, 1, 1)
+        self.__dict__.update(attrs)
+
+
+class FormatRatingTests(unittest.TestCase):
+    """Regression test for the ratings payload leaving out tvdb_id/imdb_id:
+    a rated item identified only by TheTVDB (no tmdb_id, e.g. a TVDB-only
+    show - see core/identity.py) used to serialize with no usable id at all,
+    even though Media stores all three. GET /history already includes every
+    id for the same Media model; GET/POST/DELETE /ratings now match it."""
+
+    def test_includes_tvdb_and_imdb_ids(self) -> None:
+        media = _FakeRatedMedia(tmdb_id=None, tvdb_id=99999, imdb_id="tt1234567")
+        rating = _FakeRating()
+
+        payload = ratings_router.format_rating(rating, media)
+
+        self.assertEqual(payload["media"]["tvdb_id"], 99999)
+        self.assertEqual(payload["media"]["imdb_id"], "tt1234567")
+        self.assertIsNone(payload["media"]["tmdb_id"])
 
 
 if __name__ == "__main__":
