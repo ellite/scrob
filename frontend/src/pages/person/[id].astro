@@ -5,6 +5,8 @@ import ActionBar from "../../components/ActionBar.astro";
 import CommentsSection from "../../components/CommentsSection.astro";
 import FilterPanel from "../../components/FilterPanel.astro";
 import { api, type MediaItem } from "../../lib/api";
+import { genreLabel, sortByLabel } from "../../lib/labels";
+import { m } from "../../paraglide/messages.js";
 export const prerender = false;
 
 const { id } = Astro.params;
@@ -42,7 +44,7 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
       <div class="sticky" style="top: calc(var(--nav-h, 0px) + 1rem)">
         {person.profile_path ? (
           <div class="relative w-full aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl mb-6 group/photo">
-            <button id="photo-zoom-btn" class="w-full h-full block cursor-zoom-in" aria-label={`Enlarge photo of ${person.name}`}>
+            <button id="photo-zoom-btn" class="w-full h-full block cursor-zoom-in" aria-label={m.person_enlarge_photo({ name: person.name })}>
               <img
                 src={person.profile_path}
                 alt={person.name}
@@ -65,23 +67,23 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
 
         <div class="space-y-6 px-2">
           <div>
-            <h3 class="text-zinc-500 text-xs font-bold uppercase tracking-wider mb-1">Personal Info</h3>
+            <h3 class="text-zinc-500 text-xs font-bold uppercase tracking-wider mb-1">{m.person_personal_info()}</h3>
             <div class="space-y-4">
               {person.known_for_department && (
                 <div>
-                  <p class="text-zinc-100 text-sm font-semibold">Known For</p>
+                  <p class="text-zinc-100 text-sm font-semibold">{m.person_known_for()}</p>
                   <p class="text-zinc-400 text-sm">{person.known_for_department}</p>
                 </div>
               )}
               {person.birthday && (
                 <div>
-                  <p class="text-zinc-100 text-sm font-semibold">Birthday</p>
+                  <p class="text-zinc-100 text-sm font-semibold">{m.person_birthday()}</p>
                   <p class="text-zinc-400 text-sm">{person.birthday}</p>
                 </div>
               )}
               {person.place_of_birth && (
                 <div>
-                  <p class="text-zinc-100 text-sm font-semibold">Place of Birth</p>
+                  <p class="text-zinc-100 text-sm font-semibold">{m.person_place_of_birth()}</p>
                   <p class="text-zinc-400 text-sm">{person.place_of_birth}</p>
                 </div>
               )}
@@ -110,27 +112,27 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
 
       {person.biography && (
         <div class="mb-12">
-          <h2 class="section-headline mb-4">Biography</h2>
+          <h2 class="section-headline mb-4">{m.person_biography()}</h2>
           <p class="text-zinc-400 leading-relaxed text-lg whitespace-pre-wrap">{person.biography}</p>
         </div>
       )}
 
       <div>
         <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <h2 class="section-headline">Known For</h2>
+          <h2 class="section-headline">{m.person_known_for()}</h2>
           <FilterPanel
             id="person-credits-filters"
             basePath={`/person/${id}`}
             sections={[
-              { key: "collection", label: "Collection", options: [{ value: "in", label: "In My Collection" }, { value: "out", label: "Not In My Collection" }], selected: collection ? [collection] : [], multi: false },
-              { key: "genre", label: "Genre", options: CREDIT_GENRES.map((g) => ({ value: g, label: g })), selected: genre },
-              { key: "year", label: "Year", options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },
+              { key: "collection", label: m.filter_collection(), options: [{ value: "in", label: m.filter_in_my_collection() }, { value: "out", label: m.filter_not_in_my_collection() }], selected: collection ? [collection] : [], multi: false },
+              { key: "genre", label: m.filter_genre(), options: sortByLabel(CREDIT_GENRES.map((g) => ({ value: g, label: genreLabel(g) }))), selected: genre },
+              { key: "year", label: m.filter_year(), options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },
               {
                 key: "min_rating",
-                label: "Rating",
+                label: m.filter_rating(),
                 options: [
-                  ...[9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: `${r}+ Stars` })),
-                  { value: "lt5", label: "Less than 5 Stars" },
+                  ...[9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: m.filter_rating_min_stars({ rating: r }) })),
+                  { value: "lt5", label: m.filter_rating_less_than_5() },
                 ],
                 selected: minRating ? [minRating] : [],
                 multi: false,
@@ -139,24 +141,24 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
           />
         </div>
         {credits.length === 0 && (collection || genre.length > 0 || year.length > 0 || minRating) ? (
-          <p class="text-zinc-500 text-sm">No matching credits found.</p>
+          <p class="text-zinc-500 text-sm">{m.person_no_matching_credits()}</p>
         ) : (
           <div id="credits-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
             {credits.map((item) => (
               <div class="flex flex-col gap-1">
                 <MediaCard item={item as unknown as MediaItem} />
                 {item.character && (
-                  <p class="text-xs text-zinc-500 truncate px-1">as {item.character}</p>
+                  <p class="text-xs text-zinc-500 truncate px-1">{m.person_as_character({ character: item.character })}</p>
                 )}
               </div>
             ))}
           </div>
         )}
         {totalPages > 1 && (
-          <div id="credits-pagination" class="flex items-center justify-center gap-3 mt-8">
-            <button id="credits-prev" disabled class="px-4 py-2 text-sm rounded-lg bg-zinc-800 text-zinc-400 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer hover:bg-zinc-700 transition-colors">← Prev</button>
-            <span id="credits-page-info" class="text-sm text-zinc-400">Page 1 of {totalPages}</span>
-            <button id="credits-next" class="px-4 py-2 text-sm rounded-lg bg-zinc-800 text-zinc-400 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer hover:bg-zinc-700 transition-colors">Next →</button>
+          <div id="credits-pagination" class="flex items-center justify-center gap-3 mt-8" data-config={JSON.stringify({ personId: person.tmdb_id, totalCredits: person.total_credits, pageSize: person.page_size, collection, genre, year, minRating })}>
+            <button id="credits-prev" disabled class="px-4 py-2 text-sm rounded-lg bg-zinc-800 text-zinc-400 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer hover:bg-zinc-700 transition-colors">← {m.common_previous()}</button>
+            <span id="credits-page-info" class="text-sm text-zinc-400">{m.pagination_page_of({ page: 1, total: totalPages })}</span>
+            <button id="credits-next" class="px-4 py-2 text-sm rounded-lg bg-zinc-800 text-zinc-400 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer hover:bg-zinc-700 transition-colors">{m.common_next()} →</button>
           </div>
         )}
       </div>
@@ -180,7 +182,7 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
     <button
       id="photo-modal-close"
       class="absolute top-4 right-4 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white/70 hover:text-white transition-all duration-200 cursor-pointer"
-      aria-label="Close"
+      aria-label={m.common_close()}
     >
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-5 h-5">
         <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
@@ -212,7 +214,13 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
   }
 </script>
 
-<script define:vars={{ personId: person.tmdb_id, totalCredits: person.total_credits, pageSize: person.page_size, collection, genre, year, minRating }}>
+<script>
+  import { m } from '../../paraglide/messages.js';
+
+  // Only rendered when there's more than one page of credits.
+  const paginationEl = document.getElementById('credits-pagination');
+  const { personId, totalCredits, pageSize, collection, genre, year, minRating } =
+    JSON.parse(paginationEl?.dataset.config ?? '{"totalCredits":0,"pageSize":1,"genre":[],"year":[]}');
   const totalPages = Math.ceil(totalCredits / pageSize);
   let currentPage = 1;
   let loading = false;
@@ -226,7 +234,7 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
     if (!prevBtn || !nextBtn || !pageInfo) return;
     prevBtn.disabled = currentPage <= 1;
     nextBtn.disabled = currentPage >= totalPages;
-    pageInfo.textContent = 'Page ' + currentPage + ' of ' + totalPages;
+    pageInfo.textContent = m.pagination_page_of({ page: currentPage, total: totalPages });
   }
 
   async function loadPage(page) {

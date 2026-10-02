@@ -1,5 +1,7 @@
 ---
 import PersonCard from "./PersonCard.astro";
+import { crewJobLabel } from "../lib/labels";
+import { m } from "../paraglide/messages.js";
 
 interface Person {
   tmdb_id?: number | null;
@@ -26,11 +28,11 @@ const hasCrew = crew.length > 0;
 <div class="mt-24 border-zinc-900 pt-16" data-castcrew>
   <div class="flex items-center gap-2 mb-10">
     <button type="button" class="castcrew-tab-btn px-5 py-3 text-sm font-black uppercase tracking-wide text-zinc-100 border-b-2 border-blue-500 transition-colors cursor-pointer" data-tab="cast">
-      Cast
+      {m.castcrew_cast()}
     </button>
     {hasCrew && (
       <button type="button" class="castcrew-tab-btn px-5 py-3 text-sm font-black uppercase tracking-wide text-zinc-500 hover:text-zinc-300 border-b-2 border-transparent transition-colors cursor-pointer" data-tab="crew">
-        Crew
+        {m.castcrew_crew()}
       </button>
     )}
   </div>
@@ -43,7 +45,7 @@ const hasCrew = crew.length > 0;
     )}
     {hasGuestStars && (
       <div class={cast.length > 0 ? "mt-12" : undefined}>
-        <h3 class="group-label mb-5">Guest Stars</h3>
+        <h3 class="group-label mb-5">{m.episode_guest_stars()}</h3>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
           {guestStars.map((person) => <PersonCard person={person} subtitle={person.character} />)}
         </div>
@@ -53,7 +55,7 @@ const hasCrew = crew.length > 0;
 
   {hasCrew && (
     <div class="castcrew-panel hidden grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6" data-panel="crew">
-      {crew.map((person) => <PersonCard person={person} subtitle={person.job} />)}
+      {crew.map((person) => <PersonCard person={person} subtitle={person.job ? crewJobLabel(person.job) : person.job} />)}
     </div>
   )}
 </div>

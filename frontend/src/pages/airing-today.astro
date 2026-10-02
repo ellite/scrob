@@ -3,6 +3,7 @@ import Base from "../layouts/Base.astro";
 import MediaCard from "../components/MediaCard.astro";
 import Pagination from "../components/Pagination.astro";
 import { api, type MediaItem } from "../lib/api";
+import { m } from "../paraglide/messages.js";
 
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -19,14 +20,14 @@ let error = "";
 try {
   data = await api.media.onAirToday(page, token);
 } catch (e: unknown) {
-  error = e instanceof Error ? e.message : "Failed to load";
+  error = e instanceof Error ? e.message : m.common_failed_to_load();
 }
 ---
 
-<Base title={`Airing Today - Page ${page}`}>
+<Base title={m.airing_today_page_title({ page })}>
   <div class="mb-8">
-    <h1 class="page-title mb-2">Airing Today</h1>
-    <p class="text-zinc-500">TV shows with new episodes airing today</p>
+    <h1 class="page-title mb-2">{m.section_airing_today()}</h1>
+    <p class="text-zinc-500">{m.airing_today_subtitle()}</p>
   </div>
 
   {error && (

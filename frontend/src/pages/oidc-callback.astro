@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import { api } from "../lib/api";
+import { m } from "../paraglide/messages.js";
 
 // This page is the OIDC redirect_uri — the provider sends the browser here with
 // ?code=...&state=... after the user authenticates.
@@ -19,9 +20,9 @@ if (!error) {
   const storedState = Astro.cookies.get("oidc_state")?.value ?? "";
 
   if (!code) {
-    error = "No authorization code returned by provider.";
+    error = m.oidc_no_code();
   } else if (!storedState || storedState !== state) {
-    error = "Invalid state parameter. Please try logging in again.";
+    error = m.oidc_invalid_state();
   } else {
     Astro.cookies.delete("oidc_state", { path: "/" });
     const storedNext = Astro.cookies.get("oidc_next")?.value ?? "/";
@@ -38,18 +39,18 @@ if (!error) {
       });
       return Astro.redirect(storedNext);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : "SSO login failed";
+      error = e instanceof Error ? e.message : m.oidc_login_failed();
     }
   }
 }
 ---
 
-<Base title="Login">
+<Base title={m.nav_login()}>
   <div class="max-w-md mx-auto mt-20 p-8 bg-zinc-900 rounded-xl border border-zinc-800 shadow-2xl">
-    <h1 class="text-3xl font-bold mb-6 text-zinc-100">Login</h1>
+    <h1 class="text-3xl font-bold mb-6 text-zinc-100">{m.nav_login()}</h1>
     <div class="bg-red-500/10 border border-red-500 text-red-500 p-3 rounded-lg mb-6">
       {error}
     </div>
-    <a href="/login" class="text-sm text-zinc-400 hover:text-zinc-100 transition-colors">Back to login</a>
+    <a href="/login" class="text-sm text-zinc-400 hover:text-zinc-100 transition-colors">{m.auth_back_to_login()}</a>
   </div>
 </Base>

@@ -1,6 +1,8 @@
 ---
 import Base from "../layouts/Base.astro";
 import { api, tmdbImageUrl } from "../lib/api";
+import { genreLabel } from "../lib/labels";
+import { m } from "../paraglide/messages.js";
 export const prerender = false;
 
 const { token, user } = Astro.locals;
@@ -49,7 +51,7 @@ let luckyBackdropUrl: string | null = null;
 if (canPick) {
   try {
     const trending = await api.media.trendingMovies(1, token!);
-    const pool = (trending?.results ?? []).filter((m: any) => m.backdrop_path);
+    const pool = (trending?.results ?? []).filter((item: any) => item.backdrop_path);
     if (pool.length > 0) {
       const pick = pool[Math.floor(Math.random() * pool.length)];
       const bp = pick.backdrop_path as string;
@@ -138,17 +140,18 @@ function skeletonWide() {
 }
 ---
 
-<Base title="Discover">
+<Base title={m.nav_discover()}>
+  <div id="discover-data" hidden data-config={JSON.stringify({ watchRegion, hasProfileData, topMovieGenres, topShowGenres, userServices, canPick })}></div>
   <div class="mb-10">
-    <h1 class="page-title">Discover</h1>
+    <h1 class="page-title">{m.nav_discover()}</h1>
   </div>
 
   {!hasTmdbKey && (
     <div class="p-10 bg-zinc-900/50 border border-zinc-800 rounded-2xl text-center mb-10">
-      <h2 class="text-xl font-bold text-zinc-100 mb-2">TMDB Read Access Token Required</h2>
-      <p class="text-zinc-400 mb-5 max-w-md mx-auto">Add your TMDB Read Access Token in settings to unlock Discover.</p>
+      <h2 class="text-xl font-bold text-zinc-100 mb-2">{m.common_tmdb_token_required()}</h2>
+      <p class="text-zinc-400 mb-5 max-w-md mx-auto">{m.discover_tmdb_required_body()}</p>
       <a href="/settings" class="inline-flex px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all">
-        Go to Settings
+        {m.common_go_to_settings()}
       </a>
     </div>
   )}
@@ -157,7 +160,7 @@ function skeletonWide() {
   <div id="pick-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
     <div id="pick-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
     <div class="relative w-full max-w-lg max-h-[90vh] bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-      <button id="pick-modal-close" class="absolute top-4 right-4 z-10 p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 rounded-full transition active:scale-95 cursor-pointer" aria-label="Close">
+      <button id="pick-modal-close" class="absolute top-4 right-4 z-10 p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 rounded-full transition active:scale-95 cursor-pointer" aria-label={m.common_close()}>
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
       </button>
 
@@ -183,10 +186,10 @@ function skeletonWide() {
           <div id="pick-sources" class="flex flex-wrap gap-2"></div>
           <div class="flex gap-3 pt-1">
             <button id="pick-again-btn" class="flex items-center gap-2 px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 font-bold text-sm rounded-xl transition-all active:scale-95 active:opacity-70 cursor-pointer">
-              Pick again
+              {m.pick_again()}
             </button>
             <a id="pick-view-link" href="#" class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-xl transition-all active:scale-95">
-              View details →
+              {m.pick_view_details()}
             </a>
           </div>
         </div>
@@ -197,7 +200,7 @@ function skeletonWide() {
         <span class="text-5xl">🤷</span>
         <p id="pick-error-msg" class="text-zinc-300 font-medium"></p>
         <button id="pick-error-retry" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-sm rounded-xl transition-all active:scale-95 cursor-pointer">
-          Try again
+          {m.common_try_again()}
         </button>
       </div>
     </div>
@@ -209,8 +212,8 @@ function skeletonWide() {
       {hasProfileData && (topMovieGenres.length > 0 || topShowGenres.length > 0) && (
         <section data-section class="mb-10">
           <div class="flex items-baseline gap-3 mb-5">
-            <h2 class="section-headline">For You</h2>
-            <span class="text-xs text-zinc-500 font-medium">Based on your favourite genres</span>
+            <h2 class="section-headline">{m.discover_for_you()}</h2>
+            <span class="text-xs text-zinc-500 font-medium">{m.discover_for_you_hint()}</span>
           </div>
           <div id="for-you" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
             <Fragment set:html={skeleton()} />
@@ -227,20 +230,20 @@ function skeletonWide() {
           <div class="absolute inset-0 bg-gradient-to-r from-zinc-950/90 via-zinc-950/60 to-zinc-950/20"></div>
           <div class="absolute inset-0 bg-gradient-to-t from-zinc-950/60 via-transparent to-transparent"></div>
           <div class="relative px-8 sm:px-12">
-            <p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-2">Feeling lucky?</p>
-            <h2 class="text-2xl sm:text-3xl font-black text-zinc-100 mb-5 leading-tight">Let us pick something<br class="hidden sm:block" /> for you to watch.</h2>
+            <p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-2">{m.discover_feeling_lucky()}</p>
+            <h2 class="text-2xl sm:text-3xl font-black text-zinc-100 mb-5 leading-tight" set:html={m.discover_pick_headline()} />
             <div class="flex gap-3">
               <button
                 id="pick-movie-btn"
                 class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-blue-900/40 active:scale-95 text-sm uppercase tracking-wider cursor-pointer"
               >
-                Pick a Movie
+                {m.pick_movie()}
               </button>
               <button
                 id="pick-show-btn"
                 class="inline-flex items-center gap-2 px-6 py-3 bg-zinc-900/70 hover:bg-zinc-700 text-zinc-100 font-black rounded-2xl transition-all active:scale-95 text-sm uppercase tracking-wider cursor-pointer backdrop-blur-sm"
               >
-                Pick a Show
+                {m.pick_show()}
               </button>
             </div>
           </div>
@@ -249,7 +252,7 @@ function skeletonWide() {
 
       <!-- Now Playing -->
       <section data-section class="mb-10">
-        <h2 class="section-headline mb-5">Now Playing in Theaters</h2>
+        <h2 class="section-headline mb-5">{m.discover_now_playing()}</h2>
         <div id="now-playing" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
           <Fragment set:html={skeleton()} />
         </div>
@@ -257,7 +260,7 @@ function skeletonWide() {
 
       <!-- Trending Trailers -->
       <section data-section class="mb-10">
-        <h2 class="section-headline mb-5">Trending Trailers</h2>
+        <h2 class="section-headline mb-5">{m.discover_trending_trailers()}</h2>
         <div id="trending-trailers" class="flex gap-4 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
           <Fragment set:html={skeletonWide()} />
         </div>
@@ -265,7 +268,7 @@ function skeletonWide() {
 
       <!-- Movie Genres (static) -->
       <section class="mb-10">
-        <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest mb-4">Discover Movies</h2>
+        <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest mb-4">{m.discover_movies_genres()}</h2>
         <div class="flex flex-wrap gap-2">
           {MOVIE_GENRES.map(g => (
             <a
@@ -273,7 +276,7 @@ function skeletonWide() {
               class="flex items-center gap-2 px-5 py-3 bg-zinc-900 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-800 text-zinc-300 hover:text-zinc-100 text-base font-medium rounded-xl transition-all active:scale-95 active:opacity-70"
             >
               <span>{g.emoji}</span>
-              <span>{g.label}</span>
+              <span>{genreLabel(g.label)}</span>
             </a>
           ))}
         </div>
@@ -283,8 +286,8 @@ function skeletonWide() {
       {hasProfileData && topMovieGenres.map((genre, i) => (
         <section data-section class="mb-10">
           <div class="flex items-baseline gap-3 mb-5">
-            <h2 class="section-headline">{genre} Movies</h2>
-            <a href={`/movies?genre=${encodeURIComponent(genre)}`} class="text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors">See all →</a>
+            <h2 class="section-headline">{m.discover_genre_movies({ genre: genreLabel(genre) })}</h2>
+            <a href={`/movies?genre=${encodeURIComponent(genre)}`} class="text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors">{m.discover_see_all_arrow()}</a>
           </div>
           <div id={`movie-genre-${i}`} class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
             <Fragment set:html={skeleton()} />
@@ -294,7 +297,7 @@ function skeletonWide() {
 
       <!-- Coming Soon -->
       <section data-section class="mb-10">
-        <h2 class="section-headline mb-5">Coming Soon</h2>
+        <h2 class="section-headline mb-5">{m.discover_coming_soon()}</h2>
         <div id="coming-soon" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
           <Fragment set:html={skeleton()} />
         </div>
@@ -302,7 +305,7 @@ function skeletonWide() {
 
       <!-- Browse by Network (static) -->
       <section class="mb-10">
-        <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest mb-4">Browse by Network</h2>
+        <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest mb-4">{m.discover_browse_by_network()}</h2>
         <div class="grid grid-cols-4 sm:grid-cols-5 lg:grid-cols-10 gap-3">
           {FEATURED_NETWORKS.map(n => (
             <a
@@ -318,7 +321,7 @@ function skeletonWide() {
 
       <!-- Top Rated Movies -->
       <section data-section class="mb-10">
-        <h2 class="section-headline mb-5">Top Rated Movies</h2>
+        <h2 class="section-headline mb-5">{m.discover_top_rated_movies()}</h2>
         <div id="top-rated-movies" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
           <Fragment set:html={skeleton()} />
         </div>
@@ -331,14 +334,14 @@ function skeletonWide() {
           <div class="absolute left-0 top-0 bottom-0 w-1 bg-blue-500 rounded-l-3xl"></div>
           <div class="relative px-8 py-8 sm:px-12 flex flex-col md:flex-row md:items-center justify-between w-full gap-5">
             <div>
-              <p class="text-xs font-black uppercase tracking-[0.2em] text-blue-400 mb-1.5">Personalise your experience</p>
-              <h2 class="text-lg font-black text-zinc-100 leading-tight">Add your region, genres and streaming services to unlock personalised recommendations.</h2>
+              <p class="text-xs font-black uppercase tracking-[0.2em] text-blue-400 mb-1.5">{m.discover_personalise_kicker()}</p>
+              <h2 class="text-lg font-black text-zinc-100 leading-tight">{m.discover_personalise_body()}</h2>
             </div>
             <a
               href="/user-settings"
               class="shrink-0 self-start md:self-auto inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-zinc-100 font-black rounded-2xl transition-all shadow-xl shadow-blue-900/40 active:scale-95 text-sm uppercase tracking-wider"
             >
-              Update profile
+              {m.discover_update_profile()}
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
                 <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
               </svg>
@@ -355,13 +358,13 @@ function skeletonWide() {
         ? userServices.map((id, i) => (
             <Fragment>
               <section data-section class="mb-6">
-                <h2 class="section-headline mb-5">On {PROVIDER_NAMES[id]}</h2>
+                <h2 class="section-headline mb-5">{m.discover_on_provider({ provider: PROVIDER_NAMES[id] })}</h2>
                 <div id={`streaming-movie-${i}`} class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
                   <Fragment set:html={skeleton()} />
                 </div>
               </section>
               <section data-section class="mb-10">
-                <h2 class="section-headline mb-5">{PROVIDER_NAMES[id]} Shows</h2>
+                <h2 class="section-headline mb-5">{m.discover_provider_shows({ provider: PROVIDER_NAMES[id] })}</h2>
                 <div id={`streaming-show-${i}`} class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
                   <Fragment set:html={skeletonWide()} />
                 </div>
@@ -371,37 +374,37 @@ function skeletonWide() {
         : !hasProfileData && (
             <Fragment>
               <section data-section class="mb-6">
-                <h2 class="section-headline mb-5">On Netflix</h2>
+                <h2 class="section-headline mb-5">{m.discover_on_provider({ provider: "Netflix" })}</h2>
                 <div id="fallback-movie-0" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
                   <Fragment set:html={skeleton()} />
                 </div>
               </section>
               <section data-section class="mb-10">
-                <h2 class="section-headline mb-5">Netflix Shows</h2>
+                <h2 class="section-headline mb-5">{m.discover_provider_shows({ provider: "Netflix" })}</h2>
                 <div id="fallback-show-0" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
                   <Fragment set:html={skeletonWide()} />
                 </div>
               </section>
               <section data-section class="mb-6">
-                <h2 class="section-headline mb-5">On Prime Video</h2>
+                <h2 class="section-headline mb-5">{m.discover_on_provider({ provider: "Prime Video" })}</h2>
                 <div id="fallback-movie-1" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
                   <Fragment set:html={skeleton()} />
                 </div>
               </section>
               <section data-section class="mb-10">
-                <h2 class="section-headline mb-5">Prime Video Shows</h2>
+                <h2 class="section-headline mb-5">{m.discover_provider_shows({ provider: "Prime Video" })}</h2>
                 <div id="fallback-show-1" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
                   <Fragment set:html={skeletonWide()} />
                 </div>
               </section>
               <section data-section class="mb-6">
-                <h2 class="section-headline mb-5">On Disney+</h2>
+                <h2 class="section-headline mb-5">{m.discover_on_provider({ provider: "Disney+" })}</h2>
                 <div id="fallback-movie-2" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
                   <Fragment set:html={skeleton()} />
                 </div>
               </section>
               <section data-section class="mb-10">
-                <h2 class="section-headline mb-5">Disney+ Shows</h2>
+                <h2 class="section-headline mb-5">{m.discover_provider_shows({ provider: "Disney+" })}</h2>
                 <div id="fallback-show-2" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
                   <Fragment set:html={skeletonWide()} />
                 </div>
@@ -412,7 +415,7 @@ function skeletonWide() {
 
       <!-- TV Show Genres (static) -->
       <section class="mb-10">
-        <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest mb-4">Discover TV Shows</h2>
+        <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest mb-4">{m.discover_tv_genres()}</h2>
         <div class="flex flex-wrap gap-2">
           {TV_GENRES.map(g => (
             <a
@@ -420,7 +423,7 @@ function skeletonWide() {
               class="flex items-center gap-2 px-5 py-3 bg-zinc-900 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-800 text-zinc-300 hover:text-zinc-100 text-base font-medium rounded-xl transition-all active:scale-95 active:opacity-70"
             >
               <span>{g.emoji}</span>
-              <span>{g.label}</span>
+              <span>{genreLabel(g.label)}</span>
             </a>
           ))}
         </div>
@@ -430,8 +433,8 @@ function skeletonWide() {
       {hasProfileData && topShowGenres.map((genre, i) => (
         <section data-section class="mb-10">
           <div class="flex items-baseline gap-3 mb-5">
-            <h2 class="section-headline">{genre} Shows</h2>
-            <a href={`/shows?genre=${encodeURIComponent(genre)}`} class="text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors">See all →</a>
+            <h2 class="section-headline">{m.discover_genre_shows({ genre: genreLabel(genre) })}</h2>
+            <a href={`/shows?genre=${encodeURIComponent(genre)}`} class="text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors">{m.discover_see_all_arrow()}</a>
           </div>
           <div id={`show-genre-${i}`} class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
             <Fragment set:html={skeletonWide()} />
@@ -441,7 +444,7 @@ function skeletonWide() {
 
       <!-- On Air This Week (backdrop) -->
       <section data-section class="mb-10">
-        <h2 class="section-headline mb-5">On Air This Week</h2>
+        <h2 class="section-headline mb-5">{m.discover_on_air_this_week()}</h2>
         <div id="on-air-this-week" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
           <Fragment set:html={skeletonWide()} />
         </div>
@@ -449,7 +452,7 @@ function skeletonWide() {
 
       <!-- Top Rated Shows (backdrop) -->
       <section data-section class="mb-10">
-        <h2 class="section-headline mb-5">Top Rated Shows</h2>
+        <h2 class="section-headline mb-5">{m.discover_top_rated_shows()}</h2>
         <div id="top-rated-shows" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
           <Fragment set:html={skeletonWide()} />
         </div>
@@ -458,8 +461,8 @@ function skeletonWide() {
       <!-- Hidden Gems (poster) -->
       <section data-section class="mb-10">
         <div class="flex items-baseline gap-3 mb-5">
-          <h2 class="section-headline">Hidden Gems</h2>
-          <span class="text-xs text-zinc-500 font-medium">Critically acclaimed · under the radar</span>
+          <h2 class="section-headline">{m.discover_hidden_gems()}</h2>
+          <span class="text-xs text-zinc-500 font-medium">{m.discover_hidden_gems_hint()}</span>
         </div>
         <div id="hidden-gems" class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
           <Fragment set:html={skeleton()} />
@@ -469,7 +472,12 @@ function skeletonWide() {
   )}
 </Base>
 
-<script define:vars={{ token, watchRegion, hasProfileData, topMovieGenres, topShowGenres, userServices, canPick }}>
+<script>
+  import { m } from '../paraglide/messages.js';
+
+  const token = (window as any).__AUTH_TOKEN__ ?? '';
+  const { watchRegion, hasProfileData, topMovieGenres, topShowGenres, userServices, canPick } =
+    JSON.parse(document.getElementById('discover-data')?.dataset.config ?? '{}');
   function esc(str) {
     if (str == null) return '';
     return String(str)
@@ -624,20 +632,20 @@ function skeletonWide() {
   // ── Pick for me ──────────────────────────────────────────────────────────────
   if (canPick) {
     const PHRASES = [
-      { emoji: '🔮', text: 'Consulting the crystal ball…' },
-      { emoji: '🎩', text: 'Pulling something out of the hat…' },
-      { emoji: '🧝', text: 'Assembling Santa\'s elves…' },
-      { emoji: '🌌', text: 'Scanning the multiverse for options…' },
-      { emoji: '🎲', text: 'Rolling the cosmic dice…' },
-      { emoji: '📚', text: 'Arguing with the film critics…' },
-      { emoji: '🍿', text: 'Asking the popcorn oracle…' },
-      { emoji: '🤖', text: 'Bribing the recommendation algorithm…' },
-      { emoji: '🦉', text: 'Consulting a very wise owl…' },
-      { emoji: '🗺️', text: 'Mapping the cinematic universe…' },
-      { emoji: '🌟', text: 'Aligning the stars for you…' },
-      { emoji: '🧙', text: 'Checking the Tome of Great Films…' },
-      { emoji: '🕵️', text: 'Calculating the millionth digit of pi…' },
-      { emoji: '⚡', text: 'Harnessing the power of lightning…' },
+      { emoji: '🔮', text: m.pick_phrase_crystal_ball() },
+      { emoji: '🎩', text: m.pick_phrase_hat() },
+      { emoji: '🧝', text: m.pick_phrase_elves() },
+      { emoji: '🌌', text: m.pick_phrase_multiverse() },
+      { emoji: '🎲', text: m.pick_phrase_dice() },
+      { emoji: '📚', text: m.pick_phrase_critics() },
+      { emoji: '🍿', text: m.pick_phrase_popcorn() },
+      { emoji: '🤖', text: m.pick_phrase_algorithm() },
+      { emoji: '🦉', text: m.pick_phrase_owl() },
+      { emoji: '🗺️', text: m.pick_phrase_cinematic_universe() },
+      { emoji: '🌟', text: m.pick_phrase_stars() },
+      { emoji: '🧙', text: m.pick_phrase_tome() },
+      { emoji: '🕵️', text: m.pick_phrase_pi() },
+      { emoji: '⚡', text: m.pick_phrase_lightning() },
     ];
 
     const modal = document.getElementById('pick-modal');
@@ -696,7 +704,7 @@ function skeletonWide() {
       resultEl.classList.remove('flex');
       errorEl.classList.remove('hidden');
       errorEl.classList.add('flex');
-      errorMsgEl.textContent = msg || 'Nothing found. Try adjusting your profile preferences.';
+      errorMsgEl.textContent = msg || m.pick_nothing_found();
     }
 
     function sourceLabel(src) {
@@ -750,7 +758,7 @@ function skeletonWide() {
         const sources = data.sources || [];
         sourcesEl.innerHTML = sources.length
           ? sources.map(sourceLabel).join('')
-          : '<span class="text-sm text-zinc-500">No streaming source found</span>';
+          : `<span class="text-sm text-zinc-500">${esc(m.pick_no_streaming_source())}</span>`;
 
         const viewLink = document.getElementById('pick-view-link');
         viewLink.href = data.type === 'series' ? '/show/' + data.tmdb_id : '/media/movie/' + data.tmdb_id;
@@ -775,14 +783,14 @@ function skeletonWide() {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (res.status === 404) {
-          showError('No unwatched titles found. Watch something first, or adjust your profile.');
+          showError(m.pick_no_unwatched());
           return;
         }
         if (!res.ok) throw new Error();
         const data = await res.json();
         showResult(data);
       } catch {
-        showError('Something went wrong. Please try again.');
+        showError(m.common_something_went_wrong_retry());
       }
     }
 

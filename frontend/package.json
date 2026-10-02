@@ -9,15 +9,20 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "i18n:check": "node scripts/check-i18n.mjs"
   },
   "dependencies": {
     "@astrojs/node": "^10.0.4",
+    "@inlang/paraglide-js": "^2.25.2",
     "@tailwindcss/vite": "^4.2.2",
     "@types/qrcode": "^1.5.6",
     "astro": "^6.1.2",
     "hls.js": "^1.6.16",
     "qrcode": "^1.5.4",
     "tailwindcss": "^4.2.2"
+  },
+  "devDependencies": {
+    "@inlang/plugin-message-format": "^4.4.4"
   }
 }

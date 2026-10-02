@@ -7,6 +7,7 @@ import ContinueWatchingCard from "../components/ContinueWatchingCard.astro";
 import { api, type ContinueWatchingItem, type MediaItem, tmdbImageUrl } from "../lib/api";
 import { formatEpisodesLeft } from "../lib/media-format";
 import { episodeHref } from "../lib/episodeHref";
+import { m } from "../paraglide/messages.js";
 
 const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -83,7 +84,7 @@ const FALLBACK_BACKDROPS: string[] = [
 ];
 
 const backdropPool: MediaItem[] = [
-  ...recentMovies.results.filter(m => !!m.backdrop_path),
+  ...recentMovies.results.filter(movie => !!movie.backdrop_path),
   ...recentShows.results.filter(e => !!e.backdrop_path),
 ];
 const discoverPick = backdropPool.length > 0
@@ -94,18 +95,18 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   : FALLBACK_BACKDROPS[Math.floor(Math.random() * FALLBACK_BACKDROPS.length)];
 ---
 
-<Base title="Dashboard">
+<Base title={m.home_page_title()}>
   {!hasTmdbKey && (
     <div class="mb-12 p-8 bg-blue-600/10 border border-blue-600/20 rounded-2xl flex flex-col md:flex-row items-center gap-6 text-center md:text-left">
       <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-3xl shrink-0 shadow-lg shadow-blue-600/20 text-zinc-100">
         🎬
       </div>
       <div class="flex-1">
-        <h2 class="text-xl font-bold text-zinc-100 mb-1">Finish setting up your account</h2>
-        <p class="text-zinc-400">To start using Scrob and explore movies and shows, you must add your TMDB Read Access Token.</p>
+        <h2 class="text-xl font-bold text-zinc-100 mb-1">{m.home_setup_title()}</h2>
+        <p class="text-zinc-400">{m.home_setup_body()}</p>
       </div>
       <a href="/settings" class="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-zinc-100 font-bold rounded-xl transition-all shadow-lg shadow-blue-600/20 active:scale-95">
-        Go to Settings
+        {m.common_go_to_settings()}
       </a>
     </div>
   )}
@@ -135,9 +136,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
 
         <div class="relative aspect-[16/9] sm:aspect-[21/8] md:aspect-[21/5] flex flex-col">
           <div class="flex items-center justify-between pt-8 pb-0">
-            <h2 class="section-headline">Trending Shows</h2>
+            <h2 class="section-headline">{m.section_trending_shows()}</h2>
             <a href="/trending/shows" class="text-sm font-bold uppercase tracking-widest text-zinc-400 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-              See All
+              {m.common_see_all()}
               <span class="group-hover/all:translate-x-1 transition-transform">→</span>
             </a>
           </div>
@@ -171,9 +172,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   {nextUp.length > 0 && settings?.minimalist_next_up && (
     <section class="mb-16">
       <div class="flex items-center justify-between mb-8">
-        <h2 class="section-headline">Next Up</h2>
+        <h2 class="section-headline">{m.section_next_up()}</h2>
         <a href="/next-up" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-          See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+          {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
         </a>
       </div>
       <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
@@ -189,7 +190,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
     const rest = nextUp.slice(1);
     const heroHref = episodeHref(hero) ?? `/media/${hero.type}/${hero.tmdb_id}`;
     const episodeLabel = hero.season_number != null && hero.episode_number != null
-      ? `S${hero.season_number} E${hero.episode_number}`
+      ? m.home_episode_label({ season: hero.season_number, episode: hero.episode_number })
       : null;
     const rawBackdrop = hero.backdrop_path || hero.show_backdrop_path;
     const heroBackdrop = tmdbImageUrl(rawBackdrop, "w1280");
@@ -213,9 +214,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
 
         <div class="relative aspect-[16/9] sm:aspect-[21/8] md:aspect-[21/5] flex flex-col">
           <div class="flex items-center justify-between pt-8 pb-0">
-            <h2 class="section-headline">Next Up</h2>
+            <h2 class="section-headline">{m.section_next_up()}</h2>
             <a href="/next-up" class="text-sm font-bold uppercase tracking-widest text-white hover:text-blue-400 transition-all flex items-center gap-2 group/all bg-black/50 backdrop-blur-sm border border-white/10 rounded-full px-3 py-1.5 shadow-lg">
-              See All
+              {m.common_see_all()}
               <span class="group-hover/all:translate-x-1 transition-transform">→</span>
             </a>
           </div>
@@ -254,9 +255,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   {continueWatching.length > 0 && (
     <section id="continue-watching-section" class="mb-16">
       <div class="flex items-center justify-between mb-8">
-        <h2 class="section-headline">Continue Watching</h2>
+        <h2 class="section-headline">{m.section_continue_watching()}</h2>
         <a href="/continue-watching" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-          See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+          {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
         </a>
       </div>
       <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
@@ -270,9 +271,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   {recentMovies.results?.length > 0 && (
     <section class="mb-16">
       <div class="flex items-center justify-between mb-8">
-        <h2 class="section-headline">Recently Added Movies</h2>
+        <h2 class="section-headline">{m.section_recently_added_movies()}</h2>
         <a href="/collection/movies?sort=created_at" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-          See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+          {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
         </a>
       </div>
       <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
@@ -286,9 +287,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   {recentShows.results?.length > 0 && (
     <section class="mb-16">
       <div class="flex items-center justify-between mb-8">
-        <h2 class="section-headline">Recently Added Episodes</h2>
+        <h2 class="section-headline">{m.section_recently_added_episodes()}</h2>
         <a href="/collection/shows?sort=created_at" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-          See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+          {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
         </a>
       </div>
       <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
@@ -305,13 +306,13 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       <div class="absolute inset-0 bg-gradient-to-r from-zinc-950/90 via-zinc-950/60 to-zinc-950/20"></div>
       <div class="absolute inset-0 bg-gradient-to-t from-zinc-950/60 via-transparent to-transparent"></div>
       <div class="relative px-8 sm:px-12">
-        <p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-2">What to watch next?</p>
-        <h2 class="text-2xl sm:text-3xl font-black text-zinc-100 mb-5 leading-tight">Explore movies & shows<br class="hidden sm:block" /> you haven't seen yet.</h2>
+        <p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-2">{m.home_discover_kicker()}</p>
+        <h2 class="text-2xl sm:text-3xl font-black text-zinc-100 mb-5 leading-tight" set:html={m.home_discover_headline()} />
         <a
           href="/discover"
           class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-blue-900/40 active:scale-95 text-sm uppercase tracking-wider"
         >
-          Discover
+          {m.nav_discover()}
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
             <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
           </svg>
@@ -325,9 +326,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       <!-- Trending Movies -->
       <section class="mb-16" id="section-trending-movies">
         <div class="flex items-center justify-between mb-8">
-          <h2 class="section-headline">Trending Movies</h2>
+          <h2 class="section-headline">{m.section_trending_movies()}</h2>
           <a href="/trending/movies" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-            See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+            {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
           </a>
         </div>
         <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0" id="grid-trending-movies">
@@ -347,9 +348,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       {user && (
         <section class="mb-16" id="section-trending-shows">
           <div class="flex items-center justify-between mb-8">
-            <h2 class="section-headline">Trending Shows</h2>
+            <h2 class="section-headline">{m.section_trending_shows()}</h2>
             <a href="/trending/shows" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-              See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+              {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
             </a>
           </div>
           <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0" id="grid-trending-shows">
@@ -369,9 +370,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
       <!-- Airing Today -->
       <section class="mb-16" id="section-airing-today">
         <div class="flex items-center justify-between mb-8">
-          <h2 class="section-headline">Airing Today</h2>
+          <h2 class="section-headline">{m.section_airing_today()}</h2>
           <a href="/airing-today" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-            See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+            {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
           </a>
         </div>
         <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0" id="grid-airing-today">
@@ -387,7 +388,12 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   )}
 </Base>
 
-<script define:vars={{ token, hasUser: !!user }}>
+<script>
+  import { m } from '../paraglide/messages.js';
+
+  // Set by the layout for signed-in viewers only.
+  const token = (window as any).__AUTH_TOKEN__ ?? '';
+  const hasUser = !!token;
 
   function esc(str) {
           if (str == null) return '';
@@ -401,8 +407,8 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
   function tmdbImageUrl(path, size = 'w500') {
     if (!path) return null;
     if (path.startsWith('http://') || path.startsWith('https://')) {
-      const m = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
-      if (m) return `/api/proxy/media/image/${m[1]}${m[2]}`;
+      const tm = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
+      if (tm) return `/api/proxy/media/image/${tm[1]}${tm[2]}`;
       return path;
     }
     return `/api/proxy/media/image/${size}${path.startsWith('/') ? path : '/' + path}`;
@@ -419,7 +425,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
           const rating = item.tmdb_rating ? Number(item.tmdb_rating).toFixed(1) : null;
           const raw = item.poster_path;
           const posterUrl = window.ratingPosterUrl(tmdbImageUrl(raw, 'w500'), item, window.__HAS_RPDB__);
-          const typeLabel = isSeries ? 'Show' : 'Movie';
+          const typeLabel = isSeries ? m.common_show() : m.common_movie();
           const watched = item.watched ?? false;
           const inLists = item.in_lists ?? [];
           const inLibrary = item.in_library ?? false;
@@ -452,23 +458,23 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
             </a>
             ${hasUser ? `<div class="grid grid-cols-3 flex-shrink-0">
               <button data-action="watched" data-watched="${watched}" data-watch-pct="${watchPct}" data-state="${watchActive ? 'active' : 'inactive'}"
-                title="${isSeries ? `${watchPct}% watched` : (watched ? 'Mark as unwatched' : 'Mark as watched')}"
+                title="${esc(isSeries ? m.watch_pct_watched({ pct: watchPct }) : (watched ? m.watch_mark_unwatched() : m.watch_mark_watched()))}"
                 class="flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer border-r border-zinc-800/60 hover:brightness-125 ${watchActive ? 'bg-green-500/20 text-green-400' : 'bg-zinc-900 text-zinc-400 hover:bg-green-500/10 hover:text-green-500'}">
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3" fill="${watchActive ? 'currentColor' : 'none'}"/>
                 </svg>
-                <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isSeries ? `${watchPct}%` : 'Watched'}</span>
+                <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isSeries ? `${watchPct}%` : esc(m.card_watched())}</span>
               </button>
-              <button data-action="list" data-in-lists="${esc(JSON.stringify(inLists))}" data-state="${inLists.length > 0 ? 'active' : 'inactive'}" title="Add to list"
+              <button data-action="list" data-in-lists="${esc(JSON.stringify(inLists))}" data-state="${inLists.length > 0 ? 'active' : 'inactive'}" title="${esc(m.list_popover_title())}"
                 class="flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer border-r border-zinc-800/60 hover:brightness-125 ${inLists.length > 0 ? 'bg-sky-500/20 text-sky-400' : 'bg-zinc-900 text-zinc-400 hover:bg-sky-500/10 hover:text-sky-400'}">
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
                   <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
                 </svg>
-                <span class="text-[8px] font-bold uppercase tracking-wider leading-none">Lists</span>
+                <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${esc(m.card_lists())}</span>
               </button>
               <button data-action="collected" data-in-library="${inLibrary}" data-collection-pct="${collectionPct}" data-state="${(inLibrary || collectionPct > 0) ? 'active' : 'inactive'}"
-                title="${isSeries ? `${collectionPct}% in library` : (inLibrary ? 'In collection' : 'Add to collection')}"
+                title="${esc(isSeries ? m.collection_pct_in_library({ pct: collectionPct }) : (inLibrary ? m.collection_in_collection() : m.collection_add()))}"
                 style="${esc(collectStyle)}"
                 class="relative flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer overflow-hidden hover:brightness-125 ${(inLibrary || collectionPct > 0) ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-900 text-zinc-400 hover:bg-purple-500/10 hover:text-purple-400'}">
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="${collectedFill}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -477,7 +483,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
                   <path d="M15 22v-4a3 3 0 0 0-6 0v4"/>
                   <path d="M2 7h20"/>
                 </svg>
-                <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isSeries ? `${collectionPct}%` : 'Collected'}</span>
+                <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isSeries ? `${collectionPct}%` : esc(m.card_collected())}</span>
               </button>
             </div>` : ''}
             <a href="${esc(href)}" class="block p-3 bg-gradient-to-b from-zinc-900 to-zinc-950 flex-1">
@@ -486,7 +492,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
                 <div class="flex items-center gap-2">
                   ${year ? `<span class="text-[11px] font-medium text-zinc-500 tracking-wide">${esc(year)}</span>` : ''}
                 </div>
-                <span class="text-[9px] font-black text-zinc-400 uppercase tracking-widest px-1.5 py-0.5 bg-zinc-800/50 rounded border border-zinc-800">${typeLabel}</span>
+                <span class="text-[9px] font-black text-zinc-400 uppercase tracking-widest px-1.5 py-0.5 bg-zinc-800/50 rounded border border-zinc-800">${esc(typeLabel)}</span>
               </div>
             </a>
           </div>`;

@@ -4,6 +4,8 @@ import Pagination from "../components/Pagination.astro";
 import SortButton from "../components/SortButton.astro";
 import { api, tmdbImageUrl, type ShowProgress } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
+import { m } from "../paraglide/messages.js";
+import { getLocale } from "../paraglide/runtime.js";
 export const prerender = false;
 
 const { token } = Astro.locals;
@@ -18,7 +20,6 @@ const sort = Astro.url.searchParams.get("sort") || defaultSort;
 const isCollection = view === "collection";
 const metricPct = (s: ShowProgress) => (isCollection ? s.collection_pct : s.watch_pct);
 const metricDone = (s: ShowProgress) => (isCollection ? s.episodes_collected : s.episodes_watched);
-const metricLabel = isCollection ? "Collected" : "Watched";
 // Bar: same green (watched) / purple (collected) as the media-card and
 // show-page action bars. The percentage: the user's theme accent (the
 // blue-* scale is remapped to --accent-* in global.css).
@@ -46,7 +47,7 @@ const showHref = (s: ShowProgress) =>
 const fmtLastWatched = (iso: string | null) => {
   if (!iso) return "";
   return new Date(iso + (iso.endsWith("Z") || iso.includes("+") ? "" : "Z"))
-    .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    .toLocaleDateString(getLocale(), { month: "short", day: "numeric", year: "numeric" });
 };
 
 // Page is always dropped here (Pagination re-adds it); a sort matching the
@@ -61,30 +62,30 @@ const urlFor = (v: string, s: string | null, hide: boolean) => {
   return `/progress${qs ? `?${qs}` : ""}`;
 };
 
-const tabs: [string, string][] = [["watched", "Watched"], ["collection", "Collection"]];
+const tabs: [string, string][] = [["watched", m.progress_tab_watched()], ["collection", m.progress_tab_collection()]];
 const sortOptions = isCollection
   ? [
-      { value: "collection_asc", label: "Least collected" },
-      { value: "collection_desc", label: "Most collected" },
-      { value: "remaining", label: "Episodes missing" },
+      { value: "collection_asc", label: m.progress_sort_least_collected() },
+      { value: "collection_desc", label: m.progress_sort_most_collected() },
+      { value: "remaining", label: m.progress_sort_episodes_missing() },
       { value: "title", label: "Title (A-Z)" },
     ]
   : [
-      { value: "recent", label: "Recently watched" },
-      { value: "watch_desc", label: "Most watched" },
-      { value: "watch_asc", label: "Least watched" },
-      { value: "remaining", label: "Episodes left" },
+      { value: "recent", label: m.progress_sort_recent() },
+      { value: "watch_desc", label: m.progress_sort_most_watched() },
+      { value: "watch_asc", label: m.progress_sort_least_watched() },
+      { value: "remaining", label: m.progress_sort_episodes_left() },
       { value: "title", label: "Title (A-Z)" },
     ];
 ---
 
-<Base title="Progress">
+<Base title={m.nav_progress()}>
   <div class="mb-6">
-    <h1 class="page-title mb-2">Progress</h1>
+    <h1 class="page-title mb-2">{m.nav_progress()}</h1>
     <p class="text-zinc-500">
       {isCollection
-        ? "How complete your library is for every show you have episodes of."
-        : "How far you are through every show you've started watching."}
+        ? m.progress_intro_collection()
+        : m.progress_intro_watched()}
     </p>
   </div>
 
@@ -112,7 +113,7 @@ const sortOptions = isCollection
               : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
           }`}
         >
-          Hide 100% {metricLabel.toLowerCase()}
+          {m.progress_hide_complete({ view })}
         </a>
         <SortButton id="progress-sort" current={sort} options={sortOptions} paramKey="sort" />
       </div>
@@ -120,18 +121,18 @@ const sortOptions = isCollection
   </div>
 
   {failed && (
-    <div class="text-center py-20 text-zinc-500"><p class="text-lg">Couldn't load your progress.</p></div>
+    <div class="text-center py-20 text-zinc-500"><p class="text-lg">{m.progress_load_failed()}</p></div>
   )}
 
   {!failed && total === 0 && (
     <div class="text-center py-20 text-zinc-500">
       <p class="text-lg">
-        {isCollection ? "No shows in your library yet." : "Nothing started yet."}
+        {isCollection ? m.progress_empty_collection() : m.progress_empty_watched()}
       </p>
       <p class="text-sm mt-2">
         {isCollection
-          ? "Add a show to your collection and it'll show up here."
-          : "Watch an episode of a show and it'll show up here."}
+          ? m.progress_empty_collection_hint()
+          : m.progress_empty_watched_hint()}
       </p>
     </div>
   )}
@@ -144,7 +145,7 @@ const sortOptions = isCollection
           const pct = metricPct(s);
           const remaining = Math.max(0, s.episodes_total - metricDone(s));
           const meta = `${metricDone(s)}/${s.episodes_total}`
-            + (remaining > 0 ? ` · ${remaining} ${isCollection ? "missing" : "left"}` : " · complete")
+            + ` · ${remaining > 0 ? (isCollection ? m.progress_meta_missing({ count: remaining }) : m.progress_meta_left({ count: remaining })) : m.progress_meta_complete()}`
             + (!isCollection && s.last_watched_at ? ` · ${fmtLastWatched(s.last_watched_at)}` : "");
           return (
             <a

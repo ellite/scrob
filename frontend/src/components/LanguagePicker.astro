@@ -1,0 +1,44 @@
+---
+// Interface language picker for signed-out pages (login, register, password
+// reset). It only sets the ui_language cookie Paraglide reads: there's no
+// account yet to save it on. Once signed in, an explicit account preference
+// (Settings > Display Settings) replaces the cookie - see middleware.ts.
+import { UI_LANGUAGES } from "../lib/ui-languages";
+import { m } from "../paraglide/messages.js";
+import { cookieMaxAge, cookieName, getLocale } from "../paraglide/runtime.js";
+
+interface Props { class?: string }
+const { class: className = "" } = Astro.props;
+const current = getLocale();
+---
+<label class={`inline-flex items-center gap-2 text-xs text-zinc-500 ${className}`}>
+  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+  <span class="sr-only">{m.settings_ui_language_title()}</span>
+  <select
+    data-language-picker
+    class="bg-zinc-900/80 backdrop-blur-sm border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+  >
+    {UI_LANGUAGES.map(({ code, name }) => (
+      <option value={code} lang={code} selected={code === current}>{name}</option>
+    ))}
+  </select>
+</label>
+
+<!--
+  define:vars keeps this inline in the page rather than importing the Paraglide
+  runtime for two constants: an import would turn it into a hoisted module, i.e.
+  one more request on the signed-out pages, which are exactly the ones a first
+  visitor loads with a cold cache.
+-->
+<script define:vars={{ __localeCookie: cookieName, __localeCookieMaxAge: cookieMaxAge }}>
+  document.querySelectorAll('[data-language-picker]').forEach((select) => {
+    // Guard against a page ever rendering two pickers: define:vars duplicates
+    // this script with the component, a hoisted module would have run once.
+    if (select.dataset.languagePicker === 'bound') return;
+    select.dataset.languagePicker = 'bound';
+    select.addEventListener('change', () => {
+      document.cookie = `${__localeCookie}=${select.value}; path=/; SameSite=Lax; max-age=${__localeCookieMaxAge}`;
+      location.reload();
+    });
+  });
+</script>

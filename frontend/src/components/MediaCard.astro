@@ -6,6 +6,7 @@ import CardActionBar from "./CardActionBar.astro";
 import PosterFallback from "./PosterFallback.astro";
 import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
+import { m } from "../paraglide/messages.js";
 
 interface Props {
   item: MediaItem;
@@ -33,7 +34,7 @@ const href = isPerson
     ? `/collection/${item.tmdb_id}`
     : episodeHref(item);
 
-const cardTitle = isSeason ? `Season ${item.season_number}` : item.title;
+const cardTitle = isSeason ? m.media_season_number({ number: item.season_number! }) : item.title;
 const posterPath = ratingPosterUrl(tmdbImageUrl(
   (isEpisode || isSeason) && item.show_poster_path ? item.show_poster_path : item.poster_path,
   "w500"
@@ -150,7 +151,7 @@ const inLibrary = item.in_library ?? false;
           {year && !sxe && !isPerson && <span class="text-[11px] font-medium text-zinc-500 tracking-wide">{year}</span>}
         </div>
         <span class="text-[9px] font-bold text-zinc-400 uppercase tracking-widest px-1.5 py-0.5 bg-zinc-800/50 rounded border border-zinc-800">
-          {isPerson ? 'Person' : isCollection ? 'Collection' : isSeason ? `Season ${item.season_number}` : isSeries ? 'Show' : (item.type === 'episode' ? 'Episode' : item.type)}
+          {isPerson ? m.common_person() : isCollection ? m.common_collection() : isSeason ? m.media_season_number({ number: item.season_number! }) : isSeries ? m.common_show() : (item.type === 'episode' ? m.common_episode() : item.type === 'movie' ? m.common_movie() : item.type)}
         </span>
       </div>
     </a>
@@ -166,7 +167,7 @@ const inLibrary = item.in_library ?? false;
           {year && !sxe && !isPerson && <span class="text-[11px] font-medium text-zinc-400 tracking-wide">{year}</span>}
         </div>
         <span class="text-[9px] font-bold text-zinc-400 uppercase tracking-widest px-1.5 py-0.5 bg-zinc-800/50 rounded border border-zinc-800">
-          {isSeason ? `Season ${item.season_number}` : (item.type === 'episode' ? 'Episode' : item.type)}
+          {isSeason ? m.media_season_number({ number: item.season_number! }) : (item.type === 'episode' ? m.common_episode() : item.type === 'movie' ? m.common_movie() : item.type)}
         </span>
       </div>
     </div>

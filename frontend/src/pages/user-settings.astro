@@ -2,6 +2,8 @@
 import Base from "../layouts/Base.astro";
 import { api } from "../lib/api";
 import type { UserPreferences, PrivacyLevel } from "../lib/api";
+import { genreLabel, localizedCountryName, localizedLanguageName, sortByLabel } from "../lib/labels";
+import { m } from "../paraglide/messages.js";
 
 const { token } = Astro.locals;
 const [profileData, me] = await Promise.all([
@@ -24,9 +26,9 @@ const prefs: UserPreferences = {
 };
 
 const PRIVACY_LEVELS: [PrivacyLevel, string, string][] = [
-  ["private", "Private", "Only you can see your profile and activity."],
-  ["friends_only", "Friends Only", "Only people you follow (and who follow you back) can see your activity."],
-  ["public", "Public", "Anyone on this instance can see your profile and activity."],
+  ["private", m.privacy_private(), m.privacy_private_desc()],
+  ["friends_only", m.privacy_friends_only(), m.privacy_friends_only_desc()],
+  ["public", m.privacy_public(), m.privacy_public_desc()],
 ];
 
 const CONTENT_LANGUAGES: [string, string][] = [
@@ -77,6 +79,10 @@ const METADATA_LANGUAGES: [string, string][] = [
   ["hr", "Croatian"],
   ["sr", "Serbian"],
 ];
+
+// Language tags whose CLDR display name matches the curated English label
+// ("Spanish (Spain)", "Chinese (Simplified)"); the stored codes stay as-is.
+const METADATA_DISPLAY_CODES: Record<string, string> = { es: "es-ES", "zh-CN": "zh-Hans", "zh-TW": "zh-Hant" };
 
 const MOVIE_GENRES = [
   "Action","Adventure","Animation","Comedy","Crime",
@@ -130,10 +136,10 @@ const COUNTRIES = [
 ];
 ---
 
-<Base title="Profile">
+<Base title={m.nav_profile()}>
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
   <div class="max-w-4xl mx-auto">
-    <h1 class="page-title mb-8">Profile</h1>
+    <h1 class="page-title mb-8">{m.nav_profile()}</h1>
 
     <div id="js-message" class="hidden p-4 rounded-lg mb-8"></div>
 
@@ -142,14 +148,14 @@ const COUNTRIES = [
       <!-- Identity -->
       <section>
         <div class="flex items-center justify-between mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Identity</h2>
+          <h2 class="section-headline">{m.profile_settings_identity()}</h2>
         </div>
 
         <!-- Avatar -->
         <div class="flex items-center gap-6 mb-8">
           <div id="avatar-preview" class="w-20 h-20 rounded-2xl overflow-hidden bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0">
             {prefs.avatar_url ? (
-              <img id="avatar-img" src={`/api/proxy${prefs.avatar_url}`} alt="Avatar" class="w-full h-full object-cover" />
+              <img id="avatar-img" src={`/api/proxy${prefs.avatar_url}`} alt={m.profile_settings_avatar_alt()} class="w-full h-full object-cover" />
             ) : (
               <span id="avatar-initials" class="text-2xl font-black text-zinc-400 select-none">
                 {(prefs.display_name ?? me.username)[0].toUpperCase()}
@@ -157,16 +163,16 @@ const COUNTRIES = [
             )}
           </div>
           <div class="space-y-2">
-            <p class="text-sm font-medium text-zinc-300">Profile Picture</p>
-            <p class="text-xs text-zinc-500">JPEG, PNG or WebP · Max 5 MB</p>
+            <p class="text-sm font-medium text-zinc-300">{m.profile_settings_picture()}</p>
+            <p class="text-xs text-zinc-500">{m.profile_settings_picture_hint()}</p>
             <div class="flex items-center gap-2 flex-wrap">
               <label class="cursor-pointer px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 text-zinc-200 text-sm font-medium rounded-lg transition-all">
-                <span id="upload-label">Choose file</span>
+                <span id="upload-label">{m.profile_settings_choose_file()}</span>
                 <input id="avatar-input" type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" />
               </label>
               {prefs.avatar_url && (
                 <button id="remove-avatar-btn" type="button" class="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-sm font-medium rounded-lg transition-all">
-                  Remove
+                  {m.common_remove()}
                 </button>
               )}
             </div>
@@ -175,7 +181,7 @@ const COUNTRIES = [
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div class="space-y-2">
-            <label for="display_name" class="block text-sm font-medium text-zinc-400">Display Name</label>
+            <label for="display_name" class="block text-sm font-medium text-zinc-400">{m.profile_settings_display_name()}</label>
             <input
               type="text"
               id="display_name"
@@ -185,15 +191,15 @@ const COUNTRIES = [
               maxlength={64}
               class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
             />
-            <p class="text-xs text-zinc-500">Shown instead of your username where your name appears.</p>
+            <p class="text-xs text-zinc-500">{m.profile_settings_display_name_hint()}</p>
           </div>
           <div class="space-y-2">
-            <label for="bio" class="block text-sm font-medium text-zinc-400">Bio</label>
+            <label for="bio" class="block text-sm font-medium text-zinc-400">{m.profile_settings_bio()}</label>
             <textarea
               id="bio"
               name="bio"
               maxlength={280}
-              placeholder="A few words about yourself…"
+              placeholder={m.profile_settings_bio_placeholder()}
               class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all resize-none h-[94px]"
             >{prefs.bio ?? ""}</textarea>
           </div>
@@ -203,7 +209,7 @@ const COUNTRIES = [
       <!-- Privacy -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Privacy</h2>
+          <h2 class="section-headline">{m.profile_settings_privacy()}</h2>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           {PRIVACY_LEVELS.map(([value, label, desc]) => (
@@ -227,22 +233,22 @@ const COUNTRIES = [
       <!-- Region -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Region</h2>
+          <h2 class="section-headline">{m.profile_settings_region()}</h2>
         </div>
         <div class="space-y-2 max-w-xs">
-          <label for="country" class="block text-sm font-medium text-zinc-400">Country</label>
+          <label for="country" class="block text-sm font-medium text-zinc-400">{m.profile_settings_country()}</label>
           <select
             id="country"
             name="country"
             class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           >
-            <option value="">— Not set —</option>
-            {COUNTRIES.map(([code, name]) => (
-              <option value={code} selected={prefs.country === code}>{name}</option>
+            <option value="">{m.profile_settings_not_set()}</option>
+            {sortByLabel(COUNTRIES.map(([code, name]) => ({ code, label: localizedCountryName(code, name) }))).map(({ code, label }) => (
+              <option value={code} selected={prefs.country === code}>{label}</option>
             ))}
           </select>
           <p class="text-xs text-zinc-500">
-            Used to show relevant streaming availability on the Discover page and filter content for your region.
+            {m.profile_settings_region_hint()}
           </p>
         </div>
       </section>
@@ -250,22 +256,22 @@ const COUNTRIES = [
       <!-- Content Language -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Content Language</h2>
+          <h2 class="section-headline">{m.profile_settings_content_language()}</h2>
         </div>
         <div class="space-y-2 max-w-xs">
-          <label for="content_language" class="block text-sm font-medium text-zinc-400">Preferred Language</label>
+          <label for="content_language" class="block text-sm font-medium text-zinc-400">{m.profile_settings_preferred_language()}</label>
           <select
             id="content_language"
             name="content_language"
             class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           >
-            <option value="">— Any language —</option>
+            <option value="">{m.profile_settings_any_language()}</option>
             {CONTENT_LANGUAGES.map(([code, name]) => (
-              <option value={code} selected={prefs.content_language === code}>{name}</option>
+              <option value={code} selected={prefs.content_language === code}>{localizedLanguageName(code, name)}</option>
             ))}
           </select>
           <p class="text-xs text-zinc-500">
-            Filter Discover recommendations to your preferred original language.
+            {m.profile_settings_content_language_hint()}
           </p>
         </div>
       </section>
@@ -273,22 +279,22 @@ const COUNTRIES = [
       <!-- Metadata Language -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Metadata Language</h2>
+          <h2 class="section-headline">{m.profile_settings_metadata_language()}</h2>
         </div>
         <div class="space-y-2 max-w-xs">
-          <label for="metadata_language" class="block text-sm font-medium text-zinc-400">Display Language</label>
+          <label for="metadata_language" class="block text-sm font-medium text-zinc-400">{m.profile_settings_metadata_language_label()}</label>
           <select
             id="metadata_language"
             name="metadata_language"
             class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           >
-            <option value="">— English (default) —</option>
+            <option value="">{m.profile_settings_english_default()}</option>
             {METADATA_LANGUAGES.map(([code, name]) => (
-              <option value={code} selected={prefs.metadata_language === code}>{name}</option>
+              <option value={code} selected={prefs.metadata_language === code}>{localizedLanguageName(METADATA_DISPLAY_CODES[code] ?? code, name)}</option>
             ))}
           </select>
           <p class="text-xs text-zinc-500">
-            Titles, overviews, and taglines will be fetched from TMDB in this language. Translations are cached as you browse — library metadata updates gradually as you visit detail pages.
+            {m.profile_settings_metadata_language_hint()}
           </p>
         </div>
 
@@ -297,20 +303,20 @@ const COUNTRIES = [
           <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
             <div class="flex items-start justify-between gap-4">
               <div>
-                <p class="text-sm font-medium text-zinc-300">Backfill Library Translations</p>
-                <p class="text-xs text-zinc-500 mt-0.5">Fetch translated metadata for all items in your collection and watch history at once.</p>
+                <p class="text-sm font-medium text-zinc-300">{m.profile_settings_backfill_title()}</p>
+                <p class="text-xs text-zinc-500 mt-0.5">{m.profile_settings_backfill_desc()}</p>
               </div>
               <div class="flex items-center gap-2 shrink-0">
                 <button
                   id="backfill-cancel-btn"
                   type="button"
                   class="hidden px-3 py-1.5 text-sm bg-zinc-800 hover:bg-red-900/60 text-zinc-400 hover:text-red-400 rounded-lg transition-colors cursor-pointer"
-                >Cancel</button>
+                >{m.common_cancel()}</button>
                 <button
                   id="backfill-btn"
                   type="button"
                   class="px-3 py-1.5 text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg transition-colors cursor-pointer"
-                >Start</button>
+                >{m.common_start()}</button>
               </div>
             </div>
             <div id="backfill-progress" class="hidden space-y-1.5">
@@ -329,10 +335,10 @@ const COUNTRIES = [
       <!-- Streaming Services -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Streaming Services</h2>
+          <h2 class="section-headline">{m.profile_settings_streaming()}</h2>
         </div>
         <p class="text-sm text-zinc-400 mb-4">
-          Select the services you subscribe to. The Discover page will highlight content available on your services.
+          {m.profile_settings_streaming_hint()}
         </p>
         <div id="streaming-chips" class="flex flex-wrap gap-2">
           {STREAMING_SERVICES.map(({ id, name }) => {
@@ -354,10 +360,10 @@ const COUNTRIES = [
       <!-- Favourite Movie Genres -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Favourite Movie Genres</h2>
+          <h2 class="section-headline">{m.profile_settings_movie_genres()}</h2>
         </div>
         <p class="text-sm text-zinc-400 mb-4">
-          Pick the genres you enjoy most. The Discover page will show dedicated rows for your favourites.
+          {m.profile_settings_genres_hint()}
         </p>
         <div id="movie-genre-chips" class="flex flex-wrap gap-2">
           {MOVIE_GENRES.map((genre) => {
@@ -369,7 +375,7 @@ const COUNTRIES = [
                 data-value={genre}
                 class={`chip px-5 py-3 rounded-full border text-base font-medium transition-all cursor-pointer active:scale-95 active:opacity-70 ${active ? "bg-blue-500/20 border-blue-500 text-blue-400" : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"}`}
               >
-                {genre}
+                {genreLabel(genre)}
               </button>
             );
           })}
@@ -379,10 +385,10 @@ const COUNTRIES = [
       <!-- Favourite Show Genres -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Favourite Show Genres</h2>
+          <h2 class="section-headline">{m.profile_settings_show_genres()}</h2>
         </div>
         <p class="text-sm text-zinc-400 mb-4">
-          Pick the genres you enjoy most. The Discover page will show dedicated rows for your favourites.
+          {m.profile_settings_genres_hint()}
         </p>
         <div id="show-genre-chips" class="flex flex-wrap gap-2">
           {SHOW_GENRES.map((genre) => {
@@ -394,7 +400,7 @@ const COUNTRIES = [
                 data-value={genre}
                 class={`chip px-5 py-3 rounded-full border text-base font-medium transition-all cursor-pointer active:scale-95 active:opacity-70 ${active ? "bg-blue-500/20 border-blue-500 text-blue-400" : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"}`}
               >
-                {genre}
+                {genreLabel(genre)}
               </button>
             );
           })}
@@ -404,11 +410,9 @@ const COUNTRIES = [
       <!-- Disliked Genres -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Disliked Genres</h2>
+          <h2 class="section-headline">{m.profile_settings_disliked_genres()}</h2>
         </div>
-        <p class="text-sm text-zinc-400 mb-4">
-          Genres you want to avoid. Items that <em>only</em> have disliked genres are filtered out of recommendations and picks. Mixed items (some liked, some disliked) can still appear. A genre can't be in both lists — selecting one here removes it from your favourites.
-        </p>
+        <p class="text-sm text-zinc-400 mb-4" set:html={m.profile_settings_disliked_hint()} />
         <div id="disliked-genre-chips" class="flex flex-wrap gap-2">
           {ALL_GENRES.map((genre) => {
             const active = prefs.disliked_genres.includes(genre);
@@ -419,7 +423,7 @@ const COUNTRIES = [
                 data-value={genre}
                 class={`chip px-5 py-3 rounded-full border text-base font-medium transition-all cursor-pointer active:scale-95 active:opacity-70 ${active ? "bg-red-500/20 border-red-500 text-red-400" : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"}`}
               >
-                {genre}
+                {genreLabel(genre)}
               </button>
             );
           })}
@@ -433,7 +437,7 @@ const COUNTRIES = [
           type="button"
           class="w-full md:w-auto bg-zinc-100 text-zinc-950 font-bold px-8 py-3 rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50"
         >
-          Save Changes
+          {m.common_save_changes()}
         </button>
       </div>
 
@@ -442,6 +446,8 @@ const COUNTRIES = [
 </Base>
 
 <script>
+  import { m } from '../paraglide/messages.js';
+
   function setup() {
     const appData = document.getElementById('app-data');
     const token = appData?.dataset.token ?? '';
@@ -488,7 +494,7 @@ const COUNTRIES = [
     avatarInput?.addEventListener('change', async () => {
       const file = avatarInput.files?.[0];
       if (!file) return;
-      if (uploadLabel) uploadLabel.textContent = 'Uploading…';
+      if (uploadLabel) uploadLabel.textContent = m.profile_settings_uploading();
       const form = new FormData();
       form.append('file', file);
       try {
@@ -499,16 +505,16 @@ const COUNTRIES = [
         });
         if (!res.ok) {
           const data = await res.json() as { detail?: string };
-          throw new Error(data.detail ?? 'Upload failed');
+          throw new Error(data.detail ?? m.profile_settings_upload_failed());
         }
         const data = await res.json() as { avatar_url: string };
         setAvatarPreview(`/api/proxy${data.avatar_url}?t=${Date.now()}`);
         if (removeBtn) removeBtn.classList.remove('hidden');
-        showMessage('Avatar updated.');
+        showMessage(m.profile_settings_avatar_updated());
       } catch (e: unknown) {
-        showMessage(e instanceof Error ? e.message : 'Upload failed.', 'error');
+        showMessage(e instanceof Error ? e.message : m.profile_settings_upload_failed_dot(), 'error');
       } finally {
-        if (uploadLabel) uploadLabel.textContent = 'Choose file';
+        if (uploadLabel) uploadLabel.textContent = m.profile_settings_choose_file();
         avatarInput.value = '';
       }
     });
@@ -520,12 +526,12 @@ const COUNTRIES = [
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${token}` },
         });
-        if (!res.ok) throw new Error('Failed to remove avatar');
+        if (!res.ok) throw new Error(m.profile_settings_avatar_remove_failed());
         setAvatarPreview(null);
         removeBtn.classList.add('hidden');
-        showMessage('Avatar removed.');
+        showMessage(m.profile_settings_avatar_removed());
       } catch (e: unknown) {
-        showMessage(e instanceof Error ? e.message : 'Failed to remove avatar.', 'error');
+        showMessage(e instanceof Error ? e.message : m.profile_settings_avatar_remove_failed_dot(), 'error');
       } finally {
         removeBtn.disabled = false;
       }
@@ -598,7 +604,7 @@ const COUNTRIES = [
     saveBtn?.addEventListener('click', async () => {
       saveBtn.disabled = true;
       const orig = saveBtn.textContent;
-      saveBtn.textContent = 'Saving…';
+      saveBtn.textContent = m.common_saving();
       const displayName = (document.getElementById('display_name') as HTMLInputElement | null)?.value.trim() ?? '';
       const bio = (document.getElementById('bio') as HTMLTextAreaElement | null)?.value.trim() ?? '';
       const country = (document.getElementById('country') as HTMLSelectElement | null)?.value ?? '';
@@ -633,14 +639,14 @@ const COUNTRIES = [
         });
         if (!res.ok) {
           const data = await res.json() as { detail?: string };
-          throw new Error(data.detail ?? 'Failed to save');
+          throw new Error(data.detail ?? m.common_save_failed());
         }
-        showMessage('Profile saved successfully.');
+        showMessage(m.profile_settings_saved());
         if (metadataLanguage) {
           document.getElementById('backfill-section')?.classList.remove('hidden');
         }
       } catch (e: unknown) {
-        showMessage(e instanceof Error ? e.message : 'Failed to save profile.', 'error');
+        showMessage(e instanceof Error ? e.message : m.profile_settings_save_failed(), 'error');
       } finally {
         saveBtn.disabled = false;
         saveBtn.textContent = orig;
@@ -666,10 +672,10 @@ const COUNTRIES = [
 
     function applyStatus(s: BackfillStatus) {
       if (s.total === 0 && s.done) {
-        if (backfillLabel) backfillLabel.textContent = s.error ? `Error: ${s.error}` : 'Nothing to backfill.';
+        if (backfillLabel) backfillLabel.textContent = s.error ? m.backfill_error({ error: s.error }) : m.backfill_nothing();
         if (backfillPct) backfillPct.textContent = '';
         if (backfillBar) { backfillBar.style.width = '0%'; backfillBar.classList.remove('animate-pulse'); }
-        if (backfillBtn) { backfillBtn.disabled = false; backfillBtn.textContent = 'Start'; }
+        if (backfillBtn) { backfillBtn.disabled = false; backfillBtn.textContent = m.common_start(); }
         backfillCancelBtn?.classList.add('hidden');
         stopPoll();
         return;
@@ -679,12 +685,12 @@ const COUNTRIES = [
         if (backfillBar) { backfillBar.style.width = `${pct}%`; backfillBar.classList.remove('animate-pulse'); }
         if (backfillPct) backfillPct.textContent = `${pct}%`;
         if (backfillLabel) backfillLabel.textContent = s.done
-          ? `Done — ${s.total} items translated`
-          : `Translating… ${s.progress} / ${s.total}`;
+          ? m.backfill_done({ total: s.total })
+          : m.backfill_progress({ progress: s.progress, total: s.total });
       }
       if (s.done || s.error) {
         stopPoll();
-        if (backfillBtn) { backfillBtn.disabled = false; backfillBtn.textContent = 'Run again'; }
+        if (backfillBtn) { backfillBtn.disabled = false; backfillBtn.textContent = m.backfill_run_again(); }
         backfillCancelBtn?.classList.add('hidden');
       } else if (s.running) {
         backfillCancelBtn?.classList.remove('hidden');
@@ -718,7 +724,7 @@ const COUNTRIES = [
         if (backfillProgress) backfillProgress.classList.remove('hidden');
         applyStatus(s);
         if (s.running) {
-          if (backfillBtn) { backfillBtn.disabled = true; backfillBtn.textContent = 'Running…'; }
+          if (backfillBtn) { backfillBtn.disabled = true; backfillBtn.textContent = m.common_running(); }
           startPolling();
         }
       } catch (_) {}
@@ -727,7 +733,7 @@ const COUNTRIES = [
     backfillBtn?.addEventListener('click', async () => {
       if (!backfillBtn || backfillBtn.disabled) return;
       backfillBtn.disabled = true;
-      backfillBtn.textContent = 'Starting…';
+      backfillBtn.textContent = m.common_starting();
       try {
         const res = await fetch('/api/proxy/profile/me/translations/backfill', {
           method: 'POST',
@@ -735,22 +741,22 @@ const COUNTRIES = [
         });
         if (!res.ok) {
           const d = await res.json() as { detail?: string };
-          showMessage(d.detail ?? 'Failed to start backfill.', 'error');
+          showMessage(d.detail ?? m.backfill_start_failed(), 'error');
           backfillBtn.disabled = false;
-          backfillBtn.textContent = 'Start';
+          backfillBtn.textContent = m.common_start();
           return;
         }
-        backfillBtn.textContent = 'Running…';
+        backfillBtn.textContent = m.common_running();
         if (backfillProgress) backfillProgress.classList.remove('hidden');
         if (backfillBar) { backfillBar.style.width = '0%'; backfillBar.classList.add('animate-pulse'); }
-        if (backfillLabel) backfillLabel.textContent = 'Starting…';
+        if (backfillLabel) backfillLabel.textContent = m.common_starting();
         if (backfillPct) backfillPct.textContent = '';
         backfillCancelBtn?.classList.remove('hidden');
         startPolling();
       } catch (e: unknown) {
         backfillBtn.disabled = false;
-        backfillBtn.textContent = 'Start';
-        showMessage(e instanceof Error ? e.message : 'Failed to start backfill.', 'error');
+        backfillBtn.textContent = m.common_start();
+        showMessage(e instanceof Error ? e.message : m.backfill_start_failed(), 'error');
       }
     });
 
@@ -762,7 +768,7 @@ const COUNTRIES = [
           headers: { 'Authorization': `Bearer ${token}` },
         });
         backfillCancelBtn.classList.add('hidden');
-        if (backfillLabel) backfillLabel.textContent = 'Cancelling…';
+        if (backfillLabel) backfillLabel.textContent = m.common_cancelling();
       } catch (_) {}
       finally {
         backfillCancelBtn.disabled = false;

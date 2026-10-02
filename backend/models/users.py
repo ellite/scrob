@@ -176,6 +176,11 @@ class UserSettings(Base):
     # Collapse consecutive same-show episodes within a date on the History
     # page into one row instead of listing each individually (#391).
     condense_history_by_show : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Web UI language (e.g. "fr"). Null means "follow the browser"
+    # (Accept-Language). Distinct from profile.metadata_language, which only
+    # localizes TMDB/TVDB titles and overviews. The frontend mirrors it into
+    # the ui_language cookie so SSR can render in it without an extra call.
+    ui_language : Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     # Prompt to rate an item right after it finishes playing (homepage Now
     # Playing bar drops the session -> star-rating popup), separately per type (#177).
     rate_prompt_movies   : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

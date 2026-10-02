@@ -4,6 +4,8 @@ import HistoryCard from "../components/HistoryCard.astro";
 import HistoryShowGroup from "../components/HistoryShowGroup.astro";
 import Pagination from "../components/Pagination.astro";
 import { api, type WatchEvent } from "../lib/api";
+import { formatDate } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 import { getViewerTimeZone } from "../lib/viewerTimeZone";
 
 const { token } = Astro.locals;
@@ -20,14 +22,14 @@ const history = await api.history.list({ page, page_size: 40, type, q: q || unde
 // Grouping logic
 const groupedHistory = history.results.reduce<Record<string, WatchEvent[]>>((acc, event) => {
   const dateStr = event.watched_at
-    ? new Date(event.watched_at + 'Z').toLocaleDateString('en-US', {
+    ? formatDate(event.watched_at + 'Z', {
         weekday: 'long',
         month: 'long',
         day: 'numeric',
         year: 'numeric',
         timeZone,
       })
-    : 'Date unknown';
+    : m.history_date_unknown();
 
   if (!acc[dateStr]) {
     acc[dateStr] = [];
@@ -102,9 +104,9 @@ const historyUrl = (overrides: { type?: string; q?: string } = {}) => {
 const baseUrl = historyUrl();
 ---
 
-<Base title="Watch History">
+<Base title={m.history_page_title()}>
   <div>
-    <h1 class="page-title mb-8">Watch History</h1>
+    <h1 class="page-title mb-8">{m.history_page_title()}</h1>
 
     <div class="flex flex-col md:flex-row md:items-center gap-3 mb-8">
       <div class="flex items-center justify-between gap-3 md:contents">
@@ -113,19 +115,19 @@ const baseUrl = historyUrl();
             href={historyUrl({ type: "" })}
             class={`px-4 py-1.5 rounded-full text-sm font-medium transition active:scale-95 active:opacity-70 ${!type ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-100'}`}
           >
-            All
+            {m.common_all()}
           </a>
           <a
             href={historyUrl({ type: "movie" })}
             class={`px-4 py-1.5 rounded-full text-sm font-medium transition active:scale-95 active:opacity-70 ${type === 'movie' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-100'}`}
           >
-            Movies
+            {m.common_movies()}
           </a>
           <a
             href={historyUrl({ type: "episode" })}
             class={`px-4 py-1.5 rounded-full text-sm font-medium transition active:scale-95 active:opacity-70 ${type === 'episode' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-100'}`}
           >
-            Shows
+            {m.common_shows()}
           </a>
         </div>
         <button
@@ -133,7 +135,7 @@ const baseUrl = historyUrl();
           type="button"
           class="md:ml-auto px-4 py-1.5 rounded-full text-sm font-medium transition active:scale-95 active:opacity-70 bg-zinc-800 text-zinc-400 hover:text-zinc-100 cursor-pointer"
         >
-          Select
+          {m.history_select()}
         </button>
       </div>
 
@@ -151,7 +153,7 @@ const baseUrl = historyUrl();
           type="search"
           name="q"
           value={q}
-          placeholder="Search your history..."
+          placeholder={m.history_search_placeholder()}
           class="w-full bg-zinc-900 border border-zinc-800 text-zinc-100 text-sm rounded-full pl-9 pr-4 py-1.5 focus:outline-none focus:border-blue-500 placeholder:text-zinc-500"
         />
       </form>
@@ -160,9 +162,9 @@ const baseUrl = historyUrl();
     <div id="history-results">
     {dates.length === 0 ? (
       <div class="bg-zinc-900/50 rounded-2xl p-12 text-center">
-        <div class="text-zinc-500 mb-2">{q ? `No results for "${q}"` : "No history yet"}</div>
+        <div class="text-zinc-500 mb-2">{q ? m.history_no_results_for({ query: q }) : m.history_empty()}</div>
         <a href={q ? historyUrl({ q: "" }) : "/"} class="text-blue-500 hover:text-blue-400 font-medium transition-colors">
-          {q ? "Clear search" : "Go discover something"}
+          {q ? m.history_clear_search() : m.history_go_discover()}
         </a>
       </div>
     ) : (
@@ -170,7 +172,7 @@ const baseUrl = historyUrl();
         {dates.map((date) => (
           <div class="relative history-day">
             <h2 class="group-label mb-4 sticky-top-safe py-2 z-10 bg-zinc-950 border-b border-zinc-800/50">
-              <button type="button" class="history-day-select" aria-label="Select day" title="Select day"></button>
+              <button type="button" class="history-day-select" aria-label={m.history_select_day()} title={m.history_select_day()}></button>
               <span>{date}</span>
             </h2>
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
@@ -193,9 +195,9 @@ const baseUrl = historyUrl();
     id="history-select-bar"
     class="hidden fixed left-1/2 -translate-x-1/2 bottom-20 md:bottom-6 z-50 items-center gap-3 bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl px-4 py-3"
   >
-    <span id="history-select-count" class="text-sm font-medium text-zinc-300 whitespace-nowrap">0 selected</span>
-    <button id="history-select-cancel" type="button" class="px-3 py-1.5 rounded-full text-sm font-medium bg-zinc-800 text-zinc-300 hover:text-zinc-100 cursor-pointer">Cancel</button>
-    <button id="history-select-delete" type="button" class="px-3 py-1.5 rounded-full text-sm font-medium bg-red-600 text-white hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer" disabled>Delete</button>
+    <span id="history-select-count" class="text-sm font-medium text-zinc-300 whitespace-nowrap">{m.history_selected_count({ count: 0 })}</span>
+    <button id="history-select-cancel" type="button" class="px-3 py-1.5 rounded-full text-sm font-medium bg-zinc-800 text-zinc-300 hover:text-zinc-100 cursor-pointer">{m.common_cancel()}</button>
+    <button id="history-select-delete" type="button" class="px-3 py-1.5 rounded-full text-sm font-medium bg-red-600 text-white hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer" disabled>{m.common_delete()}</button>
   </div>
 </Base>
 
@@ -326,6 +328,8 @@ const baseUrl = historyUrl();
 </script>
 
 <script>
+  import { m } from '../paraglide/messages.js';
+
   // Multi-select delete. State lives here (not on the swapped-in results) so
   // it survives the live search replacing #history-results; sync() re-applies
   // it afterwards and drops selected ids that are no longer on screen, so
@@ -357,7 +361,7 @@ const baseUrl = historyUrl();
       btn?.classList.toggle('history-selected', all);
     });
 
-    if (countEl) countEl.textContent = `${selected.size} selected`;
+    if (countEl) countEl.textContent = m.history_selected_count({ count: selected.size });
     if (deleteBtn) deleteBtn.disabled = selected.size === 0;
   }
 
@@ -368,7 +372,7 @@ const baseUrl = historyUrl();
     bar?.classList.toggle('hidden', !on);
     bar?.classList.toggle('flex', on);
     if (toggleBtn) {
-      toggleBtn.textContent = on ? 'Done' : 'Select';
+      toggleBtn.textContent = on ? m.history_select_done() : m.history_select();
       // Swap (not add to) the idle classes, same as the type tabs: both sets
       // on at once leaves the winner up to stylesheet order.
       toggleBtn.classList.toggle('bg-zinc-100', on);
@@ -416,14 +420,14 @@ const baseUrl = historyUrl();
     const n = selected.size;
     if (n === 0) return;
     const ok = await (window as any).showConfirm(
-      `Delete ${n} ${n === 1 ? 'entry' : 'entries'}?`,
-      'This removes them from your watch history. This cannot be undone.',
+      m.history_delete_selected_title({ count: n }),
+      m.history_delete_selected_body(),
     );
     if (!ok) return;
 
     const token = (window as any).__AUTH_TOKEN__ ?? '';
     deleteBtn.disabled = true;
-    deleteBtn.textContent = 'Deleting...';
+    deleteBtn.textContent = m.common_deleting();
     try {
       const res = await fetch('/api/proxy/history/events/delete', {
         method: 'POST',
@@ -435,9 +439,9 @@ const baseUrl = historyUrl();
       // the pagination both shift when a batch disappears.
       window.location.reload();
     } catch {
-      deleteBtn.textContent = 'Failed - retry';
+      deleteBtn.textContent = m.history_delete_selected_failed();
       deleteBtn.disabled = false;
-      setTimeout(() => { deleteBtn.textContent = 'Delete'; }, 2000);
+      setTimeout(() => { deleteBtn.textContent = m.common_delete(); }, 2000);
     }
   });
 

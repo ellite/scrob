@@ -1,5 +1,6 @@
 ---
 import Base from "../../layouts/Base.astro";
+import { m } from "../../paraglide/messages.js";
 export const prerender = false;
 
 const { id } = Astro.params;
@@ -14,27 +15,26 @@ try {
     `http://localhost:${import.meta.env.BACKEND_PORT ?? "7331"}/profile/${id}`,
     token ? { headers: { Authorization: `Bearer ${token}` } } : {}
   );
-  if (res.status === 404) accessError = "User not found.";
-  else if (res.status === 403) accessError = "This profile is private.";
-  else if (!res.ok) accessError = "Failed to load profile.";
+  if (res.status === 404) accessError = m.profile_not_found();
+  else if (res.status === 403) accessError = m.profile_private();
+  else if (!res.ok) accessError = m.profile_load_failed();
 } catch {
-  accessError = "Failed to load profile.";
+  accessError = m.profile_load_failed();
 }
 
-const isOwnStats = currentUser && String(currentUser.id) === String(id);
 ---
 
-<Base title="Statistics">
+<Base title={m.nav_statistics()}>
   {accessError ? (
     <div class="max-w-md mx-auto mt-20 text-center">
       <div class="bg-zinc-900/50 border border-zinc-800 p-10 rounded-3xl">
         <div class="w-20 h-20 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-6">
           <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-zinc-500"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         </div>
-        <h2 class="text-2xl font-black text-zinc-100 mb-2">Access Restricted</h2>
+        <h2 class="text-2xl font-black text-zinc-100 mb-2">{m.profile_access_restricted()}</h2>
         <p class="text-zinc-400 font-medium mb-8">{accessError}</p>
         <a href="/" class="px-6 py-3 bg-sky-600 hover:bg-sky-500 text-white font-black rounded-xl transition-all inline-block">
-          Return Home
+          {m.common_return_home()}
         </a>
       </div>
     </div>
@@ -45,12 +45,12 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
       <div>
         <a href={`/profile/${id}`} class="text-xs font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition flex items-center gap-1.5 mb-3">
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-          Profile
+          {m.nav_profile()}
         </a>
-        <h1 class="page-title">Statistics</h1>
+        <h1 class="page-title">{m.nav_statistics()}</h1>
       </div>
 
-      <div id="stats-content" class="space-y-10">
+      <div id="stats-content" class="space-y-10" data-user-id={id}>
 
       <!-- Summary row skeleton -->
       <div id="summary-row" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -65,16 +65,16 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
       <!-- Watching Statistics -->
       <section>
         <div class="flex items-center justify-between gap-4 flex-wrap mb-6">
-          <h2 class="section-headline">Watching</h2>
+          <h2 class="section-headline">{m.stats_watching()}</h2>
           <div class="flex items-center gap-2">
             <select id="period-select" class="bg-zinc-800 border border-zinc-700 text-zinc-200 text-sm font-bold rounded-xl px-3 py-2 cursor-pointer hover:border-zinc-500 transition focus:outline-none appearance-none">
-              <option value="all">All time</option>
-              <option value="year">This year</option>
-              <option value="month">This month</option>
-              <option value="week">This week</option>
-              <option value="last365">Last 365 days</option>
-              <option value="last30">Last 30 days</option>
-              <option value="last7">Last 7 days</option>
+              <option value="all">{m.stats_period_all()}</option>
+              <option value="year">{m.stats_period_year()}</option>
+              <option value="month">{m.stats_period_month()}</option>
+              <option value="week">{m.stats_period_week()}</option>
+              <option value="last365">{m.stats_period_last365()}</option>
+              <option value="last30">{m.stats_period_last30()}</option>
+              <option value="last7">{m.stats_period_last7()}</option>
             </select>
             <div id="period-nav" style="display:none" class="items-center gap-1">
               <button id="prev-btn" class="w-8 h-8 flex items-center justify-center rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition disabled:opacity-30 disabled:cursor-not-allowed">
@@ -91,13 +91,13 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
           <!-- Watch activity chart -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
-            <h3 class="group-label mb-5">Activity Over Time</h3>
+            <h3 class="group-label mb-5">{m.stats_activity_over_time()}</h3>
             <div id="activity-chart" class="h-40 animate-pulse bg-zinc-800/50 rounded-xl"></div>
           </div>
 
           <!-- Most watched genres -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
-            <h3 class="group-label mb-5">Most Watched Genres</h3>
+            <h3 class="group-label mb-5">{m.stats_most_watched_genres()}</h3>
             <div id="genres-container" class="grid grid-cols-1 md:grid-cols-2 gap-8 animate-pulse">
               <div class="space-y-3">
                 <div class="h-3 w-20 bg-zinc-800 rounded"></div>
@@ -116,13 +116,13 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
           <!-- Watch time chart -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
-            <h3 class="group-label mb-5">Watch Time Over Time</h3>
+            <h3 class="group-label mb-5">{m.stats_watch_time_over_time()}</h3>
             <div id="watch-time-chart" class="h-40 animate-pulse bg-zinc-800/50 rounded-xl"></div>
           </div>
 
           <!-- Watch time breakdown -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
-            <h3 class="group-label mb-5">Watch Time</h3>
+            <h3 class="group-label mb-5">{m.stats_watch_time()}</h3>
             <div id="watch-time-breakdown" class="space-y-3 animate-pulse">
               <div class="h-10 bg-zinc-800/50 rounded-xl"></div>
               <div class="h-10 bg-zinc-800/50 rounded-xl"></div>
@@ -131,7 +131,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
           <!-- Avg ratings -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
-            <h3 class="group-label mb-5">Average Ratings</h3>
+            <h3 class="group-label mb-5">{m.stats_average_ratings()}</h3>
             <div id="avg-ratings" class="space-y-4 animate-pulse">
               <div class="h-10 bg-zinc-800/50 rounded-xl"></div>
               <div class="h-10 bg-zinc-800/50 rounded-xl"></div>
@@ -140,13 +140,13 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
           <!-- Rating distribution -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
-            <h3 class="group-label mb-5">Rating Distribution</h3>
+            <h3 class="group-label mb-5">{m.stats_rating_distribution()}</h3>
             <div id="rating-chart" class="h-36 animate-pulse bg-zinc-800/50 rounded-xl"></div>
           </div>
 
           <!-- Most active weekday -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
-            <h3 id="weekday-chart-title" class="group-label mb-5">Average Activity by Day of Week</h3>
+            <h3 id="weekday-chart-title" class="group-label mb-5">{m.stats_avg_by_weekday()}</h3>
             <div id="weekday-chart" class="h-36 animate-pulse bg-zinc-800/50 rounded-xl"></div>
           </div>
 
@@ -155,34 +155,34 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
       <!-- Most Watched: top titles, networks and people (#124) -->
       <section id="top-stats" style="display:none">
-        <h2 class="section-headline mb-6">Most Watched</h2>
+        <h2 class="section-headline mb-6">{m.stats_most_watched()}</h2>
         <div class="space-y-6">
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-shows-card">
-            <h3 class="group-label mb-5">Most Played Shows</h3>
+            <h3 class="group-label mb-5">{m.stats_most_played_shows()}</h3>
             <div id="top-shows" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-movies-card">
-            <h3 class="group-label mb-5">Most Played Movies</h3>
+            <h3 class="group-label mb-5">{m.stats_most_played_movies()}</h3>
             <div id="top-movies" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-networks-card">
-            <h3 class="group-label mb-5">Favourite Networks</h3>
+            <h3 class="group-label mb-5">{m.stats_favourite_networks()}</h3>
             <div id="top-networks" class="flex flex-wrap gap-3"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-actors-card">
-            <h3 class="group-label mb-5">Most Watched Actors</h3>
+            <h3 class="group-label mb-5">{m.stats_most_watched_actors()}</h3>
             <div id="top-actors" class="flex flex-wrap gap-2"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-directors-card">
-            <h3 class="group-label mb-5">Favourite Directors</h3>
+            <h3 class="group-label mb-5">{m.stats_favourite_directors()}</h3>
             <div id="top-directors" class="flex flex-wrap gap-2"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-writers-card">
-            <h3 class="group-label mb-5">Favourite Writers</h3>
+            <h3 class="group-label mb-5">{m.stats_favourite_writers()}</h3>
             <div id="top-writers" class="flex flex-wrap gap-2"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-studios-card">
-            <h3 class="group-label mb-5">Favourite Studios</h3>
+            <h3 class="group-label mb-5">{m.stats_favourite_studios()}</h3>
             <div id="top-studios" class="flex flex-wrap gap-2"></div>
           </div>
         </div>
@@ -190,11 +190,11 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
       <!-- Collection Statistics -->
       <section>
-        <h2 class="section-headline mb-6">Collection</h2>
+        <h2 class="section-headline mb-6">{m.stats_collection()}</h2>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
           <!-- Breakdown -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
-            <h3 class="group-label mb-5">Breakdown</h3>
+            <h3 class="group-label mb-5">{m.stats_breakdown()}</h3>
             <div id="collection-breakdown" class="space-y-3 animate-pulse">
               {[...Array(3)].map(() => (
                 <div class="h-8 bg-zinc-800/50 rounded-xl"></div>
@@ -203,7 +203,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
           </div>
           <!-- Pie charts -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
-            <h3 class="group-label mb-5">Watched vs Unwatched</h3>
+            <h3 class="group-label mb-5">{m.stats_watched_vs_unwatched()}</h3>
             <div class="grid grid-cols-3 gap-4 animate-pulse" id="collection-pies">
               {[...Array(3)].map(() => (
                 <div class="flex flex-col items-center gap-3">
@@ -221,17 +221,23 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
   )}
 </Base>
 
-<script define:vars={{ userId: id, token, isOwnStats }}>
+<script>
+  import { m } from '../../paraglide/messages.js';
+  import { formatDate, formatNumber } from '../../lib/format';
+  import { formatShortDuration } from '../../lib/media-format';
+
+  const token = (window as any).__AUTH_TOKEN__ ?? '';
+  const userId = document.getElementById('stats-content')?.dataset.userId;
   // ── State ──────────────────────────────────────────────────────────────────
   let currentPeriod = 'all';
   let currentOffset = 0;
 
   // ── Period computation ─────────────────────────────────────────────────────
   const _fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  const _short = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const _short = d => formatDate(d, { month: 'short', day: 'numeric' });
 
   function computeRange(period, offset) {
-    if (period === 'all') return { since: null, until: null, label: 'All time', canNav: false };
+    if (period === 'all') return { since: null, until: null, label: m.stats_period_all(), canNav: false };
     const today = new Date(); today.setHours(0, 0, 0, 0);
     let since, until, label;
     if (period === 'year') {
@@ -241,7 +247,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
     } else if (period === 'month') {
       const base = new Date(today.getFullYear(), today.getMonth() + offset, 1);
       since = base; until = new Date(base.getFullYear(), base.getMonth() + 1, 0);
-      label = base.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      label = formatDate(base, { month: 'long', year: 'numeric' });
     } else if (period === 'week') {
       const dow = today.getDay();
       const monday = new Date(today);
@@ -249,20 +255,20 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
       const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
       since = monday; until = sunday;
       label = monday.getMonth() === sunday.getMonth()
-        ? `${monday.toLocaleDateString('en-US',{month:'short'})} ${monday.getDate()}–${sunday.getDate()}`
+        ? `${formatDate(monday, { month: 'short' })} ${monday.getDate()}–${sunday.getDate()}`
         : `${_short(monday)} – ${_short(sunday)}`;
     } else if (period === 'last365') {
       until = new Date(today); until.setDate(today.getDate() + offset * 365);
       since = new Date(until); since.setDate(until.getDate() - 364);
-      label = offset === 0 ? 'Last 365 days' : `${_short(since)} – ${_short(until)}`;
+      label = offset === 0 ? m.stats_period_last365() : `${_short(since)} – ${_short(until)}`;
     } else if (period === 'last30') {
       until = new Date(today); until.setDate(today.getDate() + offset * 30);
       since = new Date(until); since.setDate(until.getDate() - 29);
-      label = offset === 0 ? 'Last 30 days' : `${_short(since)} – ${_short(until)}`;
+      label = offset === 0 ? m.stats_period_last30() : `${_short(since)} – ${_short(until)}`;
     } else if (period === 'last7') {
       until = new Date(today); until.setDate(today.getDate() + offset * 7);
       since = new Date(until); since.setDate(until.getDate() - 6);
-      label = offset === 0 ? 'Last 7 days' : `${_short(since)} – ${_short(until)}`;
+      label = offset === 0 ? m.stats_period_last7() : `${_short(since)} – ${_short(until)}`;
     }
     return { since: _fmt(since), until: _fmt(until), label, canNav: true };
   }
@@ -270,11 +276,15 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
   // ── Helpers ────────────────────────────────────────────────────────────────
   function formatMinutes(mins) {
     const h = Math.round(mins / 60);
-    return h >= 48 ? `${(mins / 60 / 24).toFixed(1)}d` : `${h}h`;
+    return h >= 48 ? m.stats_days_short({ value: formatNumber(Number((mins / 60 / 24).toFixed(1))) }) : m.stats_hours_short({ value: h });
   }
 
-  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const dayNames   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  // Short month/weekday names in the UI language (2023-01-01 was a Sunday).
+  const monthNames = Array.from({ length: 12 }, (_, i) => formatDate(new Date(2023, i, 1), { month: 'short' }));
+  const dayNames   = Array.from({ length: 7 }, (_, i) => formatDate(new Date(2023, 0, 1 + i), { weekday: 'short' }));
+  // The stats API labels weekdays with these English abbreviations.
+  const API_DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const dayLabel = (apiDay) => dayNames[API_DAY_NAMES.indexOf(apiDay)] ?? apiDay;
 
   function fillActivityGaps(activityData, since, until, isDaily) {
     if (!since || !until) return activityData;
@@ -303,8 +313,8 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
   function getActivityLabel(d, isDaily, totalBars) {
     if (!isDaily) return monthNames[parseInt(d.month.slice(5), 10) - 1];
-    const [y, m, day] = d.month.split('-').map(Number);
-    if (totalBars <= 7) return dayNames[new Date(y, m-1, day).getDay()];
+    const [y, mon, day] = d.month.split('-').map(Number);
+    if (totalBars <= 7) return dayNames[new Date(y, mon-1, day).getDay()];
     return [1, 5, 10, 15, 20, 25].includes(day) ? String(day) : '';
   }
 
@@ -326,10 +336,10 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
     const summaryRow = document.getElementById('summary-row');
     if (summaryRow) {
       summaryRow.innerHTML = [
-        { value: data.movies_watched.toLocaleString(),   label: 'Movies Watched' },
-        { value: data.shows_watched.toLocaleString(),    label: 'Shows Watched' },
-        { value: data.episodes_watched.toLocaleString(), label: 'Episodes Watched' },
-        { value: totalH >= 48 ? `${totalD}d` : `${totalH}h`, label: 'Watch Time' },
+        { value: formatNumber(data.movies_watched),   label: m.profile_movies_watched() },
+        { value: formatNumber(data.shows_watched),    label: m.profile_shows_watched() },
+        { value: formatNumber(data.episodes_watched), label: m.stats_episodes_watched() },
+        { value: totalH >= 48 ? m.stats_days_short({ value: formatNumber(Number(totalD)) }) : m.stats_hours_short({ value: totalH }), label: m.stats_watch_time() },
       ].map(({ value, label }) => `
         <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-5 text-center">
           <p class="text-3xl font-black text-zinc-100 tracking-tight">${value}</p>
@@ -366,10 +376,10 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
                   const moviePct = total > 0 ? (d.movies / total) * 100 : 50;
                   const parts = d.month.split('-').map(Number);
                   const barLabel = isDaily
-                    ? `${monthNames[parts[1]-1]}. ${parts[2]}, ${parts[0]}`
-                    : `${monthNames[parts[1]-1]}. ${parts[0]}`;
+                    ? m.stats_bar_label_day({ month: monthNames[parts[1]-1], day: parts[2], year: parts[0] })
+                    : m.stats_bar_label_month({ month: monthNames[parts[1]-1], year: parts[0] });
                   return `
-                    <div data-info="${barLabel}: ${d.movies} Movies, ${d.episodes} Episodes" style="flex:1;min-width:${barMinWidth}px;height:100%;display:flex;flex-direction:column;justify-content:flex-end">
+                    <div data-info="${m.stats_bar_info_counts({ label: barLabel, movies: d.movies, episodes: d.episodes })}" style="flex:1;min-width:${barMinWidth}px;height:100%;display:flex;flex-direction:column;justify-content:flex-end">
                       <div style="height:${total > 0 ? Math.max(pct, 2) : 0}%;width:100%;border-radius:3px 3px 0 0;overflow:hidden;display:flex;flex-direction:column">
                         <div style="flex:${moviePct};background:rgba(14,165,233,0.8)"></div>
                         <div style="flex:${100-moviePct};background:rgba(168,85,247,0.8)"></div>
@@ -387,8 +397,8 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
             </div>
           </div>
           <div style="display:flex;gap:16px;margin-top:10px;padding-top:8px;border-top:1px solid rgba(39,39,42,0.4)">
-            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(14,165,233,0.8);display:inline-block"></span>Movies</span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(168,85,247,0.8);display:inline-block"></span>Episodes</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(14,165,233,0.8);display:inline-block"></span>${m.stats_chart_movies()}</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(168,85,247,0.8);display:inline-block"></span>${m.stats_chart_episodes()}</span>
           </div>
         `;
         const infoText = document.getElementById('activity-info-text');
@@ -404,7 +414,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
           if (bar && infoText) infoText.textContent = bar.dataset.info;
         }, { passive: true });
       } else {
-        activityChart.innerHTML = '<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">No watch history for the selected period.</p>';
+        activityChart.innerHTML = `<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">${m.stats_no_history_period()}</p>`;
       }
     }
 
@@ -439,11 +449,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
       watchTimeChart.classList.remove('animate-pulse', 'bg-zinc-800/50', 'rounded-xl');
 
-      const fmtTime = (mins) => {
-        if (!mins) return '0m';
-        const h = Math.floor(mins / 60), m = mins % 60;
-        return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
-      };
+      const fmtTime = (mins) => formatShortDuration(mins || 0);
 
       if (wtData.length > 0 && wtData.some(d => d.movie_minutes + d.show_minutes > 0)) {
         const maxVal = Math.max(...wtData.map(d => d.movie_minutes + d.show_minutes), 1);
@@ -463,9 +469,9 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
                   const moviePct = total > 0 ? (d.movie_minutes / total) * 100 : 50;
                   const parts = d.month.split('-').map(Number);
                   const barLabel = isDaily
-                    ? `${monthNames[parts[1]-1]}. ${parts[2]}, ${parts[0]}`
-                    : `${monthNames[parts[1]-1]}. ${parts[0]}`;
-                  const tooltip = `${barLabel}: ${fmtTime(total)} total · ${fmtTime(d.movie_minutes)} movies · ${fmtTime(d.show_minutes)} shows`;
+                    ? m.stats_bar_label_day({ month: monthNames[parts[1]-1], day: parts[2], year: parts[0] })
+                    : m.stats_bar_label_month({ month: monthNames[parts[1]-1], year: parts[0] });
+                  const tooltip = m.stats_watch_time_tooltip({ label: barLabel, total: fmtTime(total), movies: fmtTime(d.movie_minutes), shows: fmtTime(d.show_minutes) });
                   return `
                     <div data-info="${tooltip}" style="flex:1;min-width:${barMinWidth}px;height:100%;display:flex;flex-direction:column;justify-content:flex-end">
                       <div style="height:${total > 0 ? Math.max(pct, 2) : 0}%;width:100%;border-radius:3px 3px 0 0;overflow:hidden;display:flex;flex-direction:column">
@@ -485,8 +491,8 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
             </div>
           </div>
           <div style="display:flex;gap:16px;margin-top:10px;padding-top:8px;border-top:1px solid rgba(39,39,42,0.4)">
-            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(14,165,233,0.8);display:inline-block"></span>Movies</span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(168,85,247,0.8);display:inline-block"></span>Shows</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(14,165,233,0.8);display:inline-block"></span>${m.stats_chart_movies()}</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(168,85,247,0.8);display:inline-block"></span>${m.common_shows()}</span>
           </div>
         `;
         const wtInfoText = document.getElementById('wt-info-text');
@@ -502,7 +508,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
           if (bar && wtInfoText) wtInfoText.textContent = bar.dataset.info;
         }, { passive: true });
       } else {
-        watchTimeChart.innerHTML = '<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">No watch time data for the selected period.</p>';
+        watchTimeChart.innerHTML = `<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">${m.stats_no_watch_time_period()}</p>`;
       }
     }
 
@@ -537,7 +543,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
         `;
       } else {
         ratingChart.classList.remove('animate-pulse', 'bg-zinc-800/50', 'rounded-xl');
-        ratingChart.innerHTML = '<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">No ratings for the selected period.</p>';
+        ratingChart.innerHTML = `<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">${m.stats_no_ratings_period()}</p>`;
       }
     }
 
@@ -560,14 +566,14 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
                     <span class="relative text-xs font-black" style="color:${textColor}">${g.count}</span>
                   </div>
                 `;
-              }).join('') : `<p class="text-xs text-zinc-600 italic">No data</p>`}
+              }).join('') : `<p class="text-xs text-zinc-600 italic">${m.stats_no_data()}</p>`}
             </div>
           </div>
         `;
       };
       genresContainer.innerHTML =
-        renderGenreList('Movies', data.top_movie_genres || [], 'rgba(14,165,233,0.1)', '#38bdf8') +
-        renderGenreList('Shows', data.top_show_genres || [], 'rgba(168,85,247,0.1)', '#c084fc');
+        renderGenreList(m.common_movies(), data.top_movie_genres || [], 'rgba(14,165,233,0.1)', '#38bdf8') +
+        renderGenreList(m.common_shows(), data.top_show_genres || [], 'rgba(168,85,247,0.1)', '#c084fc');
     }
 
     // Watch time breakdown
@@ -575,8 +581,8 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
     if (watchTimeBreakdown) {
       watchTimeBreakdown.classList.remove('animate-pulse');
       watchTimeBreakdown.innerHTML = [
-        { label: 'Movies', value: data.movie_watch_minutes, textColor: '#38bdf8' },
-        { label: 'Shows',  value: data.show_watch_minutes,  textColor: '#c084fc' },
+        { label: m.common_movies(), value: data.movie_watch_minutes, textColor: '#38bdf8' },
+        { label: m.common_shows(),  value: data.show_watch_minutes,  textColor: '#c084fc' },
       ].map(({ label, value, textColor }) => `
         <div class="flex items-center justify-between bg-zinc-800/40 rounded-xl px-4 py-3">
           <span class="text-sm font-bold text-zinc-300">${label}</span>
@@ -590,14 +596,14 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
     if (avgRatings) {
       avgRatings.classList.remove('animate-pulse');
       avgRatings.innerHTML = [
-        { label: 'Movies', value: data.avg_movie_rating, textColor: '#38bdf8' },
-        { label: 'Shows', value: data.avg_show_rating,   textColor: '#c084fc' },
+        { label: m.common_movies(), value: data.avg_movie_rating, textColor: '#38bdf8' },
+        { label: m.common_shows(), value: data.avg_show_rating,   textColor: '#c084fc' },
       ].map(({ label, value, textColor }) => `
         <div class="flex items-center justify-between bg-zinc-800/40 rounded-xl px-4 py-3">
           <span class="text-sm font-bold text-zinc-300">${label}</span>
           ${value != null
             ? `<span class="flex items-center gap-1.5 font-black text-lg" style="color:${textColor}"><span class="text-sm text-yellow-400">★</span>${value.toFixed(1)}</span>`
-            : `<span class="text-zinc-600 text-sm font-medium">No ratings</span>`
+            : `<span class="text-zinc-600 text-sm font-medium">${m.stats_no_ratings()}</span>`
           }
         </div>
       `).join('');
@@ -621,8 +627,8 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
           return `
             <div style="flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px">
               <span style="font-size:10px;font-weight:700;color:${isPeak ? 'rgba(14,165,233,0.9)' : '#52525b'}">${d.avg > 0 ? d.avg.toFixed(1) : ''}</span>
-              <div style="height:${Math.max(pct, 3)}%;width:100%;background:${color};border-radius:4px 4px 0 0" title="${d.day}: avg ${d.avg} items/week"></div>
-              <span style="font-size:11px;font-weight:800;color:${isPeak ? '#e4e4e7' : '#71717a'};text-transform:uppercase;letter-spacing:.05em">${d.day}</span>
+              <div style="height:${Math.max(pct, 3)}%;width:100%;background:${color};border-radius:4px 4px 0 0" title="${m.stats_weekday_tooltip({ day: dayLabel(d.day), avg: formatNumber(d.avg) })}"></div>
+              <span style="font-size:11px;font-weight:800;color:${isPeak ? '#e4e4e7' : '#71717a'};text-transform:uppercase;letter-spacing:.05em">${dayLabel(d.day)}</span>
             </div>
           `;
         }).join('');
@@ -630,7 +636,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
         weekdayChart.style.display = '';
         weekdayChart.style.gap = '';
         weekdayChart.style.alignItems = '';
-        weekdayChart.innerHTML = '<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">No watch history for the selected period.</p>';
+        weekdayChart.innerHTML = `<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">${m.stats_no_history_period()}</p>`;
       }
     }
 
@@ -639,9 +645,9 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
     if (collectionBreakdown) {
       collectionBreakdown.classList.remove('animate-pulse');
       collectionBreakdown.innerHTML = [
-        { label: 'Movies Collected',   value: data.movies_collected.toLocaleString(),   textColor: '#38bdf8' },
-        { label: 'Shows Collected',    value: data.shows_collected.toLocaleString(),    textColor: '#c084fc' },
-        { label: 'Episodes Collected', value: data.episodes_collected.toLocaleString(), textColor: '#818cf8' },
+        { label: m.stats_movies_collected(),   value: formatNumber(data.movies_collected),   textColor: '#38bdf8' },
+        { label: m.stats_shows_collected(),    value: formatNumber(data.shows_collected),    textColor: '#c084fc' },
+        { label: m.stats_episodes_collected(), value: formatNumber(data.episodes_collected), textColor: '#818cf8' },
       ].map(({ label, value, textColor }) => `
         <div class="flex items-center justify-between bg-zinc-800/40 rounded-xl px-4 py-3">
           <span class="text-sm font-bold text-zinc-300">${label}</span>
@@ -669,12 +675,12 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
               <div class="flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-sm shrink-0" style="background:${colorA}"></span>
                 <span class="text-[11px] font-bold text-zinc-500 flex-1">${labelA}</span>
-                <span class="text-[11px] font-black text-zinc-800 dark:text-zinc-100">${countA.toLocaleString()}</span>
+                <span class="text-[11px] font-black text-zinc-800 dark:text-zinc-100">${formatNumber(countA)}</span>
               </div>
               <div class="flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-sm shrink-0" style="background:${colorB}"></span>
                 <span class="text-[11px] font-bold text-zinc-500 flex-1">${labelB}</span>
-                <span class="text-[11px] font-black text-zinc-800 dark:text-zinc-100">${countB.toLocaleString()}</span>
+                <span class="text-[11px] font-black text-zinc-800 dark:text-zinc-100">${formatNumber(countB)}</span>
               </div>
             </div>
           </div>
@@ -688,9 +694,9 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
       pieContainer.classList.remove('animate-pulse');
       pieContainer.innerHTML =
-        donut(moviesPct, 'rgba(14,165,233,0.85)', 'rgba(168,85,247,0.7)', 'Movies vs Shows', 'Movies',  'Shows',     data.movies_collected,         data.shows_collected) +
-        donut(mwPct,     'rgba(34,197,94,0.85)',  'rgba(63,63,70,0.6)',   'Movies Watched',  'Watched', 'Unwatched', data.movies_watched_collected, data.movies_unwatched_collected) +
-        donut(swPct,     'rgba(34,197,94,0.85)',  'rgba(63,63,70,0.6)',   'Shows Watched',   'Watched', 'Unwatched', data.shows_watched_collected,  data.shows_unwatched_collected);
+        donut(moviesPct, 'rgba(14,165,233,0.85)', 'rgba(168,85,247,0.7)', m.stats_movies_vs_shows(), m.common_movies(), m.common_shows(), data.movies_collected,         data.shows_collected) +
+        donut(mwPct,     'rgba(34,197,94,0.85)',  'rgba(63,63,70,0.6)',   m.stats_movies_watched(),  m.stats_watched(), m.stats_unwatched(), data.movies_watched_collected, data.movies_unwatched_collected) +
+        donut(swPct,     'rgba(34,197,94,0.85)',  'rgba(63,63,70,0.6)',   m.stats_shows_watched(),   m.stats_watched(), m.stats_unwatched(), data.shows_watched_collected,  data.shows_unwatched_collected);
     }
     renderTopStats(data);
   } // end renderStats
@@ -700,7 +706,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
     const section = document.getElementById('top-stats');
     if (!section) return;
     const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    const fmtH = (min) => { const h = Math.floor(min / 60); const m = min % 60; return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`; };
+    const fmtH = (min) => formatShortDuration(min);
     const card = (id, has) => { const el = document.getElementById(id + '-card'); if (el) el.style.display = has ? '' : 'none'; return has; };
 
     const posters = (items) => (items || []).filter(it => it.title).map(it => `
@@ -709,13 +715,13 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
           ${it.poster_path ? `<img src="${esc(it.poster_path)}" alt="${esc(it.title)}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform">` : ''}
         </div>
         <div class="text-xs text-zinc-300 font-semibold mt-1.5 truncate">${esc(it.title)}</div>
-        <div class="text-[11px] text-zinc-500">${it.plays} play${it.plays === 1 ? '' : 's'} · ${fmtH(it.minutes || 0)}</div>
+        <div class="text-[11px] text-zinc-500">${m.stats_plays({ count: it.plays })} · ${fmtH(it.minutes || 0)}</div>
       </a>`).join('');
     document.getElementById('top-shows').innerHTML = posters(data.top_shows);
     document.getElementById('top-movies').innerHTML = posters(data.top_movies);
 
     document.getElementById('top-networks').innerHTML = (data.top_networks || []).map(n => `
-      <div class="flex items-center gap-2 bg-white/90 rounded-lg px-3 py-2" title="${esc(n.name)} · ${n.plays} plays">
+      <div class="flex items-center gap-2 bg-white/90 rounded-lg px-3 py-2" title="${esc(n.name)} · ${esc(m.stats_plays({ count: n.plays }))}">
         ${n.logo_path ? `<img src="https://image.tmdb.org/t/p/w92${esc(n.logo_path)}" alt="${esc(n.name)}" class="h-5 object-contain">` : `<span class="text-sm font-bold text-zinc-800">${esc(n.name)}</span>`}
         <span class="text-xs font-semibold text-zinc-500">${n.plays}</span>
       </div>`).join('');
@@ -724,7 +730,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
       const tag = linked ? 'a' : 'span';
       const href = linked ? ` href="/person/${p.id}"` : '';
       return `
-      <${tag}${href} class="inline-flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5${linked ? ' hover:border-blue-500/50 hover:bg-zinc-800/60 transition-colors' : ''}" title="${esc(p.name)} · ${p.titles} title${p.titles === 1 ? '' : 's'} · ${p.plays} play${p.plays === 1 ? '' : 's'}">
+      <${tag}${href} class="inline-flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5${linked ? ' hover:border-blue-500/50 hover:bg-zinc-800/60 transition-colors' : ''}" title="${esc(p.name)} · ${esc(m.stats_titles({ count: p.titles }))} · ${esc(m.stats_plays({ count: p.plays }))}">
         <span class="text-sm font-semibold text-zinc-200">${esc(p.name)}</span>
         <span class="text-[11px] font-semibold text-blue-400 bg-blue-500/10 rounded-full px-1.5 py-0.5">${p.titles}</span>
       </${tag}>`;
@@ -776,7 +782,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
     if (nextBtn) nextBtn.disabled = currentOffset >= 0;
     if (weekdayTitle) {
       const isWeekly = currentPeriod === 'week' || currentPeriod === 'last7';
-      weekdayTitle.textContent = isWeekly ? 'Activity by Day of Week' : 'Average Activity by Day of Week';
+      weekdayTitle.textContent = isWeekly ? m.stats_by_weekday() : m.stats_avg_by_weekday();
     }
     loadStats(since, until);
   }

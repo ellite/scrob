@@ -4,6 +4,8 @@ import FilterPanel from "../../components/FilterPanel.astro";
 import SortButton from "../../components/SortButton.astro";
 import StudioBrowse from "../../components/StudioBrowse.astro";
 import { api, type MediaItem, type StudioHeader } from "../../lib/api";
+import { genreLabel, sortByLabel } from "../../lib/labels";
+import { m } from "../../paraglide/messages.js";
 export const prerender = false;
 
 const companyId = Number(Astro.params.id);
@@ -78,7 +80,7 @@ inList.forEach((v) => baseParams.append("in_list", v));
 const basePath = `/studio/${companyId}`;
 const baseUrl = `${basePath}?${baseParams.toString()}`;
 
-const title = header?.name ? `${header.name} — Studio` : "Studio";
+const title = header?.name ? m.studio_page_title({ name: header.name }) : m.studio_kind({ kind: "studio" });
 const tabClass = (active: boolean) =>
   `px-4 py-1.5 rounded-lg text-sm font-medium transition-colors active:scale-95 ${active ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-100"}`;
 ---
@@ -86,8 +88,8 @@ const tabClass = (active: boolean) =>
 <Base title={title}>
   <StudioBrowse
     header={header}
-    kindLabel="Studio"
-    fallbackName="Unknown studio"
+    kind="studio"
+    fallbackName={m.studio_unknown()}
     data={data}
     baseUrl={baseUrl}
     hasTmdbKey={hasTmdbKey}
@@ -95,21 +97,21 @@ const tabClass = (active: boolean) =>
     {hasTmdbKey && (
       <div slot="toolbar" class="flex flex-wrap items-center gap-3">
         <div class="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1">
-          <a href={`${basePath}?type=movie`} class={tabClass(type === "movie")}>Movies</a>
-          <a href={`${basePath}?type=series`} class={tabClass(type === "series")}>Shows</a>
+          <a href={`${basePath}?type=movie`} class={tabClass(type === "movie")}>{m.common_movies()}</a>
+          <a href={`${basePath}?type=series`} class={tabClass(type === "series")}>{m.common_shows()}</a>
         </div>
         <SortButton
           id="studio-category"
           current={category}
           paramKey="category"
-          label="Category"
+          label={m.explore_category()}
           iconPaths={[
             "M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.169.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z",
             "M6 6h.008v.008H6V6Z",
           ]}
           options={[
-            { value: "popular", label: "Popular" },
-            { value: "top_rated", label: "Top Rated" },
+            { value: "popular", label: m.explore_category_popular() },
+            { value: "top_rated", label: m.explore_category_top_rated() },
           ]}
         />
         <FilterPanel
@@ -117,13 +119,13 @@ const tabClass = (active: boolean) =>
           basePath={basePath}
           extraParams={{ type, category }}
           sections={[
-            { key: "genre", label: "Genre", options: genres.map((g) => ({ value: g, label: g })), selected: genre },
-            { key: "year", label: "Year", options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },
-            { key: "min_rating", label: "Rating", options: [9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: `${r}+ Stars` })), selected: minRating ? [String(minRating)] : [], multi: false },
+            { key: "genre", label: m.filter_genre(), options: sortByLabel(genres.map((g) => ({ value: g, label: genreLabel(g) }))), selected: genre },
+            { key: "year", label: m.filter_year(), options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },
+            { key: "min_rating", label: m.filter_rating(), options: [9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: m.filter_rating_min_stars({ rating: r }) })), selected: minRating ? [String(minRating)] : [], multi: false },
             ...(user ? [
-              { key: "collection", label: "Collection", options: [{ value: "in", label: "In My Collection" }, { value: "out", label: "Not In My Collection" }], selected: collection },
-              { key: "watch", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }, { value: "started", label: "In Progress" }], selected: watch },
-              { key: "in_list", label: "Lists", options: [{ value: "in", label: "In a List" }, { value: "out", label: "Not In a List" }], selected: inList },
+              { key: "collection", label: m.filter_collection(), options: [{ value: "in", label: m.filter_in_my_collection() }, { value: "out", label: m.filter_not_in_my_collection() }], selected: collection },
+              { key: "watch", label: m.filter_watched(), options: [{ value: "watched", label: m.filter_watched_option() }, { value: "unwatched", label: m.filter_unwatched_option() }, { value: "started", label: m.filter_in_progress_option() }], selected: watch },
+              { key: "in_list", label: m.filter_lists(), options: [{ value: "in", label: m.filter_in_a_list() }, { value: "out", label: m.filter_not_in_a_list() }], selected: inList },
             ] : []),
           ]}
         />

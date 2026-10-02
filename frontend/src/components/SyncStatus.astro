@@ -1,15 +1,17 @@
 ---
+import { m } from "../paraglide/messages.js";
+
 const { token } = Astro.locals;
 ---
 
 <div id="sync-status-container" class="space-y-4 mb-8 hidden" data-token={token}>
   <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
-    <h2 class="text-xl font-semibold text-zinc-100">Active Sync</h2>
+    <h2 class="text-xl font-semibold text-zinc-100">{m.sync_active_title()}</h2>
     <button 
       id="abort-sync-btn"
       class="text-xs font-bold uppercase tracking-widest text-red-500 hover:text-red-400 transition-colors border border-red-500/30 px-2 py-1 rounded-md bg-red-500/5 cursor-pointer"
     >
-      Abort All
+      {m.sync_abort_all()}
     </button>
   </div>
   <div id="active-jobs" class="grid gap-4">
@@ -18,6 +20,8 @@ const { token } = Astro.locals;
 </div>
 
 <script>
+  import { m } from '../paraglide/messages.js';
+
   function setupSyncStatus() {
     const container = document.getElementById('sync-status-container') as HTMLElement | null;
     if (!container) return;
@@ -29,10 +33,10 @@ const { token } = Astro.locals;
 
     if (abortBtn) {
       abortBtn.addEventListener('click', async () => {
-        if (!confirm('Are you sure you want to abort all active sync jobs?')) return;
+        if (!confirm(m.sync_abort_confirm())) return;
         
         abortBtn.disabled = true;
-        abortBtn.textContent = 'ABORTING...';
+        abortBtn.textContent = m.sync_aborting();
         
         try {
           const res = await fetch(`${apiUrl}/sync/abort`, {
@@ -46,7 +50,7 @@ const { token } = Astro.locals;
           console.error('Failed to abort sync', e);
         } finally {
           abortBtn.disabled = false;
-          abortBtn.textContent = 'ABORT ALL';
+          abortBtn.textContent = m.sync_abort_all_upper();
         }
       });
     }
@@ -75,7 +79,7 @@ const { token } = Astro.locals;
                 : 0;
               
               const isFailed = job.status === 'failed';
-              const statusText = isFailed ? 'Failed' : job.status;
+              const statusText = m.sync_job_status({ status: job.status });
               const statusColor = isFailed ? 'text-red-500' : 'text-zinc-500';
               
               return `
@@ -83,14 +87,14 @@ const { token } = Astro.locals;
                   <div class="flex justify-between items-center mb-2">
                     <div class="flex items-center gap-2">
                       <span class="w-2 h-2 ${job.source === 'plex' ? 'bg-plex' : job.source === 'trakt' ? 'bg-red-500' : 'bg-jellyfin'} rounded-full"></span>
-                      <span class="font-medium text-zinc-100 capitalize">${esc(job.source)} Sync</span>
+                      <span class="font-medium text-zinc-100 capitalize">${esc(m.sync_job_title({ source: job.source }))}</span>
                     </div>
                     <span class="text-xs ${statusColor} capitalize font-medium">${esc(statusText)}</span>
                   </div>
                   
                   ${isFailed ? `
                     <div class="text-xs text-red-400 bg-red-400/5 border border-red-400/10 rounded p-2 mb-1">
-                      ${esc(job.error_message || 'Unknown error')}
+                      ${esc(job.error_message || m.common_unknown_error())}
                     </div>
                   ` : `
                     <div class="w-full bg-zinc-800 rounded-full h-1.5 mb-2 overflow-hidden">
@@ -98,7 +102,7 @@ const { token } = Astro.locals;
                     </div>
                     
                     <div class="flex justify-between text-xs text-zinc-500 uppercase tracking-wider font-bold">
-                      <span>${job.current_step ? esc(job.current_step) : `${esc(String(job.processed_items))} / ${esc(String(job.total_items || '?'))} items`}</span>
+                      <span>${job.current_step ? esc(job.current_step) : esc(m.sync_job_items_progress({ processed: job.processed_items, total: job.total_items || '?' }))}</span>
                       <span>${esc(String(percent))}%</span>
                     </div>
                   `}

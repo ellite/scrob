@@ -521,6 +521,8 @@ export interface UserSettings {
   preferences: UserPreferences | null;
   blur_explicit: boolean;
   time_format_24h: boolean;
+  // Web UI language ("en", "fr"); null = follow the browser.
+  ui_language: string | null;
   use_hls_player: boolean;
   shuffle_next_up: boolean;
   minimalist_next_up: boolean;

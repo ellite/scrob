@@ -73,9 +73,11 @@ const {
   ratingPosterPath,
 } = Astro.props;
 
+import { m } from "../paraglide/messages.js";
+
 const isSeries = mediaType === "series";
 const showRequest = !hideRequest && requestEnabled && (mediaType === "movie" || mediaType === "series");
-const ratingLabel = userRating != null ? userRating.toFixed(1) : "Rate";
+const ratingLabel = userRating != null ? userRating.toFixed(1) : m.rating_rate();
 
 // Rating-popover header subtitle: callers pass the episode/season name in
 // ratingSubtitle; for an episode we prefix the SxxExx from the numbers we
@@ -118,10 +120,10 @@ const rewatchActive = !!rewatch;
 const rewatchCls = rewatchActive
   ? "bg-indigo-500/50 text-indigo-300 hover:bg-indigo-400/50"
   : "bg-zinc-800 text-zinc-500 hover:bg-indigo-400/50 hover:text-indigo-400";
-const rewatchLabel = rewatchActive ? `${rewatch!.watched}/${rewatch!.total}` : "Rewatch";
+const rewatchLabel = rewatchActive ? `${rewatch!.watched}/${rewatch!.total}` : m.rewatch_label();
 const rewatchTitle = rewatchActive
-  ? `Rewatching - ${rewatch!.watched}/${rewatch!.total} watched this cycle. Click for options.`
-  : "Start a rewatch";
+  ? m.rewatch_active_title({ watched: rewatch!.watched, total: rewatch!.total })
+  : m.rewatch_start();
 
 const needsCheck  = !requestStatus && !isMonitored;
 const requestBlocked = isMonitored || !!requestStatus;
@@ -129,19 +131,19 @@ const requestCls  = requestBlocked
   ? "bg-orange-500/50 text-orange-300 hover:bg-orange-400/50"
   : "bg-zinc-800 text-zinc-500 hover:bg-orange-300/60 hover:text-orange-400";
 const requestTitle = isMonitored
-  ? (isSeries ? "Already in Sonarr" : "Already in Radarr")
+  ? (isSeries ? m.request_already_in_sonarr() : m.request_already_in_radarr())
   : requestStatus === "pending"
-    ? "Awaiting admin approval"
+    ? m.request_awaiting_approval()
     : requestStatus === "rejected"
-      ? "Request rejected"
-      : (isSeries ? "Request on Sonarr" : "Request on Radarr");
+      ? m.request_rejected()
+      : (isSeries ? m.request_on_sonarr() : m.request_on_radarr());
 
 const dropCls = dropped
   ? "bg-rose-500/50 text-rose-300 hover:bg-rose-400/50"
   : "bg-zinc-800 text-zinc-500 hover:bg-rose-400/50 hover:text-rose-400";
 const dropTitle = dropped
-  ? "Dropped - click for options"
-  : "Click for hide/drop options";
+  ? m.drop_dropped_title()
+  : m.drop_options_title();
 ---
 
 <div
@@ -172,14 +174,14 @@ const dropTitle = dropped
         data-watched={String(watched)}
         data-watch-pct={String(watchPct)}
         data-state={watchActive ? "active" : "inactive"}
-        title={isSeries ? `${watchPct}% watched` : (watched ? "Mark as unwatched" : "Mark as watched")}
+        title={isSeries ? m.watch_pct_watched({ pct: watchPct }) : (watched ? m.watch_mark_unwatched() : m.watch_mark_watched())}
         class={`${btn} ${btnW} border-r border-zinc-800/60 ${watchedCls}`}
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
           <circle cx="12" cy="12" r="3" fill={watchActive ? "currentColor" : "none"}/>
         </svg>
-        <span class={label}>{isSeries ? `${watchPct}%` : "Watched"}</span>
+        <span class={label}>{isSeries ? `${watchPct}%` : m.card_watched()}</span>
         {isSeries && <span class="md:hidden text-[9px] font-bold leading-none">{watchPct}%</span>}
       </button>
     )}
@@ -210,7 +212,7 @@ const dropTitle = dropped
         data-action="list"
         data-in-lists={JSON.stringify(inLists)}
         data-state={inLists.length > 0 ? "active" : "inactive"}
-        title="Add to list"
+        title={m.list_popover_title()}
         class={`${btn} ${btnW} ${!listOnly ? "border-r border-zinc-800/60" : ""} ${listsCls}`}
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -221,7 +223,7 @@ const dropTitle = dropped
           <line x1="3" y1="12" x2="3.01" y2="12"/>
           <line x1="3" y1="18" x2="3.01" y2="18"/>
         </svg>
-        <span class={label}>Lists</span>
+        <span class={label}>{m.card_lists()}</span>
       </button>
     )}
 
@@ -231,7 +233,7 @@ const dropTitle = dropped
         data-action="rate"
         data-user-rating={userRating != null ? String(userRating) : ""}
         data-state={userRating != null ? "active" : "inactive"}
-        title={userRating != null ? `Your rating: ${ratingLabel}/10` : "Rate this"}
+        title={userRating != null ? m.rating_your_rating_value({ rating: ratingLabel }) : m.rating_rate_this()}
         class={`${btn} ${btnW} border-r border-zinc-800/60 ${rateCls}`}
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill={userRating != null ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -249,7 +251,7 @@ const dropTitle = dropped
         data-in-library={String(inLibrary)}
         data-collection-pct={String(collectionPct)}
         data-state={inLibrary ? "active" : "inactive"}
-        title={isSeries ? `${collectionPct}% in library` : (inLibrary ? "In collection" : "Add to collection")}
+        title={isSeries ? m.collection_pct_in_library({ pct: collectionPct }) : (inLibrary ? m.collection_in_collection() : m.collection_add())}
         class={`${btn} ${btnW} relative overflow-hidden ${collectedCls} ${showRequest ? "border-r border-zinc-800/60" : ""}`}
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -258,7 +260,7 @@ const dropTitle = dropped
           <path d="M15 22v-4a3 3 0 0 0-6 0v4"/>
           <path d="M2 7h20"/>
         </svg>
-        <span class={label}>{isSeries ? `${collectionPct}%` : "Collected"}</span>
+        <span class={label}>{isSeries ? `${collectionPct}%` : m.card_collected()}</span>
         {isSeries && <span class="md:hidden text-[9px] font-bold leading-none">{collectionPct}%</span>}
       </button>
     )}
@@ -296,7 +298,7 @@ const dropTitle = dropped
           <circle cx="12" cy="12" r="10"/>
           <line x1="8" y1="12" x2="16" y2="12"/>
         </svg>
-        <span class={label}>{dropped ? "Dropped" : "Drop"}</span>
+        <span class={label}>{dropped ? m.drop_dropped() : m.drop_drop()}</span>
       </button>
     )}
   </div>

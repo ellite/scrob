@@ -1,5 +1,7 @@
 ---
 import Base from "../../layouts/Base.astro";
+import { languageName, showStatusLabel } from "../../lib/labels";
+import { m } from "../../paraglide/messages.js";
 import MediaRow from "../../components/MediaRow.astro";
 import ActionBar from "../../components/ActionBar.astro";
 import TrailerButton from "../../components/TrailerButton.astro";
@@ -63,23 +65,22 @@ const hasHeatmapRatings = heatmapSeasons.some((s) => s.episodes.some((e) => e.ra
 
 const year = show?.first_air_date?.slice(0, 4) ?? null;
 const rating = show?.tmdb_rating ? show.tmdb_rating.toFixed(1) : null;
-const langNames = new Intl.DisplayNames(["en"], { type: "language" });
 const originalLanguage = show?.original_language
-  ? langNames.of(show.original_language) ?? show.original_language
+  ? languageName(show.original_language)
   : null;
 const posterPath = show
   ? ratingPosterUrl(show.poster_path, { type: "series", tmdb_id: show.tmdb_id, tvdb_id: show.tvdb_id, imdb_id: show.imdb_id }, Astro.locals.hasRpdbKey)
   : null;
 ---
 
-<Base title={show?.title || "Show Details"}>
+<Base title={show?.title || m.show_details_title()}>
   {error && !show && (
     <div class="max-w-md mx-auto mt-20 text-center">
         <div class="bg-red-500/10 border border-red-500/20 text-red-500 p-6 rounded-2xl mb-6">
-            <p class="font-bold text-lg mb-2">Oops!</p>
+            <p class="font-bold text-lg mb-2">{m.common_oops()}</p>
             <p class="text-sm opacity-80">{error}</p>
         </div>
-        <a href="/" class="text-blue-500 hover:underline">Return to Dashboard</a>
+        <a href="/" class="text-blue-500 hover:underline">{m.common_return_to_dashboard()}</a>
     </div>
   )}
 
@@ -101,7 +102,7 @@ const posterPath = show
 
       <div class="relative z-20">
         <nav class="flex items-center gap-2 text-sm text-zinc-400 mb-8 overflow-hidden whitespace-nowrap">
-          <a href="/shows" class="hover:text-zinc-100 transition shrink-0">Shows</a>
+          <a href="/shows" class="hover:text-zinc-100 transition shrink-0">{m.common_shows()}</a>
           <span class="text-zinc-700">/</span>
           <span class="text-zinc-100 font-bold truncate">{show.title}</span>
         </nav>
@@ -111,7 +112,7 @@ const posterPath = show
           <div class="w-64 shrink-0 mx-auto md:mx-0">
             <div class="aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 bg-zinc-900 ring-1 ring-white/10 relative" data-adult={show.adult ? "true" : undefined}>
               {posterPath ? (
-                <button id="poster-zoom-btn" class="w-full h-full group/poster block cursor-zoom-in" aria-label={`Enlarge poster for ${show.title}`}>
+                <button id="poster-zoom-btn" class="w-full h-full group/poster block cursor-zoom-in" aria-label={m.common_enlarge_poster({ title: show.title })}>
                   <img
                     src={posterPath}
                     alt={show.title}
@@ -128,7 +129,7 @@ const posterPath = show
               ) : (
                 <div class="w-full h-full flex flex-col items-center justify-center text-zinc-400 p-4 text-center">
                   <svg xmlns="http://www.w3.org/2000/svg" width="30%" height="30%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-2"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
-                  <span class="text-sm font-medium">No Poster Available</span>
+                  <span class="text-sm font-medium">{m.common_no_poster_available()}</span>
                 </div>
               )}
             </div>
@@ -150,7 +151,7 @@ const posterPath = show
                     <span class="text-lg leading-none">★</span> {rating}
                   </span>
                 )}
-                <span class="font-medium text-zinc-400">{seasonCount} Season{seasonCount !== 1 ? "s" : ""}</span>
+                <span class="font-medium text-zinc-400">{m.show_season_count({ count: seasonCount })}</span>
                 {show.age_rating && (
                   <span class="px-2 py-0.5 border border-zinc-600 rounded text-[10px] font-black text-zinc-400 tracking-widest">
                     {show.age_rating}
@@ -163,7 +164,7 @@ const posterPath = show
                 )}
                 {show.status && (
                   <span class="capitalize px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-black text-zinc-400 tracking-widest">
-                    {show.status}
+                    {showStatusLabel(show.status)}
                   </span>
                 )}
                 {originalLanguage && (
@@ -192,7 +193,7 @@ const posterPath = show
                     {nets.map(n => {
                       const inner = <div class="logo-swatch backdrop-blur-sm p-3 rounded-xl border border-gray-200/60 flex items-center"><img src={n.logo_path!} alt={n.name} title={n.name} class="h-5 max-w-[80px] object-contain" loading="lazy" /></div>;
                       return n.id != null
-                        ? <a href={`/network/${n.id}`} title={`More from ${n.name}`} class="transition hover:brightness-110">{inner}</a>
+                        ? <a href={`/network/${n.id}`} title={m.media_more_from_studio({ name: n.name })} class="transition hover:brightness-110">{inner}</a>
                         : inner;
                     })}
                   </div>
@@ -241,6 +242,7 @@ const posterPath = show
               {user && show.id && (
                 <button
                   id="refresh-metadata-btn"
+                  data-show-id={id}
                   class="flex items-center gap-2 px-4 py-2 text-sm font-bold leading-none text-zinc-300 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors cursor-pointer"
                 >
                   <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -249,7 +251,7 @@ const posterPath = show
                     <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
                     <path d="M8 16H3v5"/>
                   </svg>
-                  <span id="refresh-label">Refresh Metadata</span>
+                  <span id="refresh-label">{m.media_refresh_metadata()}</span>
                 </button>
               )}
               <TrailerButton tmdbId={show.tmdb_id ?? Number(id)} mediaType="series" title={show.title} year={year} />
@@ -258,7 +260,7 @@ const posterPath = show
             <div class="mb-12">
               <h2 class="text-xl font-black text-zinc-100 mb-4 flex items-center gap-2 uppercase tracking-tight">
                 <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
-                Overview
+                {m.common_overview()}
               </h2>
               <p class="text-zinc-300 leading-relaxed text-lg max-w-4xl font-medium opacity-90">
                 {show.overview}
@@ -278,7 +280,7 @@ const posterPath = show
             <!-- Where to Watch -->
             {show.where_to_watch && show.where_to_watch.length > 0 && (
               <div class="mb-8">
-                <h2 class="text-sm font-black text-zinc-500 mb-3 uppercase tracking-widest">Where to Watch</h2>
+                <h2 class="text-sm font-black text-zinc-500 mb-3 uppercase tracking-widest">{m.media_where_to_watch()}</h2>
                 <div class="flex flex-wrap gap-2">
                   {show.where_to_watch.map(s => (
                     <div class="flex items-center gap-2 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg">
@@ -301,7 +303,7 @@ const posterPath = show
         {hasHeatmapRatings && (
           <div class="mt-24">
             <div class="flex items-center justify-between mb-10 border-b border-zinc-900 pb-6">
-              <h2 class="section-headline">Episode Ratings</h2>
+              <h2 class="section-headline">{m.show_episode_ratings()}</h2>
             </div>
             <RatingHeatmap seasons={heatmapSeasons} />
           </div>
@@ -310,11 +312,11 @@ const posterPath = show
         <!-- Seasons -->
         <div class="mt-24">
           <div class="flex items-center justify-between mb-10 border-b border-zinc-900 pb-6">
-            <h2 class="section-headline">Seasons</h2>
+            <h2 class="section-headline">{m.show_seasons()}</h2>
           </div>
           
           <div class="grid grid-cols-[repeat(auto-fit,minmax(380px,1fr))] gap-8">
-            {(show.seasons_meta || seasons.map(([k]) => ({ season_number: Number(k.replace("season_","")), name: `Season ${k.replace("season_","")}`, overview: null, poster_path: null, episode_count: 0, air_date: null }))).map((s) => {
+            {(show.seasons_meta || seasons.map(([k]) => ({ season_number: Number(k.replace("season_","")), name: m.media_season_number({ number: k.replace("season_","") }), overview: null, poster_path: null, episode_count: 0, air_date: null }))).map((s) => {
                 const seasonNum = s.season_number;
                 const episodes = show.seasons?.[`season_${seasonNum}`] || [];
                 const poster = s.poster_path || show.poster_path;
@@ -330,14 +332,14 @@ const posterPath = show
                                 ) : (
                                     <div class="w-full h-full bg-zinc-900 flex flex-col items-center justify-center text-zinc-500 gap-1">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="35%" height="35%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
-                                        <span class="text-[10px] font-bold uppercase tracking-widest">No Poster</span>
+                                        <span class="text-[10px] font-bold uppercase tracking-widest">{m.common_no_poster()}</span>
                                     </div>
                                 )}
                             </div>
                         </div>
                         <div class="flex-1 py-2">
                             <div class="flex items-start justify-between gap-4 mb-1">
-                                <h3 class="text-xl font-black text-zinc-100 group-hover/season:text-blue-400 transition-colors">{s.name || `Season ${seasonNum}`}</h3>
+                                <h3 class="text-xl font-black text-zinc-100 group-hover/season:text-blue-400 transition-colors">{s.name || m.media_season_number({ number: seasonNum })}</h3>
                                 {s.tmdb_rating != null && s.tmdb_rating > 0 && (
                                     <div class="bg-zinc-950 border border-zinc-800 px-2 py-1 rounded-xl flex items-center gap-1.5 shrink-0 shadow-sm">
                                         <span class="text-yellow-400 text-xs">★</span>
@@ -347,10 +349,10 @@ const posterPath = show
                             </div>
                             <div class="flex items-center gap-2 mb-3">
                                 <span class="text-[10px] font-black text-zinc-500 uppercase tracking-widest bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
-                                    {s.episode_count || episodes.length} Episodes
+                                    {m.show_episode_count_label({ count: s.episode_count || episodes.length })}
                                 </span>
                             </div>
-                            <p class="text-xs text-zinc-400 line-clamp-3 leading-relaxed opacity-80">{s.overview || "No overview available."}</p>
+                            <p class="text-xs text-zinc-400 line-clamp-3 leading-relaxed opacity-80">{s.overview || m.show_no_overview()}</p>
                         </div>
                     </a>
                     {user && (
@@ -370,7 +372,7 @@ const posterPath = show
                         hideLists={false}
                         userRating={seasonState.user_rating ?? null}
                         ratingTitle={show.title}
-                        ratingSubtitle={s.name || `Season ${seasonNum}`}
+                        ratingSubtitle={s.name || m.media_season_number({ number: seasonNum })}
                         ratingPosterPath={poster}
                       />
                     )}
@@ -409,7 +411,7 @@ const posterPath = show
     <button
       id="poster-modal-close"
       class="absolute top-4 right-4 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white/70 hover:text-white transition-all duration-200 cursor-pointer"
-      aria-label="Close"
+      aria-label={m.common_close()}
     >
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-5 h-5">
         <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
@@ -452,7 +454,11 @@ const posterPath = show
   }
 </script>
 
-<script define:vars={{ showId: id, token: Astro.locals.token }}>
+<script>
+  import { m } from '../../paraglide/messages.js';
+
+  const token = (window as any).__AUTH_TOKEN__ ?? '';
+  const showId = document.getElementById('refresh-metadata-btn')?.dataset.showId ?? '';
   const btn = document.getElementById('refresh-metadata-btn');
   if (btn) {
     btn.addEventListener('click', async () => {
@@ -463,7 +469,7 @@ const posterPath = show
       btn.setAttribute('disabled', 'true');
       btn.classList.add('opacity-60', 'cursor-not-allowed');
       icon.classList.add('animate-spin');
-      label.textContent = 'Refreshing...';
+      label.textContent = m.media_refreshing();
 
       try {
         const res = await fetch(`/api/proxy/shows/${showId}/refresh`, {
@@ -472,17 +478,17 @@ const posterPath = show
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.detail || 'Refresh failed');
+          throw new Error(data.detail || m.media_refresh_failed());
         }
-        label.textContent = 'Done!';
+        label.textContent = m.common_done();
         icon.classList.remove('animate-spin');
         setTimeout(() => { window.location.reload(); }, 800);
       } catch (err) {
         icon.classList.remove('animate-spin');
-        label.textContent = 'Refresh failed';
+        label.textContent = m.media_refresh_failed();
         btn.removeAttribute('disabled');
         btn.classList.remove('opacity-60', 'cursor-not-allowed');
-        setTimeout(() => { label.textContent = 'Refresh Metadata'; }, 3000);
+        setTimeout(() => { label.textContent = m.media_refresh_metadata(); }, 3000);
       }
     });
   }

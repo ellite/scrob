@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import { api } from "../lib/api";
+import { m } from "../paraglide/messages.js";
 export const prerender = false;
 
 Astro.response.status = 404;
@@ -23,14 +24,14 @@ if (token) {
 }
 ---
 
-<Base title="Page not found">
+<Base title={m.notfound_page_title()}>
   <div class="flex flex-col items-center justify-center text-center py-20 px-4">
     <p class="text-8xl font-black text-zinc-800 leading-none mb-6 select-none">404</p>
-    <h1 class="text-2xl font-black text-zinc-100 mb-3">Seems like you're lost.</h1>
+    <h1 class="text-2xl font-black text-zinc-100 mb-3">{m.notfound_heading()}</h1>
     <p class="text-zinc-500 text-sm mb-10 max-w-xs">
       {canPick
-        ? "Not sure what you were looking for, but maybe we can find something worth watching instead."
-        : "The page you're looking for doesn't exist or has been moved."}
+        ? m.notfound_pick_hint()
+        : m.notfound_missing()}
     </p>
 
     {canPick ? (
@@ -39,13 +40,13 @@ if (token) {
           id="pick-movie-btn"
           class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-blue-900/40 active:scale-95 text-sm uppercase tracking-wider cursor-pointer"
         >
-          Pick a Movie
+          {m.pick_movie()}
         </button>
         <button
           id="pick-show-btn"
           class="inline-flex items-center gap-2 px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-black rounded-2xl transition-all active:scale-95 text-sm uppercase tracking-wider cursor-pointer"
         >
-          Pick a Show
+          {m.pick_show()}
         </button>
       </div>
     ) : null}
@@ -54,7 +55,7 @@ if (token) {
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
         <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
       </svg>
-      Go home
+      {m.notfound_go_home()}
     </a>
   </div>
 
@@ -62,7 +63,7 @@ if (token) {
   <div id="pick-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
     <div id="pick-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
     <div class="relative w-full max-w-lg max-h-[90vh] bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-      <button id="pick-modal-close" class="absolute top-4 right-4 z-10 p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 rounded-full transition active:scale-95 cursor-pointer" aria-label="Close">
+      <button id="pick-modal-close" class="absolute top-4 right-4 z-10 p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 rounded-full transition active:scale-95 cursor-pointer" aria-label={m.common_close()}>
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
       </button>
 
@@ -86,10 +87,10 @@ if (token) {
           <div id="pick-sources" class="flex flex-wrap gap-2"></div>
           <div class="flex gap-3 pt-1">
             <button id="pick-again-btn" class="flex items-center gap-2 px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 font-bold text-sm rounded-xl transition-all active:scale-95 active:opacity-70 cursor-pointer">
-              Pick again
+              {m.pick_again()}
             </button>
             <a id="pick-view-link" href="#" class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-xl transition-all active:scale-95">
-              View details →
+              {m.pick_view_details()}
             </a>
           </div>
         </div>
@@ -99,24 +100,29 @@ if (token) {
         <span class="text-5xl">🤷</span>
         <p id="pick-error-msg" class="text-zinc-300 font-medium"></p>
         <button id="pick-error-retry" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-sm rounded-xl transition-all active:scale-95 cursor-pointer">
-          Try again
+          {m.common_try_again()}
         </button>
       </div>
     </div>
   </div>
 </Base>
 
-<script define:vars={{ token, canPick }}>
+<script>
+  import { m } from '../paraglide/messages.js';
+
+  // The pick buttons only render when picking is possible (canPick above).
+  const token = (window as any).__AUTH_TOKEN__ ?? '';
+  const canPick = !!document.getElementById('pick-movie-btn');
   if (canPick) {
     const PHRASES = [
-      { emoji: '🔮', text: 'Consulting the crystal ball…' },
-      { emoji: '🎩', text: 'Pulling something out of the hat…' },
-      { emoji: '🌌', text: 'Scanning the multiverse for options…' },
-      { emoji: '🎲', text: 'Rolling the cosmic dice…' },
-      { emoji: '🍿', text: 'Asking the popcorn oracle…' },
-      { emoji: '🤖', text: 'Bribing the recommendation algorithm…' },
-      { emoji: '🦉', text: 'Consulting a very wise owl…' },
-      { emoji: '🧙', text: 'Checking the Tome of Great Films…' },
+      { emoji: '🔮', text: m.pick_phrase_crystal_ball() },
+      { emoji: '🎩', text: m.pick_phrase_hat() },
+      { emoji: '🌌', text: m.pick_phrase_multiverse() },
+      { emoji: '🎲', text: m.pick_phrase_dice() },
+      { emoji: '🍿', text: m.pick_phrase_popcorn() },
+      { emoji: '🤖', text: m.pick_phrase_algorithm() },
+      { emoji: '🦉', text: m.pick_phrase_owl() },
+      { emoji: '🧙', text: m.pick_phrase_tome() },
     ];
 
     function esc(str) {
@@ -171,7 +177,7 @@ if (token) {
       loadingEl.classList.add('hidden'); loadingEl.classList.remove('flex');
       resultEl.classList.add('hidden'); resultEl.classList.remove('flex');
       errorEl.classList.remove('hidden'); errorEl.classList.add('flex');
-      errorMsgEl.textContent = msg || 'Nothing found. Try adjusting your profile preferences.';
+      errorMsgEl.textContent = msg || m.pick_nothing_found();
     }
 
     function sourceLabel(src) {
@@ -217,7 +223,7 @@ if (token) {
         const sourcesEl = document.getElementById('pick-sources');
         sourcesEl.innerHTML = (data.sources || []).length
           ? (data.sources || []).map(sourceLabel).join('')
-          : '<span class="text-sm text-zinc-500">No streaming source found</span>';
+          : `<span class="text-sm text-zinc-500">${esc(m.pick_no_streaming_source())}</span>`;
 
         document.getElementById('pick-view-link').href = data.type === 'series' ? '/show/' + data.tmdb_id : '/media/movie/' + data.tmdb_id;
       }
@@ -241,13 +247,13 @@ if (token) {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.status === 404) {
-          showError('No unwatched titles found. Watch something first, or adjust your profile.');
+          showError(m.pick_no_unwatched());
           return;
         }
         if (!res.ok) throw new Error();
         showResult(await res.json());
       } catch {
-        showError('Something went wrong. Please try again.');
+        showError(m.common_something_went_wrong_retry());
       }
     }
 

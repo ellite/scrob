@@ -9,6 +9,8 @@ import { tmdbImageUrl } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
 import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
+import { formatTime } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 import { getViewerTimeZone } from "../lib/viewerTimeZone";
 
 interface Props {
@@ -26,7 +28,7 @@ const timeZone = getViewerTimeZone(Astro.cookies);
 
 function fmtTime(watchedAt: string | null): string | null {
   return watchedAt
-    ? new Date(watchedAt + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: !use24h, timeZone })
+    ? formatTime(watchedAt + 'Z', { hour: '2-digit', minute: '2-digit', hour12: !use24h, timeZone })
     : null;
 }
 
@@ -37,7 +39,7 @@ const chronological = [...events].reverse();
 const startTime = fmtTime(chronological[0].watched_at);
 const endTime = fmtTime(chronological[chronological.length - 1].watched_at);
 const timeLabel = !startTime || !endTime
-  ? 'Unknown'
+  ? m.history_time_unknown()
   : startTime === endTime ? startTime : `${startTime} – ${endTime}`;
 
 const codes = chronological.map((e) => episodeCode(e.media)).filter((c): c is string => !!c);
@@ -75,7 +77,7 @@ const codes = chronological.map((e) => episodeCode(e.media)).filter((c): c is st
       </div>
       <p class="text-xs font-bold text-zinc-400 truncate">{codes.join(' · ')}</p>
       <p class="text-xs font-bold text-zinc-500 uppercase tracking-widest">
-        {events.length} episodes · {timeLabel}
+        {m.episode_count({ count: events.length })} · {timeLabel}
       </p>
     </div>
   </button>
@@ -84,7 +86,7 @@ const codes = chronological.map((e) => episodeCode(e.media)).filter((c): c is st
     {chronological.map((event) => {
       const media = event.media;
       const href = episodeHref(media);
-      const time = fmtTime(event.watched_at) ?? 'Unknown';
+      const time = fmtTime(event.watched_at) ?? m.history_time_unknown();
       const code = episodeCode(media);
       return (
         <div class="flex items-center gap-3 px-4 py-3 hover:bg-zinc-800/40 transition-colors" data-event-id={event.id} data-href={href}>
@@ -101,8 +103,8 @@ const codes = chronological.map((e) => episodeCode(e.media)).filter((c): c is st
           </p>
           <button
             class="delete-history-event w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-zinc-950/50 border border-zinc-800 text-zinc-500 hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/10 transition-all duration-200 cursor-pointer"
-            title="Delete this entry"
-            aria-label="Delete history entry"
+            title={m.history_delete_entry_title()}
+            aria-label={m.history_delete_entry_label()}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
@@ -115,6 +117,8 @@ const codes = chronological.map((e) => episodeCode(e.media)).filter((c): c is st
 </div>
 
 <script>
+  import { m } from '../paraglide/messages.js';
+
   // Delegated from document (like HistoryCard's own delete handler), not
   // bound per-card: the /history live search swaps #history-results in
   // place, and freshly-inserted groups must stay expandable without this
@@ -157,8 +161,8 @@ const codes = chronological.map((e) => episodeCode(e.media)).filter((c): c is st
       }
 
       e.stopPropagation();
-      const title = card.querySelector('p.text-lg')?.textContent?.trim() || 'this entry';
-      const ok = await (window as any).showConfirm(`Delete "${title}"?`, 'This removes it from your watch history. This cannot be undone.');
+      const title = card.querySelector('p.text-lg')?.textContent?.trim() || m.history_delete_fallback_title();
+      const ok = await (window as any).showConfirm(m.history_delete_confirm_title({ title }), m.history_delete_confirm_body());
       if (!ok) return;
 
       const eventId = card.dataset.eventId;

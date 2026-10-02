@@ -10,6 +10,8 @@ interface Props {
   seasons: HeatmapSeason[];
 }
 
+import { m } from "../paraglide/messages.js";
+
 const { seasons } = Astro.props;
 
 const rated = (r: number | null | undefined): r is number => typeof r === "number" && r > 0;
@@ -38,7 +40,7 @@ const cellClass = "flex items-center justify-center rounded-md text-white font-b
               {ep.rating.toFixed(1)}
             </a>
           ) : (
-            <a href={ep.href} title={`S${s.number}E${ep.number} · ${ep.title} · not rated`} class="w-9 h-7 rounded-md bg-zinc-800/60 hover:ring-2 hover:ring-blue-400 transition"></a>
+            <a href={ep.href} title={`S${s.number}E${ep.number} · ${ep.title} · ${m.heatmap_not_rated()}`} class="w-9 h-7 rounded-md bg-zinc-800/60 hover:ring-2 hover:ring-blue-400 transition"></a>
           ))}
         </div>
       </div>

@@ -1,5 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
+import { m } from "../paraglide/messages.js";
 import SortButton from "../components/SortButton.astro";
 export const prerender = false;
 
@@ -7,38 +8,38 @@ const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 ---
 
-<Base title="Next Up">
+<Base title={m.section_next_up()}>
   <div class="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-8">
     <div>
-      <h1 class="page-title mb-2">Next Up</h1>
-      <p class="text-zinc-500">Continue where you left off</p>
+      <h1 class="page-title mb-2">{m.section_next_up()}</h1>
+      <p class="text-zinc-500">{m.next_up_subtitle()}</p>
     </div>
     <div class="flex flex-col gap-3 md:items-end">
       <div class="flex flex-wrap items-center gap-3 md:justify-end">
         <SortButton
           id="next-up-sort"
           current="recent"
-          label="Sort By"
+          label={m.sort_by()}
           navigate={false}
           options={[
-            { value: "recent", label: "Recently watched" },
-            { value: "episodes_asc", label: "Episodes left ↑" },
-            { value: "episodes_desc", label: "Episodes left ↓" },
-            { value: "time_asc", label: "Time left ↑" },
-            { value: "time_desc", label: "Time left ↓" },
+            { value: "recent", label: m.next_up_sort_recent() },
+            { value: "episodes_asc", label: m.next_up_sort_episodes_asc() },
+            { value: "episodes_desc", label: m.next_up_sort_episodes_desc() },
+            { value: "time_asc", label: m.next_up_sort_time_asc() },
+            { value: "time_desc", label: m.next_up_sort_time_desc() },
           ]}
         />
         <button
           id="refresh-tmdb-btn"
           disabled
-          title="Re-check TMDB for new episodes of shows that aren't showing here"
+          title={m.next_up_refresh_title()}
           class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <svg id="refresh-tmdb-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/>
             <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>
           </svg>
-          <span id="refresh-tmdb-label">Refresh from TMDB</span>
+          <span id="refresh-tmdb-label">{m.next_up_refresh()}</span>
         </button>
         <button
           id="toggle-hidden-btn"
@@ -48,14 +49,14 @@ Astro.response.headers.set("Cache-Control", "no-store");
             <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/>
             <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>
           </svg>
-          <span id="toggle-label">Show hidden</span>
+          <span id="toggle-label">{m.cw_show_hidden()}</span>
         </button>
       </div>
 
       <div id="refresh-feedback" class="hidden w-full md:w-80">
         <div id="refresh-progress" class="hidden">
           <div class="flex justify-between items-center mb-1.5">
-            <span class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Checking TMDB</span>
+            <span class="text-xs font-semibold uppercase tracking-wider text-zinc-500">{m.next_up_checking_tmdb()}</span>
             <span id="refresh-progress-pct" class="text-xs font-bold text-zinc-400">0%</span>
           </div>
           <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
@@ -83,13 +84,17 @@ Astro.response.headers.set("Cache-Control", "no-store");
   <div id="next-up-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 hidden"></div>
 
   <div id="empty-state" class="hidden text-center py-20 text-zinc-500">
-    <p class="text-lg">Nothing to watch next.</p>
-    <p class="text-sm mt-2">Start watching a show to see your next episodes here.</p>
+    <p class="text-lg">{m.next_up_empty()}</p>
+    <p class="text-sm mt-2">{m.next_up_empty_hint()}</p>
   </div>
 
 </Base>
 
-<script define:vars={{ token }}>
+<script>
+  import { m } from '../paraglide/messages.js';
+  import { formatEpisodesLeft } from '../lib/media-format';
+
+  const token = (window as any).__AUTH_TOKEN__ ?? '';
   function esc(str) {
     if (str == null) return '';
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -98,8 +103,8 @@ Astro.response.headers.set("Cache-Control", "no-store");
   function tmdbImageUrl(path, size = 'w500') {
     if (!path) return null;
     if (path.startsWith('http://') || path.startsWith('https://')) {
-      const m = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
-      if (m) return `/api/proxy/media/image/${m[1]}${m[2]}`;
+      const tm = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
+      if (tm) return `/api/proxy/media/image/${tm[1]}${tm[2]}`;
       const t = /artworks\.thetvdb\.com(\/.+)$/.exec(path);
       if (t) return `/api/proxy/media/image/tvdb${t[1]}`;
       return path;
@@ -132,19 +137,8 @@ Astro.response.headers.set("Cache-Control", "no-store");
     });
   }
 
-  // Local copy of lib/media-format's formatEpisodesLeft — this define:vars
-  // script can't import from lib/ (same reason tmdbImageUrl is re-implemented
-  // above).
   function episodesLeftLabel(item) {
-    const n = item.episodes_left;
-    if (n == null || n <= 0) return null;
-    let label = `${n} episode${n === 1 ? '' : 's'} left`;
-    const mins = item.remaining_runtime;
-    if (mins && mins > 0) {
-      const h = Math.floor(mins / 60), m = mins % 60;
-      label += ` · ~${h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`}`;
-    }
-    return label;
+    return formatEpisodesLeft(item.episodes_left, item.remaining_runtime);
   }
 
   function buildCard(item) {
@@ -189,13 +183,13 @@ Astro.response.headers.set("Cache-Control", "no-store");
       <button
         class="nextup-undrop-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 cursor-pointer bg-rose-900/60 border border-rose-600 text-rose-300 hover:bg-rose-700 hover:border-rose-500 hover:text-white"
         data-show-id="${esc(String(item.show_id))}"
-        title="Undrop this show"
+        title="${esc(m.dropped_undrop_show())}"
       >${DROP_ICON}</button>
     ` : isHidden ? `
       <button
         class="nextup-restore-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 cursor-pointer bg-amber-900/60 border border-amber-600 text-amber-300 hover:bg-amber-700 hover:border-amber-500 hover:text-white"
         data-show-id="${esc(String(item.show_id))}"
-        title="Restore to Next Up"
+        title="${esc(m.next_up_restore())}"
       >${EYE}</button>
     ` : `
       <button
@@ -205,7 +199,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
         data-show-id="${esc(String(item.show_id))}"
         data-dropped="false"
         class="absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 cursor-pointer bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-rose-200 hover:border-rose-700 hover:bg-rose-900"
-        title="Hide or drop this show"
+        title="${esc(m.next_up_hide_or_drop())}"
       >${EYE_SLASH}</button>
     `) : '';
 
@@ -297,7 +291,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
     document.getElementById('refresh-progress-fill').style.width = `${pct}%`;
     document.getElementById('refresh-progress-pct').textContent = `${pct}%`;
     document.getElementById('refresh-progress-label').textContent =
-      total > 0 ? `${done} of ${total} show${total === 1 ? '' : 's'}` : '';
+      total > 0 ? m.next_up_refresh_progress({ done, total }) : '';
   }
 
   const refreshBtn = document.getElementById('refresh-tmdb-btn');
@@ -311,7 +305,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
 
     refreshBtn.disabled = true;
     icon.classList.add('animate-spin');
-    label.textContent = 'Checking TMDB…';
+    label.textContent = m.next_up_checking_tmdb_ellipsis();
     status.classList.add('hidden');
     clearTimeout(window._refreshStatusTimeout);
     setRefreshProgress(0, 0);
@@ -360,7 +354,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
       }
 
       if (hadError === 'no_tmdb_key') {
-        showStatus('No TMDB API key configured - add one in Settings.');
+        showStatus(m.next_up_no_tmdb_key());
         return;
       }
 
@@ -376,15 +370,15 @@ Astro.response.headers.set("Cache-Control", "no-store");
 
       const added = allItems.length - prevCount;
       showStatus(added > 0
-        ? `Refreshed - ${added} show${added === 1 ? '' : 's'} added.`
-        : 'Refreshed - no new episodes found.');
+        ? m.next_up_refreshed_added({ count: added })
+        : m.next_up_refreshed_none());
     } catch {
-      showStatus('Refresh failed - try again in a moment.');
+      showStatus(m.next_up_refresh_failed());
     } finally {
       progress.classList.add('hidden');
       refreshBtn.disabled = false;
       icon.classList.remove('animate-spin');
-      label.textContent = 'Refresh from TMDB';
+      label.textContent = m.next_up_refresh();
     }
   });
 
@@ -451,7 +445,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
   document.getElementById('toggle-hidden-btn').addEventListener('click', () => {
     showingHidden = !showingHidden;
 
-    document.getElementById('toggle-label').textContent = showingHidden ? 'Hide hidden' : 'Show hidden';
+    document.getElementById('toggle-label').textContent = showingHidden ? m.cw_hide_hidden() : m.cw_show_hidden();
 
     // Swap the icon between eye-slash (show) and eye (hide)
     document.getElementById('toggle-icon').innerHTML = showingHidden

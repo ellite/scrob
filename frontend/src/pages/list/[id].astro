@@ -4,6 +4,7 @@ import MediaCard from "../../components/MediaCard.astro";
 import ListCard from "../../components/ListCard.astro";
 import SortButton from "../../components/SortButton.astro";
 import { api, type ListDetail, type UserList, type PublicList, type MediaItem } from "../../lib/api";
+import { m } from "../../paraglide/messages.js";
 export const prerender = false;
 
 const { id } = Astro.params;
@@ -29,9 +30,9 @@ try {
 } catch (e: unknown) {
   const message = e instanceof Error ? e.message : String(e);
   if (message.includes("403")) {
-    error = "This list is private.";
+    error = m.list_private();
   } else if (message.includes("404")) {
-    error = "List not found.";
+    error = m.list_not_found();
   } else {
     error = message;
   }
@@ -52,23 +53,23 @@ const radarrUrl = `${origin}/api/proxy/radarr-compat/${list?.id}`;
 const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
 ---
 
-<Base title={list?.name || "List"}>
+<Base title={list?.name || m.list_page_title_fallback()}>
   {error && !list && (
     <div class="max-w-md mx-auto mt-20 text-center">
       <div class="bg-red-500/10 border border-red-500/20 text-red-500 p-6 rounded-2xl mb-6">
-        <p class="font-bold text-lg mb-2">Oops!</p>
+        <p class="font-bold text-lg mb-2">{m.common_oops()}</p>
         <p class="text-sm opacity-80">{error}</p>
       </div>
-      <a href="/lists" class="text-blue-500 hover:underline">Back to Lists</a>
+      <a href="/lists" class="text-blue-500 hover:underline">{m.list_back_to_lists()}</a>
     </div>
   )}
 
   {list && (
-    <div class="max-w-6xl mx-auto">
+    <div id="list-page" data-list-id={list.id} class="max-w-6xl mx-auto">
       <!-- Header -->
       <div class="mb-10">
         <nav class="flex items-center gap-2 text-sm text-zinc-400 mb-6">
-          <a href="/lists" class="hover:text-zinc-100 transition">Lists</a>
+          <a href="/lists" class="hover:text-zinc-100 transition">{m.nav_lists()}</a>
           <span class="text-zinc-700">/</span>
           <span class="text-zinc-100 font-bold truncate">{list.name}</span>
         </nav>
@@ -79,12 +80,12 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
               <h1 id="list-title" class="page-title"><span id="list-title-text">{list.name}</span></h1>
               {list.privacy_level === "public" && (
                 <span id="list-privacy-badge" class="text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full uppercase tracking-widest">
-                  Public
+                  {m.privacy_public_short()}
                 </span>
               )}
               {list.privacy_level === "friends_only" && (
                 <span id="list-privacy-badge" class="text-[10px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full uppercase tracking-widest">
-                  Friends
+                  {m.privacy_friends_short()}
                 </span>
               )}
             </div>
@@ -92,7 +93,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
               <p id="list-desc" class="text-zinc-400 text-base leading-relaxed max-w-2xl">{list.description}</p>
             )}
             <p class="text-xs font-bold text-zinc-400 uppercase tracking-widest mt-3">
-              {list.item_count} {list.item_count === 1 ? "item" : "items"}
+              {m.list_item_count({ count: list.item_count })}
             </p>
           </div>
 
@@ -106,7 +107,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
                     <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
                   </svg>
-                  Edit
+                  {m.common_edit()}
                 </button>
                 <button
                   id="delete-list-btn"
@@ -115,7 +116,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
                     <path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
                   </svg>
-                  Delete
+                  {m.common_delete()}
                 </button>
               </>
             )}
@@ -127,10 +128,10 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       <div id="edit-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
         <div id="edit-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
         <div class="relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
-          <h2 class="text-xl font-black text-zinc-100 mb-6">Edit List</h2>
+          <h2 class="text-xl font-black text-zinc-100 mb-6">{m.list_edit()}</h2>
           <form id="edit-form" class="space-y-4">
             <div>
-              <label for="edit-name" class="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Name</label>
+              <label for="edit-name" class="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">{m.lists_name()}</label>
               <input
                 type="text"
                 id="edit-name"
@@ -141,7 +142,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
               />
             </div>
             <div>
-              <label for="edit-desc" class="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Description</label>
+              <label for="edit-desc" class="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">{m.common_description()}</label>
               <textarea
                 id="edit-desc"
                 rows="2"
@@ -149,12 +150,12 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
               >{list.description || ""}</textarea>
             </div>
             <div>
-              <label class="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3 text-center">Privacy</label>
+              <label class="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3 text-center">{m.privacy_label()}</label>
               <div class="grid grid-cols-3 gap-2">
                 <label class="relative flex flex-col items-center p-3 rounded-xl border border-zinc-800 bg-zinc-950 cursor-pointer transition-all hover:bg-zinc-900 group">
                   <input type="radio" name="edit-privacy" value="private" checked={list.privacy_level === "private"} class="sr-only peer" />
                   <div class="absolute inset-0 rounded-xl border-2 border-transparent peer-checked:border-blue-600 transition-all"></div>
-                  <span class="text-[10px] font-black uppercase tracking-widest text-zinc-500 peer-checked:text-blue-400 mb-1">Private</span>
+                  <span class="text-[10px] font-black uppercase tracking-widest text-zinc-500 peer-checked:text-blue-400 mb-1">{m.privacy_private_short()}</span>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-400 peer-checked:text-blue-500">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
                   </svg>
@@ -162,7 +163,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
                 <label class="relative flex flex-col items-center p-3 rounded-xl border border-zinc-800 bg-zinc-950 cursor-pointer transition-all hover:bg-zinc-900 group">
                   <input type="radio" name="edit-privacy" value="friends_only" checked={list.privacy_level === "friends_only"} class="sr-only peer" />
                   <div class="absolute inset-0 rounded-xl border-2 border-transparent peer-checked:border-blue-600 transition-all"></div>
-                  <span class="text-[10px] font-black uppercase tracking-widest text-zinc-500 peer-checked:text-blue-400 mb-1">Friends</span>
+                  <span class="text-[10px] font-black uppercase tracking-widest text-zinc-500 peer-checked:text-blue-400 mb-1">{m.privacy_friends_short()}</span>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-400 peer-checked:text-blue-500">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.998 5.998 0 0 0-12 0m12 0c0-1.723-.699-3.283-1.838-4.412m-1.148-1.148A5.988 5.988 0 0 1 12 12c-1.353 0-2.585.449-3.568 1.206m8.114-1.83c.915 0 1.656-.74 1.656-1.656V6.142c0-.915-.74-1.656-1.656-1.656H12M8.114 11.372A5.988 5.988 0 0 0 12 12c1.353 0 2.585-.449 3.568-1.206m-8.114 1.83a6.062 6.062 0 0 1-1.062-1.062m1.062 1.062c-1.139 1.129-1.838 2.689-1.838 4.412m3.114-10.43c0-.915.74-1.656 1.656-1.656h3.114c.915 0 1.656.74 1.656 1.656V6.142c0 .915-.74 1.656-1.656 1.656H12" />
                   </svg>
@@ -170,7 +171,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
                 <label class="relative flex flex-col items-center p-3 rounded-xl border border-zinc-800 bg-zinc-950 cursor-pointer transition-all hover:bg-zinc-900 group">
                   <input type="radio" name="edit-privacy" value="public" checked={list.privacy_level === "public"} class="sr-only peer" />
                   <div class="absolute inset-0 rounded-xl border-2 border-transparent peer-checked:border-blue-600 transition-all"></div>
-                  <span class="text-[10px] font-black uppercase tracking-widest text-zinc-500 peer-checked:text-blue-400 mb-1">Public</span>
+                  <span class="text-[10px] font-black uppercase tracking-widest text-zinc-500 peer-checked:text-blue-400 mb-1">{m.privacy_public_short()}</span>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-400 peer-checked:text-blue-500">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-.778.099-1.533.284-2.253" />
                   </svg>
@@ -179,8 +180,8 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
             </div>
             <div id="edit-error" class="hidden text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2"></div>
             <div class="flex gap-3 pt-2">
-              <button type="button" id="edit-cancel-btn" class="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-all text-sm cursor-pointer">Cancel</button>
-              <button type="submit" id="edit-submit-btn" class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all text-sm cursor-pointer disabled:opacity-50">Save Changes</button>
+              <button type="button" id="edit-cancel-btn" class="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-all text-sm cursor-pointer">{m.common_cancel()}</button>
+              <button type="submit" id="edit-submit-btn" class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all text-sm cursor-pointer disabled:opacity-50">{m.common_save_changes()}</button>
             </div>
           </form>
         </div>
@@ -194,7 +195,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-400">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
               </svg>
-              <span class="text-sm font-black text-zinc-400 uppercase tracking-widest">Import into Radarr / Sonarr</span>
+              <span class="text-sm font-black text-zinc-400 uppercase tracking-widest">{m.list_arr_import_title()}</span>
             </div>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-500 transition-transform group-open:rotate-180">
               <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
@@ -202,32 +203,30 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
           </summary>
 
           <div class="px-5 pb-5 pt-1 space-y-4 border-t border-zinc-800/60 mt-0">
-            <p class="text-sm text-zinc-400 pt-3">
-              In Radarr / Sonarr → Settings → Import Lists → Add → choose <strong class="text-zinc-300">Radarr</strong> or <strong class="text-zinc-300">Sonarr</strong> as the list type. Paste the URL below as the <strong class="text-zinc-300">Base URL</strong> and your Scrob API key (from <a href="/settings" class="text-blue-400 hover:underline">Settings</a>) as the <strong class="text-zinc-300">API Key</strong>.
-            </p>
+            <p class="text-sm text-zinc-400 pt-3" set:html={m.list_arr_import_help()} />
 
             {hasMovies && (
               <div>
-                <p class="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1.5">Radarr — movies</p>
+                <p class="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1.5">{m.list_arr_radarr_movies()}</p>
                 <div class="flex items-center gap-2">
                   <code class="flex-1 text-xs bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-zinc-300 truncate font-mono">{radarrUrl}</code>
                   <button
                     class="copy-btn shrink-0 px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-all cursor-pointer"
                     data-url={radarrUrl}
-                  >Copy</button>
+                  >{m.common_copy()}</button>
                 </div>
               </div>
             )}
 
             {hasShows && (
               <div>
-                <p class="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1.5">Sonarr — shows</p>
+                <p class="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1.5">{m.list_arr_sonarr_shows()}</p>
                 <div class="flex items-center gap-2">
                   <code class="flex-1 text-xs bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-zinc-300 truncate font-mono">{sonarrUrl}</code>
                   <button
                     class="copy-btn shrink-0 px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-all cursor-pointer"
                     data-url={sonarrUrl}
-                  >Copy</button>
+                  >{m.common_copy()}</button>
                 </div>
               </div>
             )}
@@ -243,7 +242,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-400">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
             </svg>
-            <span class="text-sm font-black text-zinc-400 uppercase tracking-widest">Add Items</span>
+            <span class="text-sm font-black text-zinc-400 uppercase tracking-widest">{m.list_add_items()}</span>
           </div>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-500 transition-transform group-open:rotate-180">
             <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
@@ -254,15 +253,15 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
           <input
             type="text"
             id="search-input"
-            placeholder="Search for a movie, show, or person to add..."
+            placeholder={m.list_search_placeholder()}
             class="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-zinc-400"
           />
           <div class="flex gap-1.5 bg-zinc-950 border border-zinc-800 rounded-xl p-1 shrink-0">
             {[
-              { value: "all", label: "All" },
-              { value: "movie", label: "Movies" },
-              { value: "series", label: "Shows" },
-              { value: "person", label: "People" },
+              { value: "all", label: m.common_all() },
+              { value: "movie", label: m.common_movies() },
+              { value: "series", label: m.common_shows() },
+              { value: "person", label: m.search_tab_people() },
             ].map(f => (
               <button
                 class="search-filter-btn px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer"
@@ -284,9 +283,9 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
-          Searching…
+          {m.common_searching()}
         </div>
-        <p id="search-empty" class="hidden mt-4 text-sm text-zinc-400 text-center py-4">No results found.</p>
+        <p id="search-empty" class="hidden mt-4 text-sm text-zinc-400 text-center py-4">{m.common_no_results_found()}</p>
         </div>
       </details>
       )}
@@ -294,7 +293,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       <!-- Items Grid -->
       <div>
         <div class="flex items-center justify-between gap-4 mb-6 flex-wrap">
-          <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest">Items</h2>
+          <h2 class="text-sm font-black text-zinc-400 uppercase tracking-widest">{m.list_items()}</h2>
           {list.items.length > 0 && (
             <div class="flex items-center gap-3 flex-wrap">
               <SortButton
@@ -302,18 +301,18 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
                 current="added_at"
                 navigate={false}
                 options={[
-                  { value: "title", label: "A–Z" },
-                  { value: "rating", label: "Top" },
-                  { value: "release_date", label: "Newest" },
-                  { value: "added_at", label: "Recently Added" },
+                  { value: "title", label: m.sort_az() },
+                  { value: "rating", label: m.sort_top() },
+                  { value: "release_date", label: m.sort_newest() },
+                  { value: "added_at", label: m.sort_recently_added() },
                 ]}
               />
               <div class="flex gap-1.5 bg-zinc-950 border border-zinc-800 rounded-xl p-1 shrink-0">
                 {[
-                  { value: "all", label: "All" },
-                  { value: "movie", label: "Movies" },
-                  { value: "series", label: "Shows" },
-                  { value: "person", label: "People" },
+                  { value: "all", label: m.common_all() },
+                  { value: "movie", label: m.common_movies() },
+                  { value: "series", label: m.common_shows() },
+                  { value: "person", label: m.search_tab_people() },
                 ].map(f => (
                   <button
                     class="items-filter-btn px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer"
@@ -335,7 +334,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
         {list.items.length === 0 ? (
           <div id="empty-state" class="text-center py-16 bg-zinc-900/20 border border-zinc-800/50 border-dashed rounded-3xl">
             <div class="text-4xl mb-3">📋</div>
-            <p class="text-zinc-500">{list.is_owner ? "This list is empty. Search above to add movies and shows." : "This list is empty."}</p>
+            <p class="text-zinc-500">{list.is_owner ? m.list_empty_owner() : m.list_empty()}</p>
           </div>
         ) : (
           <div id="items-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
@@ -353,7 +352,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
                     <button
                       class="remove-item-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-rose-200 hover:border-rose-700 hover:bg-rose-900 transition-all duration-200 cursor-pointer"
                       data-item-id={entry.id}
-                      aria-label="Remove from list"
+                      aria-label={m.list_remove_item()}
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
@@ -365,14 +364,14 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
             ))}
           </div>
         )}
-        <p id="items-filter-empty" class="hidden text-sm text-zinc-500 text-center py-10">No items match this filter.</p>
+        <p id="items-filter-empty" class="hidden text-sm text-zinc-500 text-center py-10">{m.list_filter_empty()}</p>
         {list.items.length === 0 && <div id="items-grid" class="hidden grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6"></div>}
       </div>
 
       <!-- Other Lists -->
       {otherLists.length > 0 && (
         <div class="mt-16 pt-10 border-t border-zinc-800/50">
-          <h2 class="section-headline mb-6">Your Other Lists</h2>
+          <h2 class="section-headline mb-6">{m.list_other_lists()}</h2>
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {otherLists.map((l) => (
               <ListCard
@@ -391,7 +390,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       <!-- Community Lists -->
       {publicLists.length > 0 && (
         <div class="mt-16 pt-10 border-t border-zinc-800/50">
-          <h2 class="section-headline mb-6">From the Community</h2>
+          <h2 class="section-headline mb-6">{m.lists_from_community()}</h2>
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {publicLists.map((l) => (
               <ListCard
@@ -411,7 +410,11 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
   )}
 </Base>
 
-<script define:vars={{ token, listId: list?.id }}>
+<script>
+  import { m } from '../../paraglide/messages.js';
+
+  const token = (window as any).__AUTH_TOKEN__ ?? '';
+  const listId = document.getElementById('list-page')?.dataset.listId;
   // Reload when restored from bfcache so DOM mutations (newly added items) aren't lost.
 
   function esc(str) {
@@ -431,8 +434,8 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
   function tmdbImageUrl(path, size = 'w500') {
     if (!path) return null;
     if (path.startsWith('http://') || path.startsWith('https://')) {
-      const m = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
-      if (m) return `/api/proxy/media/image/${m[1]}${m[2]}`;
+      const tm = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
+      if (tm) return `/api/proxy/media/image/${tm[1]}${tm[2]}`;
       const t = /artworks\.thetvdb\.com(\/.+)$/.exec(path);
       if (t) return `/api/proxy/media/image/tvdb${t[1]}`;
       return path;
@@ -464,7 +467,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
     const privacyLevel = document.querySelector('input[name="edit-privacy"]:checked').value;
 
     editSubmitBtn.disabled = true;
-    editSubmitBtn.textContent = 'Saving...';
+    editSubmitBtn.textContent = m.common_saving();
     editError.classList.add('hidden');
 
     try {
@@ -475,7 +478,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.detail || 'Failed to update list');
+        throw new Error(err.detail || m.list_update_failed());
       }
       const updated = await res.json();
       document.getElementById('list-title-text').textContent = updated.name;
@@ -492,10 +495,10 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
         badge.id = 'list-privacy-badge';
         if (updated.privacy_level === 'public') {
           badge.className = 'text-[10px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full uppercase tracking-widest';
-          badge.textContent = 'Public';
+          badge.textContent = m.privacy_public_short();
         } else {
           badge.className = 'text-[10px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full uppercase tracking-widest';
-          badge.textContent = 'Friends';
+          badge.textContent = m.privacy_friends_short();
         }
         headerTitle?.appendChild(badge);
       }
@@ -506,14 +509,14 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       editError.classList.remove('hidden');
     } finally {
       editSubmitBtn.disabled = false;
-      editSubmitBtn.textContent = 'Save Changes';
+      editSubmitBtn.textContent = m.common_save_changes();
     }
   });
 
   // --- Delete list ---
   document.getElementById('delete-list-btn')?.addEventListener('click', async () => {
-    const title = document.getElementById('list-title-text')?.textContent || 'this list';
-    const ok = await window.showConfirm(`Delete "${title}"?`, 'This cannot be undone.');
+    const title = document.getElementById('list-title-text')?.textContent || m.list_delete_fallback_title();
+    const ok = await (window as any).showConfirm(m.common_delete_named_confirm({ name: title }), m.common_cannot_be_undone());
     if (!ok) return;
 
     try {
@@ -534,8 +537,8 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       btn.dataset.bound = 'true';
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
-        const itemTitle = btn.getAttribute('data-item-title') || 'this item';
-        const ok = await window.showConfirm(`Remove "${itemTitle}"?`, 'This removes it from this list.');
+        const itemTitle = btn.getAttribute('data-item-title') || m.list_item_fallback_title();
+        const ok = await (window as any).showConfirm(m.list_remove_confirm_title({ title: itemTitle }), m.list_remove_confirm_body());
         if (!ok) return;
 
         const itemId = btn.getAttribute('data-item-id');
@@ -758,11 +761,11 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
                 : `<div class="w-full h-full flex items-center justify-center text-zinc-400 text-xs p-2 text-center">${esc(item.title)}</div>`
             }
             <div class="add-overlay absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center pb-3">
-              <span class="text-white text-[10px] font-black uppercase tracking-widest bg-blue-600 px-2.5 py-1 rounded-full shadow">Add</span>
+              <span class="text-white text-[10px] font-black uppercase tracking-widest bg-blue-600 px-2.5 py-1 rounded-full shadow">${esc(m.list_add())}</span>
             </div>
           </div>
           <p class="text-sm font-bold text-zinc-300 truncate group-hover:text-zinc-100 transition-colors leading-snug">${esc(item.title)}</p>
-          <p class="text-xs text-zinc-500 mt-0.5">${esc(meta) || (isPerson ? 'Person' : '')}</p>
+          <p class="text-xs text-zinc-500 mt-0.5">${esc(meta) || (isPerson ? esc(m.common_person()) : '')}</p>
         `;
         el.addEventListener('click', () => addItem(item.tmdb_id, item.type, el, item));
         searchResults.appendChild(el);
@@ -783,7 +786,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
     const isSeason = media.type === 'series' && media.season_number != null;
     const isSeries = media.type === 'series' && media.season_number == null;
     const showActionBar = !isPerson && media.type !== 'collection';
-    const cardTitle = isSeason ? `Season ${media.season_number}` : media.title;
+    const cardTitle = isSeason ? m.media_season_number({ number: media.season_number }) : media.title;
 
     // Local copy of lib/episodeHref's season/series branches - this
     // define:vars script can't import (see lib/episodeHref.ts's own header
@@ -829,20 +832,20 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
           data-watched="${watched}"
           data-watch-pct="${watchPct}"
           data-state="${watchActive ? 'active' : 'inactive'}"
-          title="${isPercentageStyle ? `${watchPct}% watched` : (watched ? 'Mark as unwatched' : 'Mark as watched')}"
+          title="${esc(isPercentageStyle ? m.watch_pct_watched({ pct: watchPct }) : (watched ? m.watch_mark_unwatched() : m.watch_mark_watched()))}"
           class="flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer border-r border-zinc-800/60 hover:brightness-125 ${watchActive ? 'bg-green-500/20 text-green-400' : 'bg-zinc-900 text-zinc-400 hover:bg-green-500/10 hover:text-green-500'}"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
             <circle cx="12" cy="12" r="3" fill="${watchActive ? 'currentColor' : 'none'}"/>
           </svg>
-          <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isPercentageStyle ? `${watchPct}%` : 'Watched'}</span>
+          <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isPercentageStyle ? `${watchPct}%` : esc(m.card_watched())}</span>
         </button>
         <button
           data-action="list"
           data-in-lists="${esc(JSON.stringify(inLists))}"
           data-state="${inLists.length > 0 ? 'active' : 'inactive'}"
-          title="Add to list"
+          title="${esc(m.list_popover_title())}"
           class="flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer border-r border-zinc-800/60 hover:brightness-125 ${inLists.length > 0 ? 'bg-sky-500/20 text-sky-400' : 'bg-zinc-900 text-zinc-400 hover:bg-sky-500/10 hover:text-sky-400'}"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -850,14 +853,14 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
             <line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/>
             <line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
           </svg>
-          <span class="text-[8px] font-bold uppercase tracking-wider leading-none">Lists</span>
+          <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${esc(m.card_lists())}</span>
         </button>
         <button
           data-action="collected"
           data-in-library="${inLibrary}"
           data-collection-pct="${collectionPct}"
           data-state="${(inLibrary || collectionPct > 0) ? 'active' : 'inactive'}"
-          title="${isPercentageStyle ? `${collectionPct}% in library` : (inLibrary ? 'In collection' : 'Add to collection')}"
+          title="${esc(isPercentageStyle ? m.collection_pct_in_library({ pct: collectionPct }) : (inLibrary ? m.collection_in_collection() : m.collection_add()))}"
           style="${esc(collectStyle)}"
           class="relative flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer overflow-hidden hover:brightness-125 ${(inLibrary || collectionPct > 0) ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-900 text-zinc-400 hover:bg-purple-500/10 hover:text-purple-400'}"
         >
@@ -866,12 +869,12 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
             <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a3 3 0 0 0-6 0v4"/>
             <path d="M2 7h20"/>
           </svg>
-          <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isPercentageStyle ? `${collectionPct}%` : 'Collected'}</span>
+          <span class="text-[8px] font-bold uppercase tracking-wider leading-none">${isPercentageStyle ? `${collectionPct}%` : esc(m.card_collected())}</span>
         </button>
       </div>` : '';
 
     const removeBtn = removeItemId != null
-      ? `<button class="remove-item-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-rose-200 hover:border-rose-700 hover:bg-rose-900 transition-all duration-200 cursor-pointer" data-item-id="${esc(String(removeItemId))}" data-item-title="${esc(cardTitle)}" aria-label="Remove from list">${TRASH_SVG}</button>`
+      ? `<button class="remove-item-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-rose-200 hover:border-rose-700 hover:bg-rose-900 transition-all duration-200 cursor-pointer" data-item-id="${esc(String(removeItemId))}" data-item-title="${esc(cardTitle)}" aria-label="${esc(m.list_remove_item())}">${TRASH_SVG}</button>`
       : '';
 
     return `
@@ -904,7 +907,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
           <h3 class="text-sm font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors leading-tight mb-1">${esc(cardTitle)}</h3>
           <div class="flex items-center justify-between">
             ${year ? `<span class="text-[11px] font-medium text-zinc-500 tracking-wide">${esc(year)}</span>` : '<span></span>'}
-            <span class="text-[9px] font-black text-zinc-400 uppercase tracking-widest px-1.5 py-0.5 bg-zinc-800/50 rounded border border-zinc-800">${isSeason ? `Season ${media.season_number}` : isSeries ? 'Show' : esc(media.type)}</span>
+            <span class="text-[9px] font-black text-zinc-400 uppercase tracking-widest px-1.5 py-0.5 bg-zinc-800/50 rounded border border-zinc-800">${esc(isSeason ? m.media_season_number({ number: media.season_number }) : isSeries ? m.common_show() : media.type === 'movie' ? m.common_movie() : media.type)}</span>
           </div>
         </a>
       </div>`;
@@ -928,7 +931,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
 
       if (res.status === 409) {
         btn.style.opacity = '0.4';
-        btn.title = 'Already in list';
+        btn.title = m.list_already_in_list();
         // Show "already added" check overlay
         if (overlay) {
           overlay.innerHTML = `<span class="text-white text-xl font-black">✓</span>`;
@@ -937,7 +940,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       }
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.detail || 'Failed to add item');
+        throw new Error(err.detail || m.list_add_failed());
       }
 
       const entry = await res.json();
@@ -948,7 +951,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
         overlay.innerHTML = `<span class="text-white text-2xl font-black drop-shadow">✓</span>`;
       }
       btn.classList.add('pointer-events-none');
-      btn.title = 'Added!';
+      btn.title = m.list_added();
 
       // Ensure items grid exists (it may not if list was empty)
       let grid = document.getElementById('items-grid');
@@ -987,7 +990,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       if (overlay) {
         overlay.classList.add('opacity-0', 'group-hover:opacity-100');
         overlay.classList.remove('opacity-100');
-        overlay.innerHTML = `<span class="text-white text-[10px] font-black uppercase tracking-widest bg-blue-600 px-2.5 py-1 rounded-full shadow">Add</span>`;
+        overlay.innerHTML = `<span class="text-white text-[10px] font-black uppercase tracking-widest bg-blue-600 px-2.5 py-1 rounded-full shadow">${esc(m.list_add())}</span>`;
       }
       btn.disabled = false;
     }
@@ -1001,7 +1004,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       try {
         await navigator.clipboard.writeText(url);
         const orig = btn.textContent;
-        btn.textContent = 'Copied!';
+        btn.textContent = m.common_copied();
         setTimeout(() => { btn.textContent = orig; }, 1500);
       } catch {}
     });
