@@ -222,27 +222,48 @@ async def get_libraries(url: str, token: str) -> List[Dict]:
     data = await _get(f"{url.rstrip('/')}/library/sections", token)
     return data.get("MediaContainer", {}).get("Directory", [])
 
+async def _get_library_items_paginated(url: str, token: str, section_id: str, params: Dict) -> List[Dict]:
+    """Fetch every item in a library section, paging with X-Plex-Container-
+    Start/-Size the same way get_watchlist/get_plex_history already do.
+
+    A single unpaginated request for a whole section used to time out on a
+    large TV library (tens of thousands of episodes in one response, #441) -
+    movies libraries are usually small enough that this went unnoticed. A
+    fixed page size keeps each request's latency predictable regardless of
+    how large the library grows.
+    """
+    page_size = 1000
+    items: List[Dict] = []
+    start = 0
+    while True:
+        data = await _get(
+            f"{url.rstrip('/')}/library/sections/{section_id}/all",
+            token,
+            params={**params, "X-Plex-Container-Start": start, "X-Plex-Container-Size": page_size},
+        )
+        container = data.get("MediaContainer", {})
+        batch = container.get("Metadata", [])
+        items.extend(batch)
+        total = container.get("totalSize", 0) or len(items)
+        start += len(batch)
+        if not batch or start >= total:
+            break
+    return items
+
+
 async def get_movies(url: str, token: str, section_id: str) -> List[Dict]:
-    params = {"includeGuids": 1}
-    data = await _get(f"{url.rstrip('/')}/library/sections/{section_id}/all", token, params=params)
-    return data.get("MediaContainer", {}).get("Metadata", [])
+    return await _get_library_items_paginated(url, token, section_id, {"includeGuids": 1})
 
 async def get_shows(url: str, token: str, section_id: str) -> List[Dict]:
-    params = {"includeGuids": 1}
-    data = await _get(f"{url.rstrip('/')}/library/sections/{section_id}/all", token, params=params)
-    return data.get("MediaContainer", {}).get("Metadata", [])
+    return await _get_library_items_paginated(url, token, section_id, {"includeGuids": 1})
 
 async def get_seasons(url: str, token: str, section_id: str) -> List[Dict]:
     """Fetch season metadata, including user ratings, from a TV library."""
-    params = {"type": 3, "includeGuids": 1}
-    data = await _get(f"{url.rstrip('/')}/library/sections/{section_id}/all", token, params=params)
-    return data.get("MediaContainer", {}).get("Metadata", [])
+    return await _get_library_items_paginated(url, token, section_id, {"type": 3, "includeGuids": 1})
 
 
 async def get_episodes(url: str, token: str, section_id: str) -> List[Dict]:
-    params = {"type": 4, "includeGuids": 1}
-    data = await _get(f"{url.rstrip('/')}/library/sections/{section_id}/all", token, params=params)
-    return data.get("MediaContainer", {}).get("Metadata", [])
+    return await _get_library_items_paginated(url, token, section_id, {"type": 4, "includeGuids": 1})
 
 async def get_recently_added(url: str, token: str, section_id: str, media_type: int, limit: int = 50) -> List[Dict]:
     """Fetch the most recently-added items from a library section.

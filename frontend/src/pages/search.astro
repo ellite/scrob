@@ -19,15 +19,24 @@ const isStudioSearch = type === "network" || type === "studio";
 const showYearFilter = (type === "movie" || type === "series") && !inLibrary;
 
 let hasTmdbKey = false;
+let hasTvdbKey = false;
 if (token) {
   const settings = await api.auth.getSettings(token);
   hasTmdbKey = !!settings?.has_effective_tmdb_key;
+  hasTvdbKey = !!settings?.has_effective_tvdb_key;
 } else {
   // Anonymous visitor - only reachable at all when the admin enabled
   // logged-out navigation, which already implies a global TMDB key.
-  const status = await api.profile.publicAccessStatus().catch(() => ({ enable_logged_out_navigation: false }));
+  const status = await api.profile.publicAccessStatus().catch(() => ({ enable_logged_out_navigation: false, has_global_tvdb_key: false }));
   hasTmdbKey = status.enable_logged_out_navigation;
+  hasTvdbKey = status.has_global_tvdb_key;
 }
+
+// TVDB search (core.tvdb.search_series) only covers series, and is a
+// separate, deliberately-not-merged source (see the "Try TheTVDB" fallback
+// below) - only worth offering on the tabs where a TVDB-only show (e.g. a
+// live-sports/reality series TMDB doesn't catalog) could plausibly belong.
+const tvdbFallbackEligible = hasTvdbKey && (type === undefined || type === "series") && !inLibrary;
 
 let results: MediaItem[] = [];
 let userResults: UserSearchResult[] = [];
@@ -257,14 +266,86 @@ const searchPrompt = m.search_prompt({ type: type ?? "" });
   {!isUserSearch && totalPages > 1 && (
     <Pagination currentPage={page} totalPages={totalPages} baseUrl={baseUrl} />
   )}
+
+  <!-- TVDB fallback: a deliberately separate, on-demand search - not merged
+       with the TMDB results above (no cross-source dedup to get wrong) and
+       not run automatically (no second API call on every keystroke). -->
+  {tvdbFallbackEligible && q.length >= 2 && (
+    <div class="mt-10 text-center">
+      <button
+        type="button"
+        id="tvdb-fallback-btn"
+        data-q={q}
+        class="px-4 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer"
+      >
+        {m.search_tvdb_fallback()}
+      </button>
+      <div id="tvdb-fallback-results" class="hidden mt-6 text-left"></div>
+    </div>
+  )}
   </div>
 </Base>
 
 <script>
   import { m } from '../paraglide/messages.js';
 
+  function esc(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   function setup() {
     const token = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
+
+    const tvdbBtn = document.getElementById('tvdb-fallback-btn') as HTMLButtonElement | null;
+    const tvdbResults = document.getElementById('tvdb-fallback-results') as HTMLElement | null;
+    if (tvdbBtn && tvdbResults) {
+      const defaultLabel = tvdbBtn.textContent ?? '';
+      tvdbBtn.addEventListener('click', async () => {
+        const q = tvdbBtn.dataset.q ?? '';
+        tvdbBtn.disabled = true;
+        tvdbBtn.textContent = m.search_tvdb_searching();
+        tvdbResults.classList.remove('hidden');
+        tvdbResults.innerHTML = `<p class="text-sm text-zinc-500 text-center">${esc(m.common_searching())}</p>`;
+        try {
+          const res = await fetch(`/api/proxy/media/search-tvdb?q=${encodeURIComponent(q)}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            tvdbResults.innerHTML = `<p class="text-sm text-red-400 text-center">${esc(err.detail ?? m.search_tvdb_failed())}</p>`;
+            return;
+          }
+          const items: any[] = await res.json();
+          if (!items.length) {
+            tvdbResults.innerHTML = `<p class="text-sm text-zinc-500 text-center">${esc(m.search_tvdb_no_results())}</p>`;
+            return;
+          }
+          tvdbBtn.classList.add('hidden');
+          tvdbResults.innerHTML = `
+            <p class="group-label mb-4">${esc(m.search_tvdb_results())}</p>
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
+              ${items.map((it) => `
+                <a href="/show/tvdb/${it.tvdb_id}" class="group">
+                  <div class="aspect-[2/3] rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800 group-hover:border-blue-500/50 transition-colors">
+                    ${it.image_url
+                      ? `<img src="${esc(it.image_url)}" alt="" class="w-full h-full object-cover" loading="lazy" />`
+                      : `<div class="w-full h-full flex items-center justify-center text-zinc-600"><svg xmlns="http://www.w3.org/2000/svg" width="35%" height="35%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg></div>`}
+                  </div>
+                  <p class="mt-2 text-sm font-bold text-zinc-100 truncate group-hover:text-blue-400 transition-colors">${esc(it.title ?? '')}</p>
+                  <p class="text-xs text-zinc-500">${esc(it.year ? String(it.year) : '')}</p>
+                </a>
+              `).join('')}
+            </div>
+            <p class="text-xs text-zinc-500 mt-6">${m.tvdb_attribution({ link: '<a href="https://thetvdb.com" target="_blank" rel="noopener noreferrer" class="text-zinc-400 hover:text-zinc-200 underline underline-offset-2 transition-colors">TheTVDB</a>' })}</p>
+          `;
+        } catch {
+          tvdbResults.innerHTML = `<p class="text-sm text-red-400 text-center">${esc(m.search_tvdb_failed())}</p>`;
+        } finally {
+          tvdbBtn.disabled = false;
+          tvdbBtn.textContent = defaultLabel;
+        }
+      });
+    }
 
     const yearSel = document.getElementById('filter-year') as HTMLSelectElement | null;
     if (yearSel) {

@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from db import engine, Base
 import models # noqa: F401
-from routers import webhooks, media, history, ratings, sync, shows, auth, lists, oidc, profile, trakt, simkl, mdblist, bingebase, comments, admin, compat, export, yamtrack, calendar
+from routers import webhooks, media, history, ratings, sync, shows, auth, lists, oidc, profile, trakt, simkl, wetrakr, mdblist, bingebase, comments, admin, compat, export, yamtrack, calendar
 
 from core.access_log import install as install_access_log_redaction
 install_access_log_redaction()
@@ -41,6 +41,7 @@ async def _auto_sync_scheduler():
     )
     from routers.trakt import run_trakt_sync, _run_trakt_push
     from routers.simkl import run_simkl_sync, _run_simkl_push
+    from routers.wetrakr import run_wetrakr_sync, _run_wetrakr_push
     from routers.mdblist import run_mdblist_sync, run_mdblist_push
 
     # Trakt/Simkl/MDBList are single, user-level cloud connections (no
@@ -64,6 +65,15 @@ async def _auto_sync_scheduler():
             "push_flags": ("simkl_push_watched", "simkl_push_ratings"),
             "pull_runner": run_simkl_sync,
             "push_runner": _run_simkl_push,
+        },
+        {
+            "source": CollectionSource.wetrakr,
+            "connected_field": "wetrakr_access_token",
+            "auto_sync_field": "wetrakr_auto_sync_interval",
+            "auto_push_field": "wetrakr_auto_push_interval",
+            "push_flags": ("wetrakr_push_watched", "wetrakr_push_ratings"),
+            "pull_runner": run_wetrakr_sync,
+            "push_runner": _run_wetrakr_push,
         },
         {
             "source": CollectionSource.mdblist,
@@ -182,7 +192,9 @@ async def _auto_sync_scheduler():
                         f"connection {conn.id} (job {job_id})"
                     )
                     if job_type == "push":
-                        asyncio.create_task(runner(conn.user_id, conn.id, job_id))
+                        # Scheduled pushes skip what an earlier push already sent (#421, #422);
+                        # a manual push still reconciles everything.
+                        asyncio.create_task(runner(conn.user_id, conn.id, job_id, incremental=True))
                     else:
                         asyncio.create_task(runner(conn.user_id, job_id, 0, 0, conn.id))
 
@@ -370,6 +382,73 @@ async def _emby_progress_poller():
             log.error(f"Emby progress poller: {e}")
 
 
+async def _refresh_tvdb_shows(db, log, is_fresh) -> None:
+    """Daily refresh of TVDB-sourced shows (tmdb_data.source == "tvdb").
+
+    Their stored season list and status are otherwise only written when
+    someone opens the show page, so Next Up and the calendar (which read that
+    snapshot) would never learn about a new season or an ended show. Only the
+    TVDB-shaped fields are rewritten; title/overview stay as they are.
+    """
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+    from models.show import Show
+    from models.global_settings import GlobalSettings
+    from models.users import User, UserSettings
+    from core import tvdb as tvdb_client
+
+    shows = [
+        s for s in (await db.execute(select(Show).where(Show.tvdb_id.isnot(None)))).scalars().all()
+        if (s.tmdb_data or {}).get("source") == "tvdb" and not is_fresh(s)
+    ]
+    if not shows:
+        return
+
+    # Same "any valid key" reasoning as the TMDB sweep: global, then an
+    # admin's, then any user's (with that key's own subscriber PIN).
+    gs = (await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))).scalar_one_or_none()
+    api_key, pin = (gs.tvdb_api_key, gs.tvdb_subscriber_pin) if gs else (None, None)
+    if not api_key:
+        row = (await db.execute(
+            select(UserSettings.tvdb_api_key, UserSettings.tvdb_subscriber_pin)
+            .join(User, User.id == UserSettings.user_id)
+            .where(UserSettings.tvdb_api_key.isnot(None))
+            .order_by(User.is_admin.desc())
+            .limit(1)
+        )).first()
+        api_key, pin = (row[0], row[1]) if row else (None, None)
+    if not api_key:
+        return
+    tvdb_client.set_subscriber_pin(api_key, pin)
+
+    sem = asyncio.Semaphore(5)
+    refreshed = 0
+
+    async def _check(show):
+        nonlocal refreshed
+        async with sem:
+            try:
+                raw = await tvdb_client.get_series(show.tvdb_id, api_key, cache_ttl=None)
+            except Exception:
+                return
+        data = tvdb_client.format_series(raw, language=tvdb_client.tvdb_language(None))
+        show.status = data.get("status") or show.status
+        show.first_air_date = data.get("first_air_date") or show.first_air_date
+        show.last_air_date = data.get("last_air_date") or show.last_air_date
+        show.tmdb_data = {
+            **(show.tmdb_data or {}),
+            "seasons": data.get("seasons") or (show.tmdb_data or {}).get("seasons", []),
+            "genres": data.get("genres") or (show.tmdb_data or {}).get("genres", []),
+            "source": "tvdb",
+            "refreshed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        refreshed += 1
+
+    await asyncio.gather(*(_check(s) for s in shows))
+    await db.commit()
+    log.info(f"Show metadata refresher (TVDB): refreshed {refreshed}/{len(shows)} stale shows")
+
+
 async def _show_metadata_refresher():
     """Keeps every TMDB-backed show's stored metadata (status plus the
     tmdb_data snapshot: seasons, last/next_episode_to_air, refreshed_at) at
@@ -391,8 +470,9 @@ async def _show_metadata_refresher():
     snapshots gated quickly), then daily. Shows refreshed less than
     STALE_AFTER ago are skipped, so a restart doesn't re-fetch what
     yesterday's sweep already covered. TVDB-sourced snapshots
-    (tmdb_data.source == "tvdb") are never touched - their season layout is
-    TVDB-shaped (#335) and their shows have no TMDB identity to fetch.
+    (tmdb_data.source == "tvdb") are never touched by the TMDB pass - their
+    season layout is TVDB-shaped (#335) - and are refreshed from TheTVDB by
+    _refresh_tvdb_shows instead.
     """
     import logging
     from datetime import datetime, timedelta, timezone
@@ -436,6 +516,13 @@ async def _show_metadata_refresher():
     while True:
         await asyncio.sleep(delay)
         delay = SWEEP_INTERVAL
+        # TVDB-sourced shows are swept separately (own key, own try) so a
+        # missing TMDB key below can't skip them, and vice versa.
+        try:
+            async with AsyncSessionLocal() as db:
+                await _refresh_tvdb_shows(db, log, _snapshot_is_fresh)
+        except Exception as e:
+            log.error(f"Show metadata refresher (TVDB): {e}")
         try:
             async with AsyncSessionLocal() as db:
                 # Show is a shared, instance-wide table with no single
@@ -745,6 +832,7 @@ app.include_router(lists.router, prefix="/lists", tags=["lists"])
 app.include_router(profile.router, prefix="/profile", tags=["profile"])
 app.include_router(trakt.router, prefix="/trakt", tags=["trakt"])
 app.include_router(simkl.router, prefix="/simkl", tags=["simkl"])
+app.include_router(wetrakr.router, prefix="/wetrakr", tags=["wetrakr"])
 app.include_router(mdblist.router, prefix="/mdblist", tags=["mdblist"])
 app.include_router(bingebase.router, prefix="/bingebase", tags=["bingebase"])
 app.include_router(comments.router, prefix="/comments", tags=["comments"])

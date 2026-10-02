@@ -527,6 +527,17 @@ class SettingsResponseEffectiveRadarrSonarrTests(unittest.IsolatedAsyncioTestCas
         self.assertTrue(result.has_effective_sonarr)
         self.assertFalse(result.has_effective_radarr)
 
+    async def test_global_mdblist_key_is_exposed_only_as_capability(self) -> None:
+        from models.global_settings import GlobalSettings
+
+        settings = self._user_settings()
+        gs = GlobalSettings(id=1, mdblist_api_key="server-secret")
+        result = await auth._settings_response(settings, _GlobalSettingsFakeDB(gs))
+
+        self.assertTrue(result.has_global_mdblist_key)
+        self.assertFalse(result.mdblist_connected)
+        self.assertIsNone(result.mdblist_api_key)
+
     async def test_user_config_does_not_need_global_settings_row_to_exist(self) -> None:
         # gs is None (no GlobalSettings row at all) - must not crash on the
         # `gs and all([...])` short-circuit when checking the global side.

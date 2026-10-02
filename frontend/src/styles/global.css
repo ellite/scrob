@@ -119,6 +119,8 @@ html.light {
 html {
   /* Fill notch/rounded-corner areas */
   background-color: var(--color-bg-page);
+  /* Anchor/scrollIntoView targets land below the pinned top nav. */
+  scroll-padding-top: var(--nav-h, 0px);
 }
 
 body {
@@ -167,7 +169,9 @@ select[class] {
 
 .sticky-top-safe {
   position: sticky;
-  top: env(safe-area-inset-top);
+  /* --nav-h is the pinned top nav's height (set in Base.astro); it already
+     includes the safe-area inset, so it replaces it rather than adding to it. */
+  top: var(--nav-h, env(safe-area-inset-top));
 }
 
 /* ── Mobile input improvements ─────────────────────────────────────────────
@@ -254,6 +258,28 @@ html.light [data-action="request"][data-state="active"] {
 }
 html.light [data-action="request"][data-state="active"]:hover {
   background-color: #ffedd5; color: #7c2d12; /* orange-100 / orange-900 */
+}
+
+/* Rewatch (indigo) */
+html.light [data-action="rewatch"][data-state="inactive"]:hover {
+  background-color: #e0e7ff; color: #312e81; /* indigo-100 / indigo-900 */
+}
+html.light [data-action="rewatch"][data-state="active"] {
+  background-color: #c7d2fe; color: #312e81; /* indigo-200 / indigo-900 */
+}
+html.light [data-action="rewatch"][data-state="active"]:hover {
+  background-color: #e0e7ff; color: #312e81; /* indigo-100 / indigo-900 */
+}
+
+/* Drop (rose) */
+html.light [data-action="drop"][data-state="inactive"]:hover {
+  background-color: #ffe4e6; color: #881337; /* rose-100 / rose-900 */
+}
+html.light [data-action="drop"][data-state="active"] {
+  background-color: #fecdd3; color: #881337; /* rose-200 / rose-900 */
+}
+html.light [data-action="drop"][data-state="active"]:hover {
+  background-color: #ffe4e6; color: #881337; /* rose-100 / rose-900 */
 }
 
 /* Network/studio logo swatch (show/movie badges, /network & /studio pages,

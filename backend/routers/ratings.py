@@ -80,6 +80,14 @@ async def submit_rating(
         db, media_type, media_id=body.media_id, tmdb_id=body.tmdb_id, tvdb_id=body.tvdb_id,
     )
 
+    if not media and not body.tmdb_id and body.tvdb_id and media_type == MediaType.series:
+        # A TheTVDB-only show has no TMDB record - its series row is built
+        # from the local Show instead.
+        from core.enrichment import get_or_create_tvdb_series_media
+        media = await get_or_create_tvdb_series_media(db, body.tvdb_id)
+        if media is None:
+            raise HTTPException(status_code=404, detail="Show not found locally; open its show page first so it can be created from TheTVDB")
+
     if not media and not body.tmdb_id:
         raise HTTPException(status_code=404, detail="Media not found")
     if not media:

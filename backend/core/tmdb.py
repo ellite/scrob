@@ -4,12 +4,19 @@ import httpx
 from core.config import settings
 
 TMDB_BASE = "https://api.themoviedb.org/3"
+TMDB_BASE_V4 = "https://api.themoviedb.org/4"
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
 
 # Errors that are worth retrying (transient). 404/4xx are permanent — don't retry.
 _RETRYABLE = (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError)
 
 DEFAULT_CACHE_TTL = 1800  # 30 minutes — TMDB metadata/discovery results don't need to be fresher than this
+
+# Crew jobs surfaced in a title's "Crew" tab - a curated allowlist, not a
+# department filter: TMDB's "Production" department alone pulls in Casting,
+# Production Coordinator, Assistant Director tiers, etc., which is far more
+# than a viewer means by "who directed/wrote/produced this".
+NOTABLE_CREW_JOBS = {"Director", "Writer", "Screenplay", "Story", "Teleplay", "Producer", "Executive Producer", "Co-Producer"}
 
 # Request-path budget. Kept deliberately tight: these calls sit inside
 # page-render fan-outs (home page enrich_with_state, Next Up, etc.), so a wide
@@ -379,6 +386,42 @@ def poster_url(path: str, size: str = "w500") -> str | None:
     return f"{TMDB_IMAGE_BASE}/{size}{path}"
 
 
+def notable_crew(credits: dict, limit: int = 12, profile_size: str = "w500") -> list[dict]:
+    """Director/writer/producer crew for a title's "Crew" tab, deduped by
+    person id - a writer-director (e.g. Richard Kelly on Donnie Darko) is one
+    entry with a combined job label, not two rows for the same person."""
+    by_id: dict[int, dict] = {}
+    order: list[int] = []
+    for c in credits.get("crew", []):
+        job = c.get("job")
+        if job not in NOTABLE_CREW_JOBS:
+            continue
+        pid = c.get("id")
+        if pid is None:
+            continue
+        if pid not in by_id:
+            by_id[pid] = {
+                "tmdb_id": pid,
+                "name": c.get("name"),
+                "jobs": [job],
+                "profile_path": poster_url(c.get("profile_path"), size=profile_size),
+            }
+            order.append(pid)
+        elif job not in by_id[pid]["jobs"]:
+            by_id[pid]["jobs"].append(job)
+
+    result = []
+    for pid in order[:limit]:
+        entry = by_id[pid]
+        result.append({
+            "tmdb_id": entry["tmdb_id"],
+            "name": entry["name"],
+            "job": ", ".join(entry["jobs"]),
+            "profile_path": entry["profile_path"],
+        })
+    return result
+
+
 async def get_person(person_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/person/{person_id}", headers=get_headers(api_key), params={"append_to_response": "combined_credits"})
 
@@ -509,6 +552,20 @@ async def get_collection(collection_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/collection/{collection_id}", headers=get_headers(api_key))
 
 
+async def get_list(list_id: int, api_key: str = None, page: int = 1) -> dict:
+    """TMDB v4 "List" details - GET /4/list/{list_id} (#442). Unlike v3's
+    single-page, movie-only /3/list/{list_id}, v4 supports mixed movie/tv
+    lists (each result item carries media_type) and paginates at 20 items
+    per page - the response's total_pages tells the caller whether to loop.
+
+    v4 also transparently serves legacy v3-created lists (verified against
+    a real v3 list, id 1, via both endpoints) - the id space is shared, so
+    this one function covers every TMDB list a user might paste a link to.
+    Requires the same v4 read-access-token this app already stores as its
+    "TMDB API key" (get_headers's Bearer auth already is v4-style)."""
+    return await _get(f"{TMDB_BASE_V4}/list/{list_id}", headers=get_headers(api_key), params={"page": page})
+
+
 async def get_network(network_id: int, api_key: str = None) -> dict:
     """TV network details (name, logo_path, origin_country, homepage)."""
     return await _get(f"{TMDB_BASE}/network/{network_id}", headers=get_headers(api_key))
@@ -521,6 +578,26 @@ async def get_company(company_id: int, api_key: str = None) -> dict:
 
 async def get_movie_videos(tmdb_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/movie/{tmdb_id}/videos", headers=get_headers(api_key))
+
+
+async def get_videos(kind: str, tmdb_id: int, api_key: str = None, language: str | None = None) -> dict:
+    """Videos for a movie ("movie") or show ("tv"). With `language`, TMDB returns
+    only videos tagged with that language - no English fallback."""
+    params = {"language": language} if language else None
+    return await _get(f"{TMDB_BASE}/{kind}/{tmdb_id}/videos", headers=get_headers(api_key), params=params)
+
+
+def pick_trailer(videos: list[dict], language: str | None = None) -> dict | None:
+    """Best YouTube trailer: official first, then any. With `language` (e.g.
+    "pt-BR"), only videos tagged with that language qualify, so a localized
+    request never quietly returns the English trailer (#413)."""
+    lang = language.split("-")[0].lower() if language else None
+    trailers = [
+        v for v in videos
+        if v.get("site") == "YouTube" and v.get("type") == "Trailer" and v.get("key")
+        and (not lang or (v.get("iso_639_1") or "").lower() == lang)
+    ]
+    return next((v for v in trailers if v.get("official")), trailers[0] if trailers else None)
 
 
 async def find_by_external_id(external_id: str, source: str, api_key: str = None) -> dict:

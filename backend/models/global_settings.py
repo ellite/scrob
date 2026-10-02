@@ -12,6 +12,7 @@ class GlobalSettings(Base):
 
     id                     : Mapped[int]           = mapped_column(Integer, primary_key=True)
     tmdb_api_key           : Mapped[Optional[str]] = mapped_column(String(255))
+    mdblist_api_key        : Mapped[Optional[str]] = mapped_column(String(255))
     radarr_url             : Mapped[Optional[str]] = mapped_column(String(500))
     radarr_token           : Mapped[Optional[str]] = mapped_column(String(500))
     radarr_root_folder     : Mapped[Optional[str]] = mapped_column(String(500))

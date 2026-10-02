@@ -1,0 +1,24 @@
+---
+interface Props {
+  kind: "person" | "movie" | "show";
+  title: string;
+  // Not "flex" by default - a caller that shows/hides this via an <img>
+  // onerror handler needs `hidden` here (display:none) without a `flex`
+  // utility fighting the handler's own `style.display = 'flex'` toggle for
+  // specificity. Callers that render it directly should pass class="flex".
+  class?: string;
+}
+
+const { kind, title, class: className = "" } = Astro.props;
+---
+
+<div class={`w-full h-full flex-col items-center justify-center text-zinc-600 bg-zinc-900 p-4 text-center ${className}`}>
+  {kind === "person" ? (
+    <svg xmlns="http://www.w3.org/2000/svg" width="30%" height="30%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+  ) : kind === "show" ? (
+    <svg xmlns="http://www.w3.org/2000/svg" width="30%" height="30%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-2"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
+  ) : (
+    <svg xmlns="http://www.w3.org/2000/svg" width="30%" height="30%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 16.5h4M17 7.5h4M17 16.5h4M3 12h18"/></svg>
+  )}
+  <span class="text-xs font-bold uppercase tracking-widest">{title}</span>
+</div>

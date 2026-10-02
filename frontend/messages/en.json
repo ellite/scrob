@@ -102,12 +102,14 @@
   "credits_scene_post": "Post-Credits Scene",
   "common_create": "Create",
   "common_confirm": "Confirm",
+  "common_ok": "OK",
   "common_dismiss": "Dismiss",
   "list_name_placeholder": "List name",
   "pwa_install_title": "Install Scrob",
   "pwa_install_message": "Add to your home screen for the full app experience.",
   "pwa_install": "Install",
   "common_something_went_wrong": "Something went wrong",
+  "common_please_try_again": "Please try again.",
   "common_saving": "Saving…",
   "common_removing": "Removing…",
   "common_remove": "Remove",
@@ -145,14 +147,28 @@
   "watch_unwatch_season_body": "This will remove all watch events for every episode in this season.",
   "watch_unwatch_show_title": "Remove all watch history?",
   "watch_unwatch_show_body": "This will remove all watch events for every episode of this show.",
-  "list_unmatched_item": "Cannot add unmatched item to lists",
+  "customize_seasons_to_monitor": "Seasons to monitor",
+  "customize_select_all": "Select all",
+  "customize_select_none": "Select none",
+  "customize_select_one_season": "Select at least one season.",
+  "watch_show_job_timed_out": "Timed out waiting for the show to be marked as watched",
+  "watch_remove_all": "Remove all watched events",
+  "watch_remove_all_season": "Remove all watched events for this season",
+  "watch_remove_all_season_confirm_title": "Remove all watched events for this season?",
+  "watch_remove_all_season_confirm_body": "This removes every recorded play of every episode in this season and marks them as unwatched on enabled services. This cannot be undone.",
+  "watch_remove_all_show_confirm_title": "Remove all watched events for this show?",
+  "watch_remove_all_show_confirm_body": "This removes every recorded play of every episode in this show and marks them as unwatched on enabled services. This cannot be undone.",
+  "watch_remove_all_failed": "Failed to remove watched events",
+  "list_unmatched_item": "This item is not matched, so it cannot be added to a list.",
+  "list_unmatched_title": "Cannot add to lists",
   "collection_remove_show_title": "Remove show from collection?",
   "collection_remove_show_body": "This will remove all collection entries for every episode in this show.",
   "collection_remove_season_title": "Remove season from collection?",
   "collection_remove_season_body": "This will remove all collection entries for this season.",
   "collection_remove_title": "Remove from collection?",
   "collection_remove_body": "This will remove all collection entries for this item.",
-  "collection_unmatched_item": "Cannot manually collect unmatched items",
+  "collection_unmatched_item": "This item is not matched, so it cannot be collected manually.",
+  "collection_unmatched_title": "Cannot add to collection",
   "collection_in_collection": "In collection",
   "collection_add": "Add to collection",
   "request_added": "Added",
@@ -397,6 +413,25 @@
   "comments_delete_confirm_title": "Delete comment?",
   "common_cannot_be_undone": "This cannot be undone.",
   "comments_delete_failed": "Failed to delete comment",
+  "trakt_comments_title": "Community Comments",
+  "trakt_comments_view_on_trakt": "View on Trakt →",
+  "trakt_comments_review": "Review",
+  "trakt_comments_likes": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} like",
+        "countPlural=other": "{count} likes",
+        "countPlural=*": "{count} likes"
+      }
+    }
+  ],
   "episodes_left": [
     {
       "declarations": [
@@ -457,6 +492,14 @@
   "genre_war": "War",
   "genre_war_politics": "War & Politics",
   "genre_western": "Western",
+  "crew_job_director": "Director",
+  "crew_job_writer": "Writer",
+  "crew_job_screenplay": "Screenplay",
+  "crew_job_story": "Story",
+  "crew_job_teleplay": "Teleplay",
+  "crew_job_producer": "Producer",
+  "crew_job_executive_producer": "Executive Producer",
+  "crew_job_co_producer": "Co-Producer",
   "show_status_returning": "Returning Series",
   "show_status_in_production": "In Production",
   "show_status_planned": "Planned",
@@ -572,6 +615,11 @@
   ],
   "search_local_only": "Showing local results only. {link} for more.",
   "search_add_tmdb_key": "Add TMDB Key",
+  "search_tvdb_fallback": "Can't find what you're looking for? Try searching TheTVDB",
+  "search_tvdb_searching": "Searching TheTVDB…",
+  "search_tvdb_failed": "TVDB search failed.",
+  "search_tvdb_no_results": "No results found on TheTVDB.",
+  "search_tvdb_results": "TheTVDB results",
   "search_all_years": "All Years",
   "common_clear": "Clear",
   "search_no_users": "No users found for \"{query}\".",
@@ -615,16 +663,14 @@
   "common_refresh": "Refresh",
   "calendar_loading": "Checking air dates for your shows… (first time can take a minute)",
   "calendar_error": "Could not load the calendar.",
-  "calendar_footer": "The next 14 days for shows you're collecting or watching",
+  "calendar_footer": "The last 7 days and next 14 days for shows you're collecting or watching",
   "common_today": "Today",
   "common_tomorrow": "Tomorrow",
   "common_yesterday": "Yesterday",
   "calendar_badge_collected": "Collected",
   "calendar_badge_watched": "Watched",
   "common_tba": "TBA",
-  "calendar_computed_at": " · computed {date}",
-  "calendar_cached": " (cached, max 24h old)",
-  "calendar_empty": "No upcoming episodes found for your shows in the next 14 days.",
+  "calendar_empty": "No episodes found for your shows in the last 7 or next 14 days.",
   "person_enlarge_photo": "Enlarge photo of {name}",
   "person_personal_info": "Personal Info",
   "person_known_for": "Known For",
@@ -681,6 +727,10 @@
   "common_overview": "Overview",
   "tmdb_collection_films": "Films in this Collection",
   "common_top_cast": "Top Cast",
+  "castcrew_cast": "Cast",
+  "castcrew_crew": "Crew",
+  "heatmap_not_rated": "not rated",
+  "media_trailer": "Trailer",
   "tmdb_collection_appearances": [
     {
       "declarations": [
@@ -758,6 +808,7 @@
     }
   ],
   "show_seasons": "Seasons",
+  "show_episode_ratings": "Episode Ratings",
   "show_episodes": "Episodes",
   "show_episode_count_label": [
     {
@@ -799,6 +850,43 @@
   "history_empty": "No history yet",
   "history_clear_search": "Clear search",
   "history_go_discover": "Go discover something",
+  "history_select": "Select",
+  "history_select_done": "Done",
+  "history_select_day": "Select day",
+  "history_selected_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} selected",
+        "countPlural=other": "{count} selected",
+        "countPlural=*": "{count} selected"
+      }
+    }
+  ],
+  "history_delete_selected_title": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Delete {count} entry?",
+        "countPlural=other": "Delete {count} entries?",
+        "countPlural=*": "Delete {count} entries?"
+      }
+    }
+  ],
+  "history_delete_selected_body": "This removes them from your watch history. This cannot be undone.",
+  "history_delete_selected_failed": "Failed - retry",
   "dropped_page_title": "Dropped",
   "dropped_summary": [
     {
@@ -964,6 +1052,19 @@
   "lists_no_public_hint": "Check back later, or sign in to see your own.",
   "common_creating": "Creating...",
   "lists_create_failed": "Failed to create list",
+  "lists_import_from": "Import from {provider}",
+  "lists_import_title": "Import a List",
+  "lists_import_label": "List URL or ID",
+  "lists_import_provider_label": "{provider} List URL or ID",
+  "lists_import_mdblist_label": "MDBList URL or ID",
+  "lists_import_placeholder": "{url} or just {id}",
+  "lists_import_submit": "Import",
+  "lists_importing": "Importing…",
+  "lists_import_failed": "Failed to import list",
+  "lists_import_tmdb_hint": "Paste a public TMDB list's URL or ID. Private lists can't be imported.",
+  "lists_import_tvdb_hint": "Paste a TheTVDB list's URL or ID. Each item is matched through its TMDB link, so anything TVDB-only (no TMDB match) is skipped - this can take a little longer than a TMDB import.",
+  "lists_import_imdb_hint": "Paste a public IMDb title list's URL or ID. Movies and whole series are matched through TMDB; unsupported entries such as episodes and games are skipped.",
+  "lists_import_mdblist_hint": "Paste an MDBList list URL, username/slug, or numeric ID. Movies and shows are imported using your configured MDBList and TMDB keys.",
   "common_delete_named_confirm": "Delete \"{name}\"?",
   "list_private": "This list is private.",
   "list_not_found": "List not found.",
@@ -1559,6 +1660,8 @@
   "admin_0_unlimited": "0 (Unlimited)",
   "admin_copy_api_key": "Copy API key",
   "admin_tvdb_help": "Server-wide fallback for TVDB-sourced shows and TVDB-ordered episode mapping. A free project key from <span class=\"text-zinc-400\">thetvdb.com/api-information</span> needs no PIN; a subscriber-supported key needs the PIN below.",
+  "admin_mdblist_key_placeholder": "MDBList API key",
+  "admin_mdblist_help": "Server-wide fallback for importing public MDBList lists. User sync, push, and scrobble features still require a personal MDBList connection.",
   "admin_tvdb_pin_label": "Subscriber PIN <span class=\"text-zinc-600\">(optional)</span>",
   "admin_role_admin": "Admin",
   "admin_restore_help": "Upload a <code class=\"text-zinc-300\">.bak</code> backup file to restore. <span class=\"text-red-400 font-medium\">All existing data will be overwritten.</span>",
@@ -1572,6 +1675,9 @@
   "admin_no_tags": "No tags available",
   "admin_enter_url_key_first": "Enter {service} URL and API key first.",
   "admin_failed_to_connect": "Failed to connect",
+  "admin_enter_api_key_first": "Enter a {service} API key first.",
+  "admin_failed_to_connect_to": "Failed to connect to {service}",
+  "admin_connection_successful": "{service} connection successful.",
   "admin_folder_free_space": "{path} ({free}GB free)",
   "admin_connected_profiles_fetched": "{service} connected and profiles fetched.",
   "admin_service_error": "{service} error",
@@ -1595,6 +1701,12 @@
   "admin_clear_cache_failed": "Failed to clear cache",
   "admin_cache_cleared": "Image cache cleared successfully.",
   "admin_user_updated": "User updated.",
+  "admin_reset_password": "Reset Password",
+  "admin_reset_password_body": "Set a new password for {username}.",
+  "admin_password_updated": "Password updated.",
+  "admin_disable_2fa_confirm_title": "Disable 2FA?",
+  "admin_disable_2fa_confirm_body": "{username} will be able to sign in with just their password until they set up 2FA again.",
+  "admin_2fa_disabled": "2FA disabled.",
   "admin_cache_stats": [
     {
       "declarations": [
@@ -1687,6 +1799,10 @@
   "conn_scrob_trakt": "Scrob → Trakt",
   "conn_now_watching": "Now watching",
   "conn_connect_simkl": "Connect Simkl",
+  "conn_connect_service": "Connect {name}",
+  "conn_wetrakr_connected_hint": "WeTrakr is connected. Use Pull to import your watched history and ratings.",
+  "conn_wetrakr_setup_hint": "Click Connect WeTrakr to link your account — no app registration needed.",
+  "conn_wetrakr_push_title": "Push all watched states, ratings, lists and comments from Scrob to WeTrakr",
   "conn_simkl_scrob": "Simkl → Scrob",
   "conn_scrob_simkl": "Scrob → Simkl",
   "conn_mdblist_scrob": "MDBList → Scrob",
@@ -1749,9 +1865,14 @@
   "conn_profile_id": "Profile {id}",
   "conn_select_profile": "Select Profile",
   "conn_ratings": "Ratings",
+  "conn_lists": "Lists",
+  "conn_comments": "Comments",
+  "conn_trakt_community_comments": "Community Comments",
+  "conn_trakt_community_comments_hint": "Show Trakt's public comments (not your own) on movie, show, season, and episode pages.",
   "conn_playback_events": "Playback events",
   "conn_watchlist": "Watchlist",
   "conn_tmdb_required_for_sync": "TMDB Read Access Token is required for sync",
+  "conn_pull_watched_ratings_from": "Pull watched history and ratings from {name}",
   "conn_sync_library_title": "Sync {service} library, watched status, and playback progress",
   "conn_pull_from": "Pull from {name}",
   "conn_sync_now": "Sync now",
@@ -1817,6 +1938,11 @@
   "conn_trakt_settings_saved": "Trakt settings saved.",
   "conn_failed_to_save_simkl_settings": "Failed to save Simkl settings",
   "conn_simkl_settings_saved": "Simkl settings saved.",
+  "conn_service_settings_saved": "{name} settings saved.",
+  "conn_failed_to_save_service_settings": "Failed to save {name} settings",
+  "conn_failed_to_start_service_auth": "Failed to start {name} auth",
+  "conn_disconnect_service_confirm": "Disconnect {name}? This will remove your {name} tokens from Scrob.",
+  "conn_failed_to_disconnect_service": "Failed to disconnect {name}",
   "conn_failed_to_save_mdblist_settings": "Failed to save MDBList settings",
   "conn_mdblist_settings_saved": "MDBList settings saved.",
   "conn_failed_to_save_bingebase_settings": "Failed to save Bingebase settings",
@@ -1927,6 +2053,7 @@
   "conn_item_playback_events": "playback events",
   "conn_item_playback_progress": "playback progress",
   "conn_item_watchlist": "watchlist",
+  "conn_item_comments": "comments",
   "conn_item_watched_history": "watched history",
   "conn_item_lists": "lists",
   "conn_item_dropped_shows": "dropped shows",
@@ -1942,6 +2069,7 @@
   "conn_push_to_name": "Push to {name}?",
   "conn_nothing_selected_push_to": "Your current settings have nothing selected to push to {name}. Enable at least one option in the \"Scrob → {name}\" section.",
   "conn_will_push_to_server": "This will push your {items} from Scrob to {name}. Existing data on the server may be overwritten.",
+  "conn_will_push_to_service": "This will push your {items} from Scrob to {name}. Existing data on {name} may be overwritten.",
   "conn_trakt_full_rescan_body": "This will scan your complete {items} on Trakt again. Existing Scrob events are retained and deduplicated.",
   "conn_trakt_pull_body": "This will import new {items} from Trakt since the last successful pull.",
   "conn_simkl_pull_body": "This will import your {items} from Simkl into Scrob.",
@@ -1950,6 +2078,7 @@
   "conn_mdblist_pull_body": "This will import your {items} from MDBList into Scrob.",
   "conn_mdblist_push_body": "This will add or update your {items} on MDBList. Existing remote items are retained.",
   "conn_error_detail": "Error: {detail}",
+  "conn_server_error_fallback": "{message} (server error {status})",
   "conn_authorization_failed": "Authorization failed",
   "conn_enter_provider_credentials": "Enter your {provider} email and password.",
   "conn_no_provider_profile": "No {provider} profile is available for this account.",

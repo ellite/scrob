@@ -1088,6 +1088,109 @@ class SyncItemsPartialWatchFanOutTests(_PartialWatchDB):
         self.assertEqual(new_watched_ids, {event.media_id})
 
 
+class SyncItemsPushBackTests(_PartialWatchDB):
+    """#420: a title marked watched in Scrob before it was collected shows up
+    on the server unwatched - sync_items hands it back for a push there."""
+
+    async def _sync_movie(self, *, watched_in_scrob: bool, user_data: dict, file_known: bool = False) -> tuple[dict, int]:
+        from models.collection import Collection, CollectionFile, CollectionSource
+        from models.events import WatchEvent
+        from models.media import Media, MediaType
+
+        async with self.Session() as db:
+            media = Media(tmdb_id=603, media_type=MediaType.movie, title="The Matrix")
+            db.add(media)
+            await db.flush()
+            if watched_in_scrob:
+                db.add(WatchEvent(
+                    user_id=1, media_id=media.id, completed=True, play_count=1,
+                    watched_at=datetime(2024, 5, 1, 12, 0, 0),
+                ))
+            if file_known:
+                coll = Collection(user_id=1, media_id=media.id)
+                db.add(coll)
+                await db.flush()
+                db.add(CollectionFile(
+                    collection_id=coll.id, connection_id=7,
+                    source=CollectionSource.jellyfin, source_id="jf-1",
+                ))
+            await db.commit()
+
+            push_back: dict[int, str] = {}
+            await sync.sync_items(
+                items=[{
+                    "Id": "jf-1", "Name": "The Matrix",
+                    "ProviderIds": {"Tmdb": "603"}, "UserData": user_data,
+                }],
+                media_type=MediaType.movie,
+                source=CollectionSource.jellyfin,
+                db=db,
+                stats={"movies": 0, "episodes": 0, "skipped": 0, "errors": 0},
+                user_id=1,
+                connection_id=7,
+                push_back=push_back,
+            )
+            return push_back, media.id
+
+    async def test_newly_collected_watched_item_is_handed_back(self):
+        push_back, media_id = await self._sync_movie(watched_in_scrob=True, user_data={"Played": False})
+        self.assertEqual(push_back, {media_id: "jf-1"})
+
+    async def test_already_watched_on_the_server_is_not(self):
+        push_back, _ = await self._sync_movie(
+            watched_in_scrob=True,
+            user_data={"Played": True, "PlayCount": 1, "LastPlayedDate": "2026-01-02T20:00:00.000Z"},
+        )
+        self.assertEqual(push_back, {})
+
+    async def test_unwatched_in_scrob_is_not(self):
+        push_back, _ = await self._sync_movie(watched_in_scrob=False, user_data={"Played": False})
+        self.assertEqual(push_back, {})
+
+    async def test_an_already_collected_file_is_not(self):
+        push_back, _ = await self._sync_movie(
+            watched_in_scrob=True, user_data={"Played": False}, file_known=True,
+        )
+        self.assertEqual(push_back, {})
+
+
+class PushWatchedBackToSourceTests(_PartialWatchDB):
+    def _conn(self, type_="jellyfin", push_watched=True):
+        return SimpleNamespace(
+            type=type_, push_watched=push_watched, url="http://srv", token="t", server_user_id="u1",
+        )
+
+    async def _run(self, conn, push_back):
+        with (
+            patch.object(sync, "_latest_watched_at", AsyncMock(return_value={1: datetime(2024, 5, 1, 12, 0, 0)})),
+            patch("core.jellyfin.mark_watched", AsyncMock(return_value=True)) as mark,
+            patch.object(sync, "_push_plex_watched_and_record", AsyncMock(return_value=True)) as plex_push,
+        ):
+            count = await sync._push_watched_back_to_source(None, 1, conn, push_back)
+        return count, mark, plex_push
+
+    async def test_jellyfin_gets_the_original_date(self):
+        count, mark, _ = await self._run(self._conn(), {1: "jf-1"})
+        self.assertEqual(count, 1)
+        self.assertEqual(mark.await_args.kwargs["played_at"], datetime(2024, 5, 1, 12, 0, 0))
+
+    async def test_plex_goes_through_the_pending_push_recorder(self):
+        count, _, plex_push = await self._run(self._conn("plex"), {1: "rk-1"})
+        self.assertEqual(count, 1)
+        plex_push.assert_awaited_once()
+
+    async def test_push_watched_off_pushes_nothing(self):
+        count, mark, plex_push = await self._run(self._conn(push_watched=False), {1: "jf-1"})
+        self.assertEqual(count, 0)
+        mark.assert_not_awaited()
+        plex_push.assert_not_awaited()
+
+    async def test_multi_episode_file_is_pushed_once(self):
+        count, mark, _ = await self._run(self._conn(), {1: "jf-1", 2: "jf-1"})
+        self.assertEqual(count, 1)
+        mark.assert_awaited_once()
+
+
 class FullPushPartialWatchTests(_PartialWatchDB):
     """Same bug on the manual push path, which read every WatchEvent as
     watched regardless of completed."""
@@ -1161,7 +1264,7 @@ class FullPushPartialWatchTests(_PartialWatchDB):
         job = await self._job(job_id)
         self.assertEqual(job.status.value, "completed")
         self.assertEqual(job.total_items, 1)
-        self.assertEqual(job.stats, {"succeeded": 1, "failed": 0})
+        self.assertEqual(job.stats, {"succeeded": 1, "failed": 0, "skipped": 0, "mode": "full"})
 
     async def test_no_echo_token_is_armed_for_the_started_item(self):
         # An armed token swallows the item's next webhook as a push echo
@@ -1455,6 +1558,118 @@ class MatchUnmatchedShowDisplacedTmdbIdTests(_PartialWatchDB):
                 select(func.count(Collection.id)).where(Collection.user_id == 1)
             )).scalar()
             self.assertEqual(leftover, 1)
+
+
+class CanonicalEpisodePositionTests(unittest.TestCase):
+    """#447: pull sync resolves a Jellyfin/Emby episode through its TVDB episode
+    id instead of trusting the server's own season/episode numbers."""
+
+    POSITIONS = {(100, 4562021): (2, 79)}
+
+    def _item(self, **over):
+        item = {"ParentIndexNumber": 2, "IndexNumber": 21, "ProviderIds": {"Tvdb": "4562021"}}
+        item.update(over)
+        return item
+
+    def test_translates_on_an_exact_episode_id_match(self):
+        self.assertEqual(sync._canonical_episode_position(self._item(), 100, self.POSITIONS), (2, 79))
+
+    def test_keeps_raw_numbers_without_a_tvdb_episode_id(self):
+        self.assertIsNone(sync._canonical_episode_position(self._item(ProviderIds={"Tmdb": "5"}), 100, self.POSITIONS))
+        self.assertIsNone(sync._canonical_episode_position(self._item(ProviderIds=None), 100, self.POSITIONS))
+
+    def test_never_matches_by_numbers_or_across_series(self):
+        # same raw numbers, different episode id: not the mapped episode
+        self.assertIsNone(sync._canonical_episode_position(self._item(ProviderIds={"Tvdb": "1"}), 100, self.POSITIONS))
+        self.assertIsNone(sync._canonical_episode_position(self._item(), 200, self.POSITIONS))
+        self.assertIsNone(sync._canonical_episode_position(self._item(), None, self.POSITIONS))
+
+    def test_skips_multi_episode_files(self):
+        self.assertIsNone(sync._canonical_episode_position(self._item(IndexNumberEnd=22), 100, self.POSITIONS))
+
+
+class FoldDivergentEpisodesTests(unittest.IsolatedAsyncioTestCase):
+    """#447: a divergent twin left by an earlier sync/webhook is settled before
+    the sync loop, so the same episode is not collected or watched twice."""
+
+    async def asyncSetUp(self):
+        import models  # noqa: F401
+        from models.base import Base
+        self.engine = create_async_engine(
+            "sqlite+aiosqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+        )
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
+        self.addAsyncCleanup(self.engine.dispose)
+
+    def _item(self, tvdb="4562021"):
+        return {"SeriesId": "jf-show", "ParentIndexNumber": 2, "IndexNumber": 21, "ProviderIds": {"Tvdb": tvdb}}
+
+    async def _seed(self, db, *, canonical, divergent_tvdb=4562021):
+        from models.base import MediaType
+        from models.media import Media
+        from models.show import Show
+        show = Show(tmdb_id=100, title="S")
+        db.add(show)
+        await db.flush()
+        rows = {}
+        if canonical:
+            rows["canonical"] = Media(tmdb_id=2300, media_type=MediaType.episode, title="c", show_id=show.id, season_number=2, episode_number=79)
+        rows["divergent"] = Media(tvdb_id=divergent_tvdb, media_type=MediaType.episode, title="d", show_id=show.id, season_number=2, episode_number=21)
+        db.add_all(rows.values())
+        await db.flush()
+        return show, rows
+
+    def _maps(self, show, rows):
+        by_ep = {(show.id, m.season_number, m.episode_number): m for m in rows.values()}
+        return {"jf-show": show.id}, {show.id: 100}, by_ep
+
+    async def test_moves_the_twin_to_the_canonical_position_when_no_canonical_row_exists(self):
+        async with self.Session() as db:
+            show, rows = await self._seed(db, canonical=False)
+            show_map, tmdb_map, by_ep = self._maps(show, rows)
+            changed, moved = await sync._fold_divergent_episodes(
+                db, [self._item()], show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
+            )
+            div = rows["divergent"]
+            self.assertTrue(changed)
+            self.assertEqual(moved, [div])
+            self.assertEqual((div.season_number, div.episode_number), (2, 79))
+            self.assertIs(by_ep[(show.id, 2, 79)], div)
+            self.assertNotIn((show.id, 2, 21), by_ep)
+
+    async def test_does_not_move_a_row_that_is_a_different_episode(self):
+        async with self.Session() as db:
+            show, rows = await self._seed(db, canonical=False, divergent_tvdb=999)
+            show_map, tmdb_map, by_ep = self._maps(show, rows)
+            changed, moved = await sync._fold_divergent_episodes(
+                db, [self._item()], show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
+            )
+            self.assertFalse(changed)
+            self.assertEqual(moved, [])
+            self.assertEqual(rows["divergent"].episode_number, 21)
+
+    async def test_merges_the_twin_when_the_canonical_row_exists(self):
+        async with self.Session() as db:
+            show, rows = await self._seed(db, canonical=True)
+            show_map, tmdb_map, by_ep = self._maps(show, rows)
+            with patch.object(sync, "reconcile_divergent_episode_media", AsyncMock(return_value={"merged": 1})) as rec:
+                changed, moved = await sync._fold_divergent_episodes(
+                    db, [self._item()], show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
+                )
+            self.assertTrue(changed)
+            self.assertEqual(moved, [])  # the canonical row is already enriched
+            rec.assert_awaited_once()
+
+    async def test_untranslated_items_are_left_alone(self):
+        async with self.Session() as db:
+            show, rows = await self._seed(db, canonical=False)
+            show_map, tmdb_map, by_ep = self._maps(show, rows)
+            changed, moved = await sync._fold_divergent_episodes(
+                db, [self._item(tvdb="1")], show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
+            )
+            self.assertFalse(changed)
 
 
 if __name__ == "__main__":

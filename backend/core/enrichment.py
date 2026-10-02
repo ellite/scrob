@@ -13,6 +13,31 @@ from models.media import Media, MediaType
 logger = logging.getLogger(__name__)
 
 
+async def get_or_create_tvdb_series_media(db: AsyncSession, tvdb_id: int) -> Media | None:
+    """The series-type Media row (lists, ratings) of a TheTVDB-only show, built
+    from its local Show. Such a show has no TMDB record to fetch from, so its
+    row carries tvdb_id and no tmdb_id. None when the show isn't local yet
+    (its show page creates it from TheTVDB)."""
+    from core.identity import find_media, find_show
+
+    existing = await find_media(db, MediaType.series, tvdb_id=tvdb_id)
+    if existing:
+        return existing
+    show = await find_show(db, tvdb_id=tvdb_id)
+    if show is None:
+        return None
+    media, _created = await create_media_safely(
+        db, None, MediaType.series,
+        tvdb_id=tvdb_id,
+        title=show.title,
+        poster_path=show.poster_path,
+        backdrop_path=show.backdrop_path,
+        release_date=show.first_air_date,
+        overview=show.overview,
+    )
+    return media
+
+
 async def create_media_safely(
     db: AsyncSession, tmdb_id: int | None, media_type: MediaType, **fields
 ) -> tuple[Media, bool]:

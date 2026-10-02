@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import re
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -17,8 +19,8 @@ from models.users import User
 from models.follows import Follow
 from models.global_settings import GlobalSettings
 from routers.media import enrich_with_state, require_anon_nav_allowed
-from core.enrichment import is_unmapped_tvdb_episode, create_media_safely
-from core.identity import find_media
+from core.enrichment import is_unmapped_tvdb_episode, create_media_safely, get_or_create_tvdb_series_media
+from core.identity import find_media, find_show
 from core.translations import (
     apply_media_translations,
     get_media_translations,
@@ -154,10 +156,9 @@ async def _attach_season_show_info(db: AsyncSession, media: dict) -> None:
     """Fill in show_title/show_poster_path/show_tvdb_id for a single season media
     dict - mirrors the batched version in get_list() for the single-item response
     add_list_item() returns."""
-    if media.get("season_number") is None or not media.get("tmdb_id"):
+    if media.get("season_number") is None or not (media.get("tmdb_id") or media.get("tvdb_id")):
         return
-    show_result = await db.execute(select(ShowModel).where(ShowModel.tmdb_id == media["tmdb_id"]))
-    show = show_result.scalar_one_or_none()
+    show = await find_show(db, tmdb_id=media.get("tmdb_id"), tvdb_id=media.get("tvdb_id"))
     if show:
         media["show_title"] = show.title
         media["show_poster_path"] = show.poster_path
@@ -268,6 +269,540 @@ async def create_list(
     }
 
 
+class TmdbListImport(BaseModel):
+    list_id_or_url: str
+
+
+def _parse_tmdb_list_id(raw: str) -> Optional[int]:
+    """Accepts a bare numeric TMDB list id, a full themoviedb.org/list/{id}-
+    slug URL, or just the "{id}-slug" part someone copied without the domain
+    (all three forms use the same leading-digits-then-dash convention)."""
+    raw = raw.strip()
+    if raw.isdigit():
+        return int(raw)
+    m = re.search(r"/list/(\d+)", raw) or re.match(r"(\d+)-", raw)
+    return int(m.group(1)) if m else None
+
+
+# A single POST request resolves every item synchronously (no background
+# job/polling UI exists for this yet, unlike Trakt/MDBList/etc.) - capped so
+# a huge public list can't make that request run for minutes.
+_TMDB_LIST_IMPORT_MAX_PAGES = 25  # 20 items/page = 500 items
+
+
+@router.post("/import/tmdb", status_code=201)
+async def import_tmdb_list(
+    body: TmdbListImport,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    tmdb_list_id = _parse_tmdb_list_id(body.list_id_or_url)
+    if tmdb_list_id is None:
+        raise HTTPException(status_code=400, detail="Could not find a TMDB list ID in that input")
+
+    from routers.media import get_user_tmdb_key
+    from routers.trakt import _get_or_create_movie_media, _get_or_create_series_media
+    from core import tmdb
+
+    api_key = await get_user_tmdb_key(db, current_user.id)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="TMDB API key required")
+
+    try:
+        first_page = await tmdb.get_list(tmdb_list_id, api_key=api_key, page=1)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"TMDB list not found (it may be private): {e}")
+
+    total_pages = min(first_page.get("total_pages", 1) or 1, _TMDB_LIST_IMPORT_MAX_PAGES)
+    pages = [first_page]
+    for p in range(2, total_pages + 1):
+        try:
+            pages.append(await tmdb.get_list(tmdb_list_id, api_key=api_key, page=p))
+        except Exception as exc:
+            logger.warning("TMDB list %s: stopped early at page %s: %s", tmdb_list_id, p, exc)
+            break
+
+    existing_list_result = await db.execute(
+        select(ListModel).where(
+            ListModel.user_id == current_user.id,
+            ListModel.tmdb_list_id == tmdb_list_id,
+        )
+    )
+    lst = existing_list_result.scalar_one_or_none()
+    if not lst:
+        lst = ListModel(
+            user_id=current_user.id,
+            name=first_page.get("name") or f"TMDB List {tmdb_list_id}",
+            description=first_page.get("description") or None,
+            tmdb_list_id=tmdb_list_id,
+        )
+        db.add(lst)
+        await db.flush()
+
+    existing_media_ids_result = await db.execute(
+        select(ListItem.media_id).where(ListItem.list_id == lst.id)
+    )
+    existing_media_ids = {row[0] for row in existing_media_ids_result}
+
+    for page_data in pages:
+        for entry in page_data.get("results", []):
+            tmdb_id = entry.get("id")
+            media_type = entry.get("media_type")
+            if not tmdb_id or media_type not in ("movie", "tv"):
+                continue
+            try:
+                async with db.begin_nested():
+                    if media_type == "movie":
+                        media = await _get_or_create_movie_media(
+                            db, tmdb_id, entry.get("title") or entry.get("original_title") or "", api_key
+                        )
+                    else:
+                        media = await _get_or_create_series_media(
+                            db, tmdb_id, entry.get("name") or entry.get("original_name") or "", api_key
+                        )
+            except Exception as exc:
+                logger.warning("Could not import TMDB list %s item tmdb_id=%s (%s): %s", tmdb_list_id, tmdb_id, media_type, exc)
+                continue
+            if not media or media.id in existing_media_ids:
+                continue
+            db.add(ListItem(list_id=lst.id, media_id=media.id))
+            existing_media_ids.add(media.id)
+
+    await db.commit()
+
+    result = await db.execute(
+        select(ListModel)
+        .options(selectinload(ListModel.items).selectinload(ListItem.media).selectinload(Media.show))
+        .where(ListModel.id == lst.id)
+    )
+    return _format_list(result.scalar_one())
+
+
+class TvdbListImport(BaseModel):
+    list_id_or_url: str
+
+
+def _parse_tvdb_list_ref(raw: str) -> Optional[str]:
+    """A bare numeric TVDB list id, OR the slug TVDB uses instead for
+    "official" lists (thetvdb.com/lists/marvel-cinematic-universe has no
+    numeric id anywhere in its own URL - user-created lists get a plain
+    numeric id instead, but official ones don't). Accepts either form bare,
+    or a full thetvdb.com/lists/{ref} URL. Always returned as a string; the
+    caller checks .isdigit() to decide whether it still needs to resolve a
+    slug to an id via TVDB's own lookup."""
+    raw = raw.strip()
+    m = re.search(r"/lists/([^/?#\s]+)", raw)
+    ref = m.group(1) if m else raw
+    if not ref or " " in ref:
+        return None
+    return ref
+
+
+# Same reasoning as _TMDB_LIST_IMPORT_MAX_PAGES, but counting entities
+# directly (TVDB's list-extended call isn't paginated - one request returns
+# every entity). Kept lower than TMDB's cap since each entity here costs an
+# *additional* TVDB call to resolve its TMDB cross-id.
+_TVDB_LIST_IMPORT_MAX_ENTITIES = 300
+_TVDB_LIST_IMPORT_CONCURRENCY = 8
+
+
+@router.post("/import/tvdb", status_code=201)
+async def import_tvdb_list(
+    body: TvdbListImport,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    list_ref = _parse_tvdb_list_ref(body.list_id_or_url)
+    if list_ref is None:
+        raise HTTPException(status_code=400, detail="Could not find a TVDB list ID in that input")
+
+    from routers.shows import get_user_tvdb_key
+    from routers.media import get_user_tmdb_key
+    from routers.trakt import _get_or_create_movie_media, _get_or_create_series_media
+    from core import tvdb as tvdb_client
+
+    tvdb_key = await get_user_tvdb_key(db, current_user.id)
+    if not tvdb_key:
+        raise HTTPException(status_code=400, detail="TVDB API key required")
+    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if not tmdb_key:
+        # Every entity is resolved through TMDB (see the module-level note on
+        # _get_or_create_movie_media/_get_or_create_series_media) - a TVDB
+        # key alone can find the list but not import anything from it.
+        raise HTTPException(status_code=400, detail="TMDB API key also required to resolve TVDB list items")
+
+    if list_ref.isdigit():
+        tvdb_list_id = int(list_ref)
+    else:
+        try:
+            tvdb_list_id = await tvdb_client.get_list_id_by_slug(list_ref, tvdb_key)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"TVDB list not found: {e}")
+        if tvdb_list_id is None:
+            raise HTTPException(status_code=404, detail="TVDB list not found")
+
+    try:
+        list_data = await tvdb_client.get_list(tvdb_list_id, tvdb_key)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"TVDB list not found: {e}")
+
+    entities = (list_data.get("entities") or [])[:_TVDB_LIST_IMPORT_MAX_ENTITIES]
+
+    # Resolving each entity's TMDB cross-id is its own TVDB call - the part
+    # of this import that's genuinely "so many calls" (#442 follow-up) - so
+    # these run bounded-concurrently instead of one at a time, the same
+    # pattern backend/routers/calendar.py already uses for its own per-show
+    # TMDB fan-out.
+    sem = asyncio.Semaphore(_TVDB_LIST_IMPORT_CONCURRENCY)
+
+    async def _resolve(entity: dict) -> tuple[str, int, int | None] | None:
+        series_id = entity.get("seriesId")
+        movie_id = entity.get("movieId")
+        async with sem:
+            try:
+                if series_id:
+                    return ("series", series_id, await tvdb_client.get_series_tmdb_cross_id(series_id, tvdb_key))
+                if movie_id:
+                    return ("movie", movie_id, await tvdb_client.get_movie_tmdb_cross_id(movie_id, tvdb_key))
+            except Exception as exc:
+                logger.warning("TVDB list %s: could not resolve entity %s: %s", tvdb_list_id, entity, exc)
+        return None
+
+    resolved = await asyncio.gather(*(_resolve(e) for e in entities))
+
+    existing_list_result = await db.execute(
+        select(ListModel).where(
+            ListModel.user_id == current_user.id,
+            ListModel.tvdb_list_id == tvdb_list_id,
+        )
+    )
+    lst = existing_list_result.scalar_one_or_none()
+    if not lst:
+        lst = ListModel(
+            user_id=current_user.id,
+            name=list_data.get("name") or f"TVDB List {tvdb_list_id}",
+            description=list_data.get("overview") or None,
+            tvdb_list_id=tvdb_list_id,
+        )
+        db.add(lst)
+        await db.flush()
+
+    existing_media_ids_result = await db.execute(
+        select(ListItem.media_id).where(ListItem.list_id == lst.id)
+    )
+    existing_media_ids = {row[0] for row in existing_media_ids_result}
+
+    for entry in resolved:
+        if not entry:
+            continue
+        kind, _tvdb_entity_id, tmdb_id = entry
+        if not tmdb_id:
+            continue  # no TMDB counterpart on file for this show/movie - skip it
+        try:
+            async with db.begin_nested():
+                if kind == "movie":
+                    media = await _get_or_create_movie_media(db, tmdb_id, f"TMDB {tmdb_id}", tmdb_key)
+                else:
+                    media = await _get_or_create_series_media(db, tmdb_id, f"TMDB {tmdb_id}", tmdb_key)
+        except Exception as exc:
+            logger.warning("Could not import TVDB list %s item tmdb_id=%s (%s): %s", tvdb_list_id, tmdb_id, kind, exc)
+            continue
+        if not media or media.id in existing_media_ids:
+            continue
+        db.add(ListItem(list_id=lst.id, media_id=media.id))
+        existing_media_ids.add(media.id)
+
+    await db.commit()
+
+    result = await db.execute(
+        select(ListModel)
+        .options(selectinload(ListModel.items).selectinload(ListItem.media).selectinload(Media.show))
+        .where(ListModel.id == lst.id)
+    )
+    return _format_list(result.scalar_one())
+
+
+class ImdbListImport(BaseModel):
+    list_id_or_url: str
+
+
+def _parse_imdb_list_id(raw: str) -> Optional[str]:
+    """Accept a bare ``ls...`` id or an imdb.com/list/ls... URL."""
+    raw = raw.strip()
+    if re.fullmatch(r"ls\d+", raw, flags=re.IGNORECASE):
+        return raw.lower()
+    match = re.search(r"/list/(ls\d+)(?:[/?#]|$)", raw, flags=re.IGNORECASE)
+    return match.group(1).lower() if match else None
+
+
+# IMDb returns cursor-paginated pages. Keep this synchronous endpoint bounded
+# to the same 500-item ceiling as TMDB, then resolve external ids concurrently.
+_IMDB_LIST_IMPORT_PAGE_SIZE = 100
+_IMDB_LIST_IMPORT_MAX_PAGES = 5
+_IMDB_LIST_IMPORT_CONCURRENCY = 8
+
+
+@router.post("/import/imdb", status_code=201)
+async def import_imdb_list(
+    body: ImdbListImport,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    imdb_list_id = _parse_imdb_list_id(body.list_id_or_url)
+    if imdb_list_id is None:
+        raise HTTPException(status_code=400, detail="Could not find an IMDb list ID in that input")
+
+    from core import imdb as imdb_client, tmdb
+    from routers.media import get_user_tmdb_key
+    from routers.trakt import _get_or_create_movie_media, _get_or_create_series_media
+
+    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if not tmdb_key:
+        raise HTTPException(status_code=400, detail="TMDB API key required to resolve IMDb list items")
+
+    pages: list[dict] = []
+    after: str | None = None
+    try:
+        for _page_number in range(_IMDB_LIST_IMPORT_MAX_PAGES):
+            page = await imdb_client.get_public_list_page(
+                imdb_list_id,
+                after=after,
+                first=_IMDB_LIST_IMPORT_PAGE_SIZE,
+            )
+            pages.append(page)
+            page_info = ((page.get("titleListItemSearch") or {}).get("pageInfo") or {})
+            if not page_info.get("hasNextPage"):
+                break
+            after = page_info.get("endCursor")
+            if not after:
+                break
+    except Exception as exc:
+        if not pages:
+            raise HTTPException(
+                status_code=404,
+                detail=f"IMDb list not found (it may be private): {exc}",
+            )
+        logger.warning("IMDb list %s: stopped early after %s page(s): %s", imdb_list_id, len(pages), exc)
+
+    first_page = pages[0]
+    entries = [
+        edge.get("title") or {}
+        for page in pages
+        for edge in ((page.get("titleListItemSearch") or {}).get("edges") or [])
+    ]
+
+    sem = asyncio.Semaphore(_IMDB_LIST_IMPORT_CONCURRENCY)
+
+    async def _resolve(entry: dict) -> tuple[str, int, str] | None:
+        imdb_id = entry.get("id")
+        if not isinstance(imdb_id, str) or not re.fullmatch(r"tt\d+", imdb_id):
+            return None
+        async with sem:
+            try:
+                found = await tmdb.find_by_external_id(imdb_id, "imdb_id", api_key=tmdb_key)
+            except Exception as exc:
+                logger.warning("IMDb list %s: could not resolve title %s: %s", imdb_list_id, imdb_id, exc)
+                return None
+
+        title = ((entry.get("titleText") or {}).get("text") or imdb_id)
+        title_type = (entry.get("titleType") or {}).get("id")
+        movie_results = found.get("movie_results") or []
+        tv_results = found.get("tv_results") or []
+        if title_type in {"tvSeries", "tvMiniSeries"} and tv_results:
+            return ("series", tv_results[0]["id"], title)
+        if movie_results:
+            return ("movie", movie_results[0]["id"], title)
+        if tv_results:
+            return ("series", tv_results[0]["id"], title)
+        # Individual episodes and unsupported IMDb title types have neither a
+        # movie nor whole-series match in TMDB and are intentionally skipped.
+        return None
+
+    resolved = await asyncio.gather(*(_resolve(entry) for entry in entries))
+
+    existing_list_result = await db.execute(
+        select(ListModel).where(
+            ListModel.user_id == current_user.id,
+            ListModel.imdb_list_id == imdb_list_id,
+        )
+    )
+    lst = existing_list_result.scalar_one_or_none()
+    if not lst:
+        name = ((first_page.get("name") or {}).get("originalText") or f"IMDb List {imdb_list_id}")
+        description = (((first_page.get("description") or {}).get("originalText") or {}).get("plainText"))
+        lst = ListModel(
+            user_id=current_user.id,
+            name=name[:255],
+            description=description or None,
+            imdb_list_id=imdb_list_id,
+        )
+        db.add(lst)
+        await db.flush()
+
+    existing_media_ids_result = await db.execute(
+        select(ListItem.media_id).where(ListItem.list_id == lst.id)
+    )
+    existing_media_ids = {row[0] for row in existing_media_ids_result}
+
+    for entry in resolved:
+        if not entry:
+            continue
+        kind, tmdb_id, title = entry
+        try:
+            async with db.begin_nested():
+                if kind == "movie":
+                    media = await _get_or_create_movie_media(db, tmdb_id, title, tmdb_key)
+                else:
+                    media = await _get_or_create_series_media(db, tmdb_id, title, tmdb_key)
+        except Exception as exc:
+            logger.warning(
+                "Could not import IMDb list %s item tmdb_id=%s (%s): %s",
+                imdb_list_id, tmdb_id, kind, exc,
+            )
+            continue
+        if not media or media.id in existing_media_ids:
+            continue
+        db.add(ListItem(list_id=lst.id, media_id=media.id))
+        existing_media_ids.add(media.id)
+
+    await db.commit()
+
+    result = await db.execute(
+        select(ListModel)
+        .options(selectinload(ListModel.items).selectinload(ListItem.media).selectinload(Media.show))
+        .where(ListModel.id == lst.id)
+    )
+    return _format_list(result.scalar_one())
+
+
+class MdblistListImport(BaseModel):
+    list_id_or_url: str
+
+
+def _parse_mdblist_list_ref(raw: str) -> Optional[str]:
+    """Accept a numeric list id, username/slug, or mdblist.com list URL."""
+    raw = raw.strip()
+    if raw.isdigit():
+        return raw
+    match = re.search(
+        r"(?:https?://)?(?:www\.)?mdblist\.com/lists/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)(?:[/?#]|$)",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return f"{match.group(1).lower()}/{match.group(2).lower()}"
+    if re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_-]+", raw):
+        return raw.lower()
+    return None
+
+
+@router.post("/import/mdblist", status_code=201)
+async def import_mdblist_list(
+    body: MdblistListImport,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    list_ref = _parse_mdblist_list_ref(body.list_id_or_url)
+    if list_ref is None:
+        raise HTTPException(status_code=400, detail="Could not find an MDBList list ID or URL in that input")
+
+    from core import mdblist as mdblist_client
+    from routers.media import get_user_tmdb_key
+    from routers.mdblist import _resolve_media
+
+    settings_result = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == current_user.id)
+    )
+    settings = settings_result.scalar_one_or_none()
+    global_settings_result = await db.execute(
+        select(GlobalSettings).where(GlobalSettings.id == 1)
+    )
+    global_settings = global_settings_result.scalar_one_or_none()
+    mdblist_api_key = (
+        settings.mdblist_api_key if settings and settings.mdblist_api_key
+        else global_settings.mdblist_api_key if global_settings else None
+    )
+    if not mdblist_api_key:
+        raise HTTPException(status_code=400, detail="MDBList API key required")
+
+    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if not tmdb_key:
+        raise HTTPException(status_code=400, detail="TMDB API key required to resolve MDBList items")
+
+    try:
+        list_data = await mdblist_client.get_list(mdblist_api_key, list_ref)
+        items = await mdblist_client.get_list_items(
+            mdblist_api_key,
+            list_ref,
+            max_items=500,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"MDBList list not found (it may be private): {exc}",
+        )
+
+    remote_id = list_data.get("id")
+    remote_key = f"list:{remote_id}" if remote_id is not None else f"list:{list_ref}"
+    existing_list_result = await db.execute(
+        select(ListModel).where(
+            ListModel.user_id == current_user.id,
+            ListModel.mdblist_slug == remote_key,
+        )
+    )
+    lst = existing_list_result.scalar_one_or_none()
+    if not lst:
+        name = str(list_data.get("name") or f"MDBList {list_ref}")
+        lst = ListModel(
+            user_id=current_user.id,
+            name=name[:255],
+            mdblist_slug=remote_key,
+        )
+        db.add(lst)
+        await db.flush()
+
+    existing_media_ids_result = await db.execute(
+        select(ListItem.media_id).where(ListItem.list_id == lst.id)
+    )
+    existing_media_ids = {row[0] for row in existing_media_ids_result}
+    external_cache: dict[tuple[str, str], int | None] = {}
+
+    for kind in ("movies", "shows"):
+        for entry in items.get(kind, []):
+            if not isinstance(entry, dict):
+                continue
+            try:
+                async with db.begin_nested():
+                    media = await _resolve_media(
+                        db,
+                        kind,
+                        entry,
+                        tmdb_key,
+                        external_cache,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Could not import MDBList %s item %s: %s",
+                    list_ref,
+                    entry.get("id") or entry.get("ids"),
+                    exc,
+                )
+                continue
+            if not media or media.id in existing_media_ids:
+                continue
+            db.add(ListItem(list_id=lst.id, media_id=media.id))
+            existing_media_ids.add(media.id)
+
+    await db.commit()
+
+    result = await db.execute(
+        select(ListModel)
+        .options(selectinload(ListModel.items).selectinload(ListItem.media).selectinload(Media.show))
+        .where(ListModel.id == lst.id)
+    )
+    return _format_list(result.scalar_one())
+
+
 @router.get("/{list_id}")
 async def get_list(
     list_id: int,
@@ -300,17 +835,32 @@ async def get_list(
         if item["media"].get("type") in (MediaType.series, "series")
         and item["media"].get("tmdb_id")
     }
+    # TheTVDB-only series rows have no tmdb_id - matched by tvdb_id instead.
+    series_tvdb_only_ids = {
+        item["media"]["tvdb_id"]
+        for item in formatted_items
+        if item["media"].get("type") in (MediaType.series, "series")
+        and not item["media"].get("tmdb_id")
+        and item["media"].get("tvdb_id")
+    }
     show_map: dict = {}
+    show_by_tvdb: dict = {}
     if series_tmdb_ids:
         shows_result = await db.execute(
             select(ShowModel).where(ShowModel.tmdb_id.in_(series_tmdb_ids))
         )
         show_map = {s.tmdb_id: s for s in shows_result.scalars().all()}
+    if series_tvdb_only_ids:
+        tvdb_shows_result = await db.execute(
+            select(ShowModel).where(ShowModel.tvdb_id.in_(series_tvdb_only_ids))
+        )
+        show_by_tvdb = {s.tvdb_id: s for s in tvdb_shows_result.scalars().all()}
+    if show_map or show_by_tvdb:
         for item in formatted_items:
             m = item["media"]
             if m.get("type") not in (MediaType.series, "series"):
                 continue
-            show = show_map.get(m.get("tmdb_id"))
+            show = show_map.get(m.get("tmdb_id")) if m.get("tmdb_id") else show_by_tvdb.get(m.get("tvdb_id"))
             if not show:
                 continue
             if not m.get("poster_path") and show.poster_path:
@@ -652,6 +1202,13 @@ async def add_list_item(
 
     api_key = await get_user_tmdb_key(db, current_user.id)
 
+    if not media and not body.tmdb_id and body.tvdb_id and body.media_type == MediaType.series:
+        # A TheTVDB-only show has no TMDB record to fetch; its series row is
+        # built from the local Show (created by its show page).
+        media = await get_or_create_tvdb_series_media(db, body.tvdb_id)
+        if media is None:
+            raise HTTPException(status_code=404, detail="Show not found locally; open its show page first so it can be created from TheTVDB")
+
     if not media and not body.tmdb_id:
         raise HTTPException(status_code=404, detail="Media not found")
     if not media:
@@ -704,11 +1261,12 @@ async def add_list_item(
 
     if body.season_number is not None:
         season_show_tmdb_id = body.tmdb_id or media.tmdb_id
-        if not season_show_tmdb_id:
-            raise HTTPException(status_code=404, detail="Season not found")
-        try:
-            await tmdb.get_season(season_show_tmdb_id, body.season_number, api_key=api_key)
-        except Exception:
+        if season_show_tmdb_id:
+            try:
+                await tmdb.get_season(season_show_tmdb_id, body.season_number, api_key=api_key)
+            except Exception:
+                raise HTTPException(status_code=404, detail="Season not found")
+        elif not media.tvdb_id:
             raise HTTPException(status_code=404, detail="Season not found")
 
     season_key = func.coalesce(ListItem.season_number, -1)

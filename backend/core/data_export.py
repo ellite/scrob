@@ -303,7 +303,11 @@ async def build_lists(db: AsyncSession, user_id: int) -> tuple[list[dict], list[
 # ── Comments ──────────────────────────────────────────────────────────
 
 async def build_comments(db: AsyncSession, user_id: int) -> dict[str, list[dict]]:
-    comments = (await db.execute(select(Comment).where(Comment.user_id == user_id))).scalars().all()
+    # TVDB-only comments (tmdb_id NULL) have no place in this TMDB-keyed
+    # Trakt-style format, and the importer can't match them back either.
+    comments = (await db.execute(
+        select(Comment).where(Comment.user_id == user_id, Comment.tmdb_id.isnot(None))
+    )).scalars().all()
 
     tmdb_ids_by_type: dict[str, set[int]] = {"movie": set(), "series": set(), "episode": set()}
     for c in comments:

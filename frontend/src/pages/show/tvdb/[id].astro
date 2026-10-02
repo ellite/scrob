@@ -3,7 +3,10 @@ import Base from "../../../layouts/Base.astro";
 import { languageName, showStatusLabel } from "../../../lib/labels";
 import { m } from "../../../paraglide/messages.js";
 import ActionBar from "../../../components/ActionBar.astro";
+import TrailerButton from "../../../components/TrailerButton.astro";
 import CommentsSection from "../../../components/CommentsSection.astro";
+import TraktCommentsSection from "../../../components/TraktCommentsSection.astro";
+import CastCrewSection from "../../../components/CastCrewSection.astro";
 import EpisodeOrderSelector from "../../../components/EpisodeOrderSelector.astro";
 import TvdbAttribution from "../../../components/TvdbAttribution.astro";
 import { api, type TvdbShow } from "../../../lib/api";
@@ -107,7 +110,7 @@ const posterPath = show
                 </button>
               ) : (
                 <div class="w-full h-full flex flex-col items-center justify-center text-zinc-400 p-4 text-center">
-                  <span class="text-4xl mb-2">📺</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="30%" height="30%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-2"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
                   <span class="text-sm font-medium">{m.common_no_poster_available()}</span>
                 </div>
               )}
@@ -173,6 +176,7 @@ const posterPath = show
               <div class="mb-6">
                 <ActionBar
                   tmdbId={show.tmdb_id_cross ?? show.tvdb_id}
+                  tvdbOnly={!show.tmdb_id_cross}
                   mediaType="series"
                   watched={show.watched}
                   inLists={show.in_lists}
@@ -206,15 +210,15 @@ const posterPath = show
               </div>
             )}
 
-            {user && show.id && (
-              <div class="mb-8">
+            <div class="mb-8 flex flex-wrap gap-3 items-start">
+              {user && show.id && (
                 <button
                   id="refresh-metadata-btn"
                   data-tvdb-id={id}
                   data-has-local-show={String(!!show?.id)}
-                  class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 hover:text-zinc-100 bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 rounded-xl transition-all duration-200 cursor-pointer"
+                  class="flex items-center gap-2 px-4 py-2 text-sm font-bold leading-none text-zinc-300 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors cursor-pointer"
                 >
-                  <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
                     <path d="M21 3v5h-5"/>
                     <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
@@ -222,8 +226,9 @@ const posterPath = show
                   </svg>
                   <span id="refresh-label">{m.media_refresh_metadata()}</span>
                 </button>
-              </div>
-            )}
+              )}
+              <TrailerButton tmdbId={show.tmdb_id_cross ?? null} mediaType="series" title={show.title} year={year} />
+            </div>
 
             <div class="mb-12">
               <h2 class="text-xl font-black text-zinc-100 mb-4 flex items-center gap-2 uppercase tracking-tight">
@@ -272,7 +277,7 @@ const posterPath = show
         <!-- Seasons -->
         <div class="mt-24">
           <div class="flex items-center justify-between mb-10 border-b border-zinc-900 pb-6">
-            <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase">{m.show_seasons()}</h2>
+            <h2 class="section-headline">{m.show_seasons()}</h2>
           </div>
 
           <div class="grid grid-cols-[repeat(auto-fit,minmax(380px,1fr))] gap-8">
@@ -291,7 +296,7 @@ const posterPath = show
                           <img src={poster} alt={seasonTitle} class="w-full h-full object-cover group-hover/season:scale-110 transition-transform duration-700" />
                         ) : (
                           <div class="w-full h-full bg-zinc-900 flex flex-col items-center justify-center text-zinc-500 gap-1">
-                            <span class="text-3xl">📺</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="35%" height="35%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
                             <span class="text-[10px] font-bold uppercase tracking-widest">{m.common_no_poster()}</span>
                           </div>
                         )}
@@ -329,6 +334,7 @@ const posterPath = show
                       showTmdbId={show!.tmdb_id_cross ?? undefined}
                       episodeOrder="tvdb"
                       tvdbId={show!.tvdb_id}
+                      tvdbOnly={!show!.tmdb_id_cross}
                       hideRequest={true}
                       hideLists={false}
                       userRating={seasonState.user_rating ?? null}
@@ -343,56 +349,18 @@ const posterPath = show
           </div>
         </div>
 
-        <!-- Cast -->
-        {show.cast?.length > 0 && (
-          <div class="mt-24 border-zinc-900 pt-16">
-            <div class="flex items-center justify-between mb-10">
-              <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase">{m.common_top_cast()}</h2>
-            </div>
-            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
-              {show.cast.slice(0, 12).map((person) => (
-                person.person_id ? (
-                  <a
-                    href={`https://www.thetvdb.com/people/${person.person_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="group/cast bg-zinc-900/20 border border-zinc-800/40 p-4 rounded-3xl hover:border-zinc-700/60 transition-colors block"
-                  >
-                    <div class="aspect-square w-full rounded-2xl overflow-hidden mb-5 ring-2 ring-zinc-800/50 shadow-lg">
-                      {person.profile_path ? (
-                        <img src={person.profile_path} alt={person.name} class="w-full h-full object-cover group-hover/cast:scale-105 transition-transform duration-300" loading="lazy" decoding="async" />
-                      ) : (
-                        <div class="w-full h-full bg-zinc-800 flex items-center justify-center text-zinc-400 text-4xl">👤</div>
-                      )}
-                    </div>
-                    <div class="space-y-1.5 text-center">
-                      <p class="text-sm font-black text-zinc-100 line-clamp-1 leading-tight group-hover/cast:text-blue-400 transition-colors">{person.name}</p>
-                      <p class="text-[11px] text-zinc-500 font-bold uppercase tracking-wider line-clamp-1 opacity-80">{person.character}</p>
-                    </div>
-                  </a>
-                ) : (
-                  <div class="group/cast bg-zinc-900/20 border border-zinc-800/40 p-4 rounded-3xl">
-                    <div class="aspect-square w-full rounded-2xl overflow-hidden mb-5 ring-2 ring-zinc-800/50 shadow-lg">
-                      {person.profile_path ? (
-                        <img src={person.profile_path} alt={person.name} class="w-full h-full object-cover" loading="lazy" decoding="async" />
-                      ) : (
-                        <div class="w-full h-full bg-zinc-800 flex items-center justify-center text-zinc-400 text-4xl">👤</div>
-                      )}
-                    </div>
-                    <div class="space-y-1.5 text-center">
-                      <p class="text-sm font-black text-zinc-100 line-clamp-1 leading-tight">{person.name}</p>
-                      <p class="text-[11px] text-zinc-500 font-bold uppercase tracking-wider line-clamp-1 opacity-80">{person.character}</p>
-                    </div>
-                  </div>
-                )
-              ))}
-            </div>
-          </div>
-        )}
+        <CastCrewSection cast={show.cast} crew={show.crew} />
 
         <CommentsSection
           mediaType="series"
-          tmdbId={show.tmdb_id_cross ?? show.tvdb_id}
+          tmdbId={show.tmdb_id_cross}
+          tvdbId={show.tvdb_id}
+        />
+
+        <TraktCommentsSection
+          mediaType="show"
+          tmdbId={show.tmdb_id_cross}
+          tvdbId={show.tvdb_id}
         />
 
         {show.tmdb_id_cross && (

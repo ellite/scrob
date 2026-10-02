@@ -814,6 +814,16 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         </div>
                       </div>
                     )}
+                    {settings.trakt_connected && (
+                      <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">{m.conn_comments()}</p>
+                        <label class="flex items-center gap-3 cursor-pointer group">
+                          <input type="checkbox" name="trakt_show_comments" id="trakt_show_comments" checked={!!settings.trakt_show_comments} class="sync-pref-checkbox w-4 h-4 rounded accent-red-500 cursor-pointer" />
+                          <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{m.conn_trakt_community_comments()}</span>
+                        </label>
+                        <p class="text-xs text-zinc-500">{m.conn_trakt_community_comments_hint()}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div class="border-t border-zinc-800 px-6 py-4 flex gap-2">
@@ -961,6 +971,134 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 </div>
                 <div class="border-t border-zinc-800 px-6 py-4 flex gap-2">
                   <button type="button" data-action="save_simkl_settings" class="js-action-btn text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer">{m.conn_save_changes()}</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- WeTrakr collapsible row -->
+            <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+              <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="wetrakr-body">
+                <div class="flex items-center gap-4 pointer-events-none">
+                  <Fragment set:html={connectionIconHtml("wetrakr")} />
+                  <div class="flex flex-col gap-0.5">
+                    <span class="font-medium text-zinc-200">WeTrakr</span>
+                    <span id="wetrakr-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <div class="flex gap-2" onclick="event.stopPropagation()">
+                    {settings.wetrakr_connected ? (
+                      <button type="button" id="wetrakr-disconnect-btn" class="js-action-btn text-sm bg-zinc-800 hover:bg-red-900/30 text-red-400 border border-zinc-700 hover:border-red-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">{m.conn_disconnect()}</button>
+                    ) : (
+                      <button type="button" id="wetrakr-connect-btn" class="text-sm bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">{m.conn_connect_service({ name: "WeTrakr" })}</button>
+                    )}
+                  </div>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                  </svg>
+                </div>
+              </div>
+              <div id="wetrakr-progress" class="hidden border-t border-zinc-800 px-6 py-3">
+                <div class="flex justify-between items-center mb-1.5">
+                  <span id="wetrakr-job-label" class="text-xs font-semibold uppercase tracking-wider text-zinc-500">{m.settings_working()}</span>
+                  <div class="flex items-center gap-3">
+                    <span id="wetrakr-job-pct" class="text-xs font-bold text-zinc-400"></span>
+                    <button type="button" id="wetrakr-job-cancel" class="hidden cursor-pointer text-xs font-semibold text-zinc-400 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 px-2 py-0.5 rounded-md transition-colors">{m.common_cancel()}</button>
+                  </div>
+                </div>
+                <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                  <div id="wetrakr-job-bar" class="h-1.5 rounded-full transition-all duration-500 bg-sky-500 animate-pulse" style="width: 100%"></div>
+                </div>
+                <div class="flex justify-between text-xs text-zinc-500 mt-1">
+                  <span id="wetrakr-job-items"></span>
+                  <span id="wetrakr-job-status"></span>
+                </div>
+              </div>
+              <div id="wetrakr-body" class="border-t border-zinc-800 hidden">
+                <div class="grid md:grid-cols-2 gap-8 px-6 py-6">
+                  <!-- Left: Auth / Info -->
+                  <div class="space-y-4">
+                    <div id="wetrakr-auth-panel" class="hidden space-y-3 bg-zinc-900/50 border border-zinc-700 rounded-xl p-4">
+                      <p class="text-sm text-zinc-400" set:html={m.conn_go_to_enter_code({ url: '<strong id="wetrakr-verify-url" class="text-zinc-100"></strong>' })} />
+                      <div class="font-mono text-2xl font-bold tracking-widest text-zinc-100 bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-3 text-center select-all" id="wetrakr-user-code"></div>
+                      <p class="text-xs text-zinc-500" id="wetrakr-auth-status">{m.conn_waiting_for_authorization()}</p>
+                    </div>
+                    <p class="text-sm text-zinc-400">
+                      {settings.wetrakr_connected
+                        ? m.conn_wetrakr_connected_hint()
+                        : m.conn_wetrakr_setup_hint()}
+                    </p>
+                  </div>
+                  <!-- Right: Sync Preferences (only if connected) -->
+                  {settings.wetrakr_connected && (
+                    <div class="space-y-4">
+                      <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">WeTrakr → Scrob</p>
+                        {[
+                          { key: "wetrakr_sync_watched", label: m.conn_watched_history() },
+                          { key: "wetrakr_sync_ratings", label: m.conn_ratings() },
+                          { key: "wetrakr_sync_lists", label: m.conn_lists() },
+                          { key: "wetrakr_sync_comments", label: m.conn_comments() },
+                        ].map(({ key, label }) => (
+                          <label class="flex items-center gap-3 cursor-pointer group">
+                            <input type="checkbox" name={key} id={key} checked={settings[key as keyof typeof settings] !== false} class="sync-pref-checkbox w-4 h-4 rounded accent-sky-500 cursor-pointer" />
+                            <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
+                          </label>
+                        ))}
+                        <button
+                          type="button"
+                          data-action="sync_wetrakr"
+                          disabled={!hasTmdbKey}
+                          title={!hasTmdbKey ? m.conn_tmdb_required_for_sync() : m.conn_pull_watched_ratings_from({ name: "WeTrakr" })}
+                          class={`js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${hasTmdbKey ? "bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30" : "bg-zinc-800 text-zinc-400 border border-zinc-700 opacity-50"}`}
+                        >{m.conn_pull()}</button>
+                      </div>
+                      <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → WeTrakr</p>
+                        {[
+                          { key: "wetrakr_push_watched", label: m.conn_watched_status() },
+                          { key: "wetrakr_push_ratings", label: m.conn_ratings() },
+                          { key: "wetrakr_push_lists", label: m.conn_lists() },
+                          { key: "wetrakr_push_comments", label: m.conn_comments() },
+                        ].map(({ key, label }) => (
+                          <label class="flex items-center gap-3 cursor-pointer group">
+                            <input type="checkbox" name={key} id={key} checked={!!settings[key as keyof typeof settings]} class="sync-pref-checkbox w-4 h-4 rounded accent-sky-500 cursor-pointer" />
+                            <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
+                          </label>
+                        ))}
+                        <button
+                          type="button"
+                          data-action="push_wetrakr"
+                          class="js-action-btn text-sm bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                          title={m.conn_wetrakr_push_title()}
+                        >{m.conn_push()}</button>
+                      </div>
+                      <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">{m.conn_auto_sync()}</p>
+                        <div class="flex items-center justify-between gap-4">
+                          <label class="text-sm text-zinc-300">{m.conn_pull_interval()}</label>
+                          <select name="wetrakr_auto_sync_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all cursor-pointer">
+                            <option value="" selected={!settings.wetrakr_auto_sync_interval}>{m.conn_disabled()}</option>
+                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
+                              <option value={String(value)} selected={settings.wetrakr_auto_sync_interval === value}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div class="flex items-center justify-between gap-4">
+                          <label class="text-sm text-zinc-300">{m.conn_push_interval()}</label>
+                          <select name="wetrakr_auto_push_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all cursor-pointer">
+                            <option value="" selected={!settings.wetrakr_auto_push_interval}>{m.conn_disabled()}</option>
+                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
+                              <option value={String(value)} selected={settings.wetrakr_auto_push_interval === value}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div class="border-t border-zinc-800 px-6 py-4 flex gap-2">
+                  <button type="button" data-action="save_wetrakr_settings" class="js-action-btn text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer">{m.conn_save_changes()}</button>
                 </div>
               </div>
             </div>
@@ -2048,6 +2186,89 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     pollSimklJob();
   }
 
+  let wetrakrPoller: ReturnType<typeof setTimeout> | null = null;
+
+  function renderWetrakrProgress(job: any) {
+    const strip  = document.getElementById('wetrakr-progress');
+    const bar    = document.getElementById('wetrakr-job-bar');
+    const pctEl  = document.getElementById('wetrakr-job-pct');
+    const label  = document.getElementById('wetrakr-job-label');
+    const items  = document.getElementById('wetrakr-job-items');
+    const cancelBtn = document.getElementById('wetrakr-job-cancel') as HTMLButtonElement | null;
+    if (!strip) return;
+
+    if (!job) { strip.classList.add('hidden'); return; }
+    strip.classList.remove('hidden');
+
+    const isPush     = job.job_type === 'push';
+    const isFailed   = job.status === 'failed';
+    const isCancelled = job.status === 'cancelled';
+    const isCompleted = job.status === 'completed';
+    const isPending  = job.status === 'pending';
+
+    if (isFailed || isCancelled) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
+      if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
+      if (label) label.textContent = isCancelled ? (isPush ? m.conn_push_cancelled() : m.conn_pull_cancelled()) : (isPush ? m.conn_push_failed() : m.conn_pull_failed());
+      if (pctEl) pctEl.textContent = '';
+      if (items) items.textContent = isCancelled ? '' : esc(job.error_message || m.common_unknown_error());
+      return;
+    }
+
+    if (isCompleted) {
+      if (cancelBtn) cancelBtn.classList.add('hidden');
+      if (bar) { bar.className = `h-1.5 rounded-full transition-all duration-500 ${isPush ? 'bg-amber-500' : 'bg-sky-500'}`; bar.style.width = '100%'; }
+      if (label) label.textContent = isPush ? m.conn_push_complete() : m.conn_pull_complete();
+      if (pctEl) pctEl.textContent = '100%';
+      const s = job.stats;
+      if (items) items.textContent = s
+        ? m.conn_import_summary({ movies: s.movies ?? 0, episodes: s.episodes ?? 0, ratings: s.ratings ?? 0 })
+        : m.conn_items_count({ count: job.processed_items });
+      return;
+    }
+
+    wireCancelButton(cancelBtn, job);
+    const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
+    const barColor = isPush ? 'bg-amber-500' : 'bg-sky-500';
+    const indeterminate = isPending || pct === 0;
+    if (bar) {
+      bar.className = `h-1.5 rounded-full transition-all duration-500 ${barColor}${indeterminate ? ' animate-pulse' : ''}`;
+      bar.style.width = indeterminate ? '100%' : `${pct}%`;
+    }
+    if (label) label.textContent = isPending
+      ? (isPush ? m.conn_push_queued() : m.conn_pull_queued())
+      : (job.current_step || (isPush ? m.conn_pushing() : m.conn_pulling()));
+    if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
+    if (items) items.textContent = job.total_items > 0 ? m.common_items_progress({ processed: job.processed_items, total: job.total_items }) : m.common_loading();
+  }
+
+  async function pollWetrakrJob() {
+    try {
+      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!res.ok) return;
+      const jobs: any[] = await res.json();
+      const job = jobs.find(j => j.source === 'wetrakr');
+      const isActive = job && (job.status === 'pending' || job.status === 'running');
+      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
+        && new Date(job.updated_at).getTime() > Date.now() - 8000;
+      renderWetrakrProgress((isActive || isRecentDone) ? job : null);
+      if (isActive) {
+        wetrakrPoller = setTimeout(pollWetrakrJob, 2000);
+      } else if (isRecentDone) {
+        wetrakrPoller = setTimeout(() => { renderWetrakrProgress(null); wetrakrPoller = null; }, 4000);
+      } else {
+        wetrakrPoller = null;
+      }
+    } catch {
+      wetrakrPoller = null;
+    }
+  }
+
+  function startWetrakrPoller() {
+    if (wetrakrPoller != null) clearTimeout(wetrakrPoller);
+    pollWetrakrJob();
+  }
+
   // ── Trakt progress tracking ───────────────────────────────────────────────
   let traktPoller: ReturnType<typeof setTimeout> | null = null;
   let traktImportPoller: ReturnType<typeof setTimeout> | null = null;
@@ -2851,18 +3072,20 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     if (!token) return;
     const traktConnected = !!document.getElementById('trakt-disconnect-btn');
     const simklConnected = !!document.getElementById('simkl-disconnect-btn');
+    const wetrakrConnected = !!document.getElementById('wetrakr-disconnect-btn');
     const mdblistConfigured = !!document.getElementById('mdblist_api_key')?.value;
     const radarrConfigured = !!document.getElementById('radarr_url')?.value;
     const sonarrConfigured = !!document.getElementById('sonarr_url')?.value;
     const mediaServerIds = Array.from(document.querySelectorAll<HTMLElement>('[data-connection-id]'))
       .map(el => el.getAttribute('data-connection-id'))
       .filter(Boolean) as string[];
-    if (!radarrConfigured && !sonarrConfigured && !traktConnected && !simklConnected && !mdblistConfigured && mediaServerIds.length === 0) return;
+    if (!radarrConfigured && !sonarrConfigured && !traktConnected && !simklConnected && !wetrakrConnected && !mdblistConfigured && mediaServerIds.length === 0) return;
 
     if (radarrConfigured) setConnStatus('radarr-conn-status', 'checking');
     if (sonarrConfigured) setConnStatus('sonarr-conn-status', 'checking');
     if (traktConnected) setConnStatus('trakt-conn-status', 'checking');
     if (simklConnected) setConnStatus('simkl-conn-status', 'checking');
+    if (wetrakrConnected) setConnStatus('wetrakr-conn-status', 'checking');
     if (mdblistConfigured) setConnStatus('mdblist-conn-status', 'checking');
     for (const id of mediaServerIds) setConnStatus(`conn-status-${id}`, 'checking');
 
@@ -2912,6 +3135,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       }
       if (data.simkl?.configured) {
         setConnStatus('simkl-conn-status', data.simkl.connected ? 'connected' : 'disconnected');
+      }
+      if (data.wetrakr?.configured) {
+        setConnStatus('wetrakr-conn-status', data.wetrakr.connected ? 'connected' : 'disconnected');
       }
       if (data.mdblist?.configured) {
         setConnStatus('mdblist-conn-status', data.mdblist.connected ? 'connected' : 'disconnected');
@@ -3226,6 +3452,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const traktSyncKeys = [
               'trakt_sync_watched', 'trakt_sync_ratings', 'trakt_sync_lists', 'trakt_sync_dropped', 'trakt_watchlist_split',
               'trakt_push_watched', 'trakt_push_ratings', 'trakt_push_collection', 'trakt_push_lists', 'trakt_push_dropped', 'trakt_scrobble',
+              'trakt_show_comments',
             ];
             for (const key of traktSyncKeys) {
               const el = document.getElementById(key) as HTMLInputElement | null;
@@ -3272,6 +3499,36 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               throw new Error(err.detail || m.conn_failed_to_save_simkl_settings());
             }
             showMessage(m.conn_simkl_settings_saved());
+            return;
+          } else if (action === 'save_wetrakr_settings') {
+            const body: Record<string, any> = {
+              wetrakr_auto_sync_interval: (() => {
+                const v = (document.querySelector('[name="wetrakr_auto_sync_interval"]') as HTMLSelectElement)?.value;
+                return v ? parseFloat(v) : null;
+              })(),
+              wetrakr_auto_push_interval: (() => {
+                const v = (document.querySelector('[name="wetrakr_auto_push_interval"]') as HTMLSelectElement)?.value;
+                return v ? parseFloat(v) : null;
+              })(),
+            };
+            const wetrakrSyncKeys = [
+              'wetrakr_sync_watched', 'wetrakr_sync_ratings', 'wetrakr_sync_lists', 'wetrakr_sync_comments',
+              'wetrakr_push_watched', 'wetrakr_push_ratings', 'wetrakr_push_lists', 'wetrakr_push_comments',
+            ];
+            for (const key of wetrakrSyncKeys) {
+              const el = document.getElementById(key) as HTMLInputElement | null;
+              if (el) body[key] = el.checked;
+            }
+            const wetrakrRes = await fetch('/api/proxy/auth/settings', {
+              method: 'PATCH',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (!wetrakrRes.ok) {
+              const err = await wetrakrRes.json();
+              throw new Error(err.detail || m.conn_failed_to_save_service_settings({ name: 'WeTrakr' }));
+            }
+            showMessage(m.conn_service_settings_saved({ name: 'WeTrakr' }));
             return;
           } else if (action === 'save_mdblist_settings') {
             const body: Record<string, any> = {
@@ -3638,6 +3895,52 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             );
             if (!ok) return;
             url = `/api/proxy/simkl/push`;
+          } else if (action === 'sync_wetrakr') {
+            const wetrakrPullLabels: Record<string, string> = {
+              wetrakr_sync_watched: m.conn_item_watched_history(),
+              wetrakr_sync_ratings: m.conn_item_ratings(),
+              wetrakr_sync_lists: m.conn_item_lists(),
+              wetrakr_sync_comments: m.conn_item_comments(),
+            };
+            const pulling: string[] = [];
+            document.querySelectorAll('.sync-pref-checkbox').forEach((el: any) => {
+              const name = el.getAttribute('name');
+              if (name && wetrakrPullLabels[name] && el.checked) pulling.push(wetrakrPullLabels[name]);
+            });
+            const noPull = pulling.length === 0;
+            const ok = await showConfirmModal(
+              noPull ? m.conn_nothing_to_pull() : m.conn_pull_from_name({ name: 'WeTrakr' }),
+              noPull
+                ? m.conn_nothing_selected_pull_from({ name: 'WeTrakr' })
+                : m.conn_will_import_from_server({ items: formatList(pulling), name: 'WeTrakr' }),
+              noPull ? m.conn_got_it() : m.conn_pull(),
+              noPull
+            );
+            if (!ok) return;
+            url = `/api/proxy/wetrakr/sync`;
+          } else if (action === 'push_wetrakr') {
+            const wetrakrPushLabels: Record<string, string> = {
+              wetrakr_push_watched: m.conn_item_watched_history(),
+              wetrakr_push_ratings: m.conn_item_ratings(),
+              wetrakr_push_lists: m.conn_item_lists(),
+              wetrakr_push_comments: m.conn_item_comments(),
+            };
+            const pushing: string[] = [];
+            document.querySelectorAll('.sync-pref-checkbox').forEach((el: any) => {
+              const name = el.getAttribute('name');
+              if (name && wetrakrPushLabels[name] && el.checked) pushing.push(wetrakrPushLabels[name]);
+            });
+            const noPush = pushing.length === 0;
+            const ok = await showConfirmModal(
+              noPush ? m.conn_nothing_to_push() : m.conn_push_to_name({ name: 'WeTrakr' }),
+              noPush
+                ? m.conn_nothing_selected_push_to({ name: 'WeTrakr' })
+                : m.conn_will_push_to_service({ items: formatList(pushing), name: 'WeTrakr' }),
+              noPush ? m.conn_got_it() : m.conn_push(),
+              noPush
+            );
+            if (!ok) return;
+            url = `/api/proxy/wetrakr/push`;
           } else if (action === 'push_trakt') {
             const traktPushLabels: Record<string, string> = {
               trakt_push_watched: m.conn_item_watched_history(),
@@ -3719,11 +4022,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
           if (res.ok) {
             const showsProgressBar = !!syncConnId || [
-              'sync_trakt', 'full_sync_trakt', 'push_trakt', 'sync_simkl', 'push_simkl', 'sync_mdblist', 'push_mdblist',
+              'sync_trakt', 'full_sync_trakt', 'push_trakt', 'sync_simkl', 'push_simkl', 'sync_wetrakr', 'push_wetrakr', 'sync_mdblist', 'push_mdblist',
             ].includes(action);
             showMessage(data.message || m.common_action_successful(), 'success', { scroll: !showsProgressBar });
             if (syncConnId) startConnPoller(syncConnId);
             if (action === 'sync_simkl' || action === 'push_simkl') startSimklPoller();
+            if (action === 'sync_wetrakr' || action === 'push_wetrakr') startWetrakrPoller();
             if (action === 'sync_trakt' || action === 'full_sync_trakt' || action === 'push_trakt') startTraktPoller();
             if (action === 'sync_mdblist' || action === 'push_mdblist') startMdblistPoller();
           } else {
@@ -4081,6 +4385,17 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const connectBtn = document.getElementById('simkl-connect-btn');
       const disconnectBtn = document.getElementById('simkl-disconnect-btn');
 
+      // A server error can come back as plain text ("Internal Server Error"),
+      // which would make res.json() throw an unreadable JSON parse error.
+      const errorDetail = async (r: Response, fallback: string): Promise<string> => {
+        try {
+          const body = await r.json();
+          return body.detail || fallback;
+        } catch {
+          return m.conn_server_error_fallback({ message: fallback, status: r.status });
+        }
+      };
+
       if (connectBtn) {
         connectBtn.onclick = async () => {
           connectBtn.disabled = true;
@@ -4096,8 +4411,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 body: JSON.stringify({ simkl_client_id: clientId }),
               });
               if (!saveRes.ok) {
-                const err = await saveRes.json();
-                throw new Error(err.detail || m.conn_failed_to_save_simkl_client_id());
+                throw new Error(await errorDetail(saveRes, m.conn_failed_to_save_simkl_client_id()));
               }
             }
 
@@ -4106,8 +4420,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               headers: { 'Authorization': `Bearer ${token}` },
             });
             if (!res.ok) {
-              const err = await res.json();
-              throw new Error(err.detail || m.conn_failed_to_start_simkl_auth());
+              throw new Error(await errorDetail(res, m.conn_failed_to_start_simkl_auth()));
             }
             const data = await res.json();
 
@@ -4142,8 +4455,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     return;
                   }
                 } else {
-                  const err = await pollRes.json();
-                  if (statusEl) statusEl.textContent = m.conn_error_detail({ detail: err.detail || m.conn_authorization_failed() });
+                  if (statusEl) statusEl.textContent = m.conn_error_detail({ detail: await errorDetail(pollRes, m.conn_authorization_failed()) });
                   connectBtn.disabled = false;
                   connectBtn.textContent = m.conn_connect_simkl();
                   return;
@@ -4180,6 +4492,96 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       }
     }
     setupSimklAuth();
+
+    function setupWetrakrAuth() {
+      const connectBtn = document.getElementById('wetrakr-connect-btn');
+      const disconnectBtn = document.getElementById('wetrakr-disconnect-btn');
+
+      if (connectBtn) {
+        connectBtn.onclick = async () => {
+          connectBtn.disabled = true;
+          connectBtn.textContent = m.common_starting();
+          try {
+            // No client_id/secret to save — Scrob ships a single app-owned key.
+            const res = await fetch('/api/proxy/wetrakr/auth/device/start', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}` },
+            });
+            if (!res.ok) {
+              const err = await res.json();
+              throw new Error(err.detail || m.conn_failed_to_start_service_auth({ name: 'WeTrakr' }));
+            }
+            const data = await res.json();
+
+            const panel   = document.getElementById('wetrakr-auth-panel');
+            const urlEl    = document.getElementById('wetrakr-verify-url');
+            const codeEl   = document.getElementById('wetrakr-user-code');
+            const statusEl = document.getElementById('wetrakr-auth-status');
+            if (panel)  panel.classList.remove('hidden');
+            if (urlEl)  urlEl.textContent = data.verification_url;
+            if (codeEl) codeEl.textContent = data.user_code;
+            connectBtn.textContent = m.conn_waiting();
+
+            const interval = (data.interval || 5) * 1000;
+            const deadline = Date.now() + data.expires_in * 1000;
+            const poll = async () => {
+              if (Date.now() > deadline) {
+                if (statusEl) statusEl.textContent = m.conn_authorization_timed_out_please_try_again();
+                connectBtn.disabled = false;
+                connectBtn.textContent = m.conn_connect_service({ name: 'WeTrakr' });
+                return;
+              }
+              try {
+                const pollRes = await fetch('/api/proxy/wetrakr/auth/device/poll', {
+                  method: 'POST',
+                  headers: { 'Authorization': `Bearer ${token}` },
+                });
+                if (pollRes.ok) {
+                  const pollData = await pollRes.json();
+                  if (pollData.status === 'connected') {
+                    if (statusEl) statusEl.textContent = m.conn_connected_reloading();
+                    window.location.reload();
+                    return;
+                  }
+                } else {
+                  const err = await pollRes.json();
+                  if (statusEl) statusEl.textContent = m.conn_error_detail({ detail: err.detail || m.conn_authorization_failed() });
+                  connectBtn.disabled = false;
+                  connectBtn.textContent = m.conn_connect_service({ name: 'WeTrakr' });
+                  return;
+                }
+              } catch (e) {}
+              setTimeout(poll, interval);
+            };
+            setTimeout(poll, interval);
+          } catch (e) {
+            showMessage(e.message, 'error');
+            connectBtn.disabled = false;
+            connectBtn.textContent = m.conn_connect_service({ name: 'WeTrakr' });
+          }
+        };
+      }
+
+      if (disconnectBtn) {
+        disconnectBtn.onclick = async () => {
+          if (!confirm(m.conn_disconnect_service_confirm({ name: 'WeTrakr' }))) return;
+          disconnectBtn.disabled = true;
+          disconnectBtn.textContent = m.conn_disconnecting();
+          try {
+            await fetch('/api/proxy/wetrakr/auth/disconnect', {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${token}` },
+            });
+            window.location.reload();
+          } catch (e) {
+            showMessage(m.conn_failed_to_disconnect_service({ name: 'WeTrakr' }), 'error');
+            disconnectBtn.disabled = false;
+            disconnectBtn.textContent = m.conn_disconnect();
+          }
+        };
+      }
+    }
+    setupWetrakrAuth();
 
     // MDBList disconnect
     function setupMdblistAuth() {

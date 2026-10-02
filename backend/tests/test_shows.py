@@ -7,9 +7,73 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from fastapi import HTTPException
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.pool import StaticPool
 
 from models.base import MediaType
 from routers import shows
+
+
+@compiles(JSONB, "sqlite")
+def _jsonb_as_json_on_sqlite(type_, compiler, **kw):
+    """JSONB is PostgreSQL-only and has no SQLite rendering of its own."""
+    return "JSON"
+
+
+class FindLocalShowForTvdbTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests: `ShowModel.tmdb_id == series_tmdb_id` compiles to
+    `tmdb_id IS NULL` whenever series_tmdb_id is None (TVDB's tmdb_id_cross
+    is absent for most TVDB-only shows), so OR-ing it in unconditionally
+    matched every other TVDB-only show in the library instead of nothing -
+    MultipleResultsFound (500) the moment a second one existed. Runs against
+    a real SQLite DB since the bug was in the WHERE clause itself."""
+
+    async def asyncSetUp(self):
+        import models  # noqa: F401 - registers every table on Base.metadata
+        from models.base import Base
+
+        self.engine = create_async_engine(
+            "sqlite+aiosqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+        )
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
+        self.addAsyncCleanup(self.engine.dispose)
+
+    async def test_multiple_tmdb_null_shows_does_not_raise(self):
+        from models.show import Show
+
+        async with self.Session() as db:
+            db.add_all([
+                Show(title="Show A", tvdb_id=111, tmdb_id=None),
+                Show(title="Show B", tvdb_id=222, tmdb_id=None),
+                Show(title="Formula 1", tvdb_id=387219, tmdb_id=None),
+            ])
+            await db.commit()
+
+            show = await shows._find_local_show_for_tvdb(db, 387219, None)
+            self.assertIsNotNone(show)
+            self.assertEqual(show.title, "Formula 1")
+
+    async def test_no_match_returns_none(self):
+        async with self.Session() as db:
+            show = await shows._find_local_show_for_tvdb(db, 999999, None)
+            self.assertIsNone(show)
+
+    async def test_matches_by_cross_linked_tmdb_id_when_present(self):
+        from models.show import Show
+
+        async with self.Session() as db:
+            db.add(Show(title="Cross-linked", tvdb_id=555, tmdb_id=777))
+            await db.commit()
+
+            # Looked up by a different tvdb_id, but the same tmdb_id the
+            # caller resolved from TVDB's own tmdb_id_cross field.
+            show = await shows._find_local_show_for_tvdb(db, 999, 777)
+            self.assertIsNotNone(show)
+            self.assertEqual(show.title, "Cross-linked")
 
 
 class _Scalars:

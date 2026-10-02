@@ -69,6 +69,25 @@ export function movieStatusLabel(status: string): string {
   return MOVIE_STATUSES[status]?.() ?? status;
 }
 
+// Crew jobs: the backend keeps only these (NOTABLE_CREW_JOBS in core/tmdb.py,
+// CREW_PEOPLE_TYPES in core/tvdb.py) and joins a person's roles with ", "
+// (a writer-director is one entry), so each part is translated on its own.
+const CREW_JOBS: Record<string, () => string> = {
+  "Director": m.crew_job_director,
+  "Writer": m.crew_job_writer,
+  "Screenplay": m.crew_job_screenplay,
+  "Story": m.crew_job_story,
+  "Teleplay": m.crew_job_teleplay,
+  "Producer": m.crew_job_producer,
+  "Executive Producer": m.crew_job_executive_producer,
+  "Co-Producer": m.crew_job_co_producer,
+};
+
+export function crewJobLabel(job: string): string {
+  // Deduped after translating: "Writer" and "Screenplay" can share a label.
+  return [...new Set(job.split(", ").map((part) => CREW_JOBS[part]?.() ?? part))].join(", ");
+}
+
 const capitalize = (s: string) => s.charAt(0).toLocaleUpperCase(getLocale()) + s.slice(1);
 
 // Language and country names come from the runtime's CLDR data (Intl), so they

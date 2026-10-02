@@ -5,12 +5,16 @@ import { m } from "../paraglide/messages.js";
 
 interface Props {
   mediaType: string;
-  tmdbId: number;
+  tmdbId?: number | null;
+  // Only for a TVDB-only show (no TMDB counterpart); ignored when tmdbId is set.
+  tvdbId?: number | null;
   seasonNumber?: number;
   episodeNumber?: number;
 }
 
-const { mediaType, tmdbId, seasonNumber, episodeNumber } = Astro.props;
+const { mediaType, tvdbId, seasonNumber, episodeNumber } = Astro.props;
+const tmdbId = Astro.props.tmdbId ?? undefined;
+const commentTvdbId = tmdbId ? undefined : (tvdbId ?? undefined);
 const token = Astro.cookies.get("token")?.value;
 const user = Astro.locals.user;
 const loginNextUrl = `/login?next=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
@@ -23,6 +27,7 @@ if (!commentsDisabled) {
     comments = await api.comments.list({
       media_type: mediaType,
       tmdb_id: tmdbId,
+      tvdb_id: commentTvdbId,
       season_number: seasonNumber,
       episode_number: episodeNumber
     }, token);
@@ -51,7 +56,8 @@ if (!commentsDisabled) {
       <div class="mb-12 bg-zinc-900/40 border border-zinc-800 p-6 rounded-3xl backdrop-blur-sm">
         <form id="comment-form" class="space-y-4">
           <input type="hidden" name="mediaType" value={mediaType} />
-          <input type="hidden" name="tmdbId" value={tmdbId} />
+          {tmdbId !== undefined && <input type="hidden" name="tmdbId" value={tmdbId} />}
+          {commentTvdbId !== undefined && <input type="hidden" name="tvdbId" value={commentTvdbId} />}
           {seasonNumber !== undefined && <input type="hidden" name="seasonNumber" value={seasonNumber} />}
           {episodeNumber !== undefined && <input type="hidden" name="episodeNumber" value={episodeNumber} />}
 
@@ -285,7 +291,8 @@ if (!commentsDisabled) {
       const formData = new FormData(form);
       const content = formData.get('content');
       const mediaType = formData.get('mediaType');
-      const tmdbId = parseInt(formData.get('tmdbId'));
+      const tmdbId = formData.get('tmdbId') ? parseInt(formData.get('tmdbId')) : undefined;
+      const tvdbId = formData.get('tvdbId') ? parseInt(formData.get('tvdbId')) : undefined;
       const seasonNumber = formData.get('seasonNumber') ? parseInt(formData.get('seasonNumber')) : undefined;
       const episodeNumber = formData.get('episodeNumber') ? parseInt(formData.get('episodeNumber')) : undefined;
       const isSpoiler = document.getElementById('is-spoiler-checkbox')?.checked ?? false;
@@ -305,6 +312,7 @@ if (!commentsDisabled) {
           body: JSON.stringify({
             media_type: mediaType,
             tmdb_id: tmdbId,
+            tvdb_id: tvdbId,
             season_number: seasonNumber,
             episode_number: episodeNumber,
             content: content,

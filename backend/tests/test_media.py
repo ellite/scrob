@@ -169,3 +169,85 @@ class TmdbListStudioParamsTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _Rows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+class SearchMetadataLanguageTests(unittest.IsolatedAsyncioTestCase):
+    """#417: search results showed TMDB's English title under a French poster."""
+
+    def _fake_db(self, local_rows=()):
+        db = SimpleNamespace()
+        db.execute = AsyncMock(side_effect=lambda *_a, **_k: _Rows(list(local_rows)))
+        return db
+
+    async def _search(self, lang, db=None, local_title=None):
+        tmdb_show = {
+            "id": 42, "name": "Surveillant !" if lang == "fr" else "Discipline and Punish",
+            "overview": "fr overview" if lang == "fr" else "en overview",
+            "poster_path": "/p.jpg", "first_air_date": "2026-01-01",
+        }
+        search_shows = AsyncMock(return_value={"results": [tmdb_show], "total_pages": 1, "total_results": 1})
+        with (
+            patch.object(media_router, "get_user_metadata_language", AsyncMock(return_value=lang)),
+            patch.object(media_router, "get_user_tmdb_key", AsyncMock(return_value="key")),
+            patch.object(media_router, "check_tmdb_key", return_value=True),
+            patch.object(media_router, "enrich_with_state", AsyncMock()),
+            patch.object(media_router.tmdb, "search_shows", search_shows),
+        ):
+            result = await media_router.search_media(
+                q="Surveillant", type="series", year=None, page=1, in_library=False,
+                db=db or self._fake_db(), current_user=SimpleNamespace(id=1),
+            )
+        return result, search_shows
+
+    async def test_language_is_passed_to_tmdb(self):
+        result, search_shows = await self._search("fr")
+        self.assertEqual(search_shows.await_args.kwargs["language"], "fr")
+        self.assertEqual(result["results"][0]["title"], "Surveillant !")
+
+    async def test_no_language_leaves_the_default_call_alone(self):
+        _, search_shows = await self._search(None)
+        self.assertIsNone(search_shows.await_args.kwargs["language"])
+
+    async def test_library_item_takes_the_localized_title(self):
+        item = {"id": 7, "title": "Discipline and Punish", "overview": "en overview", "poster_path": None}
+        db = self._fake_db()
+        with patch.object(media_router, "format_media", return_value=item):
+            # First query is the local-library lookup; later ones find nothing.
+            db.execute = AsyncMock(side_effect=[
+                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [
+                    SimpleNamespace(tmdb_id=42, media_type=MediaType.series, id=7),
+                ])),
+                _Rows([]),
+                _Rows([]),
+            ])
+            with patch.object(media_router, "get_media_translations", AsyncMock(return_value={})):
+                result, _ = await self._search("fr", db=db)
+        self.assertEqual(result["results"][0]["title"], "Surveillant !")
+        self.assertTrue(result["results"][0]["in_library"])
+
+    async def test_stored_translation_wins_for_library_items(self):
+        item = {"id": 7, "title": "Discipline and Punish", "overview": "x", "poster_path": None}
+        db = self._fake_db()
+        with patch.object(media_router, "format_media", return_value=item):
+            db.execute = AsyncMock(side_effect=[
+                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [
+                    SimpleNamespace(tmdb_id=42, media_type=MediaType.series, id=7),
+                ])),
+                _Rows([]),
+                _Rows([]),
+            ])
+            stored = {7: {"title": "Surveillant (stocke)", "overview": None, "tagline": None, "poster_path": None}}
+            with patch.object(media_router, "get_media_translations", AsyncMock(return_value=stored)):
+                result, _ = await self._search("fr", db=db)
+        self.assertEqual(result["results"][0]["title"], "Surveillant (stocke)")

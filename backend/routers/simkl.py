@@ -12,6 +12,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -64,7 +65,25 @@ async def simkl_pin_start(
 
     _require_simkl_config(settings)
 
-    data = await simkl_client.start_pin_auth(settings.simkl_client_id)
+    # Simkl answers a bad Client ID with an HTTP error or a 200 carrying
+    # result "KO" and no user_code; either used to escape as a bare 500.
+    try:
+        data = await simkl_client.start_pin_auth(settings.simkl_client_id)
+    except httpx.HTTPStatusError as exc:
+        logger.warning("Simkl PIN start rejected: HTTP %s", exc.response.status_code)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Simkl rejected the request (HTTP {exc.response.status_code}). Check that the Client ID is correct.",
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Simkl PIN start failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Could not reach Simkl. Try again in a moment.")
+    if not isinstance(data, dict) or not data.get("user_code"):
+        message = data.get("message") if isinstance(data, dict) else None
+        raise HTTPException(
+            status_code=502,
+            detail=f"Simkl did not return a PIN{f': {message}' if message else ''}. Check that the Client ID is correct.",
+        )
 
     settings.simkl_device_code = data["user_code"]
     await db.commit()
@@ -284,7 +303,7 @@ def _simkl_rating_value(item: dict) -> float | None:
 # ── Background sync job ───────────────────────────────────────────────────────
 
 async def run_simkl_sync(user_id: int, job_id: int) -> None:
-    from routers.sync import SyncCancelled, _raise_if_cancelled
+    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
     print(f"Starting Simkl sync for user {user_id}, job {job_id}")
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
@@ -594,7 +613,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
             print(f"Simkl sync job {job_id} failed: {exc}")
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
-                    status=SyncStatus.failed, error_message=str(exc)
+                    status=SyncStatus.failed, error_message=_short_error(exc)
                 )
             )
             await db.commit()
@@ -634,7 +653,7 @@ async def sync_simkl(
 # ── Push (Scrob → Simkl) ──────────────────────────────────────────────────────
 
 async def _run_simkl_push(user_id: int, job_id: int) -> None:
-    from routers.sync import SyncCancelled, _raise_if_cancelled
+    from routers.sync import SyncCancelled, _raise_if_cancelled, _select_in_chunks, _short_error
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
@@ -684,14 +703,22 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(all_media_ids)))
             await db.commit()
 
-            media_result = await db.execute(select(Media).where(Media.id.in_(all_media_ids)))
-            media_by_id: dict[int, Media] = {m.id: m for m in media_result.scalars().all()}
+            media_rows = await _select_in_chunks(
+                db,
+                lambda chunk: select(Media).where(Media.id.in_(chunk)),
+                list(all_media_ids),
+            )
+            media_by_id: dict[int, Media] = {m.id: m for m in media_rows}
 
             show_ids = {m.show_id for m in media_by_id.values() if m.show_id}
             shows_by_id: dict[int, Show] = {}
             if show_ids:
-                shows_result = await db.execute(select(Show).where(Show.id.in_(show_ids)))
-                shows_by_id = {s.id: s for s in shows_result.scalars().all()}
+                show_rows = await _select_in_chunks(
+                    db,
+                    lambda chunk: select(Show).where(Show.id.in_(chunk)),
+                    list(show_ids),
+                )
+                shows_by_id = {s.id: s for s in show_rows}
 
             movie_candidates: list[tuple[int, datetime]] = []
             episode_candidates: list[tuple[int, int, int, datetime]] = []
@@ -730,13 +757,16 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                 # can have local watch history even when the user chose not to push
                 # watched history to Simkl this run.
                 rating_media_ids = list(ratings_map.keys())
-                watch_check_result = await db.execute(
-                    select(WatchEvent.media_id).where(
-                        WatchEvent.user_id == user_id,
-                        WatchEvent.media_id.in_(rating_media_ids),
-                    ).distinct()
+                media_ids_with_watch_event = set(
+                    await _select_in_chunks(
+                        db,
+                        lambda chunk: select(WatchEvent.media_id).where(
+                            WatchEvent.user_id == user_id,
+                            WatchEvent.media_id.in_(chunk),
+                        ).distinct(),
+                        rating_media_ids,
+                    )
                 )
-                media_ids_with_watch_event = {row[0] for row in watch_check_result.all()}
 
                 rated_show_tmdb_ids = {
                     media_by_id[mid].tmdb_id
@@ -745,14 +775,17 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                 }
                 shows_with_watched_episode: set[int] = set()
                 if rated_show_tmdb_ids:
-                    watched_show_result = await db.execute(
-                        select(Show.tmdb_id)
-                        .join(Media, Media.show_id == Show.id)
-                        .join(WatchEvent, WatchEvent.media_id == Media.id)
-                        .where(WatchEvent.user_id == user_id, Show.tmdb_id.in_(rated_show_tmdb_ids))
-                        .distinct()
+                    shows_with_watched_episode = set(
+                        await _select_in_chunks(
+                            db,
+                            lambda chunk: select(Show.tmdb_id)
+                            .join(Media, Media.show_id == Show.id)
+                            .join(WatchEvent, WatchEvent.media_id == Media.id)
+                            .where(WatchEvent.user_id == user_id, Show.tmdb_id.in_(chunk))
+                            .distinct(),
+                            list(rated_show_tmdb_ids),
+                        )
                     )
-                    shows_with_watched_episode = {row[0] for row in watched_show_result.all()}
 
                 for mid, rating in ratings_map.items():
                     media = media_by_id.get(mid)
@@ -846,7 +879,7 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
 
         except Exception as exc:
             print(f"Simkl push job {job_id} failed: {exc}")
-            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=str(exc)))
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=_short_error(exc)))
             await db.commit()
 
 

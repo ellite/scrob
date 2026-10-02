@@ -173,7 +173,7 @@ const bottomNavItem = (active: boolean) =>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen overflow-x-hidden">
   {!hideNav && (
-    <nav class="px-4 md:px-6 py-3 md:py-4 text-sm relative z-30 bg-zinc-950 md:bg-transparent">
+    <nav class="px-4 md:px-6 py-3 md:py-4 text-sm sticky top-0 z-30 bg-zinc-950">
       <!-- Default bar -->
       <div id="nav-default" class="flex items-center justify-between gap-3 safe-area-top">
         <!-- Left: logo + desktop links -->
@@ -497,6 +497,13 @@ const bottomNavItem = (active: boolean) =>
           <input type="checkbox" id="customize-add-season-folder" class="sr-only peer" />
           <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
         </label>
+        <div id="customize-add-seasons-row" class="hidden space-y-1.5">
+          <div class="flex items-center justify-between">
+            <span class="block text-sm font-medium text-zinc-400">{m.customize_seasons_to_monitor()}</span>
+            <button type="button" id="customize-add-seasons-toggle" class="text-xs text-zinc-500 hover:text-zinc-200 transition cursor-pointer">{m.customize_select_none()}</button>
+          </div>
+          <div id="customize-add-seasons" class="flex flex-wrap gap-2 p-2 bg-zinc-950 border border-zinc-800 rounded-lg"></div>
+        </div>
         <div id="customize-add-error" class="hidden text-sm text-red-400"></div>
       </div>
       <div id="customize-add-footer" class="hidden border-t border-zinc-800 px-5 py-4 flex gap-2">
@@ -630,6 +637,18 @@ const bottomNavItem = (active: boolean) =>
       });
     });
 
+    // ── Sticky nav height ──────────────────────────────────────────────────────
+    // The top nav stays pinned, so anything else that sticks or scrolls to the top of
+    // the page has to clear it. Exposed as --nav-h (kept current as the nav changes
+    // height, e.g. when the mobile search bar swaps in).
+    const stickyNav = document.querySelector('nav.sticky');
+    if (stickyNav) {
+      const syncNavHeight = () =>
+        document.documentElement.style.setProperty('--nav-h', `${stickyNav.getBoundingClientRect().height}px`);
+      syncNavHeight();
+      new ResizeObserver(syncNavHeight).observe(stickyNav);
+    }
+
     // ── Mobile search expand ───────────────────────────────────────────────────
     const navDefault = document.getElementById('nav-default');
     const navSearch = document.getElementById('nav-search');
@@ -674,6 +693,14 @@ const bottomNavItem = (active: boolean) =>
     // Expose the server-side token for the card action script (httpOnly cookie is not JS-readable)
     window.__AUTH_TOKEN__ = __layoutAuthToken;
     window.__USE_24H__ = __use24h;
+    // Tell the SSR side the viewer's timezone so history times render in it,
+    // not the container's (#411). Applies from the next page load.
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz && !document.cookie.split('; ').includes('viewer_tz=' + encodeURIComponent(tz))) {
+        document.cookie = 'viewer_tz=' + encodeURIComponent(tz) + '; path=/; SameSite=Lax; Max-Age=31536000';
+      }
+    } catch {}
     window.__IS_ADMIN__ = __isAdmin;
     window.__RADARR_CUSTOMIZE_ON_ADD__ = __radarrCustomizeOnAdd;
     window.__SONARR_CUSTOMIZE_ON_ADD__ = __sonarrCustomizeOnAdd;
@@ -978,7 +1005,33 @@ const bottomNavItem = (active: boolean) =>
       } catch {
         if (err.message) msg = err.message;
       }
-      alert(msg);
+      // A proxy/gateway error page comes back as HTML - never show markup.
+      if (msg.trimStart().startsWith('<')) msg = fallback;
+      void showAlert(fallback, msg === fallback ? m.common_please_try_again() : msg);
+    }
+
+    // Single-button variant of showConfirm, in place of the browser's alert().
+    function showAlert(title: string, body: string): Promise<void> {
+      return new Promise(resolve => {
+        const dialog = document.getElementById('confirm-dialog')!;
+        (document.getElementById('confirm-title') as HTMLElement).textContent = title;
+        (document.getElementById('confirm-body') as HTMLElement).textContent = body;
+        const ok = document.getElementById('confirm-ok')!;
+        const cancel = document.getElementById('confirm-cancel')!;
+        cancel.classList.add('hidden');
+        ok.textContent = m.common_ok();
+        dialog.classList.remove('hidden');
+        const close = () => {
+          dialog.classList.add('hidden');
+          ok.replaceWith(ok.cloneNode(true));
+          cancel.replaceWith(cancel.cloneNode(true));
+          // The clones inherit this alert's state - put the confirm layout back.
+          document.getElementById('confirm-cancel')!.classList.remove('hidden');
+          document.getElementById('confirm-ok')!.textContent = m.common_confirm();
+          resolve();
+        };
+        ok.addEventListener('click', close, { once: true });
+      });
     }
 
     // ── Watched-at picker ──────────────────────────────────────────────────────
@@ -1067,6 +1120,7 @@ const bottomNavItem = (active: boolean) =>
 
     // ── Confirm dialog ─────────────────────────────────────────────────────────
     (window as Window & { showConfirm: typeof showConfirm }).showConfirm = showConfirm;
+    (window as any).showAlert = showAlert;
     function showConfirm(title: string, body: string): Promise<boolean> {
       return new Promise(resolve => {
         const dialog = document.getElementById('confirm-dialog')!;
@@ -1109,6 +1163,8 @@ const bottomNavItem = (active: boolean) =>
       episodeOrder: string = 'tmdb',
       itemInfo: { title?: string; subtitle?: string; posterUrl?: string; landscape?: boolean } | null = null,
       mediaId: string = '',
+      // tmdbId is really a TheTVDB id (show with no TMDB counterpart).
+      tvdbOnly: boolean = false,
     ) {
       _activeRatingBtn = btn;
       _ratingMediaId = mediaId;
@@ -1163,7 +1219,7 @@ const bottomNavItem = (active: boolean) =>
         half.addEventListener('click', async () => {
           try {
             const ratingBody: Record<string, unknown> = { media_type: mediaType, rating: i };
-            if (tmdbId) ratingBody.tmdb_id = Number(tmdbId);
+            if (tmdbId) ratingBody[tvdbOnly ? 'tvdb_id' : 'tmdb_id'] = Number(tmdbId);
             if (_ratingMediaId) ratingBody.media_id = Number(_ratingMediaId);
             if (seasonNumber !== null) ratingBody.season_number = seasonNumber;
             if (seasonNumber !== null && nonAiredOrder(episodeOrder)) ratingBody.episode_order = episodeOrder;
@@ -1174,7 +1230,15 @@ const bottomNavItem = (active: boolean) =>
               btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-amber-500/10', 'hover:text-amber-400');
               btn.classList.add('bg-amber-500/20', 'text-amber-400', 'hover:bg-amber-500/40');
               btn.querySelector('svg')!.setAttribute('fill', 'currentColor');
-              btn.querySelector('span')!.textContent = i.toFixed(1);
+              const rateSpans = btn.querySelectorAll('span');
+              rateSpans[0]!.textContent = i.toFixed(1);
+              let mobileRateSpan = rateSpans[1];
+              if (!mobileRateSpan) {
+                mobileRateSpan = document.createElement('span');
+                mobileRateSpan.className = 'md:hidden text-[9px] font-bold leading-none';
+                btn.appendChild(mobileRateSpan);
+              }
+              mobileRateSpan.textContent = i.toFixed(1);
               btn.title = m.rating_your_rating_value({ rating: i.toFixed(1) });
             }
             closeRatingPopover();
@@ -1198,7 +1262,7 @@ const bottomNavItem = (active: boolean) =>
         try {
           const seasonQuery = seasonNumber !== null ? `&season_number=${seasonNumber}` : '';
           const orderQuery = seasonNumber !== null && nonAiredOrder(episodeOrder) ? '&episode_order=' + encodeURIComponent(episodeOrder) : '';
-          const idQuery = tmdbId ? `tmdb_id=${tmdbId}` : `media_id=${_ratingMediaId}`;
+          const idQuery = tmdbId ? `${tvdbOnly ? 'tvdb_id' : 'tmdb_id'}=${tmdbId}` : `media_id=${_ratingMediaId}`;
           await apiFetch(`/ratings?${idQuery}&media_type=${mediaType}${seasonQuery}${orderQuery}`, 'DELETE');
           if (btn) {
             btn.dataset.userRating = '';
@@ -1206,7 +1270,9 @@ const bottomNavItem = (active: boolean) =>
             btn.classList.remove('bg-amber-500/20', 'text-amber-400', 'hover:bg-amber-500/40');
             btn.classList.add('bg-zinc-800', 'text-zinc-500', 'hover:bg-amber-500/10', 'hover:text-amber-400');
             btn.querySelector('svg')!.setAttribute('fill', 'none');
-            btn.querySelector('span')!.textContent = m.rating_rate();
+            const rateSpans = btn.querySelectorAll('span');
+            rateSpans[0]!.textContent = m.rating_rate();
+            rateSpans[1]?.remove();
             btn.title = m.rating_rate_this();
           }
           closeRatingPopover();
@@ -1283,6 +1349,8 @@ const bottomNavItem = (active: boolean) =>
     let _listMediaId = '';
     let _listMediaType = '';
     let _listSeasonNumber = '';
+    // The card's id is a TheTVDB id (show with no TMDB counterpart).
+    let _listTvdbOnly = false;
 
     function closeListPopover() {
       document.getElementById('list-popover')!.classList.add('hidden');
@@ -1295,6 +1363,7 @@ const bottomNavItem = (active: boolean) =>
       _listMediaId = mediaId;
       _listMediaType = mediaType;
       _listSeasonNumber = seasonNumber;
+      _listTvdbOnly = btn.closest<HTMLElement>('[data-card]')?.dataset.tvdbOnly === 'true';
       const popover = document.getElementById('list-popover')!;
       const itemsEl = document.getElementById('list-popover-items')!;
       itemsEl.innerHTML = `<div class="px-3 py-2 text-xs text-zinc-500">${esc(m.common_loading())}</div>`;
@@ -1332,16 +1401,18 @@ const bottomNavItem = (active: boolean) =>
             const seasonNumber = _listMediaType === 'series' && _listSeasonNumber ? Number(_listSeasonNumber) : null;
             if (cb.checked) {
               const body: Record<string, unknown> = { media_type: _listMediaType };
-              if (_listTmdbId) body.tmdb_id = Number(_listTmdbId);
+              if (_listTmdbId) body[_listTvdbOnly ? 'tvdb_id' : 'tmdb_id'] = Number(_listTmdbId);
               if (_listMediaId) body.media_id = Number(_listMediaId);
               if (seasonNumber != null) body.season_number = seasonNumber;
               await apiFetch(`/lists/${listId}/items`, 'POST', body);
             } else {
               // Find the list_item id — need to fetch list detail
               const detail = await apiFetch(`/lists/${listId}`);
-              const item = detail.items?.find((i: { media: { id?: number; tmdb_id: number | null; season_number: number | null } }) => {
+              const item = detail.items?.find((i: { media: { id?: number; tmdb_id: number | null; tvdb_id?: number | null; season_number: number | null } }) => {
                 const sameItem = _listTmdbId
-                  ? i.media?.tmdb_id === Number(_listTmdbId)
+                  ? (_listTvdbOnly
+                      ? !i.media?.tmdb_id && i.media?.tvdb_id === Number(_listTmdbId)
+                      : i.media?.tmdb_id === Number(_listTmdbId))
                   : !!_listMediaId && i.media?.id === Number(_listMediaId);
                 if (!sameItem) return false;
                 // Only a whole-season list entry (media_type=series) needs
@@ -1420,11 +1491,13 @@ const bottomNavItem = (active: boolean) =>
       document.getElementById('rewatch-modal')!.classList.add('hidden');
     }
 
-    function openRewatchModal(seriesTmdbId: string) {
+    // seriesQuery is the show's id as a query fragment, e.g. `series_tmdb_id=1`
+    // (or `series_tvdb_id=1` for a TheTVDB-only show).
+    function openRewatchModal(seriesQuery: string) {
       document.getElementById('rewatch-modal-restart')!.onclick = async () => {
         closeRewatchModal();
         try {
-          await apiFetch(`/history/rewatch?series_tmdb_id=${seriesTmdbId}`, 'POST');
+          await apiFetch(`/history/rewatch?${seriesQuery}`, 'POST');
           window.location.reload();
         } catch (err: any) {
           alertFromError(err, m.rewatch_restart_failed());
@@ -1434,7 +1507,7 @@ const bottomNavItem = (active: boolean) =>
       document.getElementById('rewatch-modal-cancel')!.onclick = async () => {
         closeRewatchModal();
         try {
-          await apiFetch(`/history/rewatch?series_tmdb_id=${seriesTmdbId}`, 'DELETE');
+          await apiFetch(`/history/rewatch?${seriesQuery}`, 'DELETE');
           window.location.reload();
         } catch (err: any) {
           alertFromError(err, m.rewatch_cancel_failed());
@@ -1512,6 +1585,38 @@ const bottomNavItem = (active: boolean) =>
     // ── Customize-on-add modal (admin-only - root folder/quality profile/
     // tags/season-folder override for one Radarr/Sonarr add) ────────────────
     let _customizeAddTags: number[] = [];
+    let _customizeAddSeasons: number[] = [];
+
+    function renderCustomizeAddSeasons(seasons: any[]) {
+      const row = document.getElementById('customize-add-seasons-row')!;
+      const container = document.getElementById('customize-add-seasons')!;
+      const toggle = document.getElementById('customize-add-seasons-toggle')!;
+      row.classList.toggle('hidden', !seasons || seasons.length === 0);
+      if (!seasons || seasons.length === 0) return;
+      const pillClass = (on: boolean) => on
+        ? 'ring-1 ring-blue-500 border-blue-500/50 bg-blue-500/10 text-zinc-100'
+        : 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-300';
+      const draw = () => {
+        container.innerHTML = seasons.map((s: any) =>
+          `<button type="button" data-season="${s.season_number}" class="px-2 py-1 text-xs font-medium rounded-md border transition-colors cursor-pointer ${pillClass(_customizeAddSeasons.includes(s.season_number))}">${esc(s.season_number === 0 ? m.season_specials() : 'S' + s.season_number)}</button>`
+        ).join('');
+        toggle.textContent = _customizeAddSeasons.length === seasons.length ? m.customize_select_none() : m.customize_select_all();
+        container.querySelectorAll('button').forEach((pill) => {
+          pill.addEventListener('click', () => {
+            const n = parseInt((pill as HTMLElement).dataset.season!);
+            _customizeAddSeasons = _customizeAddSeasons.includes(n)
+              ? _customizeAddSeasons.filter(x => x !== n)
+              : [..._customizeAddSeasons, n];
+            draw();
+          });
+        });
+      };
+      toggle.onclick = () => {
+        _customizeAddSeasons = _customizeAddSeasons.length === seasons.length ? [] : seasons.map((s: any) => s.season_number);
+        draw();
+      };
+      draw();
+    }
 
     function closeCustomizeAddPopover() {
       document.getElementById('customize-add-popover')!.classList.add('hidden');
@@ -1547,7 +1652,7 @@ const bottomNavItem = (active: boolean) =>
       });
     }
 
-    async function openCustomizeAddPopover(mediaType: string, onConfirm: (overrides: Record<string, unknown>) => Promise<void>) {
+    async function openCustomizeAddPopover(mediaType: string, onConfirm: (overrides: Record<string, unknown>) => Promise<void>, idQuery = '') {
       const popover = document.getElementById('customize-add-popover')!;
       const loading = document.getElementById('customize-add-loading')!;
       const body = document.getElementById('customize-add-body')!;
@@ -1562,10 +1667,12 @@ const bottomNavItem = (active: boolean) =>
       footer.classList.add('hidden');
       errorEl.classList.add('hidden');
       seasonRow.classList.toggle('hidden', !isSeries);
+      document.getElementById('customize-add-seasons-row')!.classList.add('hidden');
+      _customizeAddSeasons = [];
       popover.classList.remove('hidden');
 
       try {
-        const opts = await apiFetch(`/media/${mediaType}/customize-options`);
+        const opts = await apiFetch(`/media/${mediaType}/customize-options${idQuery}`);
 
         const rootSelect = document.getElementById('customize-add-root-folder') as HTMLSelectElement;
         rootSelect.innerHTML = opts.root_folders.map((f: any) =>
@@ -1582,6 +1689,8 @@ const bottomNavItem = (active: boolean) =>
 
         if (isSeries) {
           (document.getElementById('customize-add-season-folder') as HTMLInputElement).checked = opts.current.season_folder !== false;
+          _customizeAddSeasons = (opts.seasons || []).filter((s: any) => s.monitored).map((s: any) => s.season_number);
+          renderCustomizeAddSeasons(opts.seasons || []);
         }
 
         loading.classList.add('hidden');
@@ -1603,6 +1712,15 @@ const bottomNavItem = (active: boolean) =>
         };
         if (isSeries) {
           overrides.season_folder = (document.getElementById('customize-add-season-folder') as HTMLInputElement).checked;
+          // Only sent when the season list loaded; otherwise Sonarr's default applies.
+          if (!document.getElementById('customize-add-seasons-row')!.classList.contains('hidden')) {
+            if (_customizeAddSeasons.length === 0) {
+              errorEl.textContent = m.customize_select_one_season();
+              errorEl.classList.remove('hidden');
+              return;
+            }
+            overrides.seasons = _customizeAddSeasons;
+          }
         }
         closeCustomizeAddPopover();
         await onConfirm(overrides);
@@ -1843,6 +1961,20 @@ const bottomNavItem = (active: boolean) =>
       await loadWatchHistoryEvents();
     }
 
+    // Marking a whole show watched can outlast a proxy timeout, so the server
+    // runs it as a background job: start it, then poll until it settles.
+    async function runShowWatchJob(body: Record<string, unknown>): Promise<void> {
+      const { job_id } = await apiFetch('/history/show-all/async', 'POST', body);
+      const deadline = Date.now() + 30 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 2000));
+        const job = await apiFetch(`/history/show-all/jobs/${job_id}`);
+        if (job.state === 'done') return;
+        if (job.state === 'error') throw new Error(JSON.stringify({ detail: job.detail }));
+      }
+      throw new Error(JSON.stringify({ detail: m.watch_show_job_timed_out() }));
+    }
+
     function openBulkWatchModal(btn: HTMLElement, kind: 'season' | 'show', seriesId: string, season = '', episodeOrder = '', tvdbId = '') {
       _watchHistoryBulkMode = { kind, seriesId, season, episodeOrder, btn, tvdbId };
       // No single date applies across a whole season/show - never offer it here.
@@ -1850,7 +1982,14 @@ const bottomNavItem = (active: boolean) =>
 
       document.getElementById('watch-history-modal-title')!.textContent = kind === 'season' ? m.watch_mark_season_watched() : m.watch_mark_show_watched();
       document.getElementById('watch-history-modal-events')!.classList.add('hidden');
-      document.getElementById('watch-history-unwatch-btn')!.classList.add('hidden');
+      // Bulk mode has no per-item play list, so its own remove-everything
+      // action lives on the same button.
+      const bulkUnwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
+      bulkUnwatchBtn.textContent = kind === 'season' ? m.watch_remove_all_season() : m.watch_remove_all();
+      bulkUnwatchBtn.disabled = false;
+      bulkUnwatchBtn.classList.remove('hidden');
+      // Below "Mark as watched" here; the single-item modal keeps it on top.
+      document.getElementById('watch-history-log-btn')!.after(bulkUnwatchBtn);
       document.getElementById('watch-history-add-play-label')!.classList.add('hidden');
       resetWatchHistoryDateUI();
 
@@ -1900,6 +2039,8 @@ const bottomNavItem = (active: boolean) =>
       eventsEl.innerHTML = `<div class="px-4 py-3 text-xs text-zinc-500">${esc(m.common_loading())}</div>`;
       const unwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
       unwatchBtn.classList.add('hidden');
+      unwatchBtn.textContent = m.watch_mark_unwatched();
+      document.getElementById('watch-history-add-play-label')!.before(unwatchBtn);
       try {
         const seriesQuery = _watchHistoryMediaType === 'episode'
           ? (_watchHistoryShowTmdbId ? `&series_tmdb_id=${_watchHistoryShowTmdbId}` : '')
@@ -1966,6 +2107,38 @@ const bottomNavItem = (active: boolean) =>
     });
 
     document.getElementById('watch-history-unwatch-btn')!.addEventListener('click', async () => {
+      if (_watchHistoryBulkMode) {
+        const { kind, seriesId, season, episodeOrder, btn: sourceBtn } = _watchHistoryBulkMode;
+        const ok = kind === 'season'
+          ? await showConfirm(m.watch_remove_all_season_confirm_title(), m.watch_remove_all_season_confirm_body())
+          : await showConfirm(m.watch_remove_all_show_confirm_title(), m.watch_remove_all_show_confirm_body());
+        if (!ok) return;
+
+        const bulkBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
+        const idleLabel = bulkBtn.textContent || '';
+        bulkBtn.disabled = true;
+        bulkBtn.textContent = m.common_removing();
+        try {
+          // A TheTVDB-only show's card carries its TVDB id as its id.
+          const idParam = sourceBtn.closest<HTMLElement>('[data-card]')?.dataset.tvdbOnly === 'true' ? 'series_tvdb_id' : 'series_tmdb_id';
+          if (kind === 'season') {
+            const orderQuery = nonAiredOrder(episodeOrder) ? '&episode_order=' + encodeURIComponent(episodeOrder) : '';
+            await apiFetch(`/history/season?${idParam}=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
+            cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, season, episodeOrder, false);
+            syncShowWatchPctFromDOM(seriesId);
+          } else {
+            await apiFetch(`/history/show-all?${idParam}=${seriesId}`, 'DELETE');
+            cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, '', '', false);
+          }
+          closeWatchHistoryModal();
+        } catch (err) {
+          alertFromError(err, m.watch_remove_all_failed());
+        }
+        bulkBtn.disabled = false;
+        bulkBtn.textContent = idleLabel;
+        return;
+      }
+
       const confirmed = await showConfirm(
         m.watch_unwatch_confirm_title(),
         m.watch_unwatch_confirm_body()
@@ -2048,26 +2221,29 @@ const bottomNavItem = (active: boolean) =>
         const logBtn = document.getElementById('watch-history-log-btn') as HTMLButtonElement;
         const idleLabel = logBtn.textContent || m.watch_mark_watched();
         logBtn.disabled = true;
-        logBtn.textContent = m.common_saving();
+        logBtn.innerHTML = '<svg class="inline-block w-4 h-4 mr-2 -mt-0.5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>' + esc(m.common_saving());
 
         if (_watchHistoryBulkMode) {
           const { kind, seriesId, season, episodeOrder, btn: sourceBtn, tvdbId: bulkTvdbId } = _watchHistoryBulkMode;
+          // A TheTVDB-only show's card carries its TVDB id as its id: send it
+          // as series_tvdb_id and never as series_tmdb_id (a different show).
+          const idBody: Record<string, unknown> = sourceBtn.closest<HTMLElement>('[data-card]')?.dataset.tvdbOnly === 'true'
+            ? { series_tvdb_id: Number(seriesId) }
+            : { series_tmdb_id: Number(seriesId), ...(bulkTvdbId ? { series_tvdb_id: Number(bulkTvdbId) } : {}) };
           try {
             if (kind === 'season') {
               const body: Record<string, unknown> = {
-                series_tmdb_id: Number(seriesId),
+                ...idBody,
                 season_number: Number(season),
                 watched_at: watchedAt,
               };
               if (nonAiredOrder(episodeOrder)) body.episode_order = episodeOrder;
-              if (bulkTvdbId) body.series_tvdb_id = Number(bulkTvdbId);
               await apiFetch('/history/season', 'POST', body);
               cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, season, episodeOrder, true);
               syncShowWatchPctFromDOM(seriesId);
             } else {
-              const body: Record<string, unknown> = { series_tmdb_id: Number(seriesId), watched_at: watchedAt };
-              if (bulkTvdbId) body.series_tvdb_id = Number(bulkTvdbId);
-              await apiFetch('/history/show-all', 'POST', body);
+              const body: Record<string, unknown> = { ...idBody, watched_at: watchedAt };
+              await runShowWatchJob(body);
               cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, '', '', true);
             }
             closeWatchHistoryModal();
@@ -2200,12 +2376,13 @@ const bottomNavItem = (active: boolean) =>
         }
         if (!confirmed) return;
 
+        const seriesIdParam = card.dataset.tvdbOnly === 'true' ? 'series_tvdb_id' : 'series_tmdb_id';
         try {
           if (mediaType === 'series' && season) {
             const orderQuery = nonAiredOrder(episodeOrder) ? '&episode_order=' + encodeURIComponent(episodeOrder) : '';
-            await apiFetch(`/history/season?series_tmdb_id=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
+            await apiFetch(`/history/season?${seriesIdParam}=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
           } else if (mediaType === 'series') {
-            await apiFetch(`/history/show-all?series_tmdb_id=${tmdbId}`, 'DELETE');
+            await apiFetch(`/history/show-all?${seriesIdParam}=${tmdbId}`, 'DELETE');
           }
           cascadeWatchedUI(btn, mediaType, tmdbId, seriesId, season || '', episodeOrder, false);
           if (mediaType === 'series' && season) {
@@ -2214,7 +2391,7 @@ const bottomNavItem = (active: boolean) =>
         } catch { /* ignore */ }
 
       } else if (action === 'list') {
-        if (!tmdbId && !mediaId) { alert(m.list_unmatched_item()); return; }
+        if (!tmdbId && !mediaId) { void showAlert(m.list_unmatched_title(), m.list_unmatched_item()); return; }
         if (document.getElementById('list-popover')!.classList.contains('hidden') || _activeListBtn !== btn) {
           openListPopover(btn, tmdbId, mediaType, card.dataset.season || '', mediaId);
         } else {
@@ -2258,7 +2435,7 @@ const bottomNavItem = (active: boolean) =>
               const query = tmdbId ? `tmdb_id=${tmdbId}` : `id=${mediaId}`;
               await apiFetch(`/media/collect?${query}&media_type=${mediaType}`, 'DELETE');
             } else {
-              if (!tmdbId && !mediaId) { alert(m.collection_unmatched_item()); return; }
+              if (!tmdbId && !mediaId) { void showAlert(m.collection_unmatched_title(), m.collection_unmatched_item()); return; }
               const collectBody: Record<string, number | string> = { media_type: mediaType };
               if (tmdbId) collectBody.tmdb_id = Number(tmdbId);
               if (mediaId) collectBody.media_id = Number(mediaId);
@@ -2304,7 +2481,7 @@ const bottomNavItem = (active: boolean) =>
             }
           : null;
         if (document.getElementById('rating-popover')!.classList.contains('hidden') || _activeRatingBtn !== btn) {
-          openRatingPopover(btn, tmdbId, mediaType, currentRating, ratingSeason, episodeOrder, rateInfo, mediaId);
+          openRatingPopover(btn, tmdbId, mediaType, currentRating, ratingSeason, episodeOrder, rateInfo, mediaId, card.dataset.tvdbOnly === 'true');
         } else {
           closeRatingPopover();
         }
@@ -2316,7 +2493,10 @@ const bottomNavItem = (active: boolean) =>
           btn.classList.add('pointer-events-none');
 
           try {
-            const res = await apiFetch(`/media/${mediaType}/${tmdbId}/request`, 'POST', overrides);
+            const requestPath = card.dataset.tvdbOnly === 'true'
+              ? `/media/series/tvdb/${tmdbId}/request`
+              : `/media/${mediaType}/${tmdbId}/request`;
+            const res = await apiFetch(requestPath, 'POST', overrides);
             if (res.status === 'added' || res.status === 'already_exists') {
               btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-green-500"><polyline points="20 6 9 17 4 12"></polyline></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-green-500">' + esc(res.status === 'added' ? m.request_added() : m.request_exists()) + '</span>';
               btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-500/10', 'hover:text-orange-400');
@@ -2344,7 +2524,11 @@ const bottomNavItem = (active: boolean) =>
           (mediaType === 'series' && (window as any).__SONARR_CUSTOMIZE_ON_ADD__)
         );
         if (customizeOnAdd) {
-          openCustomizeAddPopover(mediaType, performRequestAdd);
+          openCustomizeAddPopover(
+            mediaType,
+            performRequestAdd,
+            mediaType === 'series' ? `?${card.dataset.tvdbOnly === 'true' ? 'tvdb_id' : 'tmdb_id'}=${tmdbId}` : '',
+          );
         } else {
           await performRequestAdd();
         }
@@ -2353,15 +2537,16 @@ const bottomNavItem = (active: boolean) =>
         // Show-level card only (ActionBar only renders this button there) —
         // data-tmdb-id on the card IS the show's own tmdb id in that context.
         const seriesId = tmdbId;
+        const seriesQuery = `${card.dataset.tvdbOnly === 'true' ? 'series_tvdb_id' : 'series_tmdb_id'}=${seriesId}`;
         const isActive = btn.dataset.rewatchActive === 'true';
 
         if (isActive) {
-          openRewatchModal(seriesId);
+          openRewatchModal(seriesQuery);
           return;
         }
 
         try {
-          await apiFetch(`/history/rewatch?series_tmdb_id=${seriesId}`, 'POST');
+          await apiFetch(`/history/rewatch?${seriesQuery}`, 'POST');
           window.location.reload();
         } catch (err: any) {
           alertFromError(err, m.rewatch_start_failed());
@@ -2407,7 +2592,8 @@ const bottomNavItem = (active: boolean) =>
       const TOKEN = () => (window as any).__AUTH_TOKEN__ ?? '';
 
       try {
-        const res = await fetch(`${API}/media/request-status?tmdb_id=${tmdbId}&media_type=${mediaType}`, {
+        const idParam = card.dataset.tvdbOnly === 'true' ? 'tvdb_id' : 'tmdb_id';
+        const res = await fetch(`${API}/media/request-status?${idParam}=${tmdbId}&media_type=${mediaType}`, {
           headers: { Authorization: `Bearer ${TOKEN()}` },
         });
         if (!res.ok) return; // service down — keep disabled

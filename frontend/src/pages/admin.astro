@@ -29,7 +29,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     class="hidden" aria-hidden="true">
   </div>
 
-  <div class="max-w-4xl mx-auto px-4 py-8 space-y-10">
+  <div class="max-w-4xl mx-auto space-y-10">
     <h1 class="page-title">{m.admin_admin_panel()}</h1>
 
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
@@ -46,11 +46,19 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="tmdb-body">
             <div class="flex items-center gap-4 pointer-events-none">
               <Fragment set:html={connectionIconHtml("themoviedatabase")} />
-              <span class="font-medium text-zinc-200">TMDB</span>
+              <div class="flex flex-col gap-0.5">
+                <span class="font-medium text-zinc-200">TMDB</span>
+                <span id="tmdb-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
+              </div>
             </div>
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-            </svg>
+            <div class="flex items-center gap-2">
+              <div onclick="event.stopPropagation()">
+                <button type="button" id="test-tmdb-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">{m.conn_test()}</button>
+              </div>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+              </svg>
+            </div>
           </div>
           <div id="tmdb-body" class="border-t border-zinc-800 hidden">
             <div class="px-6 py-6">
@@ -81,11 +89,19 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="tvdb-body">
             <div class="flex items-center gap-4 pointer-events-none">
               <Fragment set:html={connectionIconHtml("tvdb")} />
-              <span class="font-medium text-zinc-200">TVDB</span>
+              <div class="flex flex-col gap-0.5">
+                <span class="font-medium text-zinc-200">TVDB</span>
+                <span id="tvdb-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
+              </div>
             </div>
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-            </svg>
+            <div class="flex items-center gap-2">
+              <div onclick="event.stopPropagation()">
+                <button type="button" id="test-tvdb-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">{m.conn_test()}</button>
+              </div>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+              </svg>
+            </div>
           </div>
           <div id="tvdb-body" class="border-t border-zinc-800 hidden">
             <div class="px-6 py-6">
@@ -122,6 +138,49 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- MDBList -->
+        <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+          <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="mdblist-body">
+            <div class="flex items-center gap-4 pointer-events-none">
+              <Fragment set:html={connectionIconHtml("mdblist")} />
+              <div class="flex flex-col gap-0.5">
+                <span class="font-medium text-zinc-200">MDBList</span>
+                <span id="mdblist-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <div onclick="event.stopPropagation()">
+                <button type="button" id="test-mdblist-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">{m.conn_test()}</button>
+              </div>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+              </svg>
+            </div>
+          </div>
+          <div id="mdblist-body" class="border-t border-zinc-800 hidden">
+            <div class="px-6 py-6">
+              <div class="space-y-2 max-w-md">
+                <label for="mdblist_api_key" class="block text-sm font-medium text-zinc-400">{m.admin_api_key()}</label>
+                <div class="relative group/field">
+                  <input
+                    type="password"
+                    name="mdblist_api_key"
+                    id="mdblist_api_key"
+                    value={globalSettings.mdblist_api_key ?? ""}
+                    placeholder={m.admin_mdblist_key_placeholder()}
+                    class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                  />
+                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+                  </button>
+                </div>
+                <p class="text-xs text-zinc-500">{m.admin_mdblist_help()}</p>
               </div>
             </div>
           </div>
@@ -411,7 +470,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             {users.map((u: AdminUser) => (
               <>
                 <tr class="user-main-row border-b border-zinc-800/50 hover:bg-zinc-800/30 transition cursor-pointer select-none"
-                    data-user-id={u.id} data-is-admin={u.is_admin} data-api-key={u.api_key}>
+                    data-user-id={u.id} data-is-admin={u.is_admin} data-totp={u.totp_enabled ?? false} data-api-key={u.api_key}>
                   <td class="px-4 py-3 text-zinc-100 font-medium">
                     <div class="flex items-center gap-3">
                       <div class="w-8 h-8 shrink-0 rounded-full overflow-hidden bg-zinc-800 border border-zinc-700 flex items-center justify-center">
@@ -433,18 +492,9 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                   </td>
                   <td class="px-4 py-3 text-right hidden md:table-cell">
                     <div class="flex items-center justify-end gap-2">
-                      <button
-                        class="toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer border"
-                        class:list={[
-                          u.is_admin
-                            ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700"
-                            : "bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20"
-                        ]}
-                      >
-                        {u.is_admin ? m.admin_remove_admin() : m.admin_make_admin()}
-                      </button>
-                      <button class="delete-user-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-all active:scale-95 cursor-pointer">
-                        {m.common_delete()}
+                      <button type="button" class="user-actions-btn inline-flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-all active:scale-95 cursor-pointer" aria-haspopup="menu" aria-expanded="false">
+                        {m.admin_actions()}
+                        <svg class="w-3 h-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                       </button>
                     </div>
                   </td>
@@ -470,20 +520,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                           </button>
                         </div>
                       </div>
-                      <div class="flex flex-wrap gap-2 md:hidden">
-                        <button
-                          class="toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer border"
-                          class:list={[
-                            u.is_admin
-                              ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700"
-                              : "bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20"
-                          ]}
-                        >
-                          {u.is_admin ? m.admin_remove_admin() : m.admin_make_admin()}
-                        </button>
-                        <button class="delete-user-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-all active:scale-95 cursor-pointer">
-                          {m.common_delete()}
-                        </button>
+                      <div class="flex flex-wrap justify-end gap-2 md:hidden">
+                        <button type="button" class="user-actions-btn inline-flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-all active:scale-95 cursor-pointer" aria-haspopup="menu" aria-expanded="false">
+                        {m.admin_actions()}
+                        <svg class="w-3 h-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                      </button>
                       </div>
                     </div>
                   </td>
@@ -653,6 +694,53 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   </div>
 </div>
 
+<!-- User actions dropdown (shared by every row, positioned next to the clicked button) -->
+<div id="user-actions-menu" role="menu" class="hidden fixed z-50 flex-col bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl p-2 text-sm">
+  <button type="button" role="menuitem" id="menu-toggle-admin" class="w-full text-left px-3 py-2 rounded-lg transition active:opacity-70 cursor-pointer text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed"></button>
+  <button type="button" role="menuitem" id="menu-reset-password" class="w-full text-left px-3 py-2 rounded-lg transition active:opacity-70 cursor-pointer text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800">{m.admin_reset_password()}</button>
+  <button type="button" role="menuitem" id="menu-disable-2fa" class="hidden w-full text-left px-3 py-2 rounded-lg transition active:opacity-70 cursor-pointer text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800">{m.settings_disable_2fa()}</button>
+  <div class="h-px bg-zinc-800 my-1 mx-1"></div>
+  <button type="button" role="menuitem" id="menu-delete-user" class="w-full text-left px-3 py-2 rounded-lg transition active:opacity-70 cursor-pointer text-red-400 hover:text-red-300 hover:bg-zinc-800">{m.common_delete()}</button>
+</div>
+
+<!-- Reset Password Modal -->
+<div id="reset-password-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div id="reset-password-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+  <form id="reset-password-form" class="relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
+    <h2 class="text-xl font-black text-zinc-100 mb-2">{m.admin_reset_password()}</h2>
+    <p id="reset-password-modal-body" class="text-sm text-zinc-400 mb-4"></p>
+    <div class="space-y-3 mb-2">
+      <div class="relative">
+        <input type="password" id="reset-password-input" autocomplete="new-password" placeholder={m.reset_new_password()} required
+          class="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-4 pr-11 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50" />
+        <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+        </button>
+      </div>
+      <div class="relative">
+        <input type="password" id="reset-password-confirm" autocomplete="new-password" placeholder={m.admin_confirm_password()} required
+          class="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-4 pr-11 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50" />
+        <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+        </button>
+      </div>
+    </div>
+    <p id="reset-password-error" class="hidden text-sm text-red-400 mb-2"></p>
+    <div class="flex gap-3 mt-4">
+      <button type="button" id="reset-password-cancel-btn"
+        class="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-colors text-sm cursor-pointer">
+        {m.common_cancel()}
+      </button>
+      <button type="submit" id="reset-password-save-btn"
+        class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-colors text-sm cursor-pointer disabled:opacity-50">
+        {m.common_save()}
+      </button>
+    </div>
+  </form>
+</div>
+
 <!-- Delete User Confirmation Modal -->
 <div id="delete-user-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div id="delete-user-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
@@ -806,6 +894,58 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(credentials),
     });
+
+  async function testGlobalApiKey(
+    provider: 'tmdb' | 'tvdb' | 'mdblist',
+    label: string,
+    keyInputId: string,
+    statusId: string,
+    pinInputId?: string,
+  ): Promise<void> {
+    const key = (document.getElementById(keyInputId) as HTMLInputElement).value.trim();
+    if (!key) { showMessage(m.admin_enter_api_key_first({ service: label }), 'error'); return; }
+
+    const button = document.getElementById(`test-${provider}-btn`) as HTMLButtonElement;
+    const body: { key: string; pin?: string } = { key };
+    if (pinInputId) {
+      const pin = (document.getElementById(pinInputId) as HTMLInputElement).value.trim();
+      if (pin) body.pin = pin;
+    }
+    button.disabled = true;
+    setConnStatus(statusId, 'checking');
+    try {
+      const response = await fetch(`/api/proxy/admin/settings/test-${provider}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        setConnStatus(statusId, 'disconnected');
+        const error: unknown = await response.json();
+        const detail = typeof error === 'object' && error !== null && 'detail' in error
+          ? String(error.detail)
+          : m.admin_failed_to_connect_to({ service: label });
+        throw new Error(detail);
+      }
+      setConnStatus(statusId, 'connected');
+      showMessage(m.admin_connection_successful({ service: label }));
+    } catch (error: unknown) {
+      setConnStatus(statusId, 'disconnected');
+      showMessage(error instanceof Error ? error.message : m.admin_service_error({ service: label }), 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  document.getElementById('test-tmdb-btn')?.addEventListener('click', () => {
+    void testGlobalApiKey('tmdb', 'TMDB', 'tmdb_api_key', 'tmdb-conn-status');
+  });
+  document.getElementById('test-tvdb-btn')?.addEventListener('click', () => {
+    void testGlobalApiKey('tvdb', 'TVDB', 'tvdb_api_key', 'tvdb-conn-status', 'tvdb_subscriber_pin');
+  });
+  document.getElementById('test-mdblist-btn')?.addEventListener('click', () => {
+    void testGlobalApiKey('mdblist', 'MDBList', 'mdblist_api_key', 'mdblist-conn-status');
+  });
 
   document.getElementById('test-radarr-btn')?.addEventListener('click', async () => {
     const u = (document.getElementById('radarr_url') as HTMLInputElement).value.trim();
@@ -972,7 +1112,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     const fd = new FormData(form);
     const body: Record<string, string | number | boolean | number[] | null> = {};
 
-    for (const f of ['tmdb_api_key', 'tvdb_api_key', 'tvdb_subscriber_pin', 'radarr_url', 'radarr_token', 'radarr_root_folder', 'sonarr_url', 'sonarr_token', 'sonarr_root_folder']) {
+    for (const f of ['tmdb_api_key', 'mdblist_api_key', 'tvdb_api_key', 'tvdb_subscriber_pin', 'radarr_url', 'radarr_token', 'radarr_root_folder', 'sonarr_url', 'sonarr_token', 'sonarr_root_folder']) {
       const v = ((fd.get(f) as string) ?? '').trim();
       body[f] = v || null;
     }
@@ -1175,24 +1315,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     return document.querySelectorAll('#users-table-body tr.user-main-row[data-is-admin="true"]').length;
   }
 
+  // The sole-admin guard now lives on the dropdown's Remove Admin item; re-sync it
+  // if the menu is open when the admin count changes.
   function refreshToggleButtons() {
-    const sole = countAdmins() === 1;
-    document.querySelectorAll<HTMLTableRowElement>('#users-table-body tr.user-main-row[data-user-id]').forEach(row => {
-      const userId = parseInt(row.dataset.userId!);
-      const isAdmin = row.dataset.isAdmin === 'true';
-      const detailRow = document.querySelector<HTMLTableRowElement>(`tr.user-detail-row[data-detail-for="${userId}"]`);
-      [row, detailRow].forEach(r => {
-        const btn = r?.querySelector<HTMLButtonElement>('.toggle-admin-btn');
-        if (!btn) return;
-        if (isAdmin && userId === currentUserId && sole) {
-          btn.disabled = true;
-          btn.title = m.admin_sole_admin();
-        } else {
-          btn.disabled = false;
-          btn.title = '';
-        }
-      });
-    });
+    if (menuCtx) syncActionsMenu();
   }
 
   function updateRow(row: HTMLTableRowElement, isAdmin: boolean) {
@@ -1205,16 +1331,6 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       badge.className = 'inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-zinc-700/50 text-zinc-400 border border-zinc-700';
       badge.textContent = m.admin_role_user();
     }
-    const adminClass = 'toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer border bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700';
-    const userClass = 'toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer border bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20';
-    const userId = row.dataset.userId!;
-    const detailRow = document.querySelector<HTMLTableRowElement>(`tr.user-detail-row[data-detail-for="${userId}"]`);
-    [row, detailRow].forEach(r => {
-      const btn = r?.querySelector<HTMLButtonElement>('.toggle-admin-btn');
-      if (!btn) return;
-      btn.className = isAdmin ? adminClass : userClass;
-      btn.textContent = isAdmin ? m.admin_remove_admin() : m.admin_make_admin();
-    });
     refreshToggleButtons();
   }
 
@@ -1247,8 +1363,6 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       svg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.976a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />';
     }, 1500);
   });
-
-  refreshToggleButtons();
 
   // ── Delete user modal ──
   const deleteUserModal = document.getElementById('delete-user-modal')!;
@@ -1458,28 +1572,185 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     if (!mainRow) return;
     const userId = parseInt(mainRow.dataset.userId!);
 
-    if (target.closest('.toggle-admin-btn')) {
-      const btn = target.closest('.toggle-admin-btn') as HTMLButtonElement;
-      if (btn.disabled) return;
-      btn.disabled = true;
-      try {
-        const res = await fetch(`/api/proxy/admin/users/${userId}/toggle-admin`, {
-          method: 'PATCH', headers: { 'Authorization': `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error((await res.json()).detail || m.common_failed());
-        const updated = await res.json();
-        updateRow(mainRow, updated.is_admin);
-        showMessage(m.admin_user_updated());
-      } catch (err: unknown) {
-        showMessage(err instanceof Error ? err.message : m.common_failed(), 'error');
-        btn.disabled = false;
-      }
+    const actionsBtn = target.closest('.user-actions-btn') as HTMLButtonElement | null;
+    if (actionsBtn) {
+      if (menuCtx?.btn === actionsBtn) { closeActionsMenu(); return; }
+      openActionsMenu(userId, mainRow, actionsBtn);
     }
+  });
 
-    if (target.closest('.delete-user-btn')) {
-      const username = mainRow.querySelector('td')!.textContent!.trim();
-      const isSelf = userId === currentUserId;
-      openDeleteModal(userId, username, mainRow, target.closest('.delete-user-btn') as HTMLButtonElement, isSelf);
+  // ── User actions dropdown ──
+  const actionsMenu = document.getElementById('user-actions-menu')!;
+  const menuToggleAdmin = document.getElementById('menu-toggle-admin') as HTMLButtonElement;
+  const menuDisable2fa = document.getElementById('menu-disable-2fa') as HTMLButtonElement;
+  let menuCtx: { userId: number; row: HTMLTableRowElement; btn: HTMLButtonElement } | null = null;
+
+  function syncActionsMenu() {
+    if (!menuCtx) return;
+    const isAdmin = menuCtx.row.dataset.isAdmin === 'true';
+    menuToggleAdmin.textContent = isAdmin ? m.admin_remove_admin() : m.admin_make_admin();
+    const blocked = isAdmin && menuCtx.userId === currentUserId && countAdmins() === 1;
+    menuToggleAdmin.disabled = blocked;
+    menuToggleAdmin.title = blocked ? m.admin_sole_admin() : '';
+    menuDisable2fa.classList.toggle('hidden', menuCtx.row.dataset.totp !== 'true');
+  }
+
+  function openActionsMenu(userId: number, row: HTMLTableRowElement, btn: HTMLButtonElement) {
+    closeActionsMenu();
+    menuCtx = { userId, row, btn };
+    syncActionsMenu();
+    // flex is toggled with hidden rather than left on, so the two utilities never fight.
+    actionsMenu.classList.remove('hidden');
+    actionsMenu.classList.add('flex');
+    // Content-sized now, so measure from the origin where it has the full viewport to
+    // lay out in - a stale or default position could squeeze it and skew the width.
+    actionsMenu.style.left = '0px';
+    actionsMenu.style.top = '0px';
+    btn.setAttribute('aria-expanded', 'true');
+    // Fixed-position next to the button, right-aligned to it, flipped above when it would overflow.
+    // The button is still mid-press (active:scale-95) when this runs, so its bounding rect
+    // is ~5% smaller than its real box. offsetWidth/Height ignore transforms; the scale is
+    // about the centre, so rebuild the unscaled box around the rect's centre.
+    const br = btn.getBoundingClientRect();
+    const cx = br.left + br.width / 2;
+    const cy = br.top + br.height / 2;
+    const r = {
+      left: cx - btn.offsetWidth / 2,
+      right: cx + btn.offsetWidth / 2,
+      top: cy - btn.offsetHeight / 2,
+      bottom: cy + btn.offsetHeight / 2,
+    };
+    const mw = actionsMenu.offsetWidth;
+    const mh = actionsMenu.offsetHeight;
+    // The button is at the row's right on both layouts, so the menu's right edge lines up with it.
+    const preferred = r.right - mw;
+    const left = Math.max(8, Math.min(preferred, window.innerWidth - mw - 8));
+    const top = r.bottom + 4 + mh > window.innerHeight ? Math.max(8, r.top - mh - 4) : r.bottom + 4;
+    actionsMenu.style.left = `${left}px`;
+    actionsMenu.style.top = `${top}px`;
+  }
+
+  function closeActionsMenu() {
+    actionsMenu.classList.add('hidden');
+    actionsMenu.classList.remove('flex');
+    menuCtx?.btn.setAttribute('aria-expanded', 'false');
+    menuCtx = null;
+  }
+
+  document.addEventListener('click', (e) => {
+    const t = e.target as HTMLElement;
+    if (t.closest('#user-actions-menu') || t.closest('.user-actions-btn')) return;
+    closeActionsMenu();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeActionsMenu(); });
+  window.addEventListener('scroll', closeActionsMenu, true);
+  window.addEventListener('resize', closeActionsMenu);
+
+  menuToggleAdmin.addEventListener('click', async () => {
+    if (!menuCtx || menuToggleAdmin.disabled) return;
+    const { userId, row } = menuCtx;
+    closeActionsMenu();
+    try {
+      const res = await fetch(`/api/proxy/admin/users/${userId}/toggle-admin`, {
+        method: 'PATCH', headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || m.common_failed());
+      const updated = await res.json();
+      updateRow(row, updated.is_admin);
+      showMessage(m.admin_user_updated());
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : m.common_failed(), 'error');
+    }
+  });
+
+  menuDisable2fa.addEventListener('click', async () => {
+    if (!menuCtx) return;
+    const { userId, row } = menuCtx;
+    closeActionsMenu();
+    const username = row.querySelector('td')!.textContent!.trim();
+    const ok = await (window as any).showConfirm(
+      m.admin_disable_2fa_confirm_title(),
+      m.admin_disable_2fa_confirm_body({ username }),
+    );
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/proxy/admin/users/${userId}/disable-2fa`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || m.common_failed());
+      row.dataset.totp = 'false';
+      showMessage(m.admin_2fa_disabled());
+    } catch (err: unknown) {
+      showMessage(err instanceof Error ? err.message : m.common_failed(), 'error');
+    }
+  });
+
+  document.getElementById('menu-delete-user')!.addEventListener('click', () => {
+    if (!menuCtx) return;
+    const { userId, row, btn } = menuCtx;
+    closeActionsMenu();
+    const username = row.querySelector('td')!.textContent!.trim();
+    openDeleteModal(userId, username, row, btn, userId === currentUserId);
+  });
+
+  // ── Reset password modal ──
+  const resetPwModal = document.getElementById('reset-password-modal')!;
+  const resetPwForm = document.getElementById('reset-password-form') as HTMLFormElement;
+  const resetPwInput = document.getElementById('reset-password-input') as HTMLInputElement;
+  const resetPwConfirm = document.getElementById('reset-password-confirm') as HTMLInputElement;
+  const resetPwError = document.getElementById('reset-password-error')!;
+  const resetPwSave = document.getElementById('reset-password-save-btn') as HTMLButtonElement;
+  let resetPwUserId: number | null = null;
+
+  function closeResetPwModal() {
+    resetPwModal.classList.add('hidden');
+    resetPwForm.reset();
+    // form.reset() doesn't undo a revealed password or its eye icon.
+    resetPwForm.querySelectorAll<HTMLInputElement>('input').forEach(i => { i.type = 'password'; });
+    resetPwForm.querySelectorAll('.eye-icon').forEach(i => i.classList.remove('hidden'));
+    resetPwForm.querySelectorAll('.eye-slash-icon').forEach(i => i.classList.add('hidden'));
+    resetPwError.classList.add('hidden');
+    resetPwUserId = null;
+  }
+
+  document.getElementById('menu-reset-password')!.addEventListener('click', () => {
+    if (!menuCtx) return;
+    const { userId, row } = menuCtx;
+    closeActionsMenu();
+    resetPwUserId = userId;
+    const username = row.querySelector('td')!.textContent!.trim();
+    document.getElementById('reset-password-modal-body')!.innerHTML =
+      m.admin_reset_password_body({ username: `<strong class="text-zinc-100">${esc(username)}</strong>` });
+    resetPwModal.classList.remove('hidden');
+    resetPwInput.focus();
+  });
+
+  document.getElementById('reset-password-cancel-btn')!.addEventListener('click', closeResetPwModal);
+  document.getElementById('reset-password-modal-backdrop')!.addEventListener('click', closeResetPwModal);
+
+  resetPwForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (resetPwUserId === null) return;
+    if (resetPwInput.value !== resetPwConfirm.value) {
+      resetPwError.textContent = m.admin_passwords_mismatch();
+      resetPwError.classList.remove('hidden');
+      return;
+    }
+    resetPwSave.disabled = true;
+    try {
+      const res = await fetch(`/api/proxy/admin/users/${resetPwUserId}/reset-password`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: resetPwInput.value }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || m.common_failed());
+      closeResetPwModal();
+      showMessage(m.admin_password_updated());
+    } catch (err: unknown) {
+      resetPwError.textContent = err instanceof Error ? err.message : m.common_failed();
+      resetPwError.classList.remove('hidden');
+    } finally {
+      resetPwSave.disabled = false;
     }
   });
 

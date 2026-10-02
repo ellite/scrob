@@ -41,7 +41,7 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
   <div class="flex flex-col md:flex-row gap-12 max-w-5xl mx-auto py-8">
     <!-- Sidebar / Photo -->
     <div class="w-full md:w-72 shrink-0">
-      <div class="sticky top-8">
+      <div class="sticky" style="top: calc(var(--nav-h, 0px) + 1rem)">
         {person.profile_path ? (
           <div class="relative w-full aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl mb-6 group/photo">
             <button id="photo-zoom-btn" class="w-full h-full block cursor-zoom-in" aria-label={m.person_enlarge_photo({ name: person.name })}>
@@ -60,8 +60,8 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
             </button>
           </div>
         ) : (
-          <div class="w-full aspect-[2/3] bg-zinc-900 rounded-2xl flex items-center justify-center text-6xl mb-6 border border-zinc-800">
-            👤
+          <div class="w-full aspect-[2/3] bg-zinc-900 rounded-2xl flex items-center justify-center text-zinc-600 mb-6 border border-zinc-800">
+            <svg xmlns="http://www.w3.org/2000/svg" width="35%" height="35%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
           </div>
         )}
 

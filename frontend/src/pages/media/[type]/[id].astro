@@ -3,8 +3,11 @@ import Base from "../../../layouts/Base.astro";
 import MediaRow from "../../../components/MediaRow.astro";
 import ActionBar from "../../../components/ActionBar.astro";
 import CommentsSection from "../../../components/CommentsSection.astro";
+import TraktCommentsSection from "../../../components/TraktCommentsSection.astro";
+import CastCrewSection from "../../../components/CastCrewSection.astro";
 import VideoPlayer from "../../../components/VideoPlayer.astro";
 import ManualScrobble from "../../../components/ManualScrobble.astro";
+import TrailerButton from "../../../components/TrailerButton.astro";
 import { api, type MediaItem } from "../../../lib/api";
 import { ratingPosterUrl } from "../../../lib/posters";
 import { escapeHtml, formatDate } from "../../../lib/format";
@@ -124,7 +127,7 @@ const refreshUrl = isEpisode
                 </button>
               ) : (
                 <div class="w-full h-full flex flex-col items-center justify-center text-zinc-400 p-4 text-center">
-                  <span class="text-4xl mb-2">🎬</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="30%" height="30%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 16.5h4M17 7.5h4M17 16.5h4M3 12h18"/></svg>
                   <span class="text-sm font-medium">{m.common_no_poster_available()}</span>
                 </div>
               )}
@@ -309,7 +312,7 @@ const refreshUrl = isEpisode
               </div>
             )}
 
-            {((item.type === 'movie' || item.type === 'episode') && (item.in_library ?? false)) && (
+            {(isMovie || (isEpisode && (item.in_library ?? false))) && (
               <div class="mb-8 flex flex-wrap gap-3 items-start">
                 {showRefreshBtn && (
                   <button
@@ -335,6 +338,9 @@ const refreshUrl = isEpisode
                     token={token}
                     secondary
                   />
+                )}
+                {isMovie && (
+                  <TrailerButton tmdbId={item.tmdb_id} mediaType="movie" title={item.title} year={year} />
                 )}
               </div>
             )}
@@ -382,39 +388,7 @@ const refreshUrl = isEpisode
           </div>
         </div>
 
-        <!-- Cast -->
-        {item.cast?.length > 0 && (
-          <div class="mt-24 border-zinc-900 pt-16">
-            <div class="flex items-center justify-between mb-10">
-              <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase">{m.common_top_cast()}</h2>
-            </div>
-            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
-              {item.cast.slice(0, 12).map((person) => (
-                <a href={`/person/${person.tmdb_id}`} class="group/cast bg-zinc-900/20 border border-zinc-800/40 p-4 rounded-3xl hover:bg-zinc-800/40 hover:border-blue-500/50 transition-all duration-500 hover:shadow-2xl hover:shadow-blue-900/10 active:scale-95 active:opacity-70">
-                  <div class="aspect-square w-full rounded-2xl overflow-hidden mb-5 ring-2 ring-zinc-800/50 group-hover/cast:ring-blue-500 transition-all duration-500 shadow-lg">
-                    {person.profile_path ? (
-                      <img
-                        src={person.profile_path}
-                        alt={person.name}
-                        class="w-full h-full object-cover group-hover/cast:scale-110 transition-transform duration-700"
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    ) : (
-                      <div class="w-full h-full bg-zinc-800 flex items-center justify-center text-zinc-400 text-4xl">
-                        👤
-                      </div>
-                    )}
-                  </div>
-                  <div class="space-y-1.5 text-center">
-                    <p class="text-sm font-black text-zinc-100 group-hover/cast:text-blue-400 transition-colors line-clamp-1 leading-tight">{person.name}</p>
-                    <p class="text-[11px] text-zinc-500 font-bold uppercase tracking-wider line-clamp-1 opacity-80">{person.character}</p>
-                  </div>
-                </a>
-              ))}
-            </div>
-          </div>
-        )}
+        <CastCrewSection cast={item.cast} crew={item.crew} />
 
         {collection && collection.parts?.length > 1 && (
           <div class="mt-32">
@@ -429,6 +403,14 @@ const refreshUrl = isEpisode
         <CommentsSection
           mediaType={item.type}
           tmdbId={item.tmdb_id}
+          seasonNumber={isEpisode ? item.season_number : undefined}
+          episodeNumber={isEpisode ? item.episode_number : undefined}
+        />
+
+        <TraktCommentsSection
+          mediaType={isEpisode ? "show" : "movie"}
+          tmdbId={isEpisode ? item.show_tmdb_id : item.tmdb_id}
+          tvdbId={isEpisode ? item.show_tvdb_id : undefined}
           seasonNumber={isEpisode ? item.season_number : undefined}
           episodeNumber={isEpisode ? item.episode_number : undefined}
         />

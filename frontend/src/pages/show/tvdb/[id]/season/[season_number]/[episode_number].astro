@@ -4,6 +4,8 @@ import { formatDate } from "../../../../../../lib/format";
 import { m } from "../../../../../../paraglide/messages.js";
 import ActionBar from "../../../../../../components/ActionBar.astro";
 import CommentsSection from "../../../../../../components/CommentsSection.astro";
+import TraktCommentsSection from "../../../../../../components/TraktCommentsSection.astro";
+import CastCrewSection from "../../../../../../components/CastCrewSection.astro";
 import TvdbAttribution from "../../../../../../components/TvdbAttribution.astro";
 import ManualScrobble from "../../../../../../components/ManualScrobble.astro";
 import VideoPlayer from "../../../../../../components/VideoPlayer.astro";
@@ -91,7 +93,7 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
                 </button>
               ) : (
                 <div class="w-full h-full flex flex-col items-center justify-center text-zinc-400 p-4 text-center">
-                  <span class="text-4xl mb-2">📺</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="30%" height="30%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-2"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
                   <span class="text-sm font-medium">{m.episode_no_thumbnail()}</span>
                 </div>
               )}
@@ -288,40 +290,21 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
 
         <CommentsSection
           mediaType="series"
-          tmdbId={episode.show_tmdb_id ?? episode.show.tmdb_id ?? Number(id)}
+          tmdbId={episode.show_tmdb_id ?? episode.show.tmdb_id}
+          tvdbId={Number(id)}
           seasonNumber={episode.tmdb_season_number}
           episodeNumber={episode.tmdb_episode_number}
         />
 
-        <!-- Cast -->
-        {episode.cast?.length > 0 && (
-          <div class="mt-8 border-t border-zinc-900 pt-16">
-            <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase mb-10">{m.common_top_cast()}</h2>
-            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
-              {episode.cast.map((person) => (
-                <div class="bg-zinc-900/20 border border-zinc-800/40 p-4 rounded-3xl">
-                  <div class="aspect-square w-full rounded-2xl overflow-hidden mb-5 ring-2 ring-zinc-800/50 shadow-lg">
-                    {person.profile_path ? (
-                      <img
-                        src={person.profile_path}
-                        alt={person.name}
-                        class="w-full h-full object-cover"
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    ) : (
-                      <div class="w-full h-full bg-zinc-800 flex items-center justify-center text-zinc-400 text-4xl">👤</div>
-                    )}
-                  </div>
-                  <div class="space-y-1.5 text-center">
-                    <p class="text-sm font-black text-zinc-100 line-clamp-1 leading-tight">{person.name}</p>
-                    <p class="text-[11px] text-zinc-500 font-bold uppercase tracking-wider line-clamp-1 opacity-80">{person.character}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <TraktCommentsSection
+          mediaType="show"
+          tmdbId={episode.show_tmdb_id ?? episode.show.tmdb_id}
+          tvdbId={Number(id)}
+          seasonNumber={(episode.show_tmdb_id ?? episode.show.tmdb_id) ? episode.tmdb_season_number : Number(season_number)}
+          episodeNumber={(episode.show_tmdb_id ?? episode.show.tmdb_id) ? episode.tmdb_episode_number : Number(episode_number)}
+        />
+
+        <CastCrewSection cast={episode.cast} crew={episode.crew} />
 
       </div>
     </div>

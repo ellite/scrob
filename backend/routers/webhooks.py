@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm.exc import StaleDataError
 
 from db import get_db
@@ -456,8 +456,23 @@ async def _find_or_create_show(db: AsyncSession, series_tmdb_id: int, api_key: s
                 ],
             },
         )
-        db.add(show)
-        await db.flush()
+        # Two webhooks for the same brand-new show can land together - e.g. one
+        # media server feeding two Scrob accounts delivers the same event to
+        # both (#446). The SELECT above isn't atomic, so both decide the show is
+        # missing and both insert; the loser hits shows.tmdb_id's unique index.
+        # add()+flush() sit inside a savepoint so that failure rolls back only
+        # this INSERT, then the winner's row is returned, instead of leaving the
+        # session in a failed state that turns the whole request into a 500 and
+        # drops the event for that user.
+        try:
+            async with db.begin_nested():
+                db.add(show)
+                await db.flush()
+        except IntegrityError:
+            winner = (await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))).scalar_one_or_none()
+            if winner is None:
+                raise
+            return winner
     return show
 
 
@@ -579,7 +594,7 @@ async def _close_session(db: AsyncSession, session_key: str) -> Optional[Playbac
     return session
 
 
-async def _commit_playback_session_update(db: AsyncSession) -> bool:
+async def _commit_playback_session_update(db: AsyncSession, *keep) -> bool:
     """Commits a pending PlaybackSession update, tolerating a concurrent
     PlaybackStop having already deleted that same row. Jellyfin/Emby send no
     dedup protection on webhook deliveries (unlike Plex), so an
@@ -587,12 +602,24 @@ async def _commit_playback_session_update(db: AsyncSession) -> bool:
     session_key and try to UPDATE a row that's already gone - SQLAlchemy
     surfaces that as a StaleDataError (0 rows matched) instead of a silent
     no-op, which otherwise crashes the whole request with a 500. Returns
-    False (after rolling back) if that happened, True on a normal commit."""
+    False (after rolling back) if that happened, True on a normal commit.
+
+    A rollback expires every ORM object in the session, and the callers go
+    on to read `settings`/`media` in the scrobble forwarders - a lazy-load
+    outside a greenlet, i.e. MissingGreenlet (#410). Pass those objects as
+    `keep` and they are reloaded here, while we can still await."""
     try:
         await db.commit()
         return True
     except StaleDataError:
         await db.rollback()
+        for obj in keep:
+            if obj is None:
+                continue
+            try:
+                await db.refresh(obj)
+            except InvalidRequestError:
+                pass  # row is gone too; nothing to reload
         return False
 
 
@@ -1360,8 +1387,9 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                     allow_collection = library_id in selected_ids if library_id else True
 
             if allow_collection:
+                created_file = False
                 for m in media_list:
-                    await _ensure_collection_entry(
+                    created_file |= await _ensure_collection_entry(
                         db, user.id, m.id, CollectionSource.jellyfin, data["jellyfin_id"], data.get("quality"),
                         connection_id=conn.id if conn else None,
                     )
@@ -1370,6 +1398,8 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                 # without this, the insert is silently rolled back when the
                 # request's session closes (see #129 followup).
                 await db.commit()
+                if created_file and notification_type == "ItemAdded":
+                    await _push_watched_for_new_item(db, user.id, conn, data["jellyfin_id"], media_list)
 
     # See #129 — the counterpart to ItemAdded above: a title removed from the
     # Jellyfin library should leave the user's collection too, rather than
@@ -1390,7 +1420,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             session = await _get_or_open_session(db, session_key, "jellyfin", user.id, current_episode.id)
             session.media_id = current_episode.id
             session.state = "playing"
-            await _commit_playback_session_update(db)
+            await _commit_playback_session_update(db, settings, *media_list)
         await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
         await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
         await _maybe_simkl_scrobble(settings, media, "start", data["progress_percent"], db=db)
@@ -1407,7 +1437,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             session.progress_percent = segment_pct
             session.progress_seconds = segment_seconds
             session.updated_at = datetime.utcnow()
-            await _commit_playback_session_update(db)
+            await _commit_playback_session_update(db, settings, *media_list)
         if data["is_paused"]:
             await _maybe_trakt_scrobble(settings, media, "pause", data["progress_percent"], db=db)
             await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
@@ -1622,13 +1652,16 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
                     allow_collection = library_id in selected_ids if library_id else True
 
             if allow_collection:
+                created_file = False
                 for m in media_list:
-                    await _ensure_collection_entry(
+                    created_file |= await _ensure_collection_entry(
                         db, user.id, m.id, CollectionSource.emby, data["jellyfin_id"], data.get("quality"),
                         connection_id=conn.id if conn else None,
                     )
                 # See the matching comment in _handle_jellyfin_webhook (#129).
                 await db.commit()
+                if created_file and notification_type in ("ItemAdded", "library.new"):
+                    await _push_watched_for_new_item(db, user.id, conn, data["jellyfin_id"], media_list)
 
     # See the matching comment in _handle_jellyfin_webhook (#129). "library.deleted"
     # is Emby's dotted-lowercase equivalent of "ItemDeleted" (confirmed live, #295).
@@ -1644,7 +1677,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
         if not conn or conn.sync_playback:
             session = await _get_or_open_session(db, session_key, "emby", user.id, media.id)
             session.state = "playing"
-            await _commit_playback_session_update(db)
+            await _commit_playback_session_update(db, settings, media)
         await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
         await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
         await _maybe_simkl_scrobble(settings, media, "start", data["progress_percent"], db=db)
@@ -1657,7 +1690,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             session.progress_percent = data["progress_percent"]
             session.progress_seconds = data["progress_seconds"]
             session.updated_at = datetime.utcnow()
-            await _commit_playback_session_update(db)
+            await _commit_playback_session_update(db, settings, media)
         if data["is_paused"]:
             await _maybe_trakt_scrobble(settings, media, "pause", data["progress_percent"], db=db)
             await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
@@ -1816,7 +1849,7 @@ async def _handle_jellyfin_scrobble_webhook(
         if conn.sync_playback:
             session = await _get_or_open_session(db, session_key, source, user.id, media.id)
             session.state = "playing"
-            await _commit_playback_session_update(db)
+            await _commit_playback_session_update(db, settings, media)
         if not is_duplicate:
             await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
             await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
@@ -1830,7 +1863,7 @@ async def _handle_jellyfin_scrobble_webhook(
             session.progress_percent = data["progress_percent"]
             session.progress_seconds = data["progress_seconds"]
             session.updated_at = datetime.utcnow()
-            await _commit_playback_session_update(db)
+            await _commit_playback_session_update(db, settings, media)
         if data["is_paused"] and not is_duplicate:
             await _maybe_trakt_scrobble(settings, media, "pause", data["progress_percent"], db=db)
             await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
@@ -1977,23 +2010,17 @@ def parse_plex_payload(payload: dict) -> dict | None:
     tvdb_id = plex_client.extract_tvdb_id(guids)
     imdb_id = plex_client.extract_imdb_id(guids)
 
-    # Extract series identifiers from grandparent
-    grandparent_guid = metadata.get("grandparentGuid", "")
-    grandparent_tmdb_id: Optional[str] = None
-    grandparent_tvdb_id: Optional[str] = None
-    grandparent_imdb_id: Optional[str] = None
-
-    # Try regex on grandparentGuid — handle both modern short forms (tmdb://, tvdb://)
-    # and legacy Plex agent forms (com.plexapp.agents.themoviedb://, thetvdb://)
-    tmdb_match = re.search(r'(?:^tmdb|themoviedb(?:\.com)?)://(\d+)', grandparent_guid, re.IGNORECASE)
-    if tmdb_match:
-        grandparent_tmdb_id = tmdb_match.group(1)
-    tvdb_match = re.search(r'(?:^tvdb|thetvdb(?:\.com)?)://(\d+)', grandparent_guid, re.IGNORECASE)
-    if tvdb_match:
-        grandparent_tvdb_id = tvdb_match.group(1)
-    imdb_match = re.search(r'imdb://(tt\d+)', grandparent_guid, re.IGNORECASE)
-    if imdb_match:
-        grandparent_imdb_id = imdb_match.group(1)
+    # Extract series identifiers from grandparent - same extract_* helpers as
+    # the item's own guids above, so a HAMA-agent show's grandparentGuid
+    # (e.g. "com.plexapp.agents.hama://tvdb-73762/1/1") resolves here too,
+    # instead of silently failing and falling through to a weaker title-only
+    # match (see #440's calendar investigation: an unresolved grandparent
+    # here is how an unrelated show's id ended up stamped on a new episode).
+    grandparent_guids = [{"id": metadata.get("grandparentGuid", "")}]
+    _grandparent_tmdb_id = plex_client.extract_tmdb_id(grandparent_guids)
+    grandparent_tmdb_id: Optional[str] = str(_grandparent_tmdb_id) if _grandparent_tmdb_id else None
+    grandparent_tvdb_id: Optional[str] = plex_client.extract_tvdb_id(grandparent_guids)
+    grandparent_imdb_id: Optional[str] = plex_client.extract_imdb_id(grandparent_guids)
 
     view_offset_ms = metadata.get("viewOffset", 0)
     duration_ms = metadata.get("duration", 0)
@@ -2073,8 +2100,11 @@ async def _ensure_collection_entry(
     source_id: str,
     quality: dict = None,
     connection_id: int | None = None,
-) -> None:
-    """Ensures a Collection + CollectionFile entry exists for the user, creating or updating as needed."""
+) -> bool:
+    """Ensures a Collection + CollectionFile entry exists for the user, creating or updating as needed.
+
+    Returns True when this call created the CollectionFile (the item is new to
+    that source), False when it already existed."""
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     if not quality:
@@ -2108,6 +2138,13 @@ async def _ensure_collection_entry(
     collection_id = coll_result.scalar_one()
 
     # 2. Upsert the CollectionFile row (one per collection+source+source_id)
+    file_existed = (await db.execute(
+        select(CollectionFile.id).where(
+            CollectionFile.collection_id == collection_id,
+            CollectionFile.source == source,
+            CollectionFile.source_id == source_id,
+        )
+    )).first() is not None
     update_dict: dict = {}
     if connection_id is not None:          update_dict["connection_id"]       = connection_id
     if quality.get("resolution"):         update_dict["resolution"]         = quality["resolution"]
@@ -2141,6 +2178,59 @@ async def _ensure_collection_entry(
 
     await db.execute(file_stmt)
     await db.flush()
+    return not file_existed
+
+
+async def _push_watched_for_new_item(
+    db: AsyncSession,
+    user_id: int,
+    conn: MediaServerConnection | None,
+    source_id: str,
+    media_list: list[Media],
+) -> bool:
+    """A title just landed in ``conn``'s library (library.new / ItemAdded) that
+    Scrob already has finished watches of - marked watched before it was
+    collected (#420) - so mark it watched on that server too, instead of
+    leaving it unwatched until a full push. The server-side counterpart of the
+    same fix in the pull sync (see routers.sync._push_watched_back_to_source).
+
+    Gated on the connection's own push_watched flag. A multi-episode file
+    only qualifies when every episode in it is watched, since the server call
+    marks the whole file. Checks the server's own state first - marking an
+    already-watched item again mints a fresh dated play (#302). Jellyfin/Emby
+    get the original watch date; Plex can't be backdated.
+    """
+    if not conn or not conn.push_watched or conn.type not in ("plex", "jellyfin", "emby") or not media_list:
+        return False
+
+    from routers.sync import _latest_watched_at, _push_plex_watched_and_record
+
+    media_ids = [m.id for m in media_list]
+    watched_at_by_media = await _latest_watched_at(db, user_id, media_ids)
+    if len(watched_at_by_media) != len(set(media_ids)):
+        return False
+
+    if conn.type == "plex":
+        import core.plex as plex_client
+        item = await plex_client.get_item(conn.url, conn.token, source_id)
+        if item is None or int(item.get("viewCount") or 0) > 0:
+            return False
+        return await _push_plex_watched_and_record(conn, source_id, user_id, media_ids[0])
+
+    from core import emby as emby_client
+    from core import jellyfin as jellyfin_client
+    client = emby_client if conn.type == "emby" else jellyfin_client
+    item = await client.get_item(conn.url, conn.token, source_id, user_id=conn.server_user_id)
+    if item is None or (item.get("UserData") or {}).get("Played"):
+        return False
+    dates = [d for d in watched_at_by_media.values() if d is not None]
+    # Registered before the call so the server's echo can't beat it (#247/#251).
+    for media_id in media_ids:
+        mark_pushed_watched(user_id, media_id)
+    return await client.mark_watched(
+        conn.url, conn.token, conn.server_user_id, source_id,
+        played_at=max(dates) if dates else None,
+    )
 
 
 async def _remove_collection_entry(
@@ -2290,6 +2380,33 @@ async def _backfill_jellyfin_runtimes(
         await db.commit()
 
 
+async def _backfill_kodi_runtime(
+    db: AsyncSession, media: Media, data: dict, tmdb_key: str | None,
+) -> None:
+    """Fill Media.runtime when a Kodi-style webhook event finds it missing,
+    from the event's own total length (exact for the file) or, failing that,
+    TMDB - then commit. The Plex and Jellyfin/Emby paths already do this
+    (_backfill_plex_runtime, _backfill_jellyfin_runtimes); this webhook used
+    the length only for the progress ratio and dropped it, so an episode TMDB
+    has no runtime for yet (a freshly aired one, typically) left the Now
+    Playing bar's live progress frozen at the last reported percentage (#383).
+    """
+    if media.runtime:
+        return
+    minutes: int | None = None
+    total_seconds = data.get("total_seconds")
+    if total_seconds:
+        try:
+            minutes = round(int(total_seconds) / 60) or None
+        except (TypeError, ValueError):
+            minutes = None
+    if not minutes:
+        minutes = await _runtime_from_tmdb(db, media, tmdb_key)
+    if minutes and minutes > 0:
+        media.runtime = minutes
+        await db.commit()
+
+
 async def _backfill_credits_stingers(db: AsyncSession, media: Media, tmdb_key: str | None) -> None:
     """Actively fills in a movie's mid/post-credits-scene flags (#319) when a
     webhook event finds them missing from tmdb_data - a movie enriched before
@@ -2402,38 +2519,22 @@ async def find_or_create_media_plex(
                 show_item = await plex_client.get_item(conn.url, conn.token, data["grandparent_rating_key"])
                 if show_item:
                     # get_guids() falls back to the lowercase 'guid' string a
-                    # legacy-agent show has instead of a Guid array, so an
-                    # older/manually-matched show can still resolve here.
+                    # legacy-agent show has instead of a Guid array, and
+                    # extract_tmdb_id/extract_tvdb_id understand the HAMA
+                    # agent's packed scheme too, so an older/manually-matched
+                    # or HAMA-scanned show can still resolve here.
                     show_guids = plex_client.get_guids(show_item)
-                    for g in show_guids:
-                        gid = g.get("id", "")
-                        if gid.startswith("tmdb://"):
-                            try:
-                                series_tmdb_id = int(gid.replace("tmdb://", ""))
-                            except ValueError:
-                                pass
-                            break
-                        elif re.search(r'themoviedb(?:\.com)?://(\d+)', gid, re.IGNORECASE):
-                            m = re.search(r'themoviedb(?:\.com)?://(\d+)', gid, re.IGNORECASE)
-                            if m:
-                                try:
-                                    series_tmdb_id = int(m.group(1))
-                                except ValueError:
-                                    pass
-                            break
-                    # Also try TVDB/IMDB on the show if TMDB still not found
+                    series_tmdb_id = plex_client.extract_tmdb_id(show_guids)
+                    # Also try TVDB on the show if TMDB still not found
                     if not series_tmdb_id:
-                        for g in show_guids:
-                            gid = g.get("id", "")
-                            tvdb_m = re.search(r'(?:^tvdb|thetvdb(?:\.com)?)://(\d+)', gid, re.IGNORECASE)
-                            if tvdb_m:
-                                try:
-                                    res = await tmdb.find_by_external_id(tvdb_m.group(1), "tvdb_id", api_key=api_key)
-                                    if res.get("tv_results"):
-                                        series_tmdb_id = res["tv_results"][0]["id"]
-                                        break
-                                except Exception:
-                                    pass
+                        show_tvdb_id = plex_client.extract_tvdb_id(show_guids)
+                        if show_tvdb_id:
+                            try:
+                                res = await tmdb.find_by_external_id(show_tvdb_id, "tvdb_id", api_key=api_key)
+                                if res.get("tv_results"):
+                                    series_tmdb_id = res["tv_results"][0]["id"]
+                            except Exception:
+                                pass
             except Exception:
                 pass
 
@@ -2791,6 +2892,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
                 elif str(payload_key) not in recent_keys:
                     recent_items = []
 
+            new_plex_items: list[tuple[str, Media]] = []
             if recent_items:
                 for plex_item in recent_items:
                     item_guids = plex_client.get_guids(plex_item)
@@ -2814,27 +2916,27 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
                         "grandparent_imdb_id": None,
                         "quality": item_quality,
                     }
-                    gp_guid = plex_item.get("grandparentGuid", "")
-                    m = re.search(r'(?:^tmdb|themoviedb(?:\.com)?)://(\d+)', gp_guid, re.IGNORECASE)
-                    if m:
-                        item_data["grandparent_tmdb_id"] = m.group(1)
-                    m = re.search(r'(?:^tvdb|thetvdb(?:\.com)?)://(\d+)', gp_guid, re.IGNORECASE)
-                    if m:
-                        item_data["grandparent_tvdb_id"] = m.group(1)
-                    m = re.search(r'imdb://(tt\d+)', gp_guid, re.IGNORECASE)
-                    if m:
-                        item_data["grandparent_imdb_id"] = m.group(1)
+                    # Same extract_* helpers as item_guids above (not raw
+                    # regex) so a HAMA-agent show's grandparentGuid resolves
+                    # here too - see the matching comment in parse_plex_payload.
+                    grandparent_guids = [{"id": plex_item.get("grandparentGuid", "")}]
+                    _gp_tmdb_id = plex_client.extract_tmdb_id(grandparent_guids)
+                    item_data["grandparent_tmdb_id"] = str(_gp_tmdb_id) if _gp_tmdb_id else None
+                    item_data["grandparent_tvdb_id"] = plex_client.extract_tvdb_id(grandparent_guids)
+                    item_data["grandparent_imdb_id"] = plex_client.extract_imdb_id(grandparent_guids)
 
                     try:
                         item_media = await find_or_create_media_plex(
                             item_data, db, api_key=tmdb_key, conn=conn, user_id=user.id
                         )
                         if item_media:
-                            await _ensure_collection_entry(
+                            created_file = await _ensure_collection_entry(
                                 db, user.id, item_media.id, CollectionSource.plex,
                                 item_rating_key, item_quality,
                                 connection_id=conn.id if conn else None,
                             )
+                            if created_file:
+                                new_plex_items.append((item_rating_key, item_media))
                     except Exception as e:
                         print(f"  library.new batch: failed to process item {item_rating_key}: {e}")
             else:
@@ -2845,11 +2947,18 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
                     if item:
                         quality = plex_client.extract_quality(item.get("Media", []))
                 if media:
-                    await _ensure_collection_entry(
+                    created_file = await _ensure_collection_entry(
                         db, user.id, media.id, CollectionSource.plex, data["plex_rating_key"], quality,
                         connection_id=conn.id if conn else None,
                     )
+                    if created_file:
+                        new_plex_items.append((data["plex_rating_key"], media))
             await db.commit()
+            for rating_key, new_media in new_plex_items:
+                try:
+                    await _push_watched_for_new_item(db, user.id, conn, rating_key, [new_media])
+                except Exception as e:
+                    print(f"  library.new: watched push-back failed for {rating_key}: {e}")
 
     elif event == "library.update":
         if not conn or conn.sync_collection:
@@ -3156,9 +3265,13 @@ def parse_kodi_payload(payload: dict) -> dict | None:
         "episode_number": item.get("episode"),
         "progress_percent": progress_percent,
         "progress_seconds": position_seconds,
+        "total_seconds": total_seconds or None,
         "is_paused": notification_type == "pause",
         "ended": ended,
         "session_id": str(item.get("id") or payload.get("session_id") or "0"),
+        # "library_update" = the add-on saw a library "mark as watched", not
+        # real playback (see _handle_kodi_webhook).
+        "library_update": payload.get("source") == "library_update",
     }
 
 
@@ -3369,6 +3482,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
     media = await find_or_create_media_kodi(data, db, api_key=tmdb_key, user_id=user.id)
     if media is None:
         return {"status": "ignored", "reason": "could not identify media"}
+    await _backfill_kodi_runtime(db, media, data, tmdb_key)
 
     session_key = f"kodi:{user.id}:{data['session_id']}"
 
@@ -3416,6 +3530,20 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
         await db.commit()
 
     elif notification_type == "stop":
+        # A library mark-as-watched of something Scrob already has a play for
+        # adds nothing. Without this, Kodi echoing back a playcount Scrob just
+        # synced to it was recorded as a brand new play each time, and the
+        # growing count made the next sync write it to Kodi again, forever.
+        if data.get("library_update"):
+            already = await db.execute(
+                select(func.count()).select_from(WatchEvent).where(
+                    WatchEvent.user_id == user.id,
+                    WatchEvent.media_id == media.id,
+                )
+            )
+            if already.scalar_one() > 0:
+                return {"status": "ignored", "reason": "already watched", "title": data["title"]}
+
         session = await _close_session(db, session_key)
         progress_percent = data["progress_percent"] or (session.progress_percent if session else 0.0)
         progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)

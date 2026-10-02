@@ -443,18 +443,18 @@ async def enrich_with_state(
 
     # Split by season_number so a season-only list item doesn't make the whole
     # show (or vice versa) appear "in that list" elsewhere in the app.
-    list_membership: dict[int, list[int]] = {}
+    list_membership: dict[tuple[str, int], list[int]] = {}
     season_list_membership: dict[tuple[int, int], list[int]] = {}
     if user_list_ids and all_tmdb_ids:
         q = await db.execute(
-            select(Media.tmdb_id, ListItem.season_number, ListItem.list_id)
+            select(Media.tmdb_id, Media.media_type, ListItem.season_number, ListItem.list_id)
             .join(ListItem, ListItem.media_id == Media.id)
             .where(ListItem.list_id.in_(user_list_ids), Media.tmdb_id.in_(all_tmdb_ids))
             .distinct()
         )
-        for row_tmdb_id, row_season_number, list_id in q.all():
+        for row_tmdb_id, row_media_type, row_season_number, list_id in q.all():
             if row_season_number is None:
-                list_membership.setdefault(row_tmdb_id, []).append(list_id)
+                list_membership.setdefault((row_media_type.value, row_tmdb_id), []).append(list_id)
             else:
                 season_list_membership.setdefault((row_tmdb_id, row_season_number), []).append(list_id)
 
@@ -765,7 +765,7 @@ async def enrich_with_state(
         if t == "series" and item.get("season_number") is not None:
             item["in_lists"] = season_list_membership.get((tid, item["season_number"]), [])
         else:
-            item["in_lists"] = list_membership.get(tid, [])
+            item["in_lists"] = list_membership.get((t, tid), [])
         item["is_monitored"] = monitored_status.get(tid, False)
         item["request_enabled"] = request_enabled_map.get(tid, False)
         item["request_status"] = request_status_map.get(tid)
@@ -1074,12 +1074,16 @@ async def find_by_imdb(
 async def search_tvdb(
     q: str = Query(..., min_length=2),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+
     from routers.shows import get_user_tvdb_key
     from core import tvdb as tvdb_client
 
-    api_key = await get_user_tvdb_key(db, current_user.id)
+    api_key = await get_user_tvdb_key(db, effective_user_id)
     if not api_key:
         raise HTTPException(status_code=400, detail="TVDB API key not configured")
 
@@ -1088,6 +1092,16 @@ async def search_tvdb(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"TVDB search failed: {e}")
     return results
+
+
+async def _apply_search_translations(db: AsyncSession, user_id: int, items: list[dict], lang: str | None) -> None:
+    """Overlay the user's stored metadata-language translations onto library
+    rows in search results, so a French profile doesn't see English titles (#417)."""
+    if not lang:
+        return
+    media_ids = [i["id"] for i in items if i.get("id")]
+    if media_ids:
+        apply_media_translations(items, await get_media_translations(db, media_ids, lang))
 
 
 @router.get("/search")
@@ -1103,6 +1117,7 @@ async def search_media(
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
+    lang = await get_user_metadata_language(db, effective_user_id)
 
     valid_types = {m.value for m in MediaType} | {"person", "collection", "network", "studio"}
     if type is not None and type not in valid_types:
@@ -1272,6 +1287,7 @@ async def search_media(
         formatted = [format_media(m) for m in items]
         for item in formatted:
             item["in_library"] = True
+        await _apply_search_translations(db, effective_user_id, formatted, lang)
         return {"page": 1, "total_pages": 1, "total_results": len(formatted), "results": formatted}
 
     # Collection-only filter: search local DB, skip TMDB entirely
@@ -1298,6 +1314,7 @@ async def search_media(
         formatted = [format_media(m) for m in items]
         for item in formatted:
             item["in_library"] = True
+        await _apply_search_translations(db, effective_user_id, formatted, lang)
         return {
             "page": page,
             "total_pages": max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE),
@@ -1324,6 +1341,7 @@ async def search_media(
         formatted = [format_media(m) for m in items]
         for item in formatted:
             item["in_library"] = True
+        await _apply_search_translations(db, effective_user_id, formatted, lang)
         return {"page": 1, "total_pages": 1, "total_results": len(formatted), "results": formatted}
 
     # 1. Search TMDB (primary source for ordering)
@@ -1332,14 +1350,14 @@ async def search_media(
     total_results = 0
     try:
         if type == MediaType.movie:
-            data = await tmdb.search_movies(q, page=page, year=year, api_key=tmdb_key)
+            data = await tmdb.search_movies(q, page=page, year=year, api_key=tmdb_key, language=lang)
             raw_results = data.get("results", [])
             for res in raw_results:
                 res["media_type"] = "movie"
             total_pages = data.get("total_pages", 1)
             total_results = data.get("total_results", 0)
         elif type == MediaType.series:
-            data = await tmdb.search_shows(q, page=page, year=year, api_key=tmdb_key)
+            data = await tmdb.search_shows(q, page=page, year=year, api_key=tmdb_key, language=lang)
             raw_results = data.get("results", [])
             for res in raw_results:
                 res["media_type"] = "tv"
@@ -1348,8 +1366,8 @@ async def search_media(
         else:
             # "All": movies + shows + people, interleaved by TMDB popularity score
             movie_data, show_data, people_data = await asyncio.gather(
-                tmdb.search_movies(q, page=page, api_key=tmdb_key),
-                tmdb.search_shows(q, page=page, api_key=tmdb_key),
+                tmdb.search_movies(q, page=page, api_key=tmdb_key, language=lang),
+                tmdb.search_shows(q, page=page, api_key=tmdb_key, language=lang),
                 tmdb.search_people(q, page=page, api_key=tmdb_key),
             )
             movie_results = movie_data.get("results", [])
@@ -1431,6 +1449,12 @@ async def search_media(
             item = format_media(local)
             item["type"] = media_type  # TMDB source of truth; local row may differ
             item["in_library"] = True
+            if lang:
+                # Library rows carry the default-language title; the search result
+                # is already in the user's language (#417). A stored translation
+                # still wins - it's overlaid below.
+                item["title"] = res.get("title") or res.get("name") or item.get("title")
+                item["overview"] = res.get("overview") or item.get("overview")
             # Fill in missing display fields from TMDB search result
             if not item.get("poster_path"):
                 item["poster_path"] = tmdb.poster_url(res.get("poster_path"))
@@ -1475,6 +1499,7 @@ async def search_media(
             enriched.append(item)
 
     await enrich_with_state(db, effective_user_id, enriched)
+    await _apply_search_translations(db, effective_user_id, enriched, lang)
     return {
         "page": page,
         "total_pages": total_pages,
@@ -1764,10 +1789,9 @@ async def airing_today_collected(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
-        return {"results": []}
-
+    # No key gate here: compute_calendar schedules each show from whichever
+    # provider it belongs to (TMDB or TheTVDB) and returns no entries when the
+    # matching key is missing.
     from routers.calendar import (
         _background_compute,
         _is_cache_fresh,
@@ -1804,11 +1828,12 @@ async def airing_today_collected(
     results = [
         {
             "id": None,
-            "tmdb_id": e["show_tmdb_id"],
+            "tmdb_id": e.get("show_tmdb_id"),
             "type": "episode",
             "title": e.get("episode_name") or e.get("show_title"),
             "show_title": e.get("show_title"),
             "show_tmdb_id": e.get("show_tmdb_id"),
+            "show_tvdb_id": e.get("show_tvdb_id"),
             "season_number": e.get("season_number"),
             "episode_number": e.get("episode_number"),
             "poster_path": e.get("poster_path"),
@@ -3782,7 +3807,8 @@ async def uncollect_season(
 
 @router.get("/request-status")
 async def get_request_status(
-    tmdb_id: int = Query(...),
+    tmdb_id: int | None = Query(None),
+    tvdb_id: int | None = Query(None),
     media_type: MediaType = Query(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
@@ -3793,6 +3819,14 @@ async def get_request_status(
     gs = await _get_global_settings(db)
 
     monitored = False
+
+    # A TheTVDB-only show has no TMDB id at all, so its own tvdb_id must be
+    # passed as tvdb_id - never as tmdb_id, which would resolve to a
+    # different show.
+    if media_type == MediaType.movie and tmdb_id is None:
+        raise HTTPException(status_code=422, detail="tmdb_id is required for movies")
+    if media_type == MediaType.series and tmdb_id is None and tvdb_id is None:
+        raise HTTPException(status_code=422, detail="tmdb_id or tvdb_id is required")
 
     try:
         if media_type == MediaType.movie:
@@ -3815,11 +3849,11 @@ async def get_request_status(
             sonarr_cfg = _effective_sonarr(settings, gs)
             if not sonarr_cfg:
                 raise HTTPException(status_code=503, detail="Sonarr not configured")
-            tvdb_id: int | None = None
-            show_q = await db.execute(select(ShowModel).where(ShowModel.tmdb_id == tmdb_id))
-            show_row = show_q.scalar_one_or_none()
-            if show_row and show_row.tmdb_data:
-                tvdb_id = (show_row.tmdb_data.get("external_ids") or {}).get("tvdb_id")
+            if not tvdb_id:
+                show_q = await db.execute(select(ShowModel).where(ShowModel.tmdb_id == tmdb_id))
+                show_row = show_q.scalar_one_or_none()
+                if show_row and show_row.tmdb_data:
+                    tvdb_id = (show_row.tmdb_data.get("external_ids") or {}).get("tvdb_id")
             if not tvdb_id:
                 from core import tmdb as tmdb_core
                 tmdb_key = await get_user_tmdb_key(db, current_user.id)
@@ -3849,6 +3883,8 @@ async def get_request_status(
 @router.get("/{type}/customize-options")
 async def get_customize_options(
     type: MediaType,
+    tmdb_id: int | None = None,
+    tvdb_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -3893,7 +3929,19 @@ async def get_customize_options(
             sonarr.get_quality_profiles(sonarr_cfg.sonarr_url, sonarr_cfg.sonarr_token),
             sonarr.get_tags(sonarr_cfg.sonarr_url, sonarr_cfg.sonarr_token),
         )
+        seasons: list = []
+        try:
+            if not tvdb_id and tmdb_id:
+                from core import tmdb
+                tmdb_key = await get_user_tmdb_key(db, current_user.id)
+                ext_ids = await tmdb.get_external_ids(tmdb_id, "tv", api_key=tmdb_key)
+                tvdb_id = ext_ids.get("tvdb_id")
+            if tvdb_id:
+                seasons = await sonarr.get_series_seasons(sonarr_cfg.sonarr_url, sonarr_cfg.sonarr_token, tvdb_id)
+        except Exception:
+            seasons = []
         return {
+            "seasons": seasons,
             "root_folders": root_folders,
             "quality_profiles": quality_profiles,
             "tags": tags,
@@ -3919,6 +3967,7 @@ class RequestOverrides(BaseModel):
     quality_profile: int | None = None
     tags: list[int] | None = None
     season_folder: bool | None = None
+    seasons: list[int] | None = None
 
 
 def _resolve_add_overrides(overrides: RequestOverrides | None, is_admin: bool) -> RequestOverrides | None:
@@ -3927,6 +3976,52 @@ def _resolve_add_overrides(overrides: RequestOverrides | None, is_admin: bool) -
     out as its own function so this rule is unit-testable without a full
     request/DB round-trip."""
     return overrides if (overrides and is_admin) else None
+
+
+@router.post("/series/tvdb/{tvdb_id}/request")
+async def request_series_by_tvdb(
+    tvdb_id: int,
+    overrides: RequestOverrides | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a TheTVDB-only series (no TMDB counterpart) to Sonarr by its own
+    TVDB id. The admin-approval queue is keyed by tmdb_id, so a request that
+    would need approval can't be filed for these shows."""
+    settings_q = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == current_user.id)
+    )
+    settings = settings_q.scalar_one_or_none()
+    gs = await _get_global_settings(db)
+
+    sonarr_cfg = _effective_sonarr(settings, gs)
+    if not sonarr_cfg:
+        raise HTTPException(status_code=400, detail="Sonarr not configured in settings")
+
+    uses_global = gs and sonarr_cfg is gs and not current_user.is_admin
+    if uses_global and gs.sonarr_require_approval:
+        raise HTTPException(
+            status_code=400,
+            detail="Requests that need admin approval aren't supported for TheTVDB-only shows",
+        )
+
+    ov = _resolve_add_overrides(overrides, current_user.is_admin)
+
+    from core import sonarr
+    try:
+        default_season_folder = sonarr_cfg.sonarr_season_folder if sonarr_cfg.sonarr_season_folder is not None else True
+        return await sonarr.add_series(
+            url=sonarr_cfg.sonarr_url,
+            token=sonarr_cfg.sonarr_token,
+            tvdb_id=tvdb_id,
+            root_folder=(ov.root_folder if ov and ov.root_folder is not None else sonarr_cfg.sonarr_root_folder),
+            quality_profile_id=(ov.quality_profile if ov and ov.quality_profile is not None else sonarr_cfg.sonarr_quality_profile),
+            tags=(ov.tags if ov and ov.tags is not None else sonarr_cfg.sonarr_tags),
+            season_folder=(ov.season_folder if ov and ov.season_folder is not None else default_season_folder),
+            seasons=(ov.seasons if ov else None),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sonarr error: {e}")
 
 
 @router.post("/{type}/{tmdb_id}/request")
@@ -4042,6 +4137,7 @@ async def request_media(
                 quality_profile_id=(ov.quality_profile if ov and ov.quality_profile is not None else sonarr_cfg.sonarr_quality_profile),
                 tags=(ov.tags if ov and ov.tags is not None else sonarr_cfg.sonarr_tags),
                 season_folder=(ov.season_folder if ov and ov.season_folder is not None else default_season_folder),
+                seasons=(ov.seasons if ov else None),
             )
             return res
         except Exception as e:
@@ -5338,6 +5434,7 @@ async def get_media_details(
                     }
                     for c in (ep_data.get("credits") or {}).get("cast", [])[:12]
                 ],
+                "crew": tmdb.notable_crew(ep_data.get("credits") or {}, profile_size="w185"),
                 "genres": (show.tmdb_data or {}).get("genres", []),
                 "in_library": ep_state.get("in_library", False),
                 "playable": playable,
@@ -5510,6 +5607,7 @@ async def get_media_details(
                 }
                 for c in data.get("credits", {}).get("cast", [])[:12]
             ],
+            "crew": tmdb.notable_crew(data.get("credits", {})),
             "where_to_watch": where_to_watch,
         }
     except Exception as e:
@@ -5568,6 +5666,43 @@ async def get_media_recommendations(
         return {"results": recommendations}
     except Exception:
         return {"results": []}
+
+
+@router.get("/{type}/{tmdb_id}/trailer")
+async def get_media_trailer(
+    type: MediaType,
+    tmdb_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
+):
+    """YouTube trailer key for a movie/series in the user's metadata language (#413).
+
+    `key` is null when TMDB has none in that language - the caller falls back to
+    a YouTube search rather than an English trailer. `language` is echoed back so
+    the fallback search can name it."""
+    if current_user is None:
+        await require_anon_nav_allowed(db)
+    if type not in (MediaType.movie, MediaType.series):
+        raise HTTPException(status_code=404, detail="Only movies and series have a trailer")
+    effective_user_id = current_user.id if current_user else ANON_USER_ID
+
+    language = await get_user_metadata_language(db, effective_user_id)
+    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
+    if not check_tmdb_key(tmdb_key):
+        return {"key": None, "name": None, "language": language}
+
+    try:
+        data = await tmdb.get_videos(
+            "movie" if type == MediaType.movie else "tv", tmdb_id, api_key=tmdb_key, language=language,
+        )
+        trailer = tmdb.pick_trailer(data.get("results", []), language)
+    except Exception:
+        trailer = None
+    return {
+        "key": trailer["key"] if trailer else None,
+        "name": trailer.get("name") if trailer else None,
+        "language": language,
+    }
 
 
 def _normalize_path(path: str | None, size: str = "w500") -> str | None:

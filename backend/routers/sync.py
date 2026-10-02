@@ -32,9 +32,11 @@ from core.jellyfin import get_jellyfin_tmdb_id
 import core.trakt as trakt_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely, enrich_media_safely, apply_media_change_safely, enrich_episode_from_tvdb
 from core.identity import coerce_id, link_show_ids
+from core.episode_order import load_tvdb_episode_id_positions, reconcile_divergent_episode_media
 from core.image_cache import pre_cache_all_collected_bg
 from core.translations import get_user_metadata_language
 from core.rewatch import record_rewatch_progress, get_active_rewatches_for_shows
+from core.push_state import MISS, RATING, WATCHED, PushState, plan_push, season_miss_key, season_rating_key
 from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event, is_duplicate_watch_time
 from core.watchlist_reconcile import compute_new_baseline, media_key, plan_watchlist_reconcile
 from models.rewatch import ShowRewatch, RewatchProgress
@@ -111,6 +113,24 @@ BATCH_SIZE = 500
 TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
 # asyncpg hard limit is 32767 parameters per query; stay well under it
 _MAX_IN_PARAMS = 30_000
+
+# sync_jobs.error_message is varchar(1000).
+_MAX_ERROR_MESSAGE = 1000
+
+
+def _short_error(exc: BaseException | str) -> str:
+    """Fit a failure into sync_jobs.error_message so recording it cannot itself fail.
+
+    An over-long value makes the UPDATE that marks the job failed raise
+    StringDataRightTruncationError, which leaves the row in 'running' forever - the job
+    shows in the UI as a sync that started and then hung, with no error to explain it.
+    asyncpg's parameter-limit error is the one that triggers this in practice: its
+    message embeds the entire bind list, so it runs to tens of kilobytes.
+    """
+    text = str(exc)
+    if len(text) <= _MAX_ERROR_MESSAGE:
+        return text
+    return text[: _MAX_ERROR_MESSAGE - 1] + "\u2026"
 _MEDIA_BROWSER_ITEM_SOURCES = (
     CollectionSource.jellyfin,
     CollectionSource.emby,
@@ -880,6 +900,22 @@ async def _build_nuvio_watched_items(
     *,
     include_unknown_dates: bool = False,
 ) -> list[dict]:
+    entries = await _build_nuvio_watched_entries(
+        db, user_id, media_ids, api_key, include_unknown_dates=include_unknown_dates
+    )
+    return [item for _, item in entries]
+
+
+async def _build_nuvio_watched_entries(
+    db: AsyncSession,
+    user_id: int,
+    media_ids: set[int] | None = None,
+    api_key: str | None = None,
+    *,
+    include_unknown_dates: bool = False,
+) -> list[tuple[int, dict]]:
+    """(media_id, nuvio watched item) pairs - the id lets a scheduled push
+    remember which items it already sent (#421)."""
     event_query = (
         select(WatchEvent.media_id, WatchEvent.watched_at)
         .where(WatchEvent.user_id == user_id, WatchEvent.completed == True)
@@ -912,7 +948,7 @@ async def _build_nuvio_watched_items(
         shows_by_id = {show.id: show for show in shows}
 
     await _ensure_nuvio_imdb_ids(media_rows, shows_by_id, api_key)
-    items: list[dict] = []
+    entries: list[tuple[int, dict]] = []
     for media in media_rows:
         item = _nuvio_watched_item(
             media,
@@ -921,8 +957,8 @@ async def _build_nuvio_watched_items(
             include_unknown_date=include_unknown_dates,
         )
         if item:
-            items.append(item)
-    return items
+            entries.append((media.id, item))
+    return entries
 
 
 def _nuvio_progress_item(
@@ -1200,6 +1236,8 @@ async def _fan_out_changes_to_other_connections(
                 )
             return True
 
+        watched_at_by_media = await _latest_watched_at(db, user_id, list(new_watched_ids)) if new_watched_ids else {}
+
         for conn in push_candidates:
             if conn.type == "stremio":
                 try:
@@ -1249,10 +1287,10 @@ async def _fan_out_changes_to_other_connections(
                             # UserDataSaved webhook can echo this back fast enough that a
                             # post-await registration would already be too late (#247/#251).
                             mark_pushed_watched(user_id, mid)
-                            push_tasks.append(_guarded(jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid)))
+                            push_tasks.append(_guarded(jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, played_at=watched_at_by_media.get(mid))))
                         elif conn.type == "emby":
                             mark_pushed_watched(user_id, mid)
-                            push_tasks.append(_guarded(emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid)))
+                            push_tasks.append(_guarded(emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, played_at=watched_at_by_media.get(mid))))
             if conn.push_ratings:
                 for (mid, season_number), rating in server_rating_changes.items():
                     media = media_by_id.get(mid)
@@ -1817,6 +1855,79 @@ def _expand_multi_episode_items(items: list, media_type: MediaType, source: Coll
     return expanded
 
 
+def _canonical_episode_position(
+    item: dict, series_tmdb_id: int | None, positions: dict[tuple[int, int], tuple[int, int]]
+) -> tuple[int, int] | None:
+    """The canonical TMDB (season, episode) of a Jellyfin/Emby episode item, found
+    through the episode's own TVDB id (#447), or None to keep the raw numbers.
+
+    The server's SeasonNumber/EpisodeNumber follow whatever metadata provider it
+    uses, so they are never assumed to be TVDB's - only an exact episode-id match
+    against an EpisodeOrderMapping row counts. A multi-episode file is skipped: its
+    ProviderIds belong to the first episode only, not to each expanded copy."""
+    if not series_tmdb_id or item.get("IndexNumberEnd") is not None:
+        return None
+    tvdb_id = jellyfin.get_jellyfin_tvdb_id(item.get("ProviderIds") or {})
+    return positions.get((series_tmdb_id, tvdb_id)) if tvdb_id else None
+
+
+async def _fold_divergent_episodes(
+    db: AsyncSession,
+    items: list,
+    show_map: dict,
+    show_id_to_tmdb: dict,
+    tvdb_positions: dict[tuple[int, int], tuple[int, int]],
+    media_by_episode: dict,
+) -> tuple[bool, list[Media]]:
+    """#447: settle divergent twins of translated items before the sync loop. Returns
+    (changed, moved_rows): changed is True when any row moved or merged, so the caller
+    must reload its lookup maps; moved_rows are the rows repositioned onto a canonical
+    slot, which still lack their TMDB data and need enriching."""
+    # A divergent twin from before this ran (or from the webhook path) holds the
+    # watch history. Where the canonical row exists, fold the twin into it; where
+    # it was never created, move the twin itself to the canonical position. Either
+    # way this sync then neither duplicates the file nor records the watch twice.
+    reconcile_show_ids: set[int] = set()
+    moved_rows: list[Media] = []
+    for it in items:
+        sid = show_map.get(str(it.get("SeriesId")))
+        pos = _canonical_episode_position(it, show_id_to_tmdb.get(sid), tvdb_positions)
+        raw = (sid, it.get("ParentIndexNumber"), it.get("IndexNumber"))
+        divergent = media_by_episode.get(raw) if pos and sid else None
+        if divergent is None:
+            continue
+        canonical = media_by_episode.get((sid, *pos))
+        if canonical is divergent:
+            continue
+        if canonical is not None:
+            reconcile_show_ids.add(sid)
+            continue
+        # Only a row provably this very episode may be moved: the raw slot can
+        # just as well hold a genuinely different TMDB episode. Same identity
+        # rule as reconcile_divergent_episode_media (tmdb_id only as the legacy
+        # stand-in for a TVDB id when tvdb_id was never set).
+        item_tvdb_id = jellyfin.get_jellyfin_tvdb_id(it.get("ProviderIds") or {})
+        row_tvdb_id = divergent.tvdb_id if divergent.tvdb_id is not None else divergent.tmdb_id
+        if row_tvdb_id != item_tvdb_id:
+            continue
+        divergent.season_number, divergent.episode_number = pos
+        del media_by_episode[raw]
+        media_by_episode[(sid, *pos)] = divergent
+        moved_rows.append(divergent)
+    if moved_rows:
+        await db.flush()
+    merged_any = bool(moved_rows)
+    for sid in reconcile_show_ids:
+        show_row = await db.get(Show, sid)
+        if show_row:
+            try:
+                stats_r = await reconcile_divergent_episode_media(db, show_row)
+                merged_any = merged_any or bool(stats_r.get("merged"))
+            except Exception:
+                logger.exception("Pre-sync episode reconciliation failed for show=%s", sid)
+    return merged_any, moved_rows
+
+
 async def sync_items(
     items: list,
     media_type: MediaType,
@@ -1837,6 +1948,7 @@ async def sync_items(
     connection_id: int | None = None,
     ratingkey_to_media_id: dict[str, int] | None = None,  # accumulated across calls; mutated in-place
     seen_source_ids: set[str] | None = None,  # accumulated across calls; every source_id encountered this run, used to prune deletions afterward
+    push_back: dict[int, str] | None = None,  # accumulated across calls; media_id → source_id of newly collected items Scrob has watched but the server reports unwatched (#420)
 ) -> list[dict]:  # returns warnings
     items = _expand_multi_episode_items(items, media_type, source)
     print(f"  Syncing {len(items)} {media_type.value}s from {source.value}...")
@@ -1927,6 +2039,49 @@ async def sync_items(
             for m in medias:
                 media_by_tmdb[(m.tmdb_id, m.media_type)] = m
 
+    # #447: Jellyfin/Emby report their own numbering, which for a show whose TVDB and
+    # TMDB layouts diverge is not the canonical TMDB position every other path uses.
+    # Resolve each item through its episode-level TVDB id so the lookups below land
+    # on the canonical row instead of creating a divergent twin on every sync.
+    tvdb_positions: dict[tuple[int, int], tuple[int, int]] = {}
+    moved_rows: list[Media] = []
+    if media_type == MediaType.episode and source in _MEDIA_BROWSER_ITEM_SOURCES and show_ids:
+        series_ids = sorted({t for t in show_id_to_tmdb.values() if t})
+        item_tvdb_ids = sorted({
+            tid for it in items
+            if it.get("IndexNumberEnd") is None
+            and (tid := jellyfin.get_jellyfin_tvdb_id(it.get("ProviderIds") or {}))
+        })
+        tvdb_positions = await load_tvdb_episode_id_positions(db, series_ids, item_tvdb_ids)
+
+    if tvdb_positions:
+        merged_any, moved_rows = await _fold_divergent_episodes(
+            db, items, show_map, show_id_to_tmdb, tvdb_positions, media_by_episode
+        )
+        if merged_any:
+            await db.commit()
+            media_by_episode.clear()
+            for m in await _select_in_chunks(
+                db,
+                lambda chunk: select(Media).where(Media.media_type == MediaType.episode, Media.show_id.in_(chunk)),
+                show_ids,
+            ):
+                media_by_episode[(m.show_id, m.season_number, m.episode_number)] = m
+            # The CollectionFiles were keyed on the rows' old positions.
+            files_q = await db.execute(
+                select(CollectionFile, Collection.media_id, Media)
+                .join(Collection, Collection.id == CollectionFile.collection_id)
+                .join(Media, Media.id == Collection.media_id)
+                .where(Collection.user_id == user_id, CollectionFile.source == source)
+            )
+            files_rows = files_q.all()
+            existing_files = {(f.source_id, m.episode_number): (f, media_id, m) for f, media_id, m in files_rows}
+            files_by_media_source = {(media_id, f.source): f for f, media_id, _ in files_rows}
+            colls_q = await db.execute(
+                select(Collection.id, Collection.media_id).where(Collection.user_id == user_id)
+            )
+            existing_coll_by_media_id = {media_id: coll_id for coll_id, media_id in colls_q.all()}
+
     # Reverse lookup: media.id → Media object (for healing unenriched items in skipped branch)
     media_by_id: dict[int, Media] = {m.id: m for _, _, m in files_rows}
     for m in list(media_by_episode.values()) + list(media_by_tmdb.values()):
@@ -1974,6 +2129,9 @@ async def sync_items(
 
     # ── Phase 2: Main sync loop (no N+1 queries, savepoints for error isolation) ──
     new_media_for_enrichment: list[tuple] = []  # (Media, series_tmdb_id | None)
+    # Rows moved onto their canonical slot above: fill in the TMDB data (and tmdb_id)
+    # they never had, exactly like a newly created episode.
+    new_media_for_enrichment.extend((m, show_id_to_tmdb.get(m.show_id)) for m in moved_rows)
     skipped_warnings: list[dict] = []
 
     # collection_id → earliest add-date seen this run, applied in batches so a
@@ -2001,6 +2159,12 @@ async def sync_items(
                     name = item.get("Name")
                     season_num = item.get("ParentIndexNumber")
                     episode_num = item.get("IndexNumber")
+                    if tvdb_positions:
+                        canonical_pos = _canonical_episode_position(
+                            item, show_id_to_tmdb.get(show_map.get(str(parent_id))), tvdb_positions
+                        )
+                        if canonical_pos:
+                            season_num, episode_num = canonical_pos
                 else:  # Plex
                     source_id = str(item.get("ratingKey"))
                     quality = plex.extract_quality(item.get("Media", []))
@@ -2018,6 +2182,7 @@ async def sync_items(
                 file_entry = existing_files.get((source_id, episode_num))
                 media_id_for_watch: int | None = None
                 heal_collection_id: int | None = None
+                new_file_media_id: int | None = None
                 show_id: int | None = None  # (re)assigned below for episodes; stays None for movies
 
                 # Detect re-match: same Plex ratingKey but TMDB ID changed.
@@ -2300,6 +2465,7 @@ async def sync_items(
                                 subtitle_languages=quality.get("subtitle_languages"),
                             ))
                             heal_collection_id = coll_id
+                            new_file_media_id = media.id
                         media_id_for_watch = media.id
 
                 if ratingkey_to_media_id is not None and media_id_for_watch is not None:
@@ -2352,6 +2518,18 @@ async def sync_items(
                             # (#253) marks it fully watched on the other side.
                             if new_watched_ids is not None and watch_state["completed"]:
                                 new_watched_ids.add(media_id_for_watch)
+
+                    # A file that just appeared on this server for something Scrob
+                    # already has a finished watch of (marked watched before it was
+                    # collected) - the server has no idea, so hand it back to the
+                    # caller to push there (#420).
+                    if (
+                        push_back is not None
+                        and new_file_media_id == media_id_for_watch
+                        and not watch_state["completed"]
+                        and media_id_for_watch in existing_completed
+                    ):
+                        push_back[media_id_for_watch] = source_id
 
                     if sync_ratings and watch_state["user_rating"] is not None:
                         existing_r = existing_ratings.get(media_id_for_watch)
@@ -2502,6 +2680,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
             _new_watched: set[int] = set()
             _new_ratings: RatingChanges = {}
             _new_collected: set[int] = set()
+            _push_back: dict[int, str] = {}
             _seen_collection_source_ids: set[str] = set()
 
             for lib in libraries:
@@ -2559,7 +2738,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.jellyfin, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
                         seen_source_ids=_seen_collection_source_ids)
                     all_warnings.extend(w)
 
@@ -2602,7 +2781,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                         db, stats, user_id, job_id, show_map,
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
                         seen_source_ids=_seen_collection_source_ids,
                     )
                     all_warnings.extend(w)
@@ -2613,7 +2792,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                             db, stats, user_id, job_id, {},
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
                             seen_source_ids=_seen_collection_source_ids,
                         )
                         all_warnings.extend(w)
@@ -2626,6 +2805,10 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                     stats["removed"] = len(removed_media_ids)
                     await db.commit()
                     print(f"Jellyfin sync job {job_id}: removed {len(removed_media_ids)} item(s) no longer in Jellyfin.")
+
+            pushed_back = await _push_watched_back_to_source(db, user_id, conn, _push_back)
+            if pushed_back:
+                print(f"Jellyfin sync job {job_id}: pushed watched state for {pushed_back} newly collected item(s).")
 
             print(f"Jellyfin sync job {job_id} completed. Stats: {stats}")
             # A pull only populates scrob's own data — it never automatically pushes to
@@ -2710,6 +2893,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             _new_watched: set[int] = set()
             _new_ratings: RatingChanges = {}
             _new_collected: set[int] = set()
+            _push_back: dict[int, str] = {}
             _seen_collection_source_ids: set[str] = set()
 
             for lib in libraries:
@@ -2767,7 +2951,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.emby, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
                         seen_source_ids=_seen_collection_source_ids)
                     all_warnings.extend(w)
 
@@ -2812,7 +2996,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         db, stats, user_id, job_id, show_map,
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
                         seen_source_ids=_seen_collection_source_ids,
                     )
                     all_warnings.extend(w)
@@ -2823,7 +3007,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                             db, stats, user_id, job_id, {},
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
                             seen_source_ids=_seen_collection_source_ids,
                         )
                         all_warnings.extend(w)
@@ -2836,6 +3020,10 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                     stats["removed"] = len(removed_media_ids)
                     await db.commit()
                     print(f"Emby sync job {job_id}: removed {len(removed_media_ids)} item(s) no longer in Emby.")
+
+            pushed_back = await _push_watched_back_to_source(db, user_id, conn, _push_back)
+            if pushed_back:
+                print(f"Emby sync job {job_id}: pushed watched state for {pushed_back} newly collected item(s).")
 
             print(f"Emby sync job {job_id} completed. Stats: {stats}")
             # A pull only populates scrob's own data — it never automatically pushes to
@@ -2971,6 +3159,60 @@ async def _push_plex_watched_and_record(conn: MediaServerConnection, sid: str, u
     if ok:
         await _record_plex_pending_push(user_id, media_id)
     return ok
+
+
+async def _push_watched_back_to_source(
+    db: AsyncSession,
+    user_id: int,
+    conn: MediaServerConnection,
+    push_back: dict[int, str],
+) -> int:
+    """Push Scrob's existing watched state to ``conn`` for items that just
+    appeared in its library (#420): something marked watched in Scrob before it
+    was collected would otherwise stay unwatched on the server until a full push.
+
+    Gated on the connection's own push_watched flag, and unlike the rest of a
+    pull this is the one thing it pushes back - to the very server it just
+    read, and only for items that server had no watch state for. Jellyfin/Emby
+    get the original watch date; Plex's /:/scrobble has no timestamp parameter,
+    so it stamps its own receipt time (see PlexPendingPush). Returns how many
+    pushes succeeded.
+    """
+    if not push_back or not conn.push_watched or conn.type not in ("plex", "jellyfin", "emby"):
+        return 0
+
+    from routers.webhooks import mark_pushed_watched
+
+    # One push per server item - a multi-episode file maps several media rows to one source_id.
+    by_source_id: dict[str, int] = {}
+    for media_id, source_id in push_back.items():
+        by_source_id.setdefault(source_id, media_id)
+
+    watched_at_by_media = (
+        await _latest_watched_at(db, user_id, list(by_source_id.values()))
+        if conn.type != "plex"
+        else {}
+    )
+    sem = asyncio.Semaphore(20)
+
+    async def _push_one(source_id: str, media_id: int) -> bool:
+        async with sem:
+            try:
+                if conn.type == "plex":
+                    return await _push_plex_watched_and_record(conn, source_id, user_id, media_id)
+                # Registered before the call so the server's UserDataSaved echo
+                # can't beat it (#247/#251).
+                mark_pushed_watched(user_id, media_id)
+                push = jellyfin.mark_watched if conn.type == "jellyfin" else emby.mark_watched
+                return await push(
+                    conn.url, conn.token, conn.server_user_id, source_id,
+                    played_at=watched_at_by_media.get(media_id),
+                )
+            except Exception:
+                return False
+
+    results = await asyncio.gather(*[_push_one(sid, mid) for sid, mid in by_source_id.items()])
+    return sum(1 for ok in results if ok)
 
 
 # How long a webhook-created (provisional) WatchEvent's watched_at — this
@@ -3621,6 +3863,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             _new_watched: set[int] = set()
             _new_ratings: RatingChanges = {}
             _new_collected: set[int] = set()
+            _push_back: dict[int, str] = {}
             _seen_collection_source_ids: set[str] = set()
             # ratingKey -> media_id, accumulated across every movie/show library this
             # run so _backfill_plex_watch_history can resolve play history afterward —
@@ -3692,7 +3935,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.plex, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=plex_watched_state_is_reliable, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
                         ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids)
                     all_warnings.extend(w)
 
@@ -3883,7 +4126,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         db, stats, user_id, job_id, show_map,
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=plex_watched_state_is_reliable, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
                         ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids,
                     )
                     all_warnings.extend(w)
@@ -3894,7 +4137,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                             db, stats, user_id, job_id, {},
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=plex_watched_state_is_reliable, sync_ratings=conn.sync_ratings,
-                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
                             ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids,
                         )
                         all_warnings.extend(w)
@@ -3917,6 +4160,12 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         f"Plex sync job {job_id}: backfilled {new_events} historical play(s), "
                         f"reconciled {reconciled} webhook estimate(s) ({unmatched} unmatched)."
                     )
+
+            # After the history backfill above, so it never sees this push's echo
+            # in the same run - the pending-push record it leaves handles the next.
+            pushed_back = await _push_watched_back_to_source(db, user_id, conn, _push_back)
+            if pushed_back:
+                print(f"Plex sync job {job_id}: pushed watched state for {pushed_back} newly collected item(s).")
 
             if conn.sync_collection and did_library_scan and not movie_limit and not show_limit:
                 removed_media_ids = await _remove_stale_collection_files(
@@ -4101,30 +4350,34 @@ async def _apply_nuvio_watch_history(
     }
     standalone_by_key: dict[tuple[MediaType, int], Media] = {}
     if standalone_tmdb_ids:
-        result = await db.execute(
-            select(Media).where(
+        rows_found = await _select_in_chunks(
+            db,
+            lambda chunk: select(Media).where(
                 Media.media_type == MediaType.movie,
-                Media.tmdb_id.in_(standalone_tmdb_ids),
-            )
+                Media.tmdb_id.in_(chunk),
+            ),
+            list(standalone_tmdb_ids),
         )
         standalone_by_key = {
             (media.media_type, media.tmdb_id): media
-            for media in result.scalars().all()
+            for media in rows_found
             if media.tmdb_id is not None
         }
 
     show_ids = set(show_map.values())
     episodes_by_key: dict[tuple[int, int, int], Media] = {}
     if show_ids:
-        result = await db.execute(
-            select(Media).where(
+        rows_found = await _select_in_chunks(
+            db,
+            lambda chunk: select(Media).where(
                 Media.media_type == MediaType.episode,
-                Media.show_id.in_(show_ids),
-            )
+                Media.show_id.in_(chunk),
+            ),
+            list(show_ids),
         )
         episodes_by_key = {
             (media.show_id, media.season_number, media.episode_number): media
-            for media in result.scalars().all()
+            for media in rows_found
             if media.show_id is not None
             and media.season_number is not None
             and media.episode_number is not None
@@ -4161,15 +4414,17 @@ async def _apply_nuvio_watch_history(
     if not candidates:
         return set()
     media_ids = {media.id for media, _ in candidates}
-    existing_result = await db.execute(
-        select(WatchEvent.media_id, WatchEvent.watched_at).where(
-            WatchEvent.user_id == user_id,
-            WatchEvent.media_id.in_(media_ids),
-        )
-    )
     existing_by_media: dict[int, list[datetime | None]] = {}
-    for existing_media_id, existing_watched_at in existing_result.all():
-        existing_by_media.setdefault(existing_media_id, []).append(existing_watched_at)
+    media_id_list = list(media_ids)
+    for i in range(0, len(media_id_list), _MAX_IN_PARAMS):
+        existing_result = await db.execute(
+            select(WatchEvent.media_id, WatchEvent.watched_at).where(
+                WatchEvent.user_id == user_id,
+                WatchEvent.media_id.in_(media_id_list[i : i + _MAX_IN_PARAMS]),
+            )
+        )
+        for existing_media_id, existing_watched_at in existing_result.all():
+            existing_by_media.setdefault(existing_media_id, []).append(existing_watched_at)
 
     window_minutes = await get_dedup_window_minutes(db, user_id)
     added_media_ids: set[int] = set()
@@ -4221,20 +4476,24 @@ async def _apply_nuvio_progress(
     }
     movies_by_tmdb: dict[int, Media] = {}
     if movie_tmdb_ids:
-        result = await db.execute(
-            select(Media).where(Media.media_type == MediaType.movie, Media.tmdb_id.in_(movie_tmdb_ids))
+        rows_found = await _select_in_chunks(
+            db,
+            lambda chunk: select(Media).where(Media.media_type == MediaType.movie, Media.tmdb_id.in_(chunk)),
+            list(movie_tmdb_ids),
         )
-        movies_by_tmdb = {media.tmdb_id: media for media in result.scalars().all() if media.tmdb_id is not None}
+        movies_by_tmdb = {media.tmdb_id: media for media in rows_found if media.tmdb_id is not None}
 
     show_ids = set(show_map.values())
     episodes_by_key: dict[tuple[int, int, int], Media] = {}
     if show_ids:
-        result = await db.execute(
-            select(Media).where(Media.media_type == MediaType.episode, Media.show_id.in_(show_ids))
+        rows_found = await _select_in_chunks(
+            db,
+            lambda chunk: select(Media).where(Media.media_type == MediaType.episode, Media.show_id.in_(chunk)),
+            list(show_ids),
         )
         episodes_by_key = {
             (media.show_id, media.season_number, media.episode_number): media
-            for media in result.scalars().all()
+            for media in rows_found
             if media.show_id is not None and media.season_number is not None and media.episode_number is not None
         }
 
@@ -4262,13 +4521,15 @@ async def _apply_nuvio_progress(
         return
 
     media_ids = {media.id for _, media in media_rows}
-    existing_result = await db.execute(
-        select(PlaybackProgress).where(
+    existing_rows = await _select_in_chunks(
+        db,
+        lambda chunk: select(PlaybackProgress).where(
             PlaybackProgress.user_id == user_id,
-            PlaybackProgress.media_id.in_(media_ids),
-        )
+            PlaybackProgress.media_id.in_(chunk),
+        ),
+        list(media_ids),
     )
-    existing = {progress.media_id: progress for progress in existing_result.scalars().all()}
+    existing = {progress.media_id: progress for progress in existing_rows}
 
     for row, media in media_rows:
         try:
@@ -6262,7 +6523,23 @@ def watched_lookup_failed_warning(media_id: int, media: Media | None, series_nam
     }
 
 
-async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
+async def _save_push_state(db: AsyncSession, push_state: PushState, connection_id: int) -> None:
+    """Persist a push's state without ever masking the push's own outcome."""
+    try:
+        await push_state.save(db, connection_id)
+    except Exception:
+        logger.exception("Could not save push state for connection %s", connection_id)
+        await db.rollback()
+
+
+async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremental: bool = False) -> None:
+    """Push Scrob's watched status/ratings/collection to one connection.
+
+    A manual push (the default) reconciles everything. `incremental` is for the
+    auto-push scheduler: it skips items whose last pushed value is unchanged and
+    lookups that recently found nothing (#421, #422), falling back to a full
+    reconcile when none happened in the last week - see core/push_state.py.
+    """
     import httpx as _httpx
     from routers.webhooks import mark_pushed_watched
 
@@ -6272,6 +6549,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             print(f"Full push job {job_id} was cancelled before it started - skipping")
             return
 
+        push_state: PushState | None = None
         try:
             conn_result = await db.execute(
                 select(MediaServerConnection).where(
@@ -6317,6 +6595,10 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 )
                 return
 
+            push_plan = await plan_push(db, conn.id, incremental=incremental)
+            push_mode = push_plan.mode
+            push_state = await PushState.load(db, conn.id, push_plan)
+
             if conn.type == "nuvio":
                 settings_result = await db.execute(
                     select(UserSettings).where(UserSettings.user_id == user_id)
@@ -6328,11 +6610,20 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     if conn.push_collection
                     else []
                 )
-                watched_items = (
-                    await _build_nuvio_watched_items(db, user_id, api_key=api_key)
+                watched_entries = (
+                    await _build_nuvio_watched_entries(db, user_id, api_key=api_key)
                     if conn.push_watched
                     else []
                 )
+                # Skip what an earlier push already sent with the same
+                # watched_at; a full reconcile sends everything (#421).
+                watched_items: list[dict] = []
+                media_id_by_item: dict[int, int] = {}
+                for entry_media_id, item in watched_entries:
+                    if push_state.unchanged(entry_media_id, WATCHED, float(item.get("watched_at") or 0)):
+                        continue
+                    watched_items.append(item)
+                    media_id_by_item[id(item)] = entry_media_id
                 progress_items = (
                     await _build_nuvio_progress_items(db, user_id, api_key=api_key)
                     if conn.push_playback
@@ -6350,34 +6641,48 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     conn.token = session.refresh_token
                     await db.commit()
 
-                async with nuvio.connection_lock(conn.id):
-                    # See core/nuvio.py's connection_lock docstring - conn may
-                    # have been loaded before another request already rotated
-                    # this single-use refresh token while this one waited.
-                    await db.refresh(conn)
-                    if conn.push_collection:
-                        # Merge rather than replace: a full/scheduled push only knows
-                        # the current local library, not what changed since last time,
-                        # so it must never drop remote-only items it can't account for.
-                        # Real removals still propagate through the real-time delta
-                        # push (_push_nuvio_library_delta) when an item is uncollected.
-                        await nuvio.merge_library(
-                            conn.url,
-                            conn.token,
-                            _nuvio_profile_id(conn),
-                            additions=library_items,
-                            removed_content_ids=set(),
-                            on_refresh=_persist_refresh,
-                        )
-                    if watched_items or progress_items:
-                        await nuvio.push_sync_items(
-                            conn.url,
-                            conn.token,
-                            _nuvio_profile_id(conn),
-                            watched_items,
-                            progress_items,
-                            on_refresh=_persist_refresh,
-                        )
+                async def _record_nuvio_page(function_name: str, page: list[dict]) -> None:
+                    # Recorded page by page, so a 429 on page 9 doesn't make the
+                    # next run resend pages 1-8.
+                    if function_name != "sync_push_watched_items":
+                        return
+                    for pushed in page:
+                        pushed_media_id = media_id_by_item.get(id(pushed))
+                        if pushed_media_id is not None:
+                            push_state.record(pushed_media_id, WATCHED, float(pushed.get("watched_at") or 0))
+
+                try:
+                    async with nuvio.connection_lock(conn.id):
+                        # See core/nuvio.py's connection_lock docstring - conn may
+                        # have been loaded before another request already rotated
+                        # this single-use refresh token while this one waited.
+                        await db.refresh(conn)
+                        if conn.push_collection:
+                            # Merge rather than replace: a full/scheduled push only knows
+                            # the current local library, not what changed since last time,
+                            # so it must never drop remote-only items it can't account for.
+                            # Real removals still propagate through the real-time delta
+                            # push (_push_nuvio_library_delta) when an item is uncollected.
+                            await nuvio.merge_library(
+                                conn.url,
+                                conn.token,
+                                _nuvio_profile_id(conn),
+                                additions=library_items,
+                                removed_content_ids=set(),
+                                on_refresh=_persist_refresh,
+                            )
+                        if watched_items or progress_items:
+                            await nuvio.push_sync_items(
+                                conn.url,
+                                conn.token,
+                                _nuvio_profile_id(conn),
+                                watched_items,
+                                progress_items,
+                                on_refresh=_persist_refresh,
+                                on_page=_record_nuvio_page,
+                            )
+                finally:
+                    await _save_push_state(db, push_state, conn.id)
 
                 await db.execute(
                     update(SyncJob)
@@ -6391,16 +6696,20 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             "collection": len(library_items),
                             "watched": len(watched_items),
                             "progress": len(progress_items),
+                            "skipped": push_state.skipped,
+                            "mode": push_mode,
                         },
                     )
                 )
                 await db.commit()
                 logger.info(
-                    "Full Nuvio push for connection %s: %s collection, %s watched, "
-                    "and %s progress items",
+                    "Nuvio push (%s) for connection %s: %s collection, %s watched "
+                    "(%s unchanged, skipped), and %s progress items",
+                    push_mode,
                     connection_id,
                     len(library_items),
                     len(watched_items),
+                    push_state.skipped,
                     len(progress_items),
                 )
                 return
@@ -6487,6 +6796,21 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 print(f"Full push for connection {connection_id}: nothing to push")
                 return
 
+            # A scheduled push leaves out what an earlier push already sent with
+            # the same value (#422): every re-sent rating is a write on the
+            # server, every re-sent watched flag a read first.
+            watched_todo = {mid for mid in watched_ids if not push_state.unchanged(mid, WATCHED, 1.0)}
+            watched_at_by_media = await _latest_watched_at(db, user_id, list(watched_todo)) if watched_todo else {}
+            ratings_todo = {
+                (mid, season_number): rating
+                for (mid, season_number), rating in ratings_map.items()
+                if not push_state.unchanged(
+                    mid,
+                    RATING if season_number is None else season_rating_key(season_number),
+                    rating,
+                )
+            }
+
             # Fast path: items we've already synced from this server have a known source_id
             source_ids_map: dict[int, list[str]] = {}
             all_media_list = list(all_media_ids)
@@ -6521,6 +6845,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             lookup_media_ids = missing_ids | season_rating_ids
             media_info: dict[int, Media] = {}
             show_tmdb_map: dict[int, int] = {}  # show.id → show.tmdb_id
+            show_tvdb_map: dict[int, int] = {}  # show.id → show.tvdb_id, fallback for TVDB-only shows (#436)
             show_title_map: dict[int, str] = {}  # show.id → show.title, for grouping lookup-failed warnings (#400)
 
             if lookup_media_ids:
@@ -6537,10 +6862,12 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     show_ids_list = list(show_ids_needed)
                     for i in range(0, len(show_ids_list), _MAX_IN_PARAMS):
                         chunk = show_ids_list[i : i + _MAX_IN_PARAMS]
-                        show_rows = await db.execute(select(Show.id, Show.tmdb_id, Show.title).where(Show.id.in_(chunk)))
+                        show_rows = await db.execute(select(Show.id, Show.tmdb_id, Show.tvdb_id, Show.title).where(Show.id.in_(chunk)))
                         for row in show_rows.all():
                             show_tmdb_map[row[0]] = row[1]
-                            show_title_map[row[0]] = row[2]
+                            if row[2] is not None:
+                                show_tvdb_map[row[0]] = row[2]
+                            show_title_map[row[0]] = row[3]
 
             # For Jellyfin/Emby, AnyProviderIdEquals can't be trusted to
             # narrow results on every server version - a per-item lookup can
@@ -6552,12 +6879,23 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             # request against the unreliable filter.
             jellyfin_movie_index: dict[int, str] = {}
             jellyfin_series_index: dict[int, str] = {}
+            jellyfin_series_tvdb_index: dict[int, str] = {}
             if conn.type in ("jellyfin", "emby") and media_info:
                 client_mod = jellyfin if conn.type == "jellyfin" else emby
                 if any(m.media_type == MediaType.movie for m in media_info.values()):
                     jellyfin_movie_index = await client_mod.build_tmdb_index(conn.url, conn.token, "Movie")
                 if any(m.media_type == MediaType.episode for m in media_info.values()):
                     jellyfin_series_index = await client_mod.build_tmdb_index(conn.url, conn.token, "Series")
+                    # Shows Scrob only ever matched via TVDB (e.g. a legacy-agent
+                    # Plex library) have no Show.tmdb_id at all, so the index
+                    # above can never resolve them - only build this second,
+                    # TVDB-keyed index when at least one such show is actually
+                    # in play (#436).
+                    if any(
+                        m.media_type == MediaType.episode and m.show_id and not show_tmdb_map.get(m.show_id) and show_tvdb_map.get(m.show_id)
+                        for m in media_info.values()
+                    ):
+                        jellyfin_series_tvdb_index = await client_mod.build_tvdb_index(conn.url, conn.token, "Series")
 
             # Build push list: (action, source_id, [rating])
             push_items: list[tuple] = []
@@ -6592,7 +6930,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             jellyfin_watched_state: dict[str, bool] = {}
 
             if conn.push_watched:
-                for mid in watched_ids:
+                for mid in watched_todo:
                     for sid in source_ids_map.get(mid, []):
                         if echoes_watched:
                             watched_sid_to_mids.setdefault(sid, set()).add(mid)
@@ -6600,11 +6938,11 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             push_items.append(("watched", sid, mid))
 
             if conn.push_ratings:
-                for (mid, season_number), rating in ratings_map.items():
+                for (mid, season_number), rating in ratings_todo.items():
                     if season_number is not None:
                         continue
                     for sid in source_ids_map.get(mid, []):
-                        push_items.append(("rating", sid, rating))
+                        push_items.append(("rating", sid, rating, mid))
 
             # Items that need live lookup: defer as coroutines resolved during push.
             lookup_items: list[tuple] = []
@@ -6616,33 +6954,37 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
 
             if missing_ids:
                 if conn.push_watched:
-                    for mid in watched_ids & missing_ids:
+                    for mid in watched_todo & missing_ids:
                         if mid in media_info:
                             if echoes_watched:
                                 watched_lookup_mids.append(mid)
                             else:
                                 lookup_items.append(("watched", mid))
                 if conn.push_ratings:
-                    for key, rating in ratings_map.items():
+                    for key, rating in ratings_todo.items():
                         mid, season_number = key
                         if season_number is None and mid in missing_ids and mid in media_info:
                             lookup_items.append(("rating", mid, rating))
             if conn.type == "plex" and conn.push_ratings:
-                for (mid, season_number), rating in ratings_map.items():
+                for (mid, season_number), rating in ratings_todo.items():
                     if season_number is not None and mid in media_info:
                         lookup_items.append(("season_rating", mid, season_number, rating))
 
             watched_group_row_count = sum(len(mids) for mids in watched_sid_to_mids.values())
             total = len(push_items) + len(lookup_items) + watched_group_row_count + len(watched_lookup_mids)
             if total == 0:
-                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, total_items=0, processed_items=0))
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.completed, total_items=0, processed_items=0,
+                    stats={"succeeded": 0, "failed": 0, "skipped": push_state.skipped, "mode": push_mode},
+                ))
                 await db.commit()
-                print(f"Full push for connection {connection_id}: no items found for this server")
+                print(f"Full push ({push_mode}) for connection {connection_id}: nothing to send"
+                      f"{f' ({push_state.skipped} unchanged, skipped)' if push_state.skipped else ' - no items found for this server'}")
                 return
 
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total, processed_items=0, current_step="Pushing watched status & ratings"))
             await db.commit()
-            print(f"Full push for connection {connection_id}: pushing {total} items ({len(push_items)} known, {len(lookup_items)} via live lookup, {watched_group_row_count} watched rows in {len(watched_sid_to_mids)} groups, {len(watched_lookup_mids)} watched rows pending lookup)...")
+            print(f"Full push ({push_mode}) for connection {connection_id}: pushing {total} items, {push_state.skipped} unchanged and skipped ({len(push_items)} known, {len(lookup_items)} via live lookup, {watched_group_row_count} watched rows in {len(watched_sid_to_mids)} groups, {len(watched_lookup_mids)} watched rows pending lookup)...")
 
             sem = asyncio.Semaphore(10)
             # Separate, higher limit for _resolve_watched_lookup only - a
@@ -6664,34 +7006,92 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     return str(rk) if rk else None
                 return item_dict.get("Id")
 
+            # The full server item behind each resolved lookup, by its server id,
+            # so a Plex rating push can compare userRating without fetching the
+            # item again.
+            found_items: dict[str, dict] = {}
+
+            def _finish_lookup(mid: int, found: dict | None) -> str | None:
+                sid = _extract_source_id(found)
+                if sid:
+                    found_items[sid] = found
+                    push_state.forget(mid, MISS)
+                else:
+                    # Not on the server (yet): don't repeat the request on every
+                    # scheduled run - see core/push_state.MISS_TTL.
+                    push_state.record_miss(mid)
+                return sid
+
             async def _find_source_id(mid: int) -> str | None:
                 m = media_info.get(mid)
                 if not m or not m.tmdb_id:
                     return None
                 if m.media_type == MediaType.movie:
                     if conn.type == "plex":
-                        found = await plex.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id)
+                        if push_state.recent_miss(mid):
+                            return None
+                        return _finish_lookup(mid, await plex.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id))
                     else:
                         # Resolved from the job's pre-built index (#300) -
                         # already the item id itself, no request needed.
                         return jellyfin_movie_index.get(m.tmdb_id)
                 elif m.media_type == MediaType.episode:
                     show_tmdb = show_tmdb_map.get(m.show_id) if m.show_id else None
-                    if not show_tmdb or m.season_number is None or m.episode_number is None:
+                    show_tvdb = show_tvdb_map.get(m.show_id) if m.show_id else None
+                    if (not show_tmdb and not show_tvdb) or m.season_number is None or m.episode_number is None:
+                        return None
+                    if push_state.recent_miss(mid):
                         return None
                     if conn.type == "plex":
+                        if not show_tmdb:
+                            return None
                         found = await plex.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number)
                     else:
-                        series_id = jellyfin_series_index.get(show_tmdb)
+                        series_id = jellyfin_series_index.get(show_tmdb) if show_tmdb else None
+                        if not series_id and show_tvdb:
+                            series_id = jellyfin_series_tvdb_index.get(show_tvdb)
                         if not series_id:
                             return None
                         client_mod = jellyfin if conn.type == "jellyfin" else emby
                         found = await client_mod.find_episode_in_series(
                             conn.url, conn.token, series_id, m.season_number, m.episode_number, user_id=conn.server_user_id
                         )
+                    return _finish_lookup(mid, found)
                 else:
                     return None
-                return _extract_source_id(found)
+
+            async def _plex_rating_matches(sid: str, rating: float) -> bool:
+                """True when Plex already holds this exact rating for the item.
+                PUT /:/rate is a write on Plex's own database even when the value
+                is unchanged, so don't issue one that changes nothing (#422). If
+                the item can't be read, say False and let the write happen, as
+                it always did."""
+                item = found_items.get(sid)
+                try:
+                    if item is None:
+                        item = await plex.get_item(conn.url, conn.token, sid)
+                    if item is None or item.get("userRating") is None:
+                        return False
+                    return abs(float(item["userRating"]) - rating) < 0.05
+                except (TypeError, ValueError):
+                    return False
+
+            async def _set_rating(client: _httpx.AsyncClient, sid: str, rating: float) -> bool:
+                if conn.type == "plex":
+                    if await _plex_rating_matches(sid, rating):
+                        return True
+                    return await plex.set_rating(conn.url, conn.token, sid, rating, client=client)
+                if conn.type == "jellyfin":
+                    return await jellyfin.set_rating(conn.url, conn.token, conn.server_user_id, sid, rating, client=client)
+                return await emby.set_rating(conn.url, conn.token, conn.server_user_id, sid, rating, client=client)
+
+            def _note_push(mid: int, key: str, value: float, ok: bool) -> None:
+                """Remember a successful push (or that one failed, so a sibling
+                that worked can't mark the item as done) - core/push_state.py."""
+                if ok:
+                    push_state.record(mid, key, value)
+                else:
+                    push_state.fail(mid, key)
 
             async def _already_watched_on_server(sid: str) -> bool | None:
                 """Plex's /:/scrobble (and Jellyfin/Emby's mark-watched call)
@@ -6743,17 +7143,11 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                     await _record_plex_pending_push(user_id, item[2])
                                 return ok
                             elif conn.type == "jellyfin":
-                                return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                                return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=watched_at_by_media.get(item[2]))
                             else:
-                                return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                                return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=watched_at_by_media.get(item[2]))
                         else:
-                            sid, rating = item[1], item[2]
-                            if conn.type == "plex":
-                                return await plex.set_rating(conn.url, conn.token, sid, rating, client=client)
-                            elif conn.type == "jellyfin":
-                                return await jellyfin.set_rating(conn.url, conn.token, conn.server_user_id, sid, rating, client=client)
-                            else:
-                                return await emby.set_rating(conn.url, conn.token, conn.server_user_id, sid, rating, client=client)
+                            return await _set_rating(client, item[1], item[2])
                     except Exception:
                         return False
 
@@ -6765,6 +7159,9 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             media = media_info.get(mid)
                             if not media or not media.tmdb_id:
                                 return False
+                            miss_key = season_miss_key(item[2])
+                            if push_state.recent_miss(mid, miss_key):
+                                return False
                             sid = await plex.resolve_season_rating_key(
                                 conn.url,
                                 conn.token,
@@ -6772,14 +7169,10 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                 item[2],
                             )
                             if not sid:
+                                push_state.record_miss(mid, miss_key)
                                 return False
-                            return await plex.set_rating(
-                                conn.url,
-                                conn.token,
-                                sid,
-                                item[3],
-                                client=client,
-                            )
+                            push_state.forget(mid, miss_key)
+                            return await _set_rating(client, sid, item[3])
                         sid = await _find_source_id(mid)
                         if not sid:
                             return False
@@ -6796,18 +7189,12 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                 return ok
                             elif conn.type == "jellyfin":
                                 mark_pushed_watched(user_id, mid)
-                                return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                                return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=watched_at_by_media.get(mid))
                             else:
                                 mark_pushed_watched(user_id, mid)
-                                return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                                return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=watched_at_by_media.get(mid))
                         else:
-                            rating = item[2]
-                            if conn.type == "plex":
-                                return await plex.set_rating(conn.url, conn.token, sid, rating, client=client)
-                            elif conn.type == "jellyfin":
-                                return await jellyfin.set_rating(conn.url, conn.token, conn.server_user_id, sid, rating, client=client)
-                            else:
-                                return await emby.set_rating(conn.url, conn.token, conn.server_user_id, sid, rating, client=client)
+                            return await _set_rating(client, sid, item[2])
                     except Exception:
                         return False
 
@@ -6832,10 +7219,13 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             return True
                         for mid in mids:
                             mark_pushed_watched(user_id, mid)
+                        # A combined file's rows share one server item, so any
+                        # one row's watched_at stands in for the group.
+                        group_played_at = watched_at_by_media.get(next(iter(mids)))
                         if conn.type == "jellyfin":
-                            return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                            return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=group_played_at)
                         else:
-                            return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                            return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=group_played_at)
                     except Exception:
                         return False
 
@@ -6884,10 +7274,32 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 # (coroutine, weight) pairs - a grouped watched push counts as
                 # every media row it covers once it resolves, not as 1, so
                 # processed_items still sums to total at completion.
+                async def _tracked(coro, notes: list[tuple[int, str, float]]) -> bool:
+                    ok = await coro
+                    for note_mid, note_key, note_value in notes:
+                        _note_push(note_mid, note_key, note_value, ok is True)
+                    return ok
+
+                def _item_notes(item: tuple) -> list[tuple[int, str, float]]:
+                    # push_items: ("watched", sid, mid) / ("rating", sid, rating, mid);
+                    # lookup_items: ("watched", mid) / ("rating", mid, rating) /
+                    # ("season_rating", mid, season_number, rating).
+                    kind = item[0]
+                    if kind == "season_rating":
+                        return [(item[1], season_rating_key(item[2]), item[3])]
+                    if kind == "watched":
+                        return [(item[2] if len(item) == 3 else item[1], WATCHED, 1.0)]
+                    mid = item[3] if len(item) == 4 else item[1]
+                    rating = item[2]
+                    return [(mid, RATING, rating)]
+
                 weighted: list[tuple] = (
-                    [(_push_known(client, item), 1) for item in push_items]
-                    + [(_push_lookup(client, item), 1) for item in lookup_items]
-                    + [(_push_watched_group(client, sid, mids), len(mids)) for sid, mids in watched_sid_to_mids.items()]
+                    [(_tracked(_push_known(client, item), _item_notes(item)), 1) for item in push_items]
+                    + [(_tracked(_push_lookup(client, item), _item_notes(item)), 1) for item in lookup_items]
+                    + [
+                        (_tracked(_push_watched_group(client, sid, mids), [(m, WATCHED, 1.0) for m in mids]), len(mids))
+                        for sid, mids in watched_sid_to_mids.items()
+                    ]
                 )
 
                 async def _weighted(coro, weight: int) -> tuple[bool, int]:
@@ -6906,24 +7318,30 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                         await db.commit()
                         await _raise_if_cancelled(db, job_id)
 
+            await _save_push_state(db, push_state, connection_id)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
                 status=SyncStatus.completed,
                 processed_items=total,
-                stats={"succeeded": succeeded, "failed": failed_count},
+                stats={"succeeded": succeeded, "failed": failed_count, "skipped": push_state.skipped, "mode": push_mode},
                 warnings=lookup_warnings or None,
             ))
             await db.commit()
-            print(f"Full push for connection {connection_id}: {succeeded}/{total} succeeded, {failed_count} failed"
+            print(f"Full push ({push_mode}) for connection {connection_id}: {succeeded}/{total} succeeded, {failed_count} failed, {push_state.skipped} unchanged and skipped"
                   f"{f', {len(lookup_warnings)} unresolved lookups' if lookup_warnings else ''}")
 
         except SyncCancelled:
             print(f"Full push for connection {connection_id} cancelled")
+            if push_state:
+                # What did go through is still worth remembering.
+                await _save_push_state(db, push_state, connection_id)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.cancelled))
             await db.commit()
 
         except Exception as e:
             import traceback
             traceback.print_exc()
+            if push_state:
+                await _save_push_state(db, push_state, connection_id)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=str(e)[:900]))
             await db.commit()
 

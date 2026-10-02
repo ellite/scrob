@@ -389,5 +389,48 @@ class GuidIdExtractionTests(unittest.TestCase):
         self.assertEqual(plex.extract_tvdb_id(guids), "73762")
 
 
+class LibrarySectionPaginationTests(unittest.IsolatedAsyncioTestCase):
+    """Regression test for #441: get_movies/get_shows/get_seasons/get_episodes
+    fetched a whole library section in one unpaginated request, which timed
+    out on a large TV library (tens of thousands of episodes) even with the
+    generous 120s client timeout - movies libraries are usually small enough
+    that this went unnoticed, mirroring Jellyfin's own #315."""
+
+    async def _fetch(self, fn, total: int):
+        requests: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            params = dict(request.url.params)
+            requests.append(params)
+            start = int(params["X-Plex-Container-Start"])
+            size = int(params["X-Plex-Container-Size"])
+            page = [{"ratingKey": str(start + i)} for i in range(min(size, total - start))]
+            return httpx.Response(200, json={"MediaContainer": {"Metadata": page, "totalSize": total}})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            plex.httpx, "AsyncClient", side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            items = await fn("http://plex.local", "token", "section-1")
+        return items, requests
+
+    async def test_get_episodes_paginates_past_the_first_page(self) -> None:
+        items, requests = await self._fetch(plex.get_episodes, total=2500)
+        self.assertEqual(len(items), 2500)
+        self.assertEqual(len(requests), 3)
+        self.assertEqual([r["X-Plex-Container-Start"] for r in requests], ["0", "1000", "2000"])
+        self.assertEqual(requests[0]["type"], "4")
+
+    async def test_get_movies_paginates_too(self) -> None:
+        items, requests = await self._fetch(plex.get_movies, total=1500)
+        self.assertEqual(len(items), 1500)
+        self.assertEqual(len(requests), 2)
+
+    async def test_small_library_is_a_single_request(self) -> None:
+        items, requests = await self._fetch(plex.get_shows, total=10)
+        self.assertEqual(len(items), 10)
+        self.assertEqual(len(requests), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

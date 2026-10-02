@@ -628,8 +628,10 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_jellyfin_watched_push_registers_for_echo_suppression(self):
         registered: list[tuple[int, int]] = []
+        played_ats: list[datetime | None] = []
 
-        async def fake_mark_watched(url, token, user_id, source_id):
+        async def fake_mark_watched(url, token, user_id, source_id, played_at=None):
+            played_ats.append(played_at)
             return True
 
         with patch("routers.history.jellyfin_client.mark_watched", fake_mark_watched), \
@@ -641,11 +643,16 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(registered, [(7, 42)])
+        # #437: the user-selected watched_at must reach Jellyfin's DatePlayed,
+        # not fall back to the push moment.
+        self.assertEqual(played_ats, [datetime(2020, 1, 1)])
 
     async def test_emby_watched_push_registers_for_echo_suppression(self):
         registered: list[tuple[int, int]] = []
+        played_ats: list[datetime | None] = []
 
-        async def fake_mark_watched(url, token, user_id, source_id):
+        async def fake_mark_watched(url, token, user_id, source_id, played_at=None):
+            played_ats.append(played_at)
             return True
 
         with patch("routers.history.emby_client.mark_watched", fake_mark_watched), \
@@ -657,6 +664,7 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(registered, [(7, 42)])
+        self.assertEqual(played_ats, [datetime(2020, 1, 1)])
 
     async def test_unwatch_push_does_not_register(self):
         async def fake_mark_unwatched(url, token, user_id, source_id):

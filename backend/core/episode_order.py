@@ -1,11 +1,13 @@
 import asyncio
 import logging
 import re
+import time
 import unicodedata
 from collections.abc import Awaitable, Callable
 from datetime import date
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import tmdb, tvdb
@@ -474,6 +476,38 @@ async def get_mapping_by_tvdb_position(
     return result.scalar_one_or_none()
 
 
+async def load_tvdb_episode_id_positions(
+    db: AsyncSession,
+    series_tmdb_ids: list[int],
+    tvdb_episode_ids: list[int],
+) -> dict[tuple[int, int], tuple[int, int]]:
+    """(series_tmdb_id, TVDB episode id) -> the canonical (tmdb_season,
+    tmdb_episode) of that episode, for every mapping where the two numbering
+    schemes disagree (#447).
+
+    Keyed on the episode's own TVDB id rather than on season/episode numbers:
+    a Jellyfin/Emby item carries its episode id in ProviderIds, so the match
+    is provable whatever numbering the server's metadata provider uses, where
+    translating raw numbers would have to assume they are TVDB's."""
+    if not series_tmdb_ids or not tvdb_episode_ids:
+        return {}
+    out: dict[tuple[int, int], tuple[int, int]] = {}
+    step = 10_000  # stay well under the 32767 bind-parameter limit
+    for i in range(0, len(tvdb_episode_ids), step):
+        chunk = tvdb_episode_ids[i : i + step]
+        rows = (await db.execute(
+            select(EpisodeOrderMapping).where(
+                EpisodeOrderMapping.series_tmdb_id.in_(series_tmdb_ids),
+                EpisodeOrderMapping.tvdb_id.in_(chunk),
+                (EpisodeOrderMapping.tmdb_season_number != EpisodeOrderMapping.tvdb_season_number)
+                | (EpisodeOrderMapping.tmdb_episode_number != EpisodeOrderMapping.tvdb_episode_number),
+            )
+        )).scalars().all()
+        for m in rows:
+            out[(m.series_tmdb_id, m.tvdb_id)] = (m.tmdb_season_number, m.tmdb_episode_number)
+    return out
+
+
 async def get_episode_orders_for_series(
     db: AsyncSession,
     user_id: int,
@@ -618,8 +652,16 @@ async def _match_tmdb_to_tvdb_episodes(
 
     for episode, external_ids in external_rows:
         external_tvdb_id = external_ids.get("tvdb_id")
-        match = tvdb_by_id.get(int(external_tvdb_id)) if external_tvdb_id else None
+        match = None
         method = "external_id"
+        # A TVDB episode can only back one mapping row (uq_episode_order_mapping_tvdb_id).
+        # TMDB occasionally points two of its episodes at the same TVDB
+        # episode (a special duplicated into a regular season, say) - the
+        # first one keeps it, the second falls through to title/date
+        # matching like any other unmatched episode. Without this the whole
+        # batch failed to INSERT, so nothing was ever persisted (#412).
+        if external_tvdb_id and int(external_tvdb_id) not in used_tvdb_ids:
+            match = tvdb_by_id.get(int(external_tvdb_id))
         if match is None:
             title = _normalise_title(episode.get("name"))
             candidates = [
@@ -671,6 +713,14 @@ async def _get_tvdb_id_for_show(
     return int(tvdb_id), show_data
 
 
+# TVDB returns each episode's original-language title unless a language is
+# requested, while TMDB titles here are English - so an anime's Japanese TVDB
+# titles never matched and the switch failed with "No TMDB episodes could be
+# matched to TVDB" (#351). Matching compares titles, so both sides must be
+# English regardless of the user's display language.
+_MATCH_LANGUAGE = "eng"
+
+
 async def _fetch_show_episodes(
     series_tmdb_id: int,
     tvdb_id: int,
@@ -718,7 +768,9 @@ async def _fetch_show_episodes(
         ),
         asyncio.gather(
             *(
-                tvdb.get_series_episodes(tvdb_id, number, tvdb_api_key, cache_ttl=cache_ttl)
+                tvdb.get_series_episodes(
+                    tvdb_id, number, tvdb_api_key, language=_MATCH_LANGUAGE, cache_ttl=cache_ttl
+                )
                 for number in tvdb_season_numbers
             )
         ),
@@ -791,6 +843,30 @@ async def ensure_episode_order_mapping(
     }
 
 
+# Guards for the on-demand webhook path below (#412). A show with no
+# mapping rows yet costs one TMDB external-id lookup per episode to resolve -
+# a 4 000-episode daily show is ~4 400 requests - and Jellyfin reports
+# playback progress every second, so without these every progress tick
+# started that computation over again, concurrently, each one holding its
+# request's DB connection until the pool ran dry and took the whole app down.
+#
+# One computation per show at a time (the lock), and at most one attempt per
+# show per _SEASON_MAPPING_ATTEMPT_TTL whatever its outcome (the deadline
+# map): every other webhook in that window returns [] immediately, which the
+# caller already treats as "no translation, use the raw numbers" - the same
+# behaviour as before #162 for that one event. Both are per-process, which is
+# exactly the scope of the problem (one uvicorn worker, one connection pool).
+_SEASON_MAPPING_ATTEMPT_TTL = tmdb.DEFAULT_CACHE_TTL
+_season_mapping_locks: dict[int, asyncio.Lock] = {}
+_season_mapping_attempts: dict[int, float] = {}
+
+
+def _reset_season_mapping_guards() -> None:
+    """Test hook - forget in-flight locks and recent attempts."""
+    _season_mapping_locks.clear()
+    _season_mapping_attempts.clear()
+
+
 async def ensure_episode_order_mapping_for_season(
     db: AsyncSession,
     show,
@@ -814,10 +890,36 @@ async def ensure_episode_order_mapping_for_season(
 
     Returns only the newly-inserted mapping rows (possibly empty if nothing
     new could be matched - a real TVDB-only episode, not a bug).
+
+    Also empty, without touching TMDB/TVDB at all, while another request is
+    already computing this show's mapping or one was attempted within the
+    last _SEASON_MAPPING_ATTEMPT_TTL - see the guards above (#412). Waiting
+    on the lock instead would park this request, DB connection and all, for
+    as long as the computation takes, which is the pool exhaustion this
+    guards against.
     """
     if not show.tvdb_id or not tmdb_api_key or not tvdb_api_key:
         return []
 
+    deadline = _season_mapping_attempts.get(show.tmdb_id)
+    if deadline is not None and time.monotonic() < deadline:
+        return []
+    lock = _season_mapping_locks.setdefault(show.tmdb_id, asyncio.Lock())
+    if lock.locked():
+        return []
+    async with lock:
+        return await _ensure_episode_order_mapping_for_season_locked(
+            db, show, season_number, tmdb_api_key, tvdb_api_key
+        )
+
+
+async def _ensure_episode_order_mapping_for_season_locked(
+    db: AsyncSession,
+    show,
+    season_number: int,
+    tmdb_api_key: str,
+    tvdb_api_key: str,
+) -> list[EpisodeOrderMapping]:
     existing_result = await db.execute(
         select(EpisodeOrderMapping).where(
             EpisodeOrderMapping.series_tmdb_id == show.tmdb_id
@@ -833,6 +935,12 @@ async def ensure_episode_order_mapping_for_season(
         # returns, so there's nothing more to do unless the show's episode
         # count grew (a genuinely new episode), which force-refresh handles.
         return []
+
+    # From here on this is a real attempt, however it ends - remember it so
+    # the next _SEASON_MAPPING_ATTEMPT_TTL of webhooks for this show don't
+    # repeat it. The cheap early return above is deliberately not counted:
+    # a webhook for another, still-unmapped season must still get its turn.
+    _season_mapping_attempts[show.tmdb_id] = time.monotonic() + _SEASON_MAPPING_ATTEMPT_TTL
 
     try:
         show_data = await tmdb.get_show(show.tmdb_id, api_key=tmdb_api_key, cache_ttl=tmdb.DEFAULT_CACHE_TTL)
@@ -859,8 +967,24 @@ async def ensure_episode_order_mapping_for_season(
     if not mappings:
         return []
 
-    db.add_all(mappings)
-    await db.flush()
+    try:
+        # add_all() inside the savepoint, same discipline as
+        # create_media_safely: on conflict the SAVEPOINT rolls back only this
+        # INSERT and the session stays usable, so the webhook that called us
+        # carries on with its own work instead of failing with a 500.
+        async with db.begin_nested():
+            db.add_all(mappings)
+            await db.flush()
+    except IntegrityError:
+        # Another worker/process got its rows in first (the in-process lock
+        # can't see across workers), or the batch still clashes with an
+        # existing row - either way whatever is in the table is what the
+        # caller's next lookup will find.
+        logger.warning(
+            "Episode order mapping for show tmdb_id=%s conflicted with existing rows, keeping those",
+            show.tmdb_id,
+        )
+        return []
     return mappings
 
 
@@ -926,15 +1050,16 @@ async def reconcile_divergent_episode_media(
         # automatically the mis-tracked artifact of this mapped episode -
         # TVDB and TMDB can assign genuinely different, unrelated episodes to
         # the same numeric slot. Only merge if `divergent` is provably that
-        # artifact: enrich_episode_from_tvdb (core/enrichment.py) always
-        # stores the raw TVDB episode id in tmdb_id for an episode with no
-        # TMDB counterpart, which is the exact same id this mapping's
-        # tvdb_id was built from. Without this check, a real, correctly
-        # tracked TMDB episode that just happens to share the same raw
-        # (season, episode) numbers as this mapping's TVDB position would
-        # get its watch history/ratings/etc. silently merged into a
-        # completely different episode.
-        if divergent.tmdb_id != mapping.tvdb_id:
+        # artifact: its TVDB episode id is the exact id this mapping's
+        # tvdb_id was built from. Rows now keep that id in Media.tvdb_id
+        # (#447); rows from before the dual-identity change stored it in
+        # tmdb_id instead, so fall back to that only when tvdb_id is unset.
+        # Without this check, a real, correctly tracked TMDB episode that
+        # just happens to share the same raw (season, episode) numbers as
+        # this mapping's TVDB position would get its watch history/ratings/etc.
+        # silently merged into a completely different episode.
+        divergent_tvdb_id = divergent.tvdb_id if divergent.tvdb_id is not None else divergent.tmdb_id
+        if divergent_tvdb_id != mapping.tvdb_id:
             continue
 
         try:

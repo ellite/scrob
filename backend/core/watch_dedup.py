@@ -11,7 +11,7 @@ produced either row.
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.events import WatchEvent
@@ -45,6 +45,28 @@ def dedup_window_from_settings(settings: Optional[UserSettings]) -> int:
     return max(DEFAULT_DEDUP_WINDOW_MINUTES, configured or 0)
 
 
+async def _acquire_dedup_lock(db: AsyncSession, user_id: int, media_id: int) -> None:
+    """Serializes concurrent duplicate-checks for this (user, media) within
+    the caller's transaction, so two near-simultaneous events for the same
+    play - e.g. a media server double-firing a webhook a few seconds apart -
+    can't both pass the check-then-insert race before either commits (#440).
+    A transaction-scoped Postgres advisory lock: it blocks a concurrent
+    caller until this one's next commit/rollback, at which point that
+    caller's own duplicate check will see the row this one just wrote. No-op
+    on the sqlite engine some unit tests substitute for Postgres, since a
+    single sqlite connection can't race with itself. get_bind is fetched
+    defensively since some callers pass a lightweight fake DB double (unit
+    tests) that doesn't implement it at all."""
+    get_bind = getattr(db, "get_bind", None)
+    bind = get_bind() if callable(get_bind) else None
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:user_id, :media_id)"),
+        {"user_id": user_id, "media_id": media_id},
+    )
+
+
 async def find_duplicate_watch_event(
     db: AsyncSession,
     user_id: int,
@@ -58,9 +80,13 @@ async def find_duplicate_watch_event(
     (watched_at, or created_at when watched_at is unknown - same convention as
     events.py) falls within window_minutes of candidate_time, regardless of
     which source produced it - or None if there isn't one. candidate_time
-    defaults to "now" to match how an unknown-dated play is itself recorded."""
+    defaults to "now" to match how an unknown-dated play is itself recorded.
+
+    Callers that follow a None result by inserting the new WatchEvent get
+    race protection for free: see _acquire_dedup_lock."""
     if not window_minutes:
         return None
+    await _acquire_dedup_lock(db, user_id, media_id)
     at = candidate_time or datetime.utcnow()
     delta = timedelta(minutes=window_minutes)
     effective_time = func.coalesce(WatchEvent.watched_at, WatchEvent.created_at)

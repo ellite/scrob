@@ -1,0 +1,48 @@
+---
+// Episode rating heat map (TMDB vote_average): one compact row of cells per
+// season. Cells with no rating stay blank rather than reading as a bad score.
+export interface HeatmapSeason {
+  number: number;
+  episodes: { number: number; rating: number | null | undefined; title: string; href: string }[];
+}
+
+interface Props {
+  seasons: HeatmapSeason[];
+}
+
+import { m } from "../paraglide/messages.js";
+
+const { seasons } = Astro.props;
+
+const rated = (r: number | null | undefined): r is number => typeof r === "number" && r > 0;
+
+// 5 and under is red, ~7.3 amber, 9+ green.
+function cellColor(r: number): string {
+  const t = Math.min(1, Math.max(0, (r - 5) / 4));
+  return `hsl(${Math.round(t * 125)} 62% 40%)`;
+}
+
+const cellClass = "flex items-center justify-center rounded-md text-white font-bold tabular-nums";
+---
+
+  <div class="space-y-1.5 bg-zinc-900/50 border border-zinc-800 rounded-3xl p-5">
+    {seasons.map((s) => (
+      <div class="flex items-center gap-3">
+        <span class="w-10 shrink-0 text-sm font-black text-zinc-500 uppercase">S{s.number}</span>
+        <div class="flex flex-wrap gap-1">
+          {s.episodes.map((ep) => rated(ep.rating) ? (
+            <a
+              href={ep.href}
+              title={`S${s.number}E${ep.number} · ${ep.title} · ${ep.rating.toFixed(1)}`}
+              class={`${cellClass} w-9 h-7 text-[11px] hover:ring-2 hover:ring-blue-400 transition`}
+              style={`background:${cellColor(ep.rating)}`}
+            >
+              {ep.rating.toFixed(1)}
+            </a>
+          ) : (
+            <a href={ep.href} title={`S${s.number}E${ep.number} · ${ep.title} · ${m.heatmap_not_rated()}`} class="w-9 h-7 rounded-md bg-zinc-800/60 hover:ring-2 hover:ring-blue-400 transition"></a>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>

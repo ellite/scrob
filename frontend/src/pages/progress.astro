@@ -156,7 +156,9 @@ const sortOptions = isCollection
                 {posterPath ? (
                   <img src={posterPath} alt={s.title} class="w-full h-full object-cover" loading="lazy" decoding="async" />
                 ) : (
-                  <div class="w-full h-full flex items-center justify-center text-zinc-700 text-lg">📺</div>
+                  <div class="w-full h-full flex items-center justify-center text-zinc-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="45%" height="45%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
+                  </div>
                 )}
               </div>
 

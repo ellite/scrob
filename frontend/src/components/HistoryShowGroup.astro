@@ -11,6 +11,7 @@ import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
 import { formatTime } from "../lib/format";
 import { m } from "../paraglide/messages.js";
+import { getViewerTimeZone } from "../lib/viewerTimeZone";
 
 interface Props {
   events: WatchEvent[];
@@ -23,9 +24,11 @@ const showTitle = first.show_title || first.title;
 const rawPoster = first.show_poster_path || first.poster_path;
 const posterPath = ratingPosterUrl(tmdbImageUrl(rawPoster, "w500"), first, Astro.locals.hasRpdbKey);
 
+const timeZone = getViewerTimeZone(Astro.cookies);
+
 function fmtTime(watchedAt: string | null): string | null {
   return watchedAt
-    ? formatTime(watchedAt + 'Z', { hour: '2-digit', minute: '2-digit', hour12: !use24h })
+    ? formatTime(watchedAt + 'Z', { hour: '2-digit', minute: '2-digit', hour12: !use24h, timeZone })
     : null;
 }
 
@@ -54,8 +57,8 @@ const codes = chronological.map((e) => episodeCode(e.media)).filter((c): c is st
           decoding="async"
         />
       ) : (
-        <div class="w-full h-full flex flex-col items-center justify-center text-xs text-zinc-700 p-2 text-center bg-zinc-900">
-          <span class="text-xl mb-1 opacity-20">🎬</span>
+        <div class="w-full h-full flex flex-col items-center justify-center text-xs text-zinc-600 p-2 text-center bg-zinc-900">
+          <svg xmlns="http://www.w3.org/2000/svg" width="45%" height="45%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
         </div>
       )}
     </div>

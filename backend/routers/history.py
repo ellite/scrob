@@ -35,6 +35,7 @@ import core.plex as plex_client
 import core.jellyfin as jellyfin_client
 import core.emby as emby_client
 import core.trakt as trakt_client
+import core.tvdb as tvdb_client
 import core.nuvio as nuvio_client
 
 router = APIRouter()
@@ -133,14 +134,14 @@ async def _push_watch_state(
                     label = f"jellyfin connection {conn.id}"
                     if watched:
                         mark_pushed_watched(user_id, coll_media_id)
-                        tasks.append((label, jellyfin_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
+                        tasks.append((label, jellyfin_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id, played_at=resolved_watched_at.get(coll_media_id))))
                     else:
                         tasks.append((label, jellyfin_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
                 elif coll_file.source == CollectionSource.emby:
                     label = f"emby connection {conn.id}"
                     if watched:
                         mark_pushed_watched(user_id, coll_media_id)
-                        tasks.append((label, emby_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
+                        tasks.append((label, emby_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id, played_at=resolved_watched_at.get(coll_media_id))))
                     else:
                         tasks.append((label, emby_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
 
@@ -1189,7 +1190,9 @@ async def get_next_up(
             # an episode number TMDB doesn't actually have, e.g. a provider
             # numbering mismatch) — they have no real metadata and would surface
             # a broken Next Up card that 404s when opened.
-            Media.tmdb_id.isnot(None),
+            # A TVDB-only episode carries its TVDB episode id instead of a
+            # TMDB one, and is just as real.
+            or_(Media.tmdb_id.isnot(None), Media.tvdb_id.isnot(None)),
             or_(*show_filters),
         )
         .order_by(Media.show_id, Media.season_number, Media.episode_number)
@@ -1266,7 +1269,7 @@ async def get_next_up(
 
             for show_id in missing_show_ids:
                 show = shows_by_id.get(show_id)
-                if not show or not show.tmdb_id:
+                if not show or not show.tmdb_id or _is_tvdb_canonical(show):
                     continue
                 fresh_show_data = fetched_by_show.get(show_id)
                 if fresh_show_data is not None:
@@ -1336,6 +1339,61 @@ async def get_next_up(
                 media.show = show
                 next_per_show[show_id] = media
             await db.commit()
+
+        # TVDB-canonical shows (no TMDB counterpart, or explicitly TVDB-numbered)
+        # get the same on-demand next-episode lookup from TheTVDB, using the
+        # season layout stored on the show. Needs only a TVDB key, so it runs
+        # whether or not the user has a TMDB one.
+        tvdb_show_result = await db.execute(
+            select(Show).where(Show.id.in_(missing_show_ids), Show.tvdb_id.isnot(None))
+        )
+        tvdb_shows = [s for s in tvdb_show_result.scalars().all() if _is_tvdb_canonical(s)]
+        if tvdb_shows:
+            from routers.shows import get_user_tvdb_key
+
+            tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
+            if tvdb_api_key:
+                tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
+                for show in tvdb_shows:
+                    season, episode = last_per_show[show.id]
+                    next_ep = _compute_next_episode((show.tmdb_data or {}).get("seasons", []), season, episode)
+                    if next_ep is None:
+                        continue
+                    try:
+                        raw_eps = await tvdb_client.get_series_episodes(
+                            show.tvdb_id, next_ep[0], tvdb_api_key, language=tvdb_lang
+                        )
+                    except Exception:
+                        continue
+                    tvdb_ep = next(
+                        (tvdb_client.format_episode(e) for e in raw_eps if e.get("number") == next_ep[1]),
+                        None,
+                    )
+                    if not tvdb_ep:
+                        continue
+                    media = Media(
+                        media_type=MediaType.episode,
+                        show_id=show.id,
+                        season_number=next_ep[0],
+                        episode_number=next_ep[1],
+                    )
+                    await enrich_episode_from_tvdb(media, tvdb_ep)
+                    try:
+                        async with db.begin_nested():
+                            db.add(media)
+                            await db.flush()
+                    except IntegrityError:
+                        existing_result = await db.execute(
+                            select(Media)
+                            .where(Media.tvdb_id == media.tvdb_id, Media.media_type == MediaType.episode)
+                            .order_by(Media.id)
+                        )
+                        media = existing_result.scalars().first()
+                        if not media:
+                            continue
+                    media.show = show
+                    next_per_show[show.id] = media
+                await db.commit()
 
     if not next_per_show:
         return {"next_up": []}
@@ -1439,7 +1497,7 @@ from core.identity import find_media, find_show, link_show_ids
 from datetime import datetime
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm.attributes import flag_modified
 
 
@@ -1991,8 +2049,45 @@ async def get_progress(
     }
 
 
+def _is_tvdb_canonical(show: Show) -> bool:
+    """A show whose season/episode numbers are TheTVDB's own (no TMDB
+    counterpart, or explicitly TVDB-canonical) - TMDB must never be asked
+    about it, even when a tmdb_id link exists."""
+    return show.canonical_source == "tvdb" or not show.tmdb_id
+
+
+async def _resolve_series_show(db: AsyncSession, tmdb_id: int | None, tvdb_id: int | None) -> Show | None:
+    """Look up the show a bulk mark/unmark targets. With a tmdb_id, returns
+    None when it isn't local yet (the caller creates it from TMDB). A
+    TVDB-only show has no tmdb_id and must already exist locally - its show
+    page creates it from TheTVDB."""
+    if tmdb_id is None:
+        if tvdb_id is None:
+            raise HTTPException(status_code=422, detail="series_tmdb_id or series_tvdb_id is required")
+        show = await find_show(db, tvdb_id=tvdb_id)
+        if show is None:
+            raise HTTPException(status_code=404, detail="Show not found locally; open its show page first so it can be created from TheTVDB")
+        return show
+    return await find_show(db, tmdb_id=tmdb_id)
+
+
+async def _fetch_tvdb_season_episodes(db: AsyncSession, show: Show, season_number: int, user_id: int) -> list[dict]:
+    from routers.shows import get_user_tvdb_key
+    import core.tvdb as tvdb_client
+
+    tvdb_api_key = await get_user_tvdb_key(db, user_id)
+    if not tvdb_api_key:
+        raise HTTPException(status_code=400, detail="TVDB API key not configured")
+    tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, user_id))
+    try:
+        raw_eps = await tvdb_client.get_series_episodes(show.tvdb_id, season_number, tvdb_api_key, language=tvdb_lang)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"TVDB season fetch failed: {e}")
+    return [tvdb_client.format_episode(e) for e in raw_eps]
+
+
 class SeasonWatchRequest(BaseModel):
-    series_tmdb_id: int
+    series_tmdb_id: int | None = None
     series_tvdb_id: int | None = None  # links the show to TVDB on demand, see #101
     season_number: int
     episode_order: str | None = None
@@ -2000,7 +2095,7 @@ class SeasonWatchRequest(BaseModel):
 
 
 class ShowWatchRequest(BaseModel):
-    series_tmdb_id: int
+    series_tmdb_id: int | None = None
     series_tvdb_id: int | None = None  # links the show to TVDB on demand, see #101
     watched_at: datetime | None = None  # omitted = now; explicit null = unknown date
 
@@ -2358,6 +2453,53 @@ async def delete_single_event(
     return {"status": "ok"}
 
 
+class BulkDeleteEventsRequest(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=1000)
+
+
+@router.post("/events/delete")
+async def delete_events_bulk(
+    body: BulkDeleteEventsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    """Delete many watch events at once (history multi-select). Ids that
+    don't exist or belong to someone else are ignored, not errors."""
+    ids = list(set(body.ids))
+    result = await db.execute(
+        select(WatchEvent.media_id).where(
+            WatchEvent.id.in_(ids),
+            WatchEvent.user_id == current_user.id,
+        )
+    )
+    affected_media_ids = set(result.scalars().all())
+
+    deleted = await db.execute(
+        delete(WatchEvent).where(
+            WatchEvent.id.in_(ids),
+            WatchEvent.user_id == current_user.id,
+        )
+    )
+    await db.commit()
+
+    # Same rule as the single delete: only push "unwatched" for media that
+    # has no plays left at all.
+    still_watched = set()
+    if affected_media_ids:
+        remaining = await db.execute(
+            select(WatchEvent.media_id).where(
+                WatchEvent.user_id == current_user.id,
+                WatchEvent.media_id.in_(affected_media_ids),
+            ).distinct()
+        )
+        still_watched = set(remaining.scalars().all())
+    fully_unwatched = list(affected_media_ids - still_watched)
+    if fully_unwatched:
+        await _push_watch_state(db, current_user.id, fully_unwatched, watched=False)
+
+    return {"status": "ok", "deleted": deleted.rowcount}
+
+
 @router.delete("")
 async def clear_history(
     db: AsyncSession = Depends(get_db),
@@ -2412,9 +2554,8 @@ async def mark_season_watched(
 ):
     """Mark all aired episodes of a season as watched, fetching from TMDB if needed."""
     # 1. Ensure show exists
-    show_q = await db.execute(select(Show).where(Show.tmdb_id == body.series_tmdb_id))
-    show = show_q.scalar_one_or_none()
-    
+    show = await _resolve_series_show(db, body.series_tmdb_id, body.series_tvdb_id)
+
     api_key = await get_user_tmdb_key(db, current_user.id)
     if not show:
         if not check_tmdb_key(api_key):
@@ -2453,9 +2594,12 @@ async def mark_season_watched(
     canonical_seasons = [body.season_number]
     tvdb_fallback_episodes: list[dict] | None = None
     _watch_order = normalize_order_key(body.episode_order)
-    if not is_aired_order(_watch_order):
+    if _is_tvdb_canonical(show):
+        # Numbers are TVDB's own, so there is no TMDB order to map through.
+        tvdb_fallback_episodes = await _fetch_tvdb_season_episodes(db, show, body.season_number, current_user.id)
+    elif not is_aired_order(_watch_order):
         target_positions = await canonical_pairs_for_display_season(
-            db, body.series_tmdb_id, _watch_order, body.season_number
+            db, show.tmdb_id, _watch_order, body.season_number
         )
         if not target_positions:
             target_positions = None
@@ -2467,18 +2611,7 @@ async def mark_season_watched(
             )
             if _watch_order != "tvdb:official" or season_on_tmdb or not show.tvdb_id:
                 raise HTTPException(status_code=400, detail="This episode order is not available for this show")
-            from routers.shows import get_user_tvdb_key
-            import core.tvdb as tvdb_client
-
-            tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
-            if not tvdb_api_key:
-                raise HTTPException(status_code=400, detail="TVDB API key not configured")
-            tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
-            try:
-                raw_eps = await tvdb_client.get_series_episodes(show.tvdb_id, body.season_number, tvdb_api_key, language=tvdb_lang)
-            except Exception as e:
-                raise HTTPException(status_code=404, detail=f"TVDB season fetch failed: {e}")
-            tvdb_fallback_episodes = [tvdb_client.format_episode(e) for e in raw_eps]
+            tvdb_fallback_episodes = await _fetch_tvdb_season_episodes(db, show, body.season_number, current_user.id)
         else:
             canonical_seasons = sorted({season for season, _ in target_positions})
 
@@ -2546,7 +2679,7 @@ async def mark_season_watched(
             season_payloads = await asyncio.gather(
                 *(
                     tmdb.get_season(
-                        body.series_tmdb_id,
+                        show.tmdb_id,
                         canonical_season,
                         api_key=api_key,
                     )
@@ -2645,15 +2778,17 @@ async def mark_season_watched(
 
 @router.delete("/season")
 async def unwatch_season(
-    series_tmdb_id: int = Query(...),
+    series_tmdb_id: int | None = Query(None),
+    series_tvdb_id: int | None = Query(None),
     season_number: int = Query(...),
     episode_order: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Remove all watch events for a season."""
-    show_q = await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
-    show = show_q.scalar_one_or_none()
+    if series_tmdb_id is None and series_tvdb_id is None:
+        raise HTTPException(status_code=422, detail="series_tmdb_id or series_tvdb_id is required")
+    show = await find_show(db, tmdb_id=series_tmdb_id, tvdb_id=series_tvdb_id)
     if not show:
         return {"status": "ok", "count": 0}
 
@@ -2662,9 +2797,11 @@ async def unwatch_season(
         Media.media_type == MediaType.episode,
     ]
     _unwatch_order = normalize_order_key(episode_order)
-    if not is_aired_order(_unwatch_order):
+    if _is_tvdb_canonical(show):
+        media_filters.append(Media.season_number == season_number)
+    elif not is_aired_order(_unwatch_order):
         pairs = await canonical_pairs_for_display_season(
-            db, series_tmdb_id, _unwatch_order, season_number
+            db, show.tmdb_id, _unwatch_order, season_number
         )
         if not pairs:
             season_on_tmdb = any(
@@ -2706,9 +2843,8 @@ async def mark_show_watched(
 ):
     """Mark all aired episodes of all seasons as watched."""
     # 1. Ensure show exists and get its metadata
-    show_q = await db.execute(select(Show).where(Show.tmdb_id == body.series_tmdb_id))
-    show = show_q.scalar_one_or_none()
-    
+    show = await _resolve_series_show(db, body.series_tmdb_id, body.series_tvdb_id)
+
     api_key = await get_user_tmdb_key(db, current_user.id)
     if not show:
         if not check_tmdb_key(api_key):
@@ -2737,8 +2873,8 @@ async def mark_show_watched(
         await db.flush()
     else:
         # We need TMDB data for season/episode counts
-        if not show.tmdb_data or "seasons" not in show.tmdb_data:
-            data = await tmdb.get_show(body.series_tmdb_id, api_key=api_key)
+        if not _is_tvdb_canonical(show) and (not show.tmdb_data or "seasons" not in show.tmdb_data):
+            data = await tmdb.get_show(show.tmdb_id, api_key=api_key)
             show.tmdb_data = {
                 "genres": [g["name"] for g in data.get("genres", [])],
                 "last_episode_to_air": data.get("last_episode_to_air"),
@@ -2760,7 +2896,9 @@ async def mark_show_watched(
             await db.commit()
 
     # 2. For each season, fetch episodes and ensure they exist + mark watched
-    seasons = [s["season_number"] for s in show.tmdb_data["seasons"] if s["season_number"] > 0]
+    tvdb_canonical = _is_tvdb_canonical(show)
+    # A TVDB-canonical show's seasons all come from TVDB in step 3 below.
+    seasons = [] if tvdb_canonical else [s["season_number"] for s in show.tmdb_data["seasons"] if s["season_number"] > 0]
     all_newly_watched_ids = []
     all_new_events = []
 
@@ -2776,7 +2914,7 @@ async def mark_show_watched(
 
     for sn in seasons:
         try:
-            season_data = await tmdb.get_season(body.series_tmdb_id, sn, api_key=api_key)
+            season_data = await tmdb.get_season(show.tmdb_id, sn, api_key=api_key)
         except Exception: continue # Skip failed seasons
 
         existing_q = await db.execute(
@@ -2847,7 +2985,7 @@ async def mark_show_watched(
         tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
         if tvdb_api_key:
             tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
-            tmdb_season_numbers = {s["season_number"] for s in show.tmdb_data.get("seasons", [])}
+            tmdb_season_numbers = set() if tvdb_canonical else {s["season_number"] for s in show.tmdb_data.get("seasons", [])}
             try:
                 tvdb_show_data = tvdb_client.format_series(await tvdb_client.get_series(show.tvdb_id, tvdb_api_key), language=tvdb_lang)
             except Exception:
@@ -2858,11 +2996,23 @@ async def mark_show_watched(
                     s["season_number"] for s in tvdb_show_data.get("seasons", [])
                     if s.get("season_number") and s["season_number"] > 0 and s["season_number"] not in tmdb_season_numbers
                 ]
+                # One fetch for the whole show, split by season locally: with a
+                # language set, TVDB ignores the season filter and returns
+                # every episode on each call, so a per-season fetch repeats the
+                # whole download once per season.
+                try:
+                    all_tvdb_eps = [
+                        tvdb_client.format_episode(e)
+                        for e in await tvdb_client.get_series_episodes(show.tvdb_id, None, tvdb_api_key, language=tvdb_lang)
+                    ]
+                except Exception:
+                    all_tvdb_eps = []
+                tvdb_eps_by_season: dict[int, list[dict]] = {}
+                for tvdb_ep in all_tvdb_eps:
+                    tvdb_eps_by_season.setdefault(tvdb_ep.get("season_number"), []).append(tvdb_ep)
+
                 for sn in tvdb_only_seasons:
-                    try:
-                        tvdb_eps = [tvdb_client.format_episode(e) for e in await tvdb_client.get_series_episodes(show.tvdb_id, sn, tvdb_api_key, language=tvdb_lang)]
-                    except Exception:
-                        continue
+                    tvdb_eps = tvdb_eps_by_season.get(sn, [])
 
                     existing_q = await db.execute(
                         select(Media).where(
@@ -2949,15 +3099,73 @@ async def mark_show_watched(
     return {"status": "ok", "count": len(all_newly_watched_ids)}
 
 
+# Marking a whole show watched can take minutes (hundreds of episodes, plus
+# the push to every connected service), far past a reverse proxy's timeout, so
+# the UI runs it as a background job and polls. In-memory on purpose: a job is
+# only ever waited on by the page that started it.
+_show_watch_jobs: dict[str, dict] = {}
+_show_watch_tasks: set[asyncio.Task] = set()
+_JOB_TTL = timedelta(hours=1)
+
+
+async def _run_show_watch_job(job_id: str, body: "ShowWatchRequest", user_id: int) -> None:
+    job = _show_watch_jobs[job_id]
+    try:
+        async with AsyncSessionLocal() as db:
+            user = await db.get(User, user_id)
+            result = await mark_show_watched(body, db, user)
+        job.update(state="done", count=result.get("count", 0))
+    except HTTPException as e:
+        job.update(state="error", detail=str(e.detail))
+    except Exception:
+        logger.exception("Background mark-show-watched failed for user %s", user_id)
+        job.update(state="error", detail="Something went wrong marking the show as watched")
+    finally:
+        job["finished_at"] = datetime.utcnow()
+
+
+@router.post("/show-all/async", status_code=202)
+async def mark_show_watched_async(
+    body: ShowWatchRequest,
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    """Start "mark every episode watched" as a background job; poll
+    GET /history/show-all/jobs/{job_id} for the outcome."""
+    now = datetime.utcnow()
+    for jid in [j for j, v in _show_watch_jobs.items() if v.get("finished_at") and now - v["finished_at"] > _JOB_TTL]:
+        _show_watch_jobs.pop(jid, None)
+
+    import uuid
+    job_id = uuid.uuid4().hex
+    _show_watch_jobs[job_id] = {"user_id": current_user.id, "state": "running", "count": 0, "detail": None, "finished_at": None}
+    task = asyncio.create_task(_run_show_watch_job(job_id, body, current_user.id))
+    _show_watch_tasks.add(task)
+    task.add_done_callback(_show_watch_tasks.discard)
+    return {"job_id": job_id}
+
+
+@router.get("/show-all/jobs/{job_id}")
+async def get_show_watch_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    job = _show_watch_jobs.get(job_id)
+    if not job or job["user_id"] != current_user.id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"state": job["state"], "count": job["count"], "detail": job["detail"]}
+
+
 @router.delete("/show-all")
 async def unwatch_show(
-    series_tmdb_id: int = Query(...),
+    series_tmdb_id: int | None = Query(None),
+    series_tvdb_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Remove all watch events for all episodes of a show."""
-    show_q = await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
-    show = show_q.scalar_one_or_none()
+    if series_tmdb_id is None and series_tvdb_id is None:
+        raise HTTPException(status_code=422, detail="series_tmdb_id or series_tvdb_id is required")
+    show = await find_show(db, tmdb_id=series_tmdb_id, tvdb_id=series_tvdb_id)
     if not show:
         return {"status": "ok", "count": 0}
 
@@ -2990,7 +3198,8 @@ async def unwatch_show(
 
 @router.post("/rewatch")
 async def start_rewatch(
-    series_tmdb_id: int = Query(...),
+    series_tmdb_id: int | None = Query(None),
+    series_tvdb_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
@@ -2999,8 +3208,9 @@ async def start_rewatch(
     read watched status from a fresh, empty progress cycle instead of full
     history until it's completed or cancelled. Calling this again while a
     cycle is already active resets it, discarding that cycle's progress."""
-    show_q = await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
-    show = show_q.scalar_one_or_none()
+    if series_tmdb_id is None and series_tvdb_id is None:
+        raise HTTPException(status_code=422, detail="series_tmdb_id or series_tvdb_id is required")
+    show = await find_show(db, tmdb_id=series_tmdb_id, tvdb_id=series_tvdb_id)
     if not show:
         raise HTTPException(status_code=404, detail="Show not found")
 
@@ -3017,15 +3227,17 @@ async def start_rewatch(
 
 @router.delete("/rewatch")
 async def cancel_rewatch(
-    series_tmdb_id: int = Query(...),
+    series_tmdb_id: int | None = Query(None),
+    series_tvdb_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Cancel an active rewatch cycle without finishing it. Watch history is
     untouched; the show goes back to reading watched status from full
     history, same as a naturally-completed rewatch."""
-    show_q = await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
-    show = show_q.scalar_one_or_none()
+    if series_tmdb_id is None and series_tvdb_id is None:
+        raise HTTPException(status_code=422, detail="series_tmdb_id or series_tvdb_id is required")
+    show = await find_show(db, tmdb_id=series_tmdb_id, tvdb_id=series_tvdb_id)
     if not show:
         raise HTTPException(status_code=404, detail="Show not found")
 

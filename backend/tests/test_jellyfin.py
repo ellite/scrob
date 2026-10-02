@@ -198,8 +198,8 @@ class JellyfinFindByIdsUserScopedTests(unittest.IsolatedAsyncioTestCase):
             requested_paths.append(request.url.path)
             if request.url.path == "/Items" and request.url.params.get("IncludeItemTypes") == "Series":
                 return httpx.Response(200, json={"Items": [{"Id": "series-item-id", "ProviderIds": {"Tmdb": "1399"}}]})
-            if request.url.path == "/Items":
-                return httpx.Response(200, json={"Items": [{"Id": "episode-item-id", "SeriesId": "series-item-id"}]})
+            if request.url.path == "/Shows/series-item-id/Episodes":
+                return httpx.Response(200, json={"Items": [{"Id": "episode-item-id", "IndexNumber": 1}]})
             return httpx.Response(200, json={"Id": "episode-item-id", "Type": "Episode"})
 
         transport = httpx.MockTransport(handler)
@@ -415,9 +415,9 @@ class JellyfinItemsBatchTests(unittest.IsolatedAsyncioTestCase):
                     {"Id": "wrong-series-id", "ProviderIds": {"Tmdb": "9999"}},
                     {"Id": "right-series-id", "ProviderIds": {"Tmdb": "1399"}},
                 ]})
-            if request.url.path == "/Items":
-                self.assertEqual(request.url.params.get("SeriesId"), "right-series-id")
-                return httpx.Response(200, json={"Items": [{"Id": "episode-id", "SeriesId": "right-series-id"}]})
+            if request.url.path == "/Shows/right-series-id/Episodes":
+                self.assertEqual(request.url.params.get("season"), "1")
+                return httpx.Response(200, json={"Items": [{"Id": "episode-id", "IndexNumber": 1}]})
             return httpx.Response(200, json={"Id": "episode-id"})
 
         transport = httpx.MockTransport(handler)
@@ -430,14 +430,15 @@ class JellyfinItemsBatchTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(item["Id"], "episode-id")
 
-    async def test_find_episode_by_ids_rejects_an_episode_from_the_wrong_series(self) -> None:
-        # Belt-and-braces: even if the series step is confirmed correct, the
-        # episode search result must actually belong to that series.
+    async def test_find_episode_by_ids_returns_none_when_the_index_number_is_missing(self) -> None:
+        # /Shows/{seriesId}/Episodes is already scoped to the series by path,
+        # not a filter param (see find_episode_in_series's docstring - #436),
+        # so the only remaining failure mode is no episode at that index.
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/Items" and request.url.params.get("IncludeItemTypes") == "Series":
                 return httpx.Response(200, json={"Items": [{"Id": "right-series-id", "ProviderIds": {"Tmdb": "1399"}}]})
-            if request.url.path == "/Items":
-                return httpx.Response(200, json={"Items": [{"Id": "episode-id", "SeriesId": "some-other-series-id"}]})
+            if request.url.path == "/Shows/right-series-id/Episodes":
+                return httpx.Response(200, json={"Items": [{"Id": "episode-id", "IndexNumber": 2}]})
             return httpx.Response(200, json={"Id": "episode-id"})
 
         transport = httpx.MockTransport(handler)

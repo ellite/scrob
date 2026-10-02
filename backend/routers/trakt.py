@@ -1255,7 +1255,7 @@ async def _local_dropped_show_tmdb_ids(
 
 
 async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
-    from routers.sync import SyncCancelled, _raise_if_cancelled
+    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
     print(f"Starting Trakt sync for user {user_id}, job {job_id}")
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
@@ -1286,7 +1286,7 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
             try:
                 access_token = await ensure_valid_trakt_token(db, settings)
             except TraktTokenError as exc:
-                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=str(exc)))
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=_short_error(exc)))
                 await db.commit()
                 return
 
@@ -1344,7 +1344,7 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
             print(f"Trakt sync job {job_id} failed: {exc}")
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
-                    status=SyncStatus.failed, error_message=str(exc)
+                    status=SyncStatus.failed, error_message=_short_error(exc)
                 )
             )
             await db.commit()
@@ -1428,7 +1428,7 @@ async def run_trakt_export_sync(
     sync_lists: bool = True,
     sync_comments: bool = True,
 ):
-    from routers.sync import SyncCancelled, _raise_if_cancelled
+    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
     print(f"Starting Trakt export import for user {user_id}, job {job_id}")
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
@@ -1499,7 +1499,7 @@ async def run_trakt_export_sync(
             print(f"Trakt export import job {job_id} failed: {exc}")
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
-                    status=SyncStatus.failed, error_message=str(exc)
+                    status=SyncStatus.failed, error_message=_short_error(exc)
                 )
             )
             await db.commit()
@@ -1535,6 +1535,72 @@ async def sync_trakt(
     background_tasks.add_task(run_trakt_sync, current_user.id, job.id, full)
     mode = "full resync" if full else "incremental sync"
     return {"status": "started", "job_id": job.id, "message": f"Trakt {mode} is running in the background"}
+
+
+@router.get("/comments")
+async def get_trakt_comments(
+    media_type: str = Query(...),
+    tmdb_id: int | None = Query(default=None),
+    tvdb_id: int | None = Query(default=None),
+    season_number: int | None = Query(default=None),
+    episode_number: int | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    sort: str = Query(default="likes"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Trakt's own public community comments for a movie/show/season/episode -
+    not the user's own comments (see models/comments.py's Comment for those).
+    Gated behind the per-user trakt_show_comments toggle (#434) - Trakt is
+    the only source of these, so there's no point resolving anything when
+    the user hasn't opted in, or hasn't connected Trakt at all.
+    """
+    if media_type not in ("movie", "show"):
+        raise HTTPException(status_code=422, detail="media_type must be 'movie' or 'show'")
+
+    result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
+    settings = result.scalar_one_or_none()
+    if not settings or not settings.trakt_show_comments or not settings.trakt_client_id:
+        return {"enabled": False, "resolved": False, "comments": []}
+
+    client_id = settings.trakt_client_id
+    trakt_id: str | None = None
+
+    try:
+        if media_type == "movie":
+            if tmdb_id:
+                media_result = await db.execute(
+                    select(Media.imdb_id).where(Media.media_type == MediaType.movie, Media.tmdb_id == tmdb_id)
+                )
+                imdb_id = media_result.scalar_one_or_none()
+                trakt_id = imdb_id or await trakt_client.resolve_trakt_id(client_id, "tmdb", tmdb_id, "movie")
+        else:
+            if tmdb_id:
+                trakt_id = await trakt_client.resolve_trakt_id(client_id, "tmdb", tmdb_id, "show")
+            if not trakt_id and tvdb_id:
+                trakt_id = await trakt_client.resolve_trakt_id(client_id, "tvdb", tvdb_id, "show")
+
+        if not trakt_id:
+            return {"enabled": True, "resolved": False, "comments": []}
+
+        if season_number is not None and episode_number is not None:
+            comments = await trakt_client.get_episode_comments(client_id, trakt_id, season_number, episode_number, sort=sort, page=page)
+        elif season_number is not None:
+            comments = await trakt_client.get_season_comments(client_id, trakt_id, season_number, sort=sort, page=page)
+        elif media_type == "movie":
+            comments = await trakt_client.get_movie_comments(client_id, trakt_id, sort=sort, page=page)
+        else:
+            comments = await trakt_client.get_show_comments(client_id, trakt_id, sort=sort, page=page)
+    except Exception:
+        logger.exception("Failed to fetch Trakt comments for user %s (%s, tmdb=%s)", current_user.id, media_type, tmdb_id)
+        return {"enabled": True, "resolved": bool(trakt_id), "comments": []}
+
+    return {
+        "enabled": True,
+        "resolved": True,
+        "comments": comments,
+        "trakt_url": f"https://trakt.tv/{media_type}s/{trakt_id}",
+    }
 
 
 @router.post("/import/upload")
@@ -1604,7 +1670,7 @@ async def trakt_import_upload(
 
 
 async def _run_trakt_push(user_id: int, job_id: int) -> None:
-    from routers.sync import SyncCancelled, _raise_if_cancelled
+    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
@@ -1627,7 +1693,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                 await db.execute(
                     update(SyncJob)
                     .where(SyncJob.id == job_id)
-                    .values(status=SyncStatus.failed, error_message=str(exc))
+                    .values(status=SyncStatus.failed, error_message=_short_error(exc))
                 )
                 await db.commit()
                 return
@@ -2070,7 +2136,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
             await db.execute(
                 update(SyncJob)
                 .where(SyncJob.id == job_id)
-                .values(status=SyncStatus.failed, error_message=str(exc))
+                .values(status=SyncStatus.failed, error_message=_short_error(exc))
             )
             await db.commit()
 

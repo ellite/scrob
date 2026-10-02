@@ -4,6 +4,7 @@ import { api, tmdbImageUrl, type DroppedShow, type DroppedMovie } from "../lib/a
 import { ratingPosterUrl } from "../lib/posters";
 import { showStatusLabel } from "../lib/labels";
 import { m } from "../paraglide/messages.js";
+import PosterFallback from "../components/PosterFallback.astro";
 export const prerender = false;
 
 const { token } = Astro.locals;
@@ -67,10 +68,7 @@ const total = shows.length + movies.length;
                     decoding="async"
                   />
                 ) : (
-                  <div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center">
-                    <span class="text-3xl mb-2 opacity-30">📺</span>
-                    <span class="text-xs font-bold uppercase tracking-widest">{s.title}</span>
-                  </div>
+                  <PosterFallback kind="show" title={s.title} class="flex" />
                 )}
               </div>
             </a>
@@ -116,10 +114,7 @@ const total = shows.length + movies.length;
                     decoding="async"
                   />
                 ) : (
-                  <div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center">
-                    <span class="text-3xl mb-2 opacity-30">🎬</span>
-                    <span class="text-xs font-bold uppercase tracking-widest">{movie.title}</span>
-                  </div>
+                  <PosterFallback kind="movie" title={movie.title} class="flex" />
                 )}
               </div>
             </a>

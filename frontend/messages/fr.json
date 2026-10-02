@@ -102,12 +102,14 @@
   "credits_scene_post": "Scène post-générique",
   "common_create": "Créer",
   "common_confirm": "Confirmer",
+  "common_ok": "OK",
   "common_dismiss": "Ignorer",
   "list_name_placeholder": "Nom de la liste",
   "pwa_install_title": "Installer Scrob",
   "pwa_install_message": "Ajoutez Scrob à votre écran d’accueil pour profiter de l’application complète.",
   "pwa_install": "Installer",
   "common_something_went_wrong": "Une erreur s’est produite",
+  "common_please_try_again": "Veuillez réessayer.",
   "common_saving": "Enregistrement…",
   "common_removing": "Suppression…",
   "common_remove": "Supprimer",
@@ -145,14 +147,28 @@
   "watch_unwatch_season_body": "Tous les visionnages de chaque épisode de cette saison seront supprimés.",
   "watch_unwatch_show_title": "Supprimer tout l’historique de visionnage ?",
   "watch_unwatch_show_body": "Tous les visionnages de chaque épisode de cette série seront supprimés.",
-  "list_unmatched_item": "Impossible d’ajouter un élément non identifié à une liste",
+  "customize_seasons_to_monitor": "Saisons à surveiller",
+  "customize_select_all": "Tout sélectionner",
+  "customize_select_none": "Tout désélectionner",
+  "customize_select_one_season": "Sélectionnez au moins une saison.",
+  "watch_show_job_timed_out": "Délai dépassé en attendant que la série soit marquée comme vue",
+  "watch_remove_all": "Supprimer tous les visionnages",
+  "watch_remove_all_season": "Supprimer tous les visionnages de cette saison",
+  "watch_remove_all_season_confirm_title": "Supprimer tous les visionnages de cette saison ?",
+  "watch_remove_all_season_confirm_body": "Toutes les lectures enregistrées de chaque épisode de cette saison seront supprimées et les épisodes marqués comme non vus sur les services activés. Cette action est irréversible.",
+  "watch_remove_all_show_confirm_title": "Supprimer tous les visionnages de cette série ?",
+  "watch_remove_all_show_confirm_body": "Toutes les lectures enregistrées de chaque épisode de cette série seront supprimées et les épisodes marqués comme non vus sur les services activés. Cette action est irréversible.",
+  "watch_remove_all_failed": "Impossible de supprimer les visionnages",
+  "list_unmatched_item": "Cet élément n’est pas identifié : il ne peut pas être ajouté à une liste.",
+  "list_unmatched_title": "Ajout aux listes impossible",
   "collection_remove_show_title": "Retirer la série de la collection ?",
   "collection_remove_show_body": "Toutes les entrées de collection de chaque épisode de cette série seront supprimées.",
   "collection_remove_season_title": "Retirer la saison de la collection ?",
   "collection_remove_season_body": "Toutes les entrées de collection de cette saison seront supprimées.",
   "collection_remove_title": "Retirer de la collection ?",
   "collection_remove_body": "Toutes les entrées de collection de cet élément seront supprimées.",
-  "collection_unmatched_item": "Impossible d’ajouter manuellement un élément non identifié à la collection",
+  "collection_unmatched_item": "Cet élément n’est pas identifié : il ne peut pas être ajouté manuellement à la collection.",
+  "collection_unmatched_title": "Ajout à la collection impossible",
   "collection_in_collection": "Dans la collection",
   "collection_add": "Ajouter à la collection",
   "request_added": "Ajouté",
@@ -397,6 +413,25 @@
   "comments_delete_confirm_title": "Supprimer le commentaire ?",
   "common_cannot_be_undone": "Cette action est irréversible.",
   "comments_delete_failed": "Impossible de supprimer le commentaire",
+  "trakt_comments_title": "Commentaires de la communauté",
+  "trakt_comments_view_on_trakt": "Voir sur Trakt →",
+  "trakt_comments_review": "Critique",
+  "trakt_comments_likes": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} j’aime",
+        "countPlural=other": "{count} j’aime",
+        "countPlural=*": "{count} j’aime"
+      }
+    }
+  ],
   "episodes_left": [
     {
       "declarations": [
@@ -457,6 +492,14 @@
   "genre_war": "Guerre",
   "genre_war_politics": "Guerre & Politique",
   "genre_western": "Western",
+  "crew_job_director": "Réalisation",
+  "crew_job_writer": "Scénario",
+  "crew_job_screenplay": "Scénario",
+  "crew_job_story": "Histoire",
+  "crew_job_teleplay": "Scénario TV",
+  "crew_job_producer": "Production",
+  "crew_job_executive_producer": "Production exécutive",
+  "crew_job_co_producer": "Coproduction",
   "show_status_returning": "Série en cours",
   "show_status_in_production": "En production",
   "show_status_planned": "Prévue",
@@ -572,6 +615,11 @@
   ],
   "search_local_only": "Seuls les résultats locaux sont affichés. {link} pour en voir plus.",
   "search_add_tmdb_key": "Ajoutez une clé TMDB",
+  "search_tvdb_fallback": "Vous ne trouvez pas ce que vous cherchez ? Essayez de chercher sur TheTVDB",
+  "search_tvdb_searching": "Recherche sur TheTVDB…",
+  "search_tvdb_failed": "La recherche TVDB a échoué.",
+  "search_tvdb_no_results": "Aucun résultat sur TheTVDB.",
+  "search_tvdb_results": "Résultats TheTVDB",
   "search_all_years": "Toutes les années",
   "common_clear": "Effacer",
   "search_no_users": "Aucun utilisateur trouvé pour « {query} ».",
@@ -615,16 +663,14 @@
   "common_refresh": "Actualiser",
   "calendar_loading": "Vérification des dates de diffusion de vos séries… (la première fois peut prendre une minute)",
   "calendar_error": "Impossible de charger le calendrier.",
-  "calendar_footer": "Les 14 prochains jours pour les séries que vous collectionnez ou regardez",
+  "calendar_footer": "Les 7 derniers jours et les 14 prochains pour les séries que vous collectionnez ou regardez",
   "common_today": "Aujourd’hui",
   "common_tomorrow": "Demain",
   "common_yesterday": "Hier",
   "calendar_badge_collected": "Collection",
   "calendar_badge_watched": "Vu",
   "common_tba": "À venir",
-  "calendar_computed_at": " · calculé le {date}",
-  "calendar_cached": " (en cache, 24 h maximum)",
-  "calendar_empty": "Aucun épisode à venir pour vos séries dans les 14 prochains jours.",
+  "calendar_empty": "Aucun épisode trouvé pour vos séries sur les 7 derniers jours ni les 14 prochains.",
   "person_enlarge_photo": "Agrandir la photo de {name}",
   "person_personal_info": "Informations personnelles",
   "person_known_for": "Connu pour",
@@ -681,6 +727,10 @@
   "common_overview": "Synopsis",
   "tmdb_collection_films": "Films de cette collection",
   "common_top_cast": "Têtes d’affiche",
+  "castcrew_cast": "Distribution",
+  "castcrew_crew": "Équipe technique",
+  "heatmap_not_rated": "non noté",
+  "media_trailer": "Bande-annonce",
   "tmdb_collection_appearances": [
     {
       "declarations": [
@@ -758,6 +808,7 @@
     }
   ],
   "show_seasons": "Saisons",
+  "show_episode_ratings": "Notes des épisodes",
   "show_episodes": "Épisodes",
   "show_episode_count_label": [
     {
@@ -799,6 +850,43 @@
   "history_empty": "Aucun historique pour le moment",
   "history_clear_search": "Effacer la recherche",
   "history_go_discover": "Découvrir quelque chose",
+  "history_select": "Sélectionner",
+  "history_select_done": "Terminé",
+  "history_select_day": "Sélectionner la journée",
+  "history_selected_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} sélectionnée",
+        "countPlural=other": "{count} sélectionnées",
+        "countPlural=*": "{count} sélectionnées"
+      }
+    }
+  ],
+  "history_delete_selected_title": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Supprimer {count} entrée ?",
+        "countPlural=other": "Supprimer {count} entrées ?",
+        "countPlural=*": "Supprimer {count} entrées ?"
+      }
+    }
+  ],
+  "history_delete_selected_body": "Elles seront retirées de votre historique de visionnage. Cette action est irréversible.",
+  "history_delete_selected_failed": "Échec - réessayer",
   "dropped_page_title": "Abandonnés",
   "dropped_summary": [
     {
@@ -964,6 +1052,19 @@
   "lists_no_public_hint": "Revenez plus tard, ou connectez-vous pour voir les vôtres.",
   "common_creating": "Création…",
   "lists_create_failed": "Impossible de créer la liste",
+  "lists_import_from": "Importer depuis {provider}",
+  "lists_import_title": "Importer une liste",
+  "lists_import_label": "URL ou ID de la liste",
+  "lists_import_provider_label": "URL ou ID de la liste {provider}",
+  "lists_import_mdblist_label": "URL ou ID MDBList",
+  "lists_import_placeholder": "{url} ou simplement {id}",
+  "lists_import_submit": "Importer",
+  "lists_importing": "Importation…",
+  "lists_import_failed": "Échec de l’importation de la liste",
+  "lists_import_tmdb_hint": "Collez l’URL ou l’ID d’une liste TMDB publique. Les listes privées ne peuvent pas être importées.",
+  "lists_import_tvdb_hint": "Collez l’URL ou l’ID d’une liste TheTVDB. Chaque élément est rapproché via son lien TMDB : ceux qui n’existent que sur TVDB (sans correspondance TMDB) sont ignorés. L’import peut prendre un peu plus de temps qu’un import TMDB.",
+  "lists_import_imdb_hint": "Collez l’URL ou l’ID d’une liste de titres IMDb publique. Les films et les séries entières sont rapprochés via TMDB ; les entrées non prises en charge, comme les épisodes et les jeux, sont ignorées.",
+  "lists_import_mdblist_hint": "Collez l’URL d’une liste MDBList, son identifiant utilisateur/slug ou son ID numérique. Les films et séries sont importés avec vos clés MDBList et TMDB configurées.",
   "common_delete_named_confirm": "Supprimer « {name} » ?",
   "list_private": "Cette liste est privée.",
   "list_not_found": "Liste introuvable.",
@@ -1559,6 +1660,8 @@
   "admin_0_unlimited": "0 (illimité)",
   "admin_copy_api_key": "Copier la clé API",
   "admin_tvdb_help": "Valeur par défaut pour tout le serveur, utilisée pour les séries issues de TVDB et la correspondance des épisodes selon l’ordre TVDB. Une clé de projet gratuite obtenue sur <span class=\"text-zinc-400\">thetvdb.com/api-information</span> ne nécessite pas de PIN ; une clé avec abonnement nécessite le PIN ci-dessous.",
+  "admin_mdblist_key_placeholder": "Clé API MDBList",
+  "admin_mdblist_help": "Valeur par défaut pour tout le serveur, utilisée pour importer des listes MDBList publiques. La synchronisation, l’envoi et le scrobbling restent soumis à une connexion MDBList personnelle.",
   "admin_tvdb_pin_label": "Code PIN d’abonné <span class=\"text-zinc-600\">(facultatif)</span>",
   "admin_role_admin": "Admin",
   "admin_restore_help": "Envoyez un fichier de sauvegarde <code class=\"text-zinc-300\">.bak</code> à restaurer. <span class=\"text-red-400 font-medium\">Toutes les données existantes seront écrasées.</span>",
@@ -1572,6 +1675,9 @@
   "admin_no_tags": "Aucun tag disponible",
   "admin_enter_url_key_first": "Saisissez d’abord l’URL et la clé API de {service}.",
   "admin_failed_to_connect": "Échec de la connexion",
+  "admin_enter_api_key_first": "Saisissez d’abord une clé API {service}.",
+  "admin_failed_to_connect_to": "Échec de la connexion à {service}",
+  "admin_connection_successful": "Connexion à {service} réussie.",
   "admin_folder_free_space": "{path} ({free} Go libres)",
   "admin_connected_profiles_fetched": "{service} connecté et profils récupérés.",
   "admin_service_error": "Erreur {service}",
@@ -1595,6 +1701,12 @@
   "admin_clear_cache_failed": "Impossible de vider le cache",
   "admin_cache_cleared": "Cache d’images vidé.",
   "admin_user_updated": "Utilisateur mis à jour.",
+  "admin_reset_password": "Réinitialiser le mot de passe",
+  "admin_reset_password_body": "Définissez un nouveau mot de passe pour {username}.",
+  "admin_password_updated": "Mot de passe mis à jour.",
+  "admin_disable_2fa_confirm_title": "Désactiver la 2FA ?",
+  "admin_disable_2fa_confirm_body": "{username} pourra se connecter avec son seul mot de passe jusqu’à ce que la 2FA soit à nouveau configurée.",
+  "admin_2fa_disabled": "2FA désactivée.",
   "admin_cache_stats": [
     {
       "declarations": [
@@ -1687,6 +1799,10 @@
   "conn_scrob_trakt": "Scrob → Trakt",
   "conn_now_watching": "En cours de visionnage",
   "conn_connect_simkl": "Connecter Simkl",
+  "conn_connect_service": "Connecter {name}",
+  "conn_wetrakr_connected_hint": "WeTrakr est connecté. Utilisez « Récupérer » pour importer votre historique de visionnage et vos notes.",
+  "conn_wetrakr_setup_hint": "Cliquez sur « Connecter WeTrakr » pour lier votre compte, sans avoir à créer d’application.",
+  "conn_wetrakr_push_title": "Envoyer tous les états de visionnage, notes, listes et commentaires de Scrob vers WeTrakr",
   "conn_simkl_scrob": "Simkl → Scrob",
   "conn_scrob_simkl": "Scrob → Simkl",
   "conn_mdblist_scrob": "MDBList → Scrob",
@@ -1749,9 +1865,14 @@
   "conn_profile_id": "Profil {id}",
   "conn_select_profile": "Choisir un profil",
   "conn_ratings": "Notes",
+  "conn_lists": "Listes",
+  "conn_comments": "Commentaires",
+  "conn_trakt_community_comments": "Commentaires de la communauté",
+  "conn_trakt_community_comments_hint": "Afficher les commentaires publics de Trakt (pas les vôtres) sur les pages des films, séries, saisons et épisodes.",
   "conn_playback_events": "Événements de lecture",
   "conn_watchlist": "Liste à voir",
   "conn_tmdb_required_for_sync": "Le jeton d’accès en lecture TMDB est nécessaire pour la synchronisation",
+  "conn_pull_watched_ratings_from": "Récupérer l’historique de visionnage et les notes depuis {name}",
   "conn_sync_library_title": "Synchroniser la bibliothèque, l’état de visionnage et la progression de lecture de {service}",
   "conn_pull_from": "Récupérer depuis {name}",
   "conn_sync_now": "Synchroniser",
@@ -1817,6 +1938,11 @@
   "conn_trakt_settings_saved": "Paramètres Trakt enregistrés.",
   "conn_failed_to_save_simkl_settings": "Impossible d’enregistrer les paramètres Simkl",
   "conn_simkl_settings_saved": "Paramètres Simkl enregistrés.",
+  "conn_service_settings_saved": "Paramètres {name} enregistrés.",
+  "conn_failed_to_save_service_settings": "Impossible d’enregistrer les paramètres {name}",
+  "conn_failed_to_start_service_auth": "Impossible de lancer l’authentification {name}",
+  "conn_disconnect_service_confirm": "Déconnecter {name} ? Vos jetons {name} seront supprimés de Scrob.",
+  "conn_failed_to_disconnect_service": "Impossible de déconnecter {name}",
   "conn_failed_to_save_mdblist_settings": "Impossible d’enregistrer les paramètres MDBList",
   "conn_mdblist_settings_saved": "Paramètres MDBList enregistrés.",
   "conn_failed_to_save_bingebase_settings": "Impossible d’enregistrer les paramètres Bingebase",
@@ -1927,6 +2053,7 @@
   "conn_item_playback_events": "événements de lecture",
   "conn_item_playback_progress": "progression de lecture",
   "conn_item_watchlist": "liste à voir",
+  "conn_item_comments": "commentaires",
   "conn_item_watched_history": "historique de visionnage",
   "conn_item_lists": "listes",
   "conn_item_dropped_shows": "séries abandonnées",
@@ -1942,6 +2069,7 @@
   "conn_push_to_name": "Envoyer vers {name} ?",
   "conn_nothing_selected_push_to": "Vos paramètres actuels ne sélectionnent rien à envoyer vers {name}. Activez au moins une option dans la section « Scrob → {name} ».",
   "conn_will_push_to_server": "Seront envoyés de Scrob vers {name} : {items}. Les données existantes sur le serveur peuvent être écrasées.",
+  "conn_will_push_to_service": "Seront envoyés de Scrob vers {name} : {items}. Les données existantes sur {name} peuvent être écrasées.",
   "conn_trakt_full_rescan_body": "Seront réanalysés intégralement sur Trakt : {items}. Les événements Scrob existants sont conservés et dédoublonnés.",
   "conn_trakt_pull_body": "Seront importés depuis Trakt, depuis la dernière récupération réussie : {items} (nouveaux éléments).",
   "conn_simkl_pull_body": "Seront importés depuis Simkl dans Scrob : {items}.",
@@ -1950,6 +2078,7 @@
   "conn_mdblist_pull_body": "Seront importés depuis MDBList dans Scrob : {items}.",
   "conn_mdblist_push_body": "Seront ajoutés ou mis à jour sur MDBList : {items}. Les éléments distants existants sont conservés.",
   "conn_error_detail": "Erreur : {detail}",
+  "conn_server_error_fallback": "{message} (erreur serveur {status})",
   "conn_authorization_failed": "Échec de l’autorisation",
   "conn_enter_provider_credentials": "Saisissez votre e-mail et votre mot de passe {provider}.",
   "conn_no_provider_profile": "Aucun profil {provider} n’est disponible pour ce compte.",

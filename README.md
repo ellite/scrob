@@ -410,6 +410,8 @@ Ratings are not synchronized with Nuvio.
 
 **Auto Pull** and **Auto Push** can run independently every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours. Nuvio synchronization is polling-based; Nuvio does not use the media-server webhook URLs documented below.
 
+For Plex, Jellyfin, Emby and Nuvio, an Auto Push only sends what changed since the previous push: ratings and watched status the server already received with the same value are skipped, and items that were not found on the server are not searched for again for 24 hours. The **Push** button always reconciles everything, and Auto Push does the same once a week, so a value edited directly on the server is put back within a week at most.
+
 Inbound Nuvio identifiers are normalized to TMDB for Scrob's internal matching. Before an outbound push, Scrob resolves those TMDB identifiers to Nuvio-compatible bare IMDb identifiers (`tt...`) and caches the mapping. Unsupported identifiers are skipped rather than attached to the wrong title.
 
 ## Trakt Synchronization

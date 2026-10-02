@@ -1,0 +1,107 @@
+---
+import { api, type TraktComment } from "../lib/api";
+import { formatDate } from "../lib/format";
+import { m } from "../paraglide/messages.js";
+
+interface Props {
+  mediaType: "movie" | "show";
+  tmdbId?: number | null;
+  tvdbId?: number | null;
+  seasonNumber?: number;
+  episodeNumber?: number;
+}
+
+const { mediaType, tmdbId, tvdbId, seasonNumber, episodeNumber } = Astro.props;
+const token = Astro.cookies.get("token")?.value;
+
+let comments: TraktComment[] = [];
+let traktUrl: string | undefined;
+// The user's settings are already on hand (middleware), so skip the request
+// altogether when community comments are off instead of asking the backend
+// to say "disabled" on every page load.
+if (token && Astro.locals.settings?.trakt_show_comments && (tmdbId || tvdbId)) {
+  try {
+    const res = await api.traktComments.list({
+      media_type: mediaType,
+      tmdb_id: tmdbId ?? undefined,
+      tvdb_id: tmdbId ? undefined : (tvdbId ?? undefined),
+      season_number: seasonNumber,
+      episode_number: episodeNumber,
+    }, token);
+    comments = res.comments;
+    traktUrl = res.trakt_url;
+  } catch (e) {
+    console.error("Failed to load Trakt comments", e);
+  }
+}
+---
+
+{comments.length > 0 && (
+<div class="mt-24 border-zinc-900 pt-16 mb-20">
+  <div class="flex items-center justify-between mb-10">
+    <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase flex items-center gap-3">
+      <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-red-500">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+      {m.trakt_comments_title()}
+      <span class="text-sm font-bold text-zinc-500 bg-zinc-900 px-3 py-1 rounded-full border border-zinc-800 ml-2">
+        {comments.length}
+      </span>
+    </h2>
+    {traktUrl && (
+      <a href={traktUrl} target="_blank" rel="noopener noreferrer" class="text-sm font-semibold text-red-400 hover:text-red-300 transition-colors">
+        {m.trakt_comments_view_on_trakt()}
+      </a>
+    )}
+  </div>
+
+  <div class="w-full space-y-8">
+    {comments.map((comment) => (
+      <div class="flex gap-5">
+        <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-zinc-700 overflow-hidden flex items-center justify-center text-xl font-black text-zinc-400 shrink-0 shadow-lg">
+          {comment.user.name?.[0]?.toUpperCase() || comment.user.username[0].toUpperCase()}
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-3 mb-1.5 flex-wrap">
+            <span class="font-black text-zinc-100 truncate">{comment.user.name || comment.user.username}</span>
+            <span class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest px-2 py-0.5 bg-zinc-900 border border-zinc-800 rounded shrink-0">
+              {formatDate(comment.created_at, { month: 'short', day: 'numeric', year: 'numeric' })}
+            </span>
+            {comment.review && (
+              <span class="text-[10px] font-bold text-red-400 uppercase tracking-widest px-2 py-0.5 bg-red-500/10 border border-red-500/30 rounded shrink-0">
+                {m.trakt_comments_review()}
+              </span>
+            )}
+            <span class:list={["trakt-spoiler-badge text-[10px] font-bold text-amber-400 uppercase tracking-widest px-2 py-0.5 bg-amber-500/10 border border-amber-500/30 rounded shrink-0", !comment.spoiler && "hidden"]}>
+              {m.comments_spoiler()}
+            </span>
+            {comment.likes > 0 && (
+              <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                {m.trakt_comments_likes({ count: comment.likes })}
+              </span>
+            )}
+          </div>
+          <div class="trakt-comment-body relative">
+            <p class:list={["trakt-comment-text text-zinc-300 leading-relaxed font-medium whitespace-pre-wrap break-words", comment.spoiler && "blur-sm select-none pointer-events-none"]}>
+              {comment.comment}
+            </p>
+            <div class:list={["trakt-spoiler-overlay absolute inset-0 flex items-center justify-center rounded-lg cursor-pointer bg-zinc-950/70 backdrop-blur-sm", !comment.spoiler && "hidden"]}>
+              <span class="text-amber-400 font-bold text-sm">{m.comments_click_to_reveal()}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    ))}
+  </div>
+</div>
+)}
+
+<script>
+  document.querySelectorAll('.trakt-spoiler-overlay').forEach((overlay) => {
+    overlay.addEventListener('click', () => {
+      const body = overlay.closest('.trakt-comment-body');
+      body?.querySelector('.trakt-comment-text')?.classList.remove('blur-sm', 'select-none', 'pointer-events-none');
+      overlay.classList.add('hidden');
+    });
+  });
+</script>

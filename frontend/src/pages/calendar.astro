@@ -1,10 +1,59 @@
 ---
 import Base from "../layouts/Base.astro";
+import { api, tmdbImageUrl, type CalendarEntry } from "../lib/api";
+import { ratingPosterUrl } from "../lib/posters";
+import { formatDate } from "../lib/format";
 import { m } from "../paraglide/messages.js";
 export const prerender = false;
 
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
+
+// cached_only=true never blocks on a TMDB recompute (see backend/routers/
+// calendar.py) - it serves whatever cache is usable (same-day fresh, or up
+// to 48h stale with collected/watched still resolved live) so the page
+// renders real items on the very first response instead of an empty shell
+// a client script fills in after the fact. `cached: false` only happens for
+// a genuinely cold cache (first-ever visit, or >48h since the last load) -
+// that's the one case actually worth a client-side wait.
+let calendarData: Awaited<ReturnType<typeof api.calendar.get>> | null = null;
+let loadError = "";
+try {
+  calendarData = await api.calendar.get(token, true);
+} catch (e: any) {
+  loadError = e.message;
+}
+
+// Only actually "needs" a client-side wait when there's no load error to
+// show instead - an error should never trigger the poll-and-reload loop.
+const needsCompute = !loadError && !calendarData?.cached;
+const entries = calendarData?.calendar?.entries ?? [];
+const todayIso = calendarData?.calendar?.today ?? new Date().toISOString().slice(0, 10);
+
+function dayLabel(iso: string, today: string): string {
+  const d = Date.UTC(...(iso.split('-').map(Number) as [number, number, number]));
+  const t = Date.UTC(...(today.split('-').map(Number) as [number, number, number]));
+  const diff = Math.round((d - t) / 86400000);
+  if (diff === 0) return m.common_today();
+  if (diff === 1) return m.common_tomorrow();
+  if (diff === -1) return m.common_yesterday();
+  return formatDate(iso + 'T00:00:00Z', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+}
+
+function entryHref(e: CalendarEntry): string {
+  if (e.show_tmdb_id) return `/show/${e.show_tmdb_id}/season/${e.season_number}/${e.episode_number}`;
+  if (e.show_tvdb_id) return `/show/tvdb/${e.show_tvdb_id}/season/${e.season_number}/${e.episode_number}`;
+  return '#';
+}
+
+// Entries arrive pre-sorted by air_date (then title, season, episode) from
+// the backend - a plain object preserves that insertion order, so grouping
+// into it reproduces the same day-by-day ordering without re-sorting.
+const byDay: Record<string, CalendarEntry[]> = {};
+for (const e of entries) {
+  (byDay[e.air_date] ??= []).push(e);
+}
+const days = Object.keys(byDay);
 ---
 
 <Base title={m.nav_calendar()}>
@@ -22,119 +71,94 @@ Astro.response.headers.set("Cache-Control", "no-store");
     </button>
   </div>
 
-  <div id="cal-loading" class="py-20 text-center text-zinc-500">{m.calendar_loading()}</div>
-  <div id="cal-error" class="hidden py-20 text-center text-zinc-500">{m.calendar_error()}</div>
-  <div id="cal-body" class="hidden space-y-8"></div>
-  <p class="text-zinc-500 mt-8">{m.calendar_footer()}<span id="cal-meta"></span></p>
+  {loadError ? (
+    <div class="py-20 text-center text-zinc-500">{m.calendar_error()}</div>
+  ) : needsCompute ? (
+    <div id="cal-pending" class="py-20 text-center text-zinc-500">{m.calendar_loading()}</div>
+  ) : days.length === 0 ? (
+    <p class="text-zinc-500 text-center py-10">{m.calendar_empty()}</p>
+  ) : (
+    <div class="space-y-8">
+      {days.map((day) => (
+        <section>
+          <h2 class="group-label mb-3">{dayLabel(day, todayIso)} <span class="text-zinc-600 normal-case tracking-normal font-medium">· {day}</span></h2>
+          <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {byDay[day].map((e) => {
+              const sxe = e.season_number != null && e.episode_number != null
+                ? `S${String(e.season_number).padStart(2, '0')}E${String(e.episode_number).padStart(2, '0')}`
+                : '';
+              const poster = ratingPosterUrl(
+                tmdbImageUrl(e.poster_path, "w185"),
+                { type: "series", tmdb_id: e.show_tmdb_id ?? null, tvdb_id: e.show_tvdb_id ?? null },
+                Astro.locals.hasRpdbKey,
+              );
+              return (
+                <a href={entryHref(e)} class="flex items-center gap-4 p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-blue-500/50 transition-colors">
+                  {poster ? (
+                    <img src={poster} alt="" class="w-10 rounded-md object-cover shrink-0" loading="lazy" decoding="async" style="height:60px" />
+                  ) : (
+                    <div class="w-10 shrink-0 flex items-center justify-center text-zinc-600" style="height:60px">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="45%" height="45%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
+                    </div>
+                  )}
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                      <div class="font-bold text-zinc-100 truncate">{e.show_title}</div>
+                      {e.collected && <span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400">{m.calendar_badge_collected()}</span>}
+                      {e.watched && <span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">{m.calendar_badge_watched()}</span>}
+                    </div>
+                    <div class="text-sm text-zinc-500 truncate">{sxe && <span class="font-bold text-blue-400">{sxe}</span>} {sxe && '· '}{e.episode_name || m.common_tba()}</div>
+                  </div>
+                </a>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  )}
+
+  <p class="text-zinc-500 mt-8">{m.calendar_footer()}</p>
 </Base>
 
-<script>
-  import { m } from '../paraglide/messages.js';
-  import { formatDate, formatDateTime } from '../lib/format';
+<script define:vars={{ token, needsCompute }}>
+  const refreshBtn = document.getElementById('cal-refresh-btn');
+  const refreshIcon = document.getElementById('cal-refresh-icon');
 
-  const token = (window as any).__AUTH_TOKEN__ ?? '';
-  const $ = (id) => document.getElementById(id);
-
-  function esc(s) {
-    if (s == null) return '';
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
-  function dayLabel(iso, todayIso) {
-    // Diffed as plain ISO date strings (via Date.UTC) against the server's
-    // own "today", not the viewer's browser clock - the entries themselves
-    // are already dated against the server's configured timezone, so the
-    // label has to use that same reference or it can disagree with the data.
-    const d = Date.UTC(...iso.split('-').map(Number));
-    const t = Date.UTC(...todayIso.split('-').map(Number));
-    const diff = Math.round((d - t) / 86400000);
-    if (diff === 0) return m.common_today();
-    if (diff === 1) return m.common_tomorrow();
-    if (diff === -1) return m.common_yesterday();
-    return formatDate(iso + 'T00:00:00Z', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
-  }
-
-  function entryRow(e) {
-    const href = e.show_tmdb_id
-      ? `/show/${e.show_tmdb_id}/season/${e.season_number}/${e.episode_number}`
-      : (e.show_tvdb_id ? `/show/tvdb/${e.show_tvdb_id}/season/${e.season_number}/${e.episode_number}` : '#');
-    const sxe = e.season_number != null && e.episode_number != null
-      ? `S${String(e.season_number).padStart(2, '0')}E${String(e.episode_number).padStart(2, '0')}`
-      : '';
-    const badges = [
-      e.collected ? '<span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400">' + esc(m.calendar_badge_collected()) + '</span>' : '',
-      e.watched ? '<span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">' + esc(m.calendar_badge_watched()) + '</span>' : '',
-    ].filter(Boolean).join('');
-    const poster = (e.show_tmdb_id || e.show_tvdb_id)
-      ? window.ratingPosterUrl(e.poster_path, {
-          type: 'series',
-          tmdb_id: e.show_tmdb_id ?? null,
-          tvdb_id: e.show_tvdb_id ?? null,
-        }, window.__HAS_RPDB__)
-      : e.poster_path;
-    return `
-      <a href="${esc(href)}" class="flex items-center gap-4 p-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-blue-500/50 transition-colors">
-        ${poster ? `<img src="${esc(poster)}" alt="" class="w-10 rounded-md object-cover shrink-0" loading="lazy" style="height:60px"/>`
-              : '<div class="w-10 shrink-0 text-2xl text-center opacity-30" style="height:60px;line-height:60px">📺</div>'}
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-2">
-            <div class="font-bold text-zinc-100 truncate">${esc(e.show_title)}</div>
-            ${badges}
-          </div>
-          <div class="text-sm text-zinc-500 truncate">${sxe ? `<span class="font-bold text-blue-400">${sxe}</span> · ` : ''}${esc(e.episode_name || m.common_tba())}</div>
-        </div>
-      </a>`;
-  }
-
-  function render(data) {
-    const cal = data.calendar || {};
-    const entries = cal.entries || [];
-    const todayIso = cal.today || new Date().toISOString().slice(0, 10);
-    if (data.computed_at) {
-      $('cal-meta').textContent = m.calendar_computed_at({ date: formatDateTime(data.computed_at + 'Z') }) + (data.cached ? m.calendar_cached() : '');
-    }
-
-    const byDay = new Map();
-    for (const e of entries) {
-      if (!byDay.has(e.air_date)) byDay.set(e.air_date, []);
-      byDay.get(e.air_date).push(e);
-    }
-
-    const bodyHtml = [...byDay.entries()].map(([day, list]) => `
-      <section>
-        <h2 class="group-label mb-3">${esc(dayLabel(day, todayIso))} <span class="text-zinc-600 normal-case tracking-normal font-medium">· ${esc(day)}</span></h2>
-        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">${list.map(entryRow).join('')}</div>
-      </section>`).join('');
-
-    $('cal-body').innerHTML = bodyHtml || `<p class="text-zinc-500 text-center py-10">${esc(m.calendar_empty())}</p>`;
-    $('cal-loading').classList.add('hidden');
-    $('cal-error').classList.add('hidden');
-    $('cal-body').classList.remove('hidden');
-  }
-
-  async function load(refresh) {
+  refreshBtn?.addEventListener('click', async () => {
+    refreshIcon?.classList.add('animate-spin');
+    refreshBtn.disabled = true;
     try {
-      const res = await fetch(`/api/proxy/calendar${refresh ? '/refresh' : ''}`, {
-        method: refresh ? 'POST' : 'GET',
+      await fetch('/api/proxy/calendar/refresh', {
+        method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error('failed');
-      render(await res.json());
-    } catch {
-      $('cal-loading').classList.add('hidden');
-      $('cal-body').classList.add('hidden');
-      $('cal-error').classList.remove('hidden');
+    } finally {
+      window.location.reload();
     }
-  }
-
-  $('cal-refresh-btn').addEventListener('click', async () => {
-    const icon = $('cal-refresh-icon');
-    icon.classList.add('animate-spin');
-    $('cal-refresh-btn').disabled = true;
-    await load(true);
-    icon.classList.remove('animate-spin');
-    $('cal-refresh-btn').disabled = false;
   });
 
-  load(false);
+  // Only present on a genuinely cold cache (first-ever visit) - poll until
+  // the background compute the server already kicked off finishes, then
+  // reload for a fresh server-rendered page. Everything else on this page
+  // is plain SSR with no client-side rendering at all.
+  if (needsCompute) {
+    (async () => {
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const res = await fetch('/api/proxy/calendar?cached_only=true', {
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          const data = await res.json();
+          if (data.cached) {
+            window.location.reload();
+            return;
+          }
+        } catch {
+          // keep polling - a transient failure here shouldn't strand the page
+        }
+      }
+    })();
+  }
 </script>

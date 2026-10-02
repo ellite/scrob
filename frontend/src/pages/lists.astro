@@ -8,6 +8,21 @@ export const prerender = false;
 const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 
+// Remote imports only make sense for a logged-in owner (list
+// creation is inherently an authenticated action), so no anonymous fallback
+// branch is needed here unlike shows.astro/search.astro's public-browse
+// pages. TVDB, IMDb, and MDBList items resolve through TMDB under the hood;
+// their entry points may additionally require their own provider key.
+let hasTmdbKey = false;
+let hasTvdbKey = false;
+let hasMdblistKey = false;
+if (user && token) {
+  const settings = await api.auth.getSettings(token);
+  hasTmdbKey = !!settings?.has_effective_tmdb_key;
+  hasTvdbKey = !!settings?.has_effective_tvdb_key;
+  hasMdblistKey = !!(settings?.mdblist_connected || settings?.has_global_mdblist_key);
+}
+
 let lists: UserList[] = [];
 let publicLists: PublicList[] = [];
 let error = "";
@@ -38,15 +53,82 @@ try {
     {user && (
       <div class="flex items-center justify-between mb-6">
         <h2 class="section-headline">{m.lists_my_lists()}</h2>
-        <button
-          id="new-list-btn"
-          class="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/20 active:scale-95 text-sm cursor-pointer"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-          {m.lists_new_list()}
-        </button>
+        <div class="relative">
+          <button
+            id="new-list-btn"
+            class="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/20 active:scale-95 text-sm cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            {m.lists_new_list()}
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3 h-3 opacity-70">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+          </button>
+          <div id="new-list-menu" class="hidden absolute top-full right-0 mt-2 w-56 z-50">
+            <div class="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl p-2 text-sm">
+              <button
+                type="button"
+                id="open-create-modal-btn"
+                class="w-full flex items-center gap-2.5 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition cursor-pointer text-left"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 shrink-0">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                {m.lists_create_list()}
+              </button>
+              {hasTmdbKey && (
+                <button
+                  type="button"
+                  class="open-import-modal-btn w-full flex items-center gap-2.5 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition cursor-pointer text-left"
+                  data-provider="tmdb"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 shrink-0">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                  {m.lists_import_from({ provider: "TMDB" })}
+                </button>
+              )}
+              {hasTvdbKey && (
+                <button
+                  type="button"
+                  class="open-import-modal-btn w-full flex items-center gap-2.5 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition cursor-pointer text-left"
+                  data-provider="tvdb"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 shrink-0">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                  {m.lists_import_from({ provider: "TVDB" })}
+                </button>
+              )}
+              {hasTmdbKey && (
+                <button
+                  type="button"
+                  class="open-import-modal-btn w-full flex items-center gap-2.5 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition cursor-pointer text-left"
+                  data-provider="imdb"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 shrink-0">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                  {m.lists_import_from({ provider: "IMDb" })}
+                </button>
+              )}
+              {hasTmdbKey && hasMdblistKey && (
+                <button
+                  type="button"
+                  class="open-import-modal-btn w-full flex items-center gap-2.5 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition cursor-pointer text-left"
+                  data-provider="mdblist"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 shrink-0">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                  {m.lists_import_from({ provider: "MDBList" })}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     )}
 
@@ -134,18 +216,92 @@ try {
     </div>
     )}
 
+    <!-- Remote list import modal - one shared modal, contents swapped by
+         provider (see openImportModal below) rather than duplicating it. -->
+    {user && (hasTmdbKey || hasTvdbKey) && (
+    <div id="import-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div id="import-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+      <div class="relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
+        <h2 id="import-modal-title" class="text-xl font-black text-zinc-100 mb-2">{m.lists_import_title()}</h2>
+        <p id="import-modal-hint" class="text-sm text-zinc-500 mb-6"></p>
+        <form id="import-form" class="space-y-4">
+          <div>
+            <label id="import-modal-label" for="list-id-input" class="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">{m.lists_import_label()}</label>
+            <input
+              type="text"
+              id="list-id-input"
+              required
+              class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+            />
+          </div>
+          <div id="import-error" class="hidden text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2"></div>
+          <div class="flex gap-3 pt-2">
+            <button
+              type="button"
+              id="import-cancel-btn"
+              class="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-all text-sm cursor-pointer"
+            >
+              {m.common_cancel()}
+            </button>
+            <button
+              type="submit"
+              id="import-submit-btn"
+              class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all text-sm cursor-pointer disabled:opacity-50 inline-flex items-center justify-center gap-2"
+            >
+              <span id="import-submit-label" class="inline-flex items-center gap-2">{m.lists_import_submit()}</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+    )}
+
     <!-- Lists Grid -->
     {user && (lists.length === 0 && !error ? (
       <div class="text-center py-24 bg-zinc-900/20 border border-zinc-800/50 border-dashed rounded-3xl">
         <div class="text-5xl mb-4">📋</div>
         <h2 class="text-xl font-bold text-zinc-100 mb-2">{m.lists_empty()}</h2>
         <p class="text-zinc-500 mb-6">{m.lists_empty_hint()}</p>
-        <button
-          id="empty-new-list-btn"
-          class="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/20 active:scale-95 cursor-pointer"
-        >
-          {m.lists_create_a_list()}
-        </button>
+        <div class="flex items-center justify-center gap-3">
+          <button
+            id="empty-new-list-btn"
+            class="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/20 active:scale-95 cursor-pointer"
+          >
+            {m.lists_create_a_list()}
+          </button>
+          {hasTmdbKey && (
+            <button
+              class="open-import-modal-btn px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-xl transition-all active:scale-95 cursor-pointer"
+              data-provider="tmdb"
+            >
+              {m.lists_import_from({ provider: "TMDB" })}
+            </button>
+          )}
+          {hasTvdbKey && (
+            <button
+              class="open-import-modal-btn px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-xl transition-all active:scale-95 cursor-pointer"
+              data-provider="tvdb"
+            >
+              {m.lists_import_from({ provider: "TVDB" })}
+            </button>
+          )}
+          {hasTmdbKey && (
+            <button
+              class="open-import-modal-btn px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-xl transition-all active:scale-95 cursor-pointer"
+              data-provider="imdb"
+            >
+              {m.lists_import_from({ provider: "IMDb" })}
+            </button>
+          )}
+          {hasTmdbKey && hasMdblistKey && (
+            <button
+              class="open-import-modal-btn px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-xl transition-all active:scale-95 cursor-pointer"
+              data-provider="mdblist"
+            >
+              {m.lists_import_from({ provider: "MDBList" })}
+            </button>
+          )}
+        </div>
       </div>
     ) : (
       <div id="lists-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -205,6 +361,7 @@ try {
 
 <script>
   import { m } from '../paraglide/messages.js';
+  import { escapeHtml as esc } from '../lib/format';
 
   const token = (window as any).__AUTH_TOKEN__ ?? '';
   const modal = document.getElementById('create-modal');
@@ -225,10 +382,132 @@ try {
     createError.classList.add('hidden');
   }
 
-  document.getElementById('new-list-btn')?.addEventListener('click', openModal);
   document.getElementById('empty-new-list-btn')?.addEventListener('click', openModal);
   cancelBtn?.addEventListener('click', closeModal);
   document.getElementById('modal-backdrop')?.addEventListener('click', closeModal);
+
+  // "New List" dropdown - same toggle pattern as Base.astro's user menu.
+  const newListBtn = document.getElementById('new-list-btn');
+  const newListMenu = document.getElementById('new-list-menu');
+  newListBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = !newListMenu?.classList.contains('hidden');
+    newListMenu?.classList.toggle('hidden', isOpen);
+  });
+  document.addEventListener('click', () => newListMenu?.classList.add('hidden'));
+
+  document.getElementById('open-create-modal-btn')?.addEventListener('click', () => {
+    newListMenu?.classList.add('hidden');
+    openModal();
+  });
+
+  // Remote imports share one modal, with copy and endpoint swapped per provider.
+  const PROVIDERS = {
+    tmdb: {
+      title: m.lists_import_from({ provider: 'TMDB' }),
+      hint: m.lists_import_tmdb_hint(),
+      label: m.lists_import_provider_label({ provider: 'TMDB' }),
+      placeholder: m.lists_import_placeholder({ url: 'https://www.themoviedb.org/list/1-...', id: '1' }),
+      endpoint: '/api/proxy/lists/import/tmdb',
+    },
+    tvdb: {
+      title: m.lists_import_from({ provider: 'TVDB' }),
+      hint: m.lists_import_tvdb_hint(),
+      label: m.lists_import_provider_label({ provider: 'TVDB' }),
+      placeholder: m.lists_import_placeholder({ url: 'https://www.thetvdb.com/lists/13131', id: '13131' }),
+      endpoint: '/api/proxy/lists/import/tvdb',
+    },
+    imdb: {
+      title: m.lists_import_from({ provider: 'IMDb' }),
+      hint: m.lists_import_imdb_hint(),
+      label: m.lists_import_provider_label({ provider: 'IMDb' }),
+      placeholder: m.lists_import_placeholder({ url: 'https://www.imdb.com/list/ls055592025', id: 'ls055592025' }),
+      endpoint: '/api/proxy/lists/import/imdb',
+    },
+    mdblist: {
+      title: m.lists_import_from({ provider: 'MDBList' }),
+      hint: m.lists_import_mdblist_hint(),
+      label: m.lists_import_mdblist_label(),
+      placeholder: 'https://mdblist.com/lists/user/list-name',
+      endpoint: '/api/proxy/lists/import/mdblist',
+    },
+  };
+  const SPINNER_SVG = '<svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
+
+  const importModal = document.getElementById('import-modal');
+  const importForm = document.getElementById('import-form');
+  const importCancelBtn = document.getElementById('import-cancel-btn');
+  const importError = document.getElementById('import-error');
+  const importSubmitBtn = document.getElementById('import-submit-btn');
+  const importSubmitLabel = document.getElementById('import-submit-label');
+  const importModalTitle = document.getElementById('import-modal-title');
+  const importModalHint = document.getElementById('import-modal-hint');
+  const importModalLabel = document.getElementById('import-modal-label');
+  const listIdInput = document.getElementById('list-id-input');
+
+  function openImportModal(provider) {
+    const cfg = PROVIDERS[provider];
+    if (!cfg || !importModal) return;
+    importModal.dataset.provider = provider;
+    importModalTitle.textContent = cfg.title;
+    importModalHint.textContent = cfg.hint;
+    importModalLabel.textContent = cfg.label;
+    listIdInput.placeholder = cfg.placeholder;
+    importModal.classList.remove('hidden');
+    listIdInput.focus();
+  }
+
+  function closeImportModal() {
+    importModal?.classList.add('hidden');
+    importForm?.reset();
+    importError?.classList.add('hidden');
+  }
+
+  document.querySelectorAll('.open-import-modal-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      newListMenu?.classList.add('hidden');
+      openImportModal(btn.dataset.provider);
+    });
+  });
+  importCancelBtn?.addEventListener('click', closeImportModal);
+  document.getElementById('import-modal-backdrop')?.addEventListener('click', closeImportModal);
+
+  importForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const listIdOrUrl = listIdInput.value.trim();
+    const provider = importModal?.dataset.provider;
+    const cfg = PROVIDERS[provider];
+    if (!listIdOrUrl || !cfg) return;
+
+    importSubmitBtn.disabled = true;
+    // TVDB resolves each item through its own extra API call (#442 follow-
+    // up), so this can take a few seconds on a bigger list - a spinner
+    // makes that wait feel like progress instead of a hang.
+    importSubmitLabel.innerHTML = `${SPINNER_SVG} ${esc(m.lists_importing())}`;
+    importError.classList.add('hidden');
+
+    try {
+      const res = await fetch(cfg.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ list_id_or_url: listIdOrUrl }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || m.lists_import_failed());
+      }
+
+      const list = await res.json();
+      closeImportModal();
+      window.location.href = `/list/${list.id}`;
+    } catch (err) {
+      importError.textContent = err.message;
+      importError.classList.remove('hidden');
+      importSubmitBtn.disabled = false;
+      importSubmitLabel.textContent = m.lists_import_submit();
+    }
+  });
 
   createForm?.addEventListener('submit', async (e) => {
     e.preventDefault();

@@ -650,7 +650,7 @@ async def _import_watchlist(
 
 
 async def run_mdblist_sync(user_id: int, job_id: int) -> None:
-    from routers.sync import SyncCancelled, _raise_if_cancelled
+    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with session_factory() as db:
         try:
@@ -754,7 +754,7 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.failed,
-                    error_message=str(exc),
+                    error_message=_short_error(exc),
                 )
             )
             await db.commit()
@@ -789,7 +789,7 @@ async def _load_shows_for_episodes(db: AsyncSession, media_by_id: dict[int, Medi
 
 
 async def run_mdblist_push(user_id: int, job_id: int) -> None:
-    from routers.sync import SyncCancelled, _raise_if_cancelled
+    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with session_factory() as db:
         try:
@@ -1046,7 +1046,7 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.failed,
-                    error_message=str(exc),
+                    error_message=_short_error(exc),
                 )
             )
             await db.commit()

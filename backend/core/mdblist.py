@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 MDBLIST_BASE = "https://api.mdblist.com"
 PAGE_SIZE = 1000
@@ -16,9 +20,122 @@ PAGE_SIZE = 1000
 # intend it to be (see #176).
 PUSH_BATCH_SIZE = 200
 
+# MDBList answers both of its throttles with 429, distinguished only by the body.
+# "API rate limit exceeded!" is the short-window throttle and clears on its own, so it
+# is worth waiting out; "Daily API limit exceeded!" does not clear until the quota
+# resets, so retrying it just burns the rest of the job against a wall.
+_RATE_LIMIT_RETRIES = 4
+_RATE_LIMIT_BACKOFF = 2.0
+# A server-sent Retry-After is honoured only up to this many seconds, so a large
+# value can't park a sync job for minutes per request.
+_RATE_LIMIT_MAX_WAIT = 30.0
+# Live scrobbles are sent from inside a webhook request, which holds a DB
+# connection while it waits (see #412 for what that does to the pool) - and a
+# scrobble that arrives late is stale anyway. So they get one short retry, not
+# the full backoff.
+_SCROBBLE_RETRIES = 1
+_SCROBBLE_MAX_WAIT = 3.0
+_DAILY_LIMIT_MARKER = "daily api limit"
+
 
 class MDBListAPIError(RuntimeError):
     """Raised when MDBList rejects or cannot complete a request."""
+
+
+class MDBListDailyLimitError(MDBListAPIError):
+    """Raised when MDBList's daily quota is spent - not retryable within the run."""
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    """Seconds to wait from a Retry-After header, when MDBList sends a usable one."""
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return None
+
+
+async def _request_json_with_headers(
+    method: str,
+    path: str,
+    api_key: str,
+    *,
+    params: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
+    ignore_statuses: set[int] | None = None,
+    rate_limit_retries: int = _RATE_LIMIT_RETRIES,
+    max_wait: float = _RATE_LIMIT_MAX_WAIT,
+) -> tuple[dict[str, Any] | list[Any], httpx.Headers]:
+    query = dict(params or {})
+    query["apikey"] = api_key
+    for attempt in range(rate_limit_retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.request(
+                    method,
+                    f"{MDBLIST_BASE}{path}",
+                    params=query,
+                    json=payload,
+                )
+            if ignore_statuses and response.status_code in ignore_statuses:
+                return {}, response.headers
+            if response.status_code == 429:
+                body = response.text.strip()
+                if _DAILY_LIMIT_MARKER in body.lower():
+                    raise MDBListDailyLimitError(
+                        f"MDBList {method} {path} failed (429): {body[:500]}"
+                    )
+                if attempt < rate_limit_retries:
+                    delay = min(max_wait, _retry_after(response) or _RATE_LIMIT_BACKOFF * (2**attempt))
+                    logger.info(
+                        "MDBList rate-limited on %s %s; waiting %.1fs (attempt %d/%d)",
+                        method, path, delay, attempt + 1, rate_limit_retries,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text.strip()[:500]
+            suffix = f": {detail}" if detail else ""
+            raise MDBListAPIError(
+                f"MDBList {method} {path} failed ({exc.response.status_code}){suffix}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise MDBListAPIError(f"MDBList {method} {path} failed: {exc}") from exc
+        break
+
+    if response.status_code == 204 or not response.content:
+        return {}, response.headers
+    data = response.json()
+    if not isinstance(data, (dict, list)):
+        raise MDBListAPIError(f"MDBList {method} {path} returned an invalid response")
+    return data, response.headers
+
+
+async def _request_json(
+    method: str,
+    path: str,
+    api_key: str,
+    *,
+    params: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
+    ignore_statuses: set[int] | None = None,
+    rate_limit_retries: int = _RATE_LIMIT_RETRIES,
+    max_wait: float = _RATE_LIMIT_MAX_WAIT,
+) -> dict[str, Any] | list[Any]:
+    data, _ = await _request_json_with_headers(
+        method,
+        path,
+        api_key,
+        params=params,
+        payload=payload,
+        ignore_statuses=ignore_statuses,
+        rate_limit_retries=rate_limit_retries,
+        max_wait=max_wait,
+    )
+    return data
 
 
 async def _request(
@@ -29,32 +146,19 @@ async def _request(
     params: dict[str, Any] | None = None,
     payload: dict[str, Any] | None = None,
     ignore_statuses: set[int] | None = None,
+    rate_limit_retries: int = _RATE_LIMIT_RETRIES,
+    max_wait: float = _RATE_LIMIT_MAX_WAIT,
 ) -> dict[str, Any]:
-    query = dict(params or {})
-    query["apikey"] = api_key
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.request(
-                method,
-                f"{MDBLIST_BASE}{path}",
-                params=query,
-                json=payload,
-            )
-        if ignore_statuses and response.status_code in ignore_statuses:
-            return {}
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        detail = exc.response.text.strip()[:500]
-        suffix = f": {detail}" if detail else ""
-        raise MDBListAPIError(
-            f"MDBList {method} {path} failed ({exc.response.status_code}){suffix}"
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise MDBListAPIError(f"MDBList {method} {path} failed: {exc}") from exc
-
-    if response.status_code == 204 or not response.content:
-        return {}
-    data = response.json()
+    data = await _request_json(
+        method,
+        path,
+        api_key,
+        params=params,
+        payload=payload,
+        ignore_statuses=ignore_statuses,
+        rate_limit_retries=rate_limit_retries,
+        max_wait=max_wait,
+    )
     if not isinstance(data, dict):
         raise MDBListAPIError(f"MDBList {method} {path} returned an invalid response")
     return data
@@ -128,6 +232,98 @@ async def get_ratings(api_key: str) -> dict[str, Any]:
 
 async def get_watchlist(api_key: str) -> dict[str, Any]:
     return await _get_all(api_key, "/watchlist/items")
+
+
+async def get_list(api_key: str, list_ref: str) -> dict[str, Any]:
+    """Return metadata for a list addressed by numeric id or username/slug."""
+    path = f"/lists/{list_ref}"
+    data = await _request_json("GET", path, api_key)
+    if isinstance(data, dict):
+        return data
+
+    # Username/slug lookups return an array because MDBList may represent a
+    # mixed list as separate movie and show records. Both records share the
+    # public list name and are fetched together by the unified items endpoint.
+    records = [record for record in data if isinstance(record, dict)]
+    if not records:
+        raise MDBListAPIError(f"MDBList GET {path} returned an invalid response")
+
+    metadata = dict(records[0])
+    for field in ("name", "description"):
+        if not metadata.get(field):
+            value = next((record.get(field) for record in records if record.get(field)), None)
+            if value is not None:
+                metadata[field] = value
+    return metadata
+
+
+async def get_list_items(
+    api_key: str,
+    list_ref: str,
+    *,
+    max_items: int = 500,
+) -> dict[str, Any]:
+    """Fetch up to ``max_items`` movies/shows from an MDBList list.
+
+    ``unified=true`` is important for dynamic lists that contain both media
+    types; without it MDBList may expose the movie and show halves separately.
+    """
+    merged: dict[str, Any] = {"movies": [], "shows": []}
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+
+    while len(merged["movies"]) + len(merged["shows"]) < max_items:
+        remaining = max_items - len(merged["movies"]) - len(merged["shows"])
+        params: dict[str, Any] = {
+            "limit": min(PAGE_SIZE, remaining),
+            "unified": "true",
+        }
+        if cursor:
+            params["cursor"] = cursor
+
+        page, headers = await _request_json_with_headers(
+            "GET", f"/lists/{list_ref}/items", api_key, params=params
+        )
+        page_count = 0
+        if isinstance(page, list):
+            # With unified=true the live API returns one flat array, despite
+            # its OpenAPI schema describing an object with media buckets.
+            for entry in page:
+                if not isinstance(entry, dict):
+                    continue
+                mediatype = str(entry.get("mediatype") or "").lower()
+                if mediatype == "movie":
+                    key = "movies"
+                elif mediatype in {"show", "series", "tv"}:
+                    key = "shows"
+                else:
+                    continue
+                if len(merged["movies"]) + len(merged["shows"]) >= max_items:
+                    break
+                merged[key].append(entry)
+                page_count += 1
+            next_cursor = headers.get("X-Next-Cursor")
+        else:
+            for key in ("movies", "shows"):
+                values = page.get(key)
+                if isinstance(values, list):
+                    room = max_items - len(merged["movies"]) - len(merged["shows"])
+                    merged[key].extend(values[:room])
+                    page_count += min(len(values), room)
+
+            pagination = page.get("pagination")
+            pagination = pagination if isinstance(pagination, dict) else {}
+            next_cursor = pagination.get("next_cursor")
+        if not next_cursor or page_count == 0:
+            break
+        cursor = str(next_cursor)
+        if cursor in seen_cursors:
+            raise MDBListAPIError(
+                f"MDBList /lists/{list_ref}/items returned a repeated pagination cursor"
+            )
+        seen_cursors.add(cursor)
+
+    return merged
 
 
 async def get_dropped(api_key: str) -> dict[str, Any]:
@@ -291,7 +487,10 @@ async def scrobble_movie(api_key: str, action: str, tmdb_id: int, progress: floa
     if progress is not None:
         body["progress"] = round(min(100.0, max(0.0, progress)), 1)
     ignore_statuses = {404} if action == "clear" else None
-    return await _request("POST", f"/scrobble/{action}", api_key, payload=body, ignore_statuses=ignore_statuses)
+    return await _request(
+        "POST", f"/scrobble/{action}", api_key, payload=body, ignore_statuses=ignore_statuses,
+        rate_limit_retries=_SCROBBLE_RETRIES, max_wait=_SCROBBLE_MAX_WAIT,
+    )
 
 
 async def scrobble_episode(
@@ -312,7 +511,10 @@ async def scrobble_episode(
     if progress is not None:
         body["progress"] = round(min(100.0, max(0.0, progress)), 1)
     ignore_statuses = {404} if action == "clear" else None
-    return await _request("POST", f"/scrobble/{action}", api_key, payload=body, ignore_statuses=ignore_statuses)
+    return await _request(
+        "POST", f"/scrobble/{action}", api_key, payload=body, ignore_statuses=ignore_statuses,
+        rate_limit_retries=_SCROBBLE_RETRIES, max_wait=_SCROBBLE_MAX_WAIT,
+    )
 
 
 async def push_ratings(

@@ -94,6 +94,9 @@ class UserSettings(Base):
     trakt_push_dropped       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     trakt_scrobble           : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
+    # Show Trakt's public comments (not the user's own) on movie/show/season/episode pages
+    trakt_show_comments      : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+
     # Trakt list import/export
     trakt_sync_lists         : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     trakt_push_lists         : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
@@ -128,6 +131,32 @@ class UserSettings(Base):
     # Simkl auto sync/push interval, in hours (null = disabled)
     simkl_auto_sync_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     simkl_auto_push_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # WeTrakr OAuth tokens — no client_id/secret columns: Scrob ships a single
+    # app-owned client_id (core/wetrakr.py), never a per-user one (the WeTrakr
+    # dev asked for this, unlike Trakt/Simkl's per-user-app model).
+    wetrakr_access_token       : Mapped[Optional[str]]      = mapped_column(String(2000))
+    wetrakr_refresh_token      : Mapped[Optional[str]]      = mapped_column(String(2000))
+    wetrakr_token_expires_at   : Mapped[Optional[int]]      = mapped_column(BigInteger)  # Unix timestamp
+    wetrakr_device_code        : Mapped[Optional[str]]      = mapped_column(String(255))  # Temporary during device auth
+
+    # WeTrakr inbound sync flags (WeTrakr → Scrob)
+    wetrakr_sync_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
+    wetrakr_sync_ratings       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
+
+    # WeTrakr outbound push flags (Scrob → WeTrakr)
+    wetrakr_push_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    wetrakr_push_ratings       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+
+    # WeTrakr lists + comments (both directions)
+    wetrakr_sync_lists         : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
+    wetrakr_push_lists         : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    wetrakr_sync_comments      : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
+    wetrakr_push_comments      : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+
+    # WeTrakr auto sync/push interval, in hours (null = disabled)
+    wetrakr_auto_sync_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    wetrakr_auto_push_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     preferences    : Mapped[Optional[dict]] = mapped_column(JSONB)
     blur_explicit   : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")

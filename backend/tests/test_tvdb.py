@@ -227,6 +227,21 @@ class SearchSeriesYearFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0]["status"], "Ended")
         self.assertEqual(results[0]["network"], "Fuji TV")
 
+    async def test_missing_artwork_placeholder_is_treated_as_no_image(self) -> None:
+        # TheTVDB serves its own stock "no artwork" graphic for a show that
+        # has none, instead of omitting image_url - showing it looked like a
+        # real (blank) poster rather than triggering our own placeholder.
+        results = await self._search([
+            {"tvdb_id": "5", "name": "Show", "image_url": "https://artworks.thetvdb.com/banners/images/missing/series.jpg"},
+        ])
+        self.assertIsNone(results[0]["image_url"])
+
+    async def test_real_artwork_url_still_passes_through(self) -> None:
+        results = await self._search([
+            {"tvdb_id": "6", "name": "Show", "image_url": "https://artworks.thetvdb.com/banners/series/6/posters/abc.jpg"},
+        ])
+        self.assertEqual(results[0]["image_url"], "https://artworks.thetvdb.com/banners/series/6/posters/abc.jpg")
+
 
 if __name__ == "__main__":
     unittest.main()

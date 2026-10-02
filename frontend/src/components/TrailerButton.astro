@@ -1,0 +1,65 @@
+---
+// "Trailer" button for movie and show detail pages (#413). Renders as a plain
+// YouTube search link (title + "trailer" + the user's metadata language), then
+// upgrades itself to the exact TMDB trailer when one exists in that language.
+// No English fallback: a missing localized trailer stays a localized search.
+import { m } from "../paraglide/messages.js";
+interface Props {
+  tmdbId?: number | null; // null for TVDB-only shows - search link only
+  mediaType: "movie" | "series";
+  title: string;
+  year?: string | null;
+}
+
+const { tmdbId = null, mediaType, title, year = null } = Astro.props;
+const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${title} ${year ?? ""} trailer`.replace(/\s+/g, " "))}`;
+---
+
+<a
+  id="trailer-btn"
+  href={searchUrl}
+  target="_blank"
+  rel="noopener noreferrer"
+  data-title={title}
+  data-year={year ?? ""}
+  data-tmdb-id={tmdbId ?? ""}
+  data-media-type={mediaType}
+  class="flex items-center gap-2 px-4 py-2 text-sm font-bold leading-none text-zinc-300 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors"
+>
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 shrink-0">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" />
+  </svg>
+  {m.media_trailer()}
+</a>
+
+<script>
+  const btn = document.getElementById('trailer-btn') as HTMLAnchorElement | null;
+  if (btn) {
+    const { title = '', year = '', tmdbId = '', mediaType = 'movie' } = btn.dataset;
+
+    const searchWithLanguage = (language: string | null) => {
+      let langName = '';
+      if (language) {
+        try {
+          langName = new Intl.DisplayNames(['en'], { type: 'language' }).of(language) ?? '';
+        } catch {
+          langName = '';
+        }
+      }
+      const q = [title, year, 'trailer', langName].filter(Boolean).join(' ');
+      return `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
+    };
+
+    if (tmdbId) {
+      fetch(`/api/proxy/media/${mediaType}/${tmdbId}/trailer`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data) return;
+          btn.href = data.key
+            ? `https://www.youtube.com/watch?v=${encodeURIComponent(data.key)}`
+            : searchWithLanguage(data.language);
+        })
+        .catch(() => {});
+    }
+  }
+</script>

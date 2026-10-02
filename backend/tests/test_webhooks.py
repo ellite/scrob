@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import datetime
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
@@ -8,6 +9,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm.exc import StaleDataError
 
 from models.base import MediaType
@@ -15,6 +17,7 @@ from routers import webhooks
 from routers.webhooks import (
     _backfill_credits_stingers,
     _backfill_jellyfin_runtimes,
+    _backfill_kodi_runtime,
     _backfill_plex_runtime,
     _commit_playback_session_update,
     _consume_recently_pushed_watched,
@@ -36,6 +39,7 @@ from routers.webhooks import (
     mark_pushed_watched,
     parse_jellyfin_payload,
     parse_kodi_payload,
+    parse_plex_payload,
 )
 
 
@@ -292,6 +296,57 @@ class GetOrOpenSessionTests(IsolatedAsyncioTestCase):
             await _get_or_open_session(db, "jellyfin:1:abc", "jellyfin", 1, 2)
 
 
+class ParsePlexPayloadGrandparentGuidTests(unittest.TestCase):
+    """Regression coverage for #440's calendar investigation: grandparentGuid
+    parsing used its own stale inline regex instead of core.plex's
+    extract_tmdb_id/extract_tvdb_id/extract_imdb_id, so it never gained HAMA
+    agent support (com.plexapp.agents.hama://tvdb-73762/1/1) the way the
+    item's own guid extraction (just above it in parse_plex_payload) did.
+    For a HAMA-scanned show this meant the grandparent's real id silently
+    failed to resolve, forcing every such episode through a much weaker
+    title-only fallback - a real gap that made this class of misattribution
+    possible."""
+
+    @staticmethod
+    def _payload(grandparent_guid: str) -> dict:
+        return {
+            "event": "media.scrobble",
+            "Metadata": {
+                "type": "episode",
+                "title": "Episode 1",
+                "grandparentTitle": "Vigil",
+                "grandparentGuid": grandparent_guid,
+                "grandparentRatingKey": "999",
+                "parentIndex": 1,
+                "index": 1,
+                "ratingKey": "123",
+                "Guid": [],
+            },
+        }
+
+    def test_hama_grandparent_tmdb_id_is_extracted(self):
+        data = parse_plex_payload(self._payload("com.plexapp.agents.hama://tmdb-126167/1/1"))
+        self.assertEqual(data["grandparent_tmdb_id"], "126167")
+
+    def test_hama_grandparent_tvdb_id_is_extracted(self):
+        data = parse_plex_payload(self._payload("com.plexapp.agents.hama://tvdb-73762/1/1"))
+        self.assertEqual(data["grandparent_tvdb_id"], "73762")
+        self.assertIsNone(data["grandparent_tmdb_id"])
+
+    def test_legacy_and_plain_schemes_still_work(self):
+        data = parse_plex_payload(self._payload("com.plexapp.agents.themoviedb://126167?lang=en"))
+        self.assertEqual(data["grandparent_tmdb_id"], "126167")
+
+        data = parse_plex_payload(self._payload("tmdb://126167"))
+        self.assertEqual(data["grandparent_tmdb_id"], "126167")
+
+    def test_unresolvable_grandparent_guid_yields_no_ids(self):
+        data = parse_plex_payload(self._payload("plex://show/abc123"))
+        self.assertIsNone(data["grandparent_tmdb_id"])
+        self.assertIsNone(data["grandparent_tvdb_id"])
+        self.assertIsNone(data["grandparent_imdb_id"])
+
+
 class FindOrCreateMediaPlexRefreshTests(IsolatedAsyncioTestCase):
     """Regression tests for #394: an episode matched by tmdb_id must have its
     metadata refreshed from TMDB on every match, not just returned as-is from
@@ -366,12 +421,21 @@ class _CollectionIdResult:
         return self._value
 
 
+class _FirstResult:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
 class _EnsureCollectionFakeDB:
     """Routes _ensure_collection_entry's queries by SQL text and captures the
     collection_files insert so tests can inspect its bound connection_id."""
 
-    def __init__(self, *, connection_exists: bool):
+    def __init__(self, *, connection_exists: bool, file_exists: bool = False):
         self._connection_exists = connection_exists
+        self._file_exists = file_exists
         self.collection_file_insert = None
 
     async def execute(self, stmt):
@@ -380,6 +444,8 @@ class _EnsureCollectionFakeDB:
             return _ScalarResult(1 if self._connection_exists else None)
         if sql.startswith("SELECT") and "FROM collections" in sql:
             return _CollectionIdResult(7)
+        if sql.startswith("SELECT") and "FROM collection_files" in sql:
+            return _FirstResult((1,) if self._file_exists else None)
         if "collection_files" in sql:
             self.collection_file_insert = stmt
         return _ScalarResult(None)
@@ -425,6 +491,96 @@ class EnsureCollectionEntryConnectionGuardTests(IsolatedAsyncioTestCase):
             source_id="521136", quality=None, connection_id=None,
         )
         self.assertIsNone(self._bound_connection_id(db.collection_file_insert))
+
+
+class EnsureCollectionEntryCreatedFlagTests(IsolatedAsyncioTestCase):
+    """#420: the return value tells library.new handlers whether the item is new to the source."""
+
+    async def _call(self, *, file_exists: bool) -> bool:
+        from models.base import CollectionSource
+        db = _EnsureCollectionFakeDB(connection_exists=True, file_exists=file_exists)
+        return await _ensure_collection_entry(
+            db, user_id=1, media_id=2, source=CollectionSource.plex,
+            source_id="521136", quality=None, connection_id=5,
+        )
+
+    async def test_new_file_returns_true(self):
+        self.assertTrue(await self._call(file_exists=False))
+
+    async def test_existing_file_returns_false(self):
+        self.assertFalse(await self._call(file_exists=True))
+
+
+class PushWatchedForNewItemTests(IsolatedAsyncioTestCase):
+    """#420: an item added to a server that Scrob already has watched gets pushed there."""
+
+    def _conn(self, type_="jellyfin", push_watched=True):
+        return SimpleNamespace(
+            type=type_, push_watched=push_watched, url="http://srv", token="t", server_user_id="u1",
+        )
+
+    async def _push(self, conn, *, watched, item, media_ids=(11,)):
+        from routers import sync as sync_router
+        media_list = [SimpleNamespace(id=i) for i in media_ids]
+        with (
+            patch.object(sync_router, "_latest_watched_at", AsyncMock(return_value=watched)),
+            patch("core.jellyfin.get_item", AsyncMock(return_value=item)) as get_item,
+            patch("core.jellyfin.mark_watched", AsyncMock(return_value=True)) as mark,
+            patch("core.plex.get_item", AsyncMock(return_value=item)),
+            patch.object(sync_router, "_push_plex_watched_and_record", AsyncMock(return_value=True)) as plex_push,
+        ):
+            result = await webhooks._push_watched_for_new_item(None, 1, conn, "sid", media_list)
+        return result, mark, plex_push
+
+    async def test_jellyfin_pushes_with_original_watch_date(self):
+        when = datetime(2024, 5, 1, 12, 0, 0)
+        result, mark, _ = await self._push(
+            self._conn(), watched={11: when}, item={"UserData": {"Played": False}},
+        )
+        self.assertTrue(result)
+        self.assertEqual(mark.await_args.kwargs["played_at"], when)
+
+    async def test_jellyfin_already_played_is_left_alone(self):
+        result, mark, _ = await self._push(
+            self._conn(), watched={11: None}, item={"UserData": {"Played": True}},
+        )
+        self.assertFalse(result)
+        mark.assert_not_awaited()
+
+    async def test_plex_already_viewed_is_left_alone(self):
+        result, _, plex_push = await self._push(
+            self._conn("plex"), watched={11: None}, item={"viewCount": 2},
+        )
+        self.assertFalse(result)
+        plex_push.assert_not_awaited()
+
+    async def test_plex_unviewed_is_pushed(self):
+        result, _, plex_push = await self._push(
+            self._conn("plex"), watched={11: None}, item={"viewCount": 0},
+        )
+        self.assertTrue(result)
+        plex_push.assert_awaited_once()
+
+    async def test_unwatched_in_scrob_is_not_pushed(self):
+        result, mark, _ = await self._push(
+            self._conn(), watched={}, item={"UserData": {"Played": False}},
+        )
+        self.assertFalse(result)
+        mark.assert_not_awaited()
+
+    async def test_multi_episode_file_needs_every_episode_watched(self):
+        result, mark, _ = await self._push(
+            self._conn(), watched={11: None}, item={"UserData": {"Played": False}}, media_ids=(11, 12),
+        )
+        self.assertFalse(result)
+        mark.assert_not_awaited()
+
+    async def test_push_watched_off_does_nothing(self):
+        result, mark, _ = await self._push(
+            self._conn(push_watched=False), watched={11: None}, item={"UserData": {"Played": False}},
+        )
+        self.assertFalse(result)
+        mark.assert_not_awaited()
 
 
 class ConsumeRecentlyPushedWatchedTests(unittest.TestCase):
@@ -1231,6 +1387,7 @@ class _FakeSessionCommitDB:
     def __init__(self, commit_side_effect=None):
         self._commit_side_effect = commit_side_effect
         self.rollback_called = False
+        self.refreshed = []
 
     async def commit(self):
         if self._commit_side_effect:
@@ -1238,6 +1395,11 @@ class _FakeSessionCommitDB:
 
     async def rollback(self):
         self.rollback_called = True
+
+    async def refresh(self, obj):
+        if isinstance(obj, Exception):
+            raise obj
+        self.refreshed.append(obj)
 
 
 class CommitPlaybackSessionUpdateTests(IsolatedAsyncioTestCase):
@@ -1260,6 +1422,26 @@ class CommitPlaybackSessionUpdateTests(IsolatedAsyncioTestCase):
         result = await _commit_playback_session_update(db)
         self.assertFalse(result)
         self.assertTrue(db.rollback_called)
+
+    async def test_kept_objects_are_reloaded_after_rollback(self):
+        # #410: the rollback expires settings/media, and the scrobble
+        # forwarders that run next would lazy-load them (MissingGreenlet).
+        db = _FakeSessionCommitDB(commit_side_effect=StaleDataError("0 were matched"))
+        settings, media = object(), object()
+        await _commit_playback_session_update(db, settings, None, media)
+        self.assertEqual(db.refreshed, [settings, media])
+
+    async def test_kept_objects_are_not_touched_on_normal_commit(self):
+        db = _FakeSessionCommitDB()
+        await _commit_playback_session_update(db, object())
+        self.assertEqual(db.refreshed, [])
+
+    async def test_kept_object_whose_row_is_gone_is_skipped(self):
+        db = _FakeSessionCommitDB(commit_side_effect=StaleDataError("0 were matched"))
+        gone, alive = InvalidRequestError("Could not refresh instance"), object()
+        result = await _commit_playback_session_update(db, gone, alive)
+        self.assertFalse(result)
+        self.assertEqual(db.refreshed, [alive])
 
     async def test_other_exceptions_still_propagate(self):
         db = _FakeSessionCommitDB(commit_side_effect=RuntimeError("unrelated failure"))
@@ -1820,12 +2002,96 @@ class ParseKodiPayloadTests(unittest.TestCase):
         data = parse_kodi_payload(self._stop_payload(position=120, total=7680, end=False))
         self.assertLess(data["progress_percent"], 0.05)
 
+    def test_total_length_is_kept_for_the_runtime_backfill(self):
+        data = parse_kodi_payload(self._stop_payload(position=120, total=7680, end=False))
+        self.assertEqual(data["total_seconds"], 7680)
+
+    def test_unknown_total_length_is_none(self):
+        payload = {"method": "Player.OnPlay", "item": {"type": "movie", "title": "x", "uniqueid": {"tmdb": "603"}}}
+        self.assertIsNone(parse_kodi_payload(payload)["total_seconds"])
+
     def test_synthetic_mark_watched_payload_is_complete(self):
         # Shape the add-on POSTs for a "mark as watched" (time == totaltime).
         data = parse_kodi_payload(self._stop_payload(position=7680, total=7680, end=True))
         self.assertTrue(data["ended"])
         self.assertEqual(data["progress_percent"], 1.0)
         self.assertEqual(data["session_id"], "7")
+
+
+class BackfillKodiRuntimeTests(IsolatedAsyncioTestCase):
+    """The Kodi-style webhook is the one external players use (Scrob's Kodi
+    add-on, the Silo watch-provider plugin). Like the Plex and Jellyfin
+    paths, it must fill a missing Media.runtime from the event's own total
+    length, then TMDB, or the Now Playing bar's live progress never engages
+    for a title TMDB has no runtime for yet (#383)."""
+
+    def _movie(self, **overrides):
+        defaults = dict(runtime=None, media_type=MediaType.movie, tmdb_id=550, show_id=None, season_number=None, episode_number=None)
+        return SimpleNamespace(**{**defaults, **overrides})
+
+    async def test_noop_when_runtime_already_set(self) -> None:
+        media = self._movie(runtime=42)
+        db = _FakeDB([])
+        with patch("core.tmdb.get_movie", new_callable=AsyncMock) as mock_get_movie:
+            await _backfill_kodi_runtime(db, media, {"total_seconds": 5400}, "tmdb-key")
+        self.assertEqual(media.runtime, 42)
+        self.assertEqual(db.commits, 0)
+        mock_get_movie.assert_not_called()
+
+    async def test_uses_the_event_total_length_first(self) -> None:
+        media = self._movie()
+        db = _FakeDB([])
+        with patch("core.tmdb.get_movie", new_callable=AsyncMock) as mock_get_movie:
+            await _backfill_kodi_runtime(db, media, {"total_seconds": 3187}, "tmdb-key")
+        self.assertEqual(media.runtime, 53)
+        self.assertEqual(db.commits, 1)
+        mock_get_movie.assert_not_called()
+
+    async def test_falls_back_to_tmdb_when_the_event_has_no_length(self) -> None:
+        media = self._movie(tmdb_id=550)
+        db = _FakeDB([])
+        with patch("core.tmdb.get_movie", new_callable=AsyncMock, return_value={"runtime": 139}) as mock_get_movie:
+            await _backfill_kodi_runtime(db, media, {"total_seconds": None}, "tmdb-key")
+        mock_get_movie.assert_awaited_once_with(550, api_key="tmdb-key")
+        self.assertEqual(media.runtime, 139)
+
+    async def test_leaves_runtime_none_when_every_source_fails(self) -> None:
+        media = self._movie(tmdb_id=None)
+        db = _FakeDB([])
+        await _backfill_kodi_runtime(db, media, {"total_seconds": 0}, "tmdb-key")
+        self.assertIsNone(media.runtime)
+        self.assertEqual(db.commits, 0)
+
+
+class FindOrCreateShowRaceTests(IsolatedAsyncioTestCase):
+    """#446: one media server feeding two Scrob accounts delivers the same
+    webhook to both at once, so both decide a brand-new show is missing and
+    both insert it. The loser must get the winner's row back, not a failed
+    session and a 500 (which dropped the event for that user)."""
+
+    SHOW = {"name": "Deadwood", "external_ids": {}, "seasons": []}
+
+    async def test_creates_the_show_inside_a_savepoint(self) -> None:
+        db = _OpenSessionFakeDB([None])
+        with patch("routers.webhooks.tmdb.get_show", AsyncMock(return_value=self.SHOW)):
+            show = await webhooks._find_or_create_show(db, 1406, "k")
+        self.assertEqual(show.tmdb_id, 1406)
+        # add() happens inside the savepoint, never before it.
+        self.assertEqual(db.events, ["begin_nested", "add"])
+
+    async def test_loser_of_the_insert_race_gets_the_winners_row(self) -> None:
+        winner = SimpleNamespace(id=7, tmdb_id=1406)
+        db = _OpenSessionFakeDB([None, winner], flush_raises=IntegrityError("insert", {}, Exception("dup tmdb_id")))
+        with patch("routers.webhooks.tmdb.get_show", AsyncMock(return_value=self.SHOW)):
+            show = await webhooks._find_or_create_show(db, 1406, "k")
+        self.assertIs(show, winner)
+
+    async def test_an_integrity_error_with_no_winning_row_still_raises(self) -> None:
+        # e.g. a tvdb_id clash: nothing exists for this tmdb_id to fall back to.
+        db = _OpenSessionFakeDB([None, None], flush_raises=IntegrityError("insert", {}, Exception("dup tvdb_id")))
+        with patch("routers.webhooks.tmdb.get_show", AsyncMock(return_value=self.SHOW)):
+            with self.assertRaises(IntegrityError):
+                await webhooks._find_or_create_show(db, 1406, "k")
 
 
 class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):

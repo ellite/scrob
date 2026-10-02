@@ -13,6 +13,7 @@ from core.jellyfin import (
     find_episode_by_ids,
     find_episode_in_series,
     build_tmdb_index,
+    build_tvdb_index,
     mark_watched,
     mark_unwatched,
     set_rating,

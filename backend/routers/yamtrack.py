@@ -25,7 +25,7 @@ async def run_yamtrack_import(user_id: int, job_id: int, data: ScrobImportData, 
     are thin wrappers around apply_scrob_import, which doesn't care whether
     the ScrobImportData it's handed came from a Scrob backup or a
     translated CSV."""
-    from routers.sync import SyncCancelled
+    from routers.sync import SyncCancelled, _short_error
 
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
@@ -50,7 +50,7 @@ async def run_yamtrack_import(user_id: int, job_id: int, data: ScrobImportData, 
             await db.commit()
         except Exception as exc:
             logger.exception("Yamtrack import job %s failed", job_id)
-            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=str(exc)))
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=_short_error(exc)))
             await db.commit()
 
 

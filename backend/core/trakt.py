@@ -830,3 +830,65 @@ async def scrobble_episode(
             headers=_headers(client_id, access_token),
         )
         resp.raise_for_status()
+
+
+# ── Public comments (Trakt's own community comments, not the user's) ──────────
+
+_COMMENT_SORTS = {"newest", "oldest", "likes", "replies", "highest", "lowest", "plays"}
+
+
+async def resolve_trakt_id(client_id: str, id_type: str, id_value, media_type: str) -> Optional[str]:
+    """Resolve an external id (tmdb or tvdb) to a Trakt slug for media_type
+    ('movie' or 'show'). Returns None if Trakt has no match.
+
+    The comments endpoints below take a Trakt-slug, Trakt-id, or IMDB-id in
+    their :id path segment - never a raw TMDB/TVDB id - so this is required
+    before any comments call for an item Scrob only knows by tmdb_id/tvdb_id.
+    """
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.get(
+            f"{TRAKT_BASE}/search/{id_type}/{id_value}",
+            params={"type": media_type},
+            headers=_headers(client_id),
+        )
+        resp.raise_for_status()
+        results = resp.json()
+    for result in results:
+        item = result.get(media_type)
+        if item:
+            slug = item.get("ids", {}).get("slug")
+            if slug:
+                return slug
+    return None
+
+
+async def _get_comments(client_id: str, path: str, sort: str, page: int, limit: int) -> list[dict]:
+    sort = sort if sort in _COMMENT_SORTS else "likes"
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.get(
+            f"{TRAKT_BASE}{path}/comments/{sort}",
+            params={"page": page, "limit": limit},
+            headers=_headers(client_id),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def get_movie_comments(client_id: str, movie_id: str, sort: str = "likes", page: int = 1, limit: int = 10) -> list[dict]:
+    """movie_id is a Trakt slug/id or IMDB id - see resolve_trakt_id."""
+    return await _get_comments(client_id, f"/movies/{movie_id}", sort, page, limit)
+
+
+async def get_show_comments(client_id: str, show_id: str, sort: str = "likes", page: int = 1, limit: int = 10) -> list[dict]:
+    """show_id is a Trakt slug/id or IMDB id - see resolve_trakt_id."""
+    return await _get_comments(client_id, f"/shows/{show_id}", sort, page, limit)
+
+
+async def get_season_comments(client_id: str, show_id: str, season_number: int, sort: str = "likes", page: int = 1, limit: int = 10) -> list[dict]:
+    return await _get_comments(client_id, f"/shows/{show_id}/seasons/{season_number}", sort, page, limit)
+
+
+async def get_episode_comments(
+    client_id: str, show_id: str, season_number: int, episode_number: int, sort: str = "likes", page: int = 1, limit: int = 10
+) -> list[dict]:
+    return await _get_comments(client_id, f"/shows/{show_id}/seasons/{season_number}/episodes/{episode_number}", sort, page, limit)

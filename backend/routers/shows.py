@@ -48,7 +48,7 @@ from core.enrichment import (
     apply_media_change_safely,
     is_unmapped_tvdb_episode,
 )
-from core.identity import link_show_ids
+from core.identity import find_media, link_show_ids
 from core.rewatch import (
     capped_season_episode_counts,
     total_aired_episodes,
@@ -86,6 +86,23 @@ async def get_user_tvdb_key(db: AsyncSession, user_id: int) -> str | None:
         tvdb.set_subscriber_pin(gs.tvdb_api_key, gs.tvdb_subscriber_pin)
         return gs.tvdb_api_key
     return None
+
+
+async def _find_local_show_for_tvdb(
+    db: AsyncSession, tvdb_id: int, series_tmdb_id: int | None
+) -> ShowModel | None:
+    """The local Show for a TVDB series, matched by tvdb_id or (when TVDB
+    cross-links one) by tmdb_id. series_tmdb_id is often None - a bare
+    `ShowModel.tmdb_id == None` compiles to `tmdb_id IS NULL`, not "matches
+    nothing", so ORing it in unconditionally would match every other
+    TVDB-only show in the library and raise MultipleResultsFound the moment
+    there's more than one (500 on a show as unremarkable as thetvdb.com's
+    own "Formula 1" page)."""
+    conditions = [ShowModel.tvdb_id == tvdb_id]
+    if series_tmdb_id is not None:
+        conditions.append(ShowModel.tmdb_id == series_tmdb_id)
+    result = await db.execute(select(ShowModel).where(or_(*conditions)))
+    return result.scalar_one_or_none()
 
 
 async def _enrich_tvdb_seasons(
@@ -877,6 +894,7 @@ async def get_show(
         networks = []
         recommendations = []
         cast = []
+        crew = []
         tmdb_extra: dict | None = None
         api_key = await get_user_tmdb_key(db, effective_user_id)
         metadata_lang = await get_user_metadata_language(db, effective_user_id)
@@ -926,6 +944,7 @@ async def get_show(
                     }
                     for c in tmdb_extra.get("credits", {}).get("cast", [])[:12]
                 ]
+                crew = tmdb.notable_crew(tmdb_extra.get("credits", {}))
                 if metadata_lang:
                     try:
                         await upsert_show_translation(
@@ -1190,6 +1209,7 @@ async def get_show(
                 for c in (tmdb_extra or show.tmdb_data or {}).get("created_by", [])
             ],
             "cast": cast,
+            "crew": crew,
             "networks": networks,
             "where_to_watch": where_to_watch,
         }
@@ -1222,6 +1242,8 @@ async def get_show(
             }
             for c in data.get("credits", {}).get("cast", [])[:12]
         ]
+
+        crew = tmdb.notable_crew(data.get("credits", {}))
 
         networks = [
             {
@@ -1314,6 +1336,7 @@ async def get_show(
                 for c in data.get("created_by", [])
             ],
             "cast": cast,
+            "crew": crew,
             "networks": networks,
             "seasons_meta": [
                 {
@@ -1947,6 +1970,7 @@ async def get_episode_detail(
             }
             for c in credits.get("cast", [])[:12]
         ]
+        crew = tmdb.notable_crew(credits)
         guest_stars = [
             {
                 "tmdb_id": c.get("id"),
@@ -2018,6 +2042,7 @@ async def get_episode_detail(
             "runtime": ep_data.get("runtime"),
             "tmdb_rating": ep_data.get("vote_average"),
             "cast": cast,
+            "crew": crew,
             "guest_stars": guest_stars,
             "show": show_info,
             "season": {
@@ -2278,15 +2303,7 @@ async def get_tvdb_show(
 
     series_tmdb_id = show_data.get("tmdb_id_cross")
     series_tmdb_id = int(series_tmdb_id) if series_tmdb_id else None
-    show_result = await db.execute(
-        select(ShowModel).where(
-            or_(
-                ShowModel.tvdb_id == tvdb_id,
-                ShowModel.tmdb_id == series_tmdb_id,
-            )
-        )
-    )
-    show = show_result.scalar_one_or_none()
+    show = await _find_local_show_for_tvdb(db, tvdb_id, series_tmdb_id)
     if show is None:
         if series_tmdb_id:
             tmdb_api_key_for_show = await get_user_tmdb_key(db, effective_user_id)
@@ -2413,20 +2430,15 @@ async def get_tvdb_show(
             if episode.id in watched_ids:
                 watched_positions.setdefault(target_season, set()).add(target_episode)
 
-        if series_tmdb_id:
-            show_media_result = await db.execute(
-                select(Media).where(
-                    Media.tmdb_id == series_tmdb_id,
-                    Media.media_type == MediaType.series,
-                )
-            )
-            show_media = show_media_result.scalar_one_or_none()
+        if series_tmdb_id or tvdb_id:
+            # A TVDB-only show's series row has no tmdb_id, only its tvdb_id.
+            show_media = await find_media(db, MediaType.series, tmdb_id=series_tmdb_id, tvdb_id=tvdb_id)
             if show_media:
                 rating_result = await db.execute(
                     select(Rating.season_number, Rating.rating).where(
                         Rating.user_id == effective_user_id,
                         Rating.media_id == show_media.id,
-                        Rating.episode_order == "tvdb",
+                        Rating.episode_order.in_(("tvdb:official", "tvdb")),  # "tvdb" = pre-#174 spelling
                         Rating.season_number.isnot(None),
                     )
                 )
@@ -2450,6 +2462,22 @@ async def get_tvdb_show(
         season["season_number"]: season.get("episode_count", 0)
         for season in show_data["seasons"]
     }
+    # Count aired episodes only (like the TMDB show page), so a season with
+    # future episodes can still reach 100%. Best effort: the episode list is
+    # cached, and a failed fetch just keeps the full episode_count.
+    try:
+        _today_str = date.today().isoformat()
+        _aired_by_season: dict[int, int] = {}
+        for _raw_ep in await tvdb_client.get_series_episodes(tvdb_id, None, api_key, language=tvdb_lang):
+            _aired = _raw_ep.get("aired")
+            if _aired and _aired <= _today_str:
+                _sn = _raw_ep.get("seasonNumber")
+                _aired_by_season[_sn] = _aired_by_season.get(_sn, 0) + 1
+        for _sn, _count in _aired_by_season.items():
+            if _sn in season_ep_counts:
+                season_ep_counts[_sn] = _count
+    except Exception:
+        pass
     for season_number_value in set(
         list(season_ep_counts)
         + list(collected_positions)
@@ -2554,6 +2582,35 @@ async def get_tvdb_show(
         show_state: dict = {"tmdb_id": series_tmdb_id, "type": "series"}
         await enrich_with_state(db, effective_user_id, [show_state])
         in_lists = show_state.get("in_lists", [])
+    else:
+        # enrich_with_state is tmdb-keyed; a TVDB-only show's series row is
+        # found by tvdb_id instead.
+        series_media = await find_media(db, MediaType.series, tvdb_id=tvdb_id)
+        if series_media:
+            in_lists_result = await db.execute(
+                select(ListItem.list_id)
+                .join(UserList, UserList.id == ListItem.list_id)
+                .where(
+                    ListItem.media_id == series_media.id,
+                    ListItem.season_number.is_(None),
+                    UserList.user_id == effective_user_id,
+                )
+            )
+            in_lists = [r[0] for r in in_lists_result.all()]
+
+    # Whole-show rating (season_number NULL); stored against the series row,
+    # which for a TVDB-only show is found by tvdb_id.
+    show_user_rating = None
+    rated_media = await find_media(db, MediaType.series, tmdb_id=series_tmdb_id, tvdb_id=tvdb_id)
+    if rated_media:
+        show_rating_result = await db.execute(
+            select(Rating.rating).where(
+                Rating.user_id == effective_user_id,
+                Rating.media_id == rated_media.id,
+                Rating.season_number.is_(None),
+            )
+        )
+        show_user_rating = show_rating_result.scalar_one_or_none()
 
     return {
         **show_data,
@@ -2577,11 +2634,16 @@ async def get_tvdb_show(
         "is_monitored": is_monitored,
         "request_enabled": request_enabled,
         "request_status": None,
-        "user_rating": None,
+        "user_rating": show_user_rating,
         "season_states": season_states,
         "seasons": {},
         "seasons_meta": show_data["seasons"],
         "cast": cast,
+        # TVDB has no series-level crew - Director/Writer only exist on each
+        # episode's own extended data (see get_tvdb_episode). Kept as an
+        # explicit empty list, not an absent key, so the frontend's "hide
+        # the Crew tab when empty" check works the same as everywhere else.
+        "crew": [],
         "networks": networks,
         "where_to_watch": where_to_watch,
     }
@@ -2618,15 +2680,7 @@ async def get_tvdb_season(
 
     series_tmdb_id = show_data.get("tmdb_id_cross")
     series_tmdb_id = int(series_tmdb_id) if series_tmdb_id else None
-    show_result = await db.execute(
-        select(ShowModel).where(
-            or_(
-                ShowModel.tvdb_id == tvdb_id,
-                ShowModel.tmdb_id == series_tmdb_id,
-            )
-        )
-    )
-    show = show_result.scalar_one_or_none()
+    show = await _find_local_show_for_tvdb(db, tvdb_id, series_tmdb_id)
     if show is None:
         if series_tmdb_id:
             tmdb_api_key_for_show = await get_user_tmdb_key(db, effective_user_id)
@@ -2836,21 +2890,16 @@ async def get_tvdb_season(
 
     season_user_rating = None
     season_in_lists: list[int] = []
-    if series_tmdb_id:
-        show_media_result = await db.execute(
-            select(Media).where(
-                Media.tmdb_id == series_tmdb_id,
-                Media.media_type == MediaType.series,
-            )
-        )
-        show_media = show_media_result.scalar_one_or_none()
+    if series_tmdb_id or tvdb_id:
+        # A TVDB-only show's series row has no tmdb_id, only its tvdb_id.
+        show_media = await find_media(db, MediaType.series, tmdb_id=series_tmdb_id, tvdb_id=tvdb_id)
         if show_media:
             season_rating_result = await db.execute(
                 select(Rating.rating).where(
                     Rating.user_id == effective_user_id,
                     Rating.media_id == show_media.id,
                     Rating.season_number == season_number,
-                    Rating.episode_order == "tvdb",
+                    Rating.episode_order.in_(("tvdb:official", "tvdb")),  # "tvdb" = pre-#174 spelling
                 )
             )
             season_user_rating = season_rating_result.scalar_one_or_none()
@@ -2910,7 +2959,11 @@ async def get_tvdb_season(
             "in_lists": tvdb_episode_in_lists.get(local_episode.id, []) if local_episode else [],
         })
 
-    total_eps = len(eps)
+    # Percentages count aired episodes only, like the TMDB season endpoint - a
+    # season with a few future episodes must still be able to reach 100%.
+    today_str = date.today().isoformat()
+    aired_eps = sum(1 for e in eps if e.get("air_date") and e["air_date"] <= today_str)
+    total_eps = aired_eps if aired_eps > 0 else len(eps)
     season_in_library = bool(collected_ep_ids)
     season_collection_pct = min(100, int((len(collected_ep_ids) / total_eps) * 100)) if total_eps else 0
     season_watched = total_eps > 0 and len(watched_ep_ids) >= total_eps
@@ -2981,17 +3034,21 @@ async def get_tvdb_episode(
     if not ep_data:
         raise HTTPException(status_code=404, detail="Episode not found")
 
+    # Cast/crew live on the episode's own extended data, not the series'
+    # (see core/tvdb.py's format_crew docstring) - fetched separately since
+    # ep_data['tvdb_id'] is only known once the episode above is resolved.
+    # Falls back to the series-level (actors-only) cast on any failure rather
+    # than failing the whole page for a secondary section.
+    raw_episode: dict = {}
+    if ep_data.get("tvdb_id"):
+        try:
+            raw_episode = await tvdb_client.get_episode(ep_data["tvdb_id"], api_key)
+        except Exception:
+            raw_episode = {}
+
     series_tmdb_id = show_data.get("tmdb_id_cross")
     series_tmdb_id = int(series_tmdb_id) if series_tmdb_id else None
-    show_result = await db.execute(
-        select(ShowModel).where(
-            or_(
-                ShowModel.tvdb_id == tvdb_id,
-                ShowModel.tmdb_id == series_tmdb_id,
-            )
-        )
-    )
-    show = show_result.scalar_one_or_none()
+    show = await _find_local_show_for_tvdb(db, tvdb_id, series_tmdb_id)
     if show is None:
         if series_tmdb_id:
             tmdb_api_key = await get_user_tmdb_key(db, effective_user_id)
@@ -3189,7 +3246,13 @@ async def get_tvdb_episode(
                         "subtitle_languages": coll_file.subtitle_languages,
                     }
 
+    # Series-level extended data only ever lists actors (peopleType), never
+    # crew - keep using it for cast. Crew (Director/Writer) only exists on
+    # the episode's own extended data (raw_episode, fetched above), which in
+    # turn never lists series-regular actors - each is the only source for
+    # its own field, not an either/or fallback.
     cast = tvdb_client.format_cast(raw_series)
+    crew = tvdb_client.format_crew(raw_episode) if raw_episode else []
     season_meta = next((s for s in show_data["seasons"] if s["season_number"] == season_number), {})
 
     resolved_tmdb_id = mapping.tmdb_episode_id if mapping else (
@@ -3231,6 +3294,7 @@ async def get_tvdb_episode(
         "in_lists": in_lists,
         "library": library_info,
         "cast": cast,
+        "crew": crew,
         "episodes": [{"episode_number": e["episode_number"], "name": e["name"]} for e in eps],
         "show": {
             "id": show.id if show else None,

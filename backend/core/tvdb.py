@@ -111,6 +111,12 @@ def tvdb_language(metadata_language: str | None) -> str | None:
 def _image_url(path: str | None) -> str | None:
     if not path:
         return None
+    if "/images/missing/" in path:
+        # TheTVDB's own "no artwork" stock graphic (e.g.
+        # https://artworks.thetvdb.com/banners/images/missing/series.jpg) -
+        # treat it the same as no image at all so callers fall back to their
+        # own placeholder instead of showing TVDB's stock art.
+        return None
     if path.startswith("http"):
         return path
     return f"{TVDB_IMAGE_BASE}{path}"
@@ -220,6 +226,57 @@ async def search_series(query: str, api_key: str, cache_ttl: float | None = DEFA
     return results
 
 
+async def get_list(list_id: int, api_key: str, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
+    """A TVDB list's details plus member entities (#442 follow-up) - GET
+    /lists/{id}/extended. Unlike TMDB's v4 lists this isn't paginated: every
+    entity comes back in one response, each as {order, seriesId, movieId}
+    with exactly one of the two ids set. There's no public/private concept
+    on TVDB lists - every list the API knows about is readable."""
+    data = await _get(f"/lists/{list_id}/extended", api_key, cache_ttl=cache_ttl)
+    return data.get("data") or {}
+
+
+async def get_list_id_by_slug(slug: str, api_key: str, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> int | None:
+    """Resolve a TVDB list's slug to its numeric id - GET /lists/slug/{slug}.
+    "Official" TVDB lists (e.g. thetvdb.com/lists/marvel-cinematic-universe)
+    have no numeric id anywhere in their own URL, only a slug; user-created
+    lists get a plain numeric id instead, so an import needs to accept
+    either. This endpoint returns the list's base record only (no entities),
+    so the caller still needs a follow-up get_list(id) call for those."""
+    data = await _get(f"/lists/slug/{slug}", api_key, cache_ttl=cache_ttl)
+    return (data.get("data") or {}).get("id")
+
+
+def _extract_tmdb_id(remote_ids: list[dict] | None) -> int | None:
+    """The TMDB cross-reference from a TVDB series/movie's remoteIds array,
+    if TVDB has one on file - used to resolve a TVDB list entity through the
+    same TMDB-keyed media pipeline every other list import already uses,
+    since Scrob has no native "whole show/movie" identity for TVDB alone."""
+    for rid in remote_ids or []:
+        if "MOVIEDB" in (rid.get("sourceName") or "").upper():
+            try:
+                return int(rid.get("id"))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+async def get_series_tmdb_cross_id(tvdb_id: int, api_key: str, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> int | None:
+    """Just the cross-referenced TMDB id for a TVDB series, if any - the
+    light call a list import uses per entity, skipping the full episode
+    list/translations get_series() fetches for the show detail page."""
+    data = await _get(f"/series/{tvdb_id}/extended", api_key, cache_ttl=cache_ttl)
+    return _extract_tmdb_id((data.get("data") or {}).get("remoteIds"))
+
+
+async def get_movie_tmdb_cross_id(tvdb_id: int, api_key: str, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> int | None:
+    """Same as get_series_tmdb_cross_id, for a TVDB movie id - core.tvdb has
+    no broader movie support (Scrob's TVDB integration is shows-only), this
+    exists solely to resolve a list entity's movieId to a TMDB id."""
+    data = await _get(f"/movies/{tvdb_id}/extended", api_key, cache_ttl=cache_ttl)
+    return _extract_tmdb_id((data.get("data") or {}).get("remoteIds"))
+
+
 async def get_series(tvdb_id: int, api_key: str, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
     """Fetch series extended info including episodes for accurate per-season counts."""
     data = await _get(
@@ -236,6 +293,14 @@ async def get_season(season_id: int, api_key: str, cache_ttl: float | None = DEF
         params={"meta": "translations"},
         cache_ttl=cache_ttl,
     )
+    return data.get("data") or {}
+
+
+async def get_episode(episode_id: int, api_key: str, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
+    """Fetch extended episode metadata - the only place TVDB exposes this
+    episode's own cast/crew (its `characters` field), separate from the
+    series-level extended data get_series returns."""
+    data = await _get(f"/episodes/{episode_id}/extended", api_key, cache_ttl=cache_ttl)
     return data.get("data") or {}
 
 
@@ -412,13 +477,18 @@ def format_series(raw: dict, language: str | None = None) -> dict:
 
 
 def format_cast(raw: dict) -> list[dict]:
-    """Extract actor list from TVDB extended series data."""
-    characters = [c for c in (raw.get("characters") or []) if c.get("type") == 3]
+    """Extract actor list from TVDB extended series/episode data.
+
+    TVDB's own peopleType string ("Actor", "Director", "Writer", "Guest
+    Star", ...) is used directly rather than the numeric type code - no
+    lookup table needed, and it's confirmed present on every characters entry.
+    """
+    characters = [c for c in (raw.get("characters") or []) if c.get("peopleType") == "Actor"]
     characters.sort(key=lambda x: x.get("sort") or 999)
     return [
         {
             "tmdb_id": None,
-            "person_id": c.get("personId"),
+            "person_id": c.get("peopleId"),
             "name": c.get("personName") or "",
             "character": c.get("name") or "",
             "profile_path": _image_url(c.get("image")),
@@ -426,6 +496,54 @@ def format_cast(raw: dict) -> list[dict]:
         for c in characters[:12]
         if c.get("personName")
     ]
+
+
+# TVDB peopleType strings that count as crew (see format_cast's docstring -
+# no numeric type-code lookup needed, TVDB hands back the label directly).
+# Confirmed against live data: crew (Director/Writer) only ever appears on
+# episode-level extended data (GET /episodes/{id}/extended), never on the
+# series-level extended endpoint - a TV series doesn't have "a director",
+# its episodes do.
+CREW_PEOPLE_TYPES = {"Director", "Writer", "Producer"}
+
+
+def format_crew(raw: dict) -> list[dict]:
+    """Extract crew list from TVDB extended episode data, deduped by person id
+    - a writer-director gets one entry with a combined job label, not two rows
+    for the same person (each role is its own characters entry on TVDB, same
+    as TMDB's crew array). See format_cast for the peopleType convention."""
+    crew = [c for c in (raw.get("characters") or []) if c.get("peopleType") in CREW_PEOPLE_TYPES and c.get("personName")]
+    crew.sort(key=lambda x: x.get("sort") or 999)
+
+    by_id: dict[int, dict] = {}
+    order: list[int] = []
+    for c in crew:
+        pid = c.get("peopleId")
+        if pid is None:
+            continue
+        if pid not in by_id:
+            by_id[pid] = {
+                "tmdb_id": None,
+                "person_id": pid,
+                "name": c.get("personName") or "",
+                "jobs": [c.get("peopleType") or ""],
+                "profile_path": _image_url(c.get("image")),
+            }
+            order.append(pid)
+        elif c.get("peopleType") not in by_id[pid]["jobs"]:
+            by_id[pid]["jobs"].append(c.get("peopleType") or "")
+
+    result = []
+    for pid in order:
+        entry = by_id[pid]
+        result.append({
+            "tmdb_id": None,
+            "person_id": entry["person_id"],
+            "name": entry["name"],
+            "job": ", ".join(entry["jobs"]),
+            "profile_path": entry["profile_path"],
+        })
+    return result
 
 
 def format_episode(raw: dict) -> dict:

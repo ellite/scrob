@@ -16,7 +16,8 @@ router = APIRouter()
 
 class CommentCreate(BaseModel):
     media_type: str
-    tmdb_id: int
+    tmdb_id: Optional[int] = None
+    tvdb_id: Optional[int] = None
     season_number: Optional[int] = None
     episode_number: Optional[int] = None
     content: str
@@ -39,12 +40,15 @@ class CommentResponse(BaseModel):
 @router.get("")
 async def list_comments(
     media_type: str,
-    tmdb_id: int,
+    tmdb_id: Optional[int] = None,
+    tvdb_id: Optional[int] = None,
     season_number: Optional[int] = None,
     episode_number: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
+    if (tmdb_id is None) == (tvdb_id is None):
+        raise HTTPException(status_code=400, detail="Provide exactly one of tmdb_id or tvdb_id")
     query = (
         select(Comment)
         .join(User, Comment.user_id == User.id)
@@ -52,7 +56,7 @@ async def list_comments(
         .options(joinedload(Comment.user).joinedload(User.profile))
         .where(
             Comment.media_type == media_type,
-            Comment.tmdb_id == tmdb_id,
+            Comment.tmdb_id == tmdb_id if tmdb_id is not None else Comment.tvdb_id == tvdb_id,
             Comment.season_number == season_number,
             Comment.episode_number == episode_number,
         )
@@ -103,6 +107,8 @@ async def create_comment(
 ):
     if not body.content.strip():
         raise HTTPException(status_code=400, detail="Comment content cannot be empty")
+    if (body.tmdb_id is None) == (body.tvdb_id is None):
+        raise HTTPException(status_code=400, detail="Provide exactly one of tmdb_id or tvdb_id")
 
     # The UI already hides the whole section when disabled (#301) - this is
     # just so a direct API call can't post one anyway.
@@ -114,6 +120,7 @@ async def create_comment(
         user_id=current_user.id,
         media_type=body.media_type,
         tmdb_id=body.tmdb_id,
+        tvdb_id=body.tvdb_id,
         season_number=body.season_number,
         episode_number=body.episode_number,
         content=body.content,

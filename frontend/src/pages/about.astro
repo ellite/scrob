@@ -31,6 +31,7 @@ const creditGroups: { label: string; services: { name: string; type: string; url
     services: [
       { name: "Trakt", type: "trakt", url: "https://trakt.tv" },
       { name: "Simkl", type: "simkl", url: "https://simkl.com" },
+      { name: "WeTrakr", type: "wetrakr", url: "https://wetrakr.com" },
       { name: "MDBList", type: "mdblist", url: "https://mdblist.com" },
       { name: "Bingebase", type: "bingebase", url: "https://bingebase.com" },
     ],
@@ -190,7 +191,7 @@ if (currentVersion !== 'dev') {
                     rel="noopener noreferrer"
                     class="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-900/40 text-zinc-300 hover:text-zinc-100 hover:border-zinc-700 hover:bg-zinc-900 transition-colors"
                   >
-                    <span class="flex shrink-0 items-center [&_svg]:size-5! [&_span]:size-5! [&_span]:text-[8px]! [&_span]:rounded-md!">
+                    <span class="flex shrink-0 items-center [&_svg]:size-5! [&_img]:size-5! [&_span]:size-5! [&_span]:text-[8px]! [&_span]:rounded-md!">
                       <Fragment set:html={connectionIconHtml(service.type)} />
                     </span>
                     <span class="text-sm truncate">{service.name}</span>

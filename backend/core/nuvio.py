@@ -33,6 +33,7 @@ class NuvioAPIError(RuntimeError):
 # refresh token Nuvio will never accept again, with no way to recover short
 # of a full re-authentication.
 OnRefresh = Callable[["NuvioSession"], Awaitable[None]] | None
+OnPage = Callable[[str, list[dict[str, Any]]], Awaitable[None]] | None
 
 _connection_locks: dict[int, asyncio.Lock] = {}
 
@@ -443,6 +444,7 @@ async def _push_sync_items(
     progress_items: list[dict[str, Any]] | None = None,
     *,
     on_refresh: OnRefresh = None,
+    on_page: OnPage = None,
 ) -> NuvioSession:
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
@@ -453,13 +455,16 @@ async def _push_sync_items(
             ("sync_push_watch_progress", "p_entries", progress_items or []),
         ):
             for offset in range(0, len(items), _PAGE_SIZE):
+                page = items[offset : offset + _PAGE_SIZE]
                 await _rpc(
                     client,
                     url,
                     session.access_token,
                     function_name,
-                    {"p_profile_id": profile_id, items_key: items[offset : offset + _PAGE_SIZE]},
+                    {"p_profile_id": profile_id, items_key: page},
                 )
+                if on_page:
+                    await on_page(function_name, page)
     return session
 
 
@@ -493,7 +498,10 @@ async def push_sync_items(
     progress_items: list[dict[str, Any]],
     *,
     on_refresh: OnRefresh = None,
+    on_page: OnPage = None,
 ) -> NuvioSession:
+    """`on_page(function_name, items)` runs after each page the server accepted,
+    so a caller can record progress even if a later page fails (e.g. a 429)."""
     return await _push_sync_items(
         url,
         refresh_token,
@@ -501,6 +509,7 @@ async def push_sync_items(
         watched_items=watched_items,
         progress_items=progress_items,
         on_refresh=on_refresh,
+        on_page=on_page,
     )
 
 

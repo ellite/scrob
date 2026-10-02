@@ -61,19 +61,29 @@ function mediaUrl(type: string, tmdbId: number): string {
   return `/media/${type}/${tmdbId}`;
 }
 
-function commentUrl(item: { media_type: string; tmdb_id: number; season_number: number | null; episode_number: number | null }): string {
-  if (item.media_type === "movie") return `/media/movie/${item.tmdb_id}`;
-  if (item.media_type === "series") return `/show/${item.tmdb_id}`;
-  if (item.media_type === "season" && item.season_number != null) return `/show/${item.tmdb_id}/season/${item.season_number}`;
-  if (item.media_type === "episode" && item.season_number != null && item.episode_number != null)
-    return `/show/${item.tmdb_id}/season/${item.season_number}/${item.episode_number}`;
-  return `/show/${item.tmdb_id}`;
+// Season and episode pages post their comments as media_type "series" with the
+// season/episode numbers set, so the kind comes from the numbers, not media_type.
+function commentKind(item: { media_type: string; season_number: number | null; episode_number: number | null }): "movie" | "show" | "season" | "episode" {
+  if (item.media_type === "movie") return "movie";
+  if (item.season_number != null && item.episode_number != null) return "episode";
+  if (item.season_number != null) return "season";
+  return "show";
+}
+
+function commentUrl(item: { media_type: string; tmdb_id: number | null; tvdb_id: number | null; season_number: number | null; episode_number: number | null }): string {
+  const kind = commentKind(item);
+  if (kind === "movie") return `/media/movie/${item.tmdb_id}`;
+  const base = item.tvdb_id && !item.tmdb_id ? `/show/tvdb/${item.tvdb_id}` : `/show/${item.tmdb_id}`;
+  if (kind === "season") return `${base}/season/${item.season_number}`;
+  if (kind === "episode") return `${base}/season/${item.season_number}/${item.episode_number}`;
+  return base;
 }
 
 function commentLabel(item: { media_type: string; season_number: number | null; episode_number: number | null; title: string | null }): string {
-  if (item.media_type === "season" && item.season_number != null)
+  const kind = commentKind(item);
+  if (kind === "season")
     return m.profile_comment_season({ title: item.title ?? m.common_unknown(), season: item.season_number });
-  if (item.media_type === "episode" && item.season_number != null && item.episode_number != null)
+  if (kind === "episode")
     return `${item.title ?? m.common_unknown()} — S${String(item.season_number).padStart(2, "0")}E${String(item.episode_number).padStart(2, "0")}`;
   return item.title ?? m.common_unknown();
 }

@@ -12,6 +12,8 @@ CLAUDE.md
 .testdb/
 .env
 *.env
+.env.*
+backend/.env.test.local
 
 # Test files
 test.http

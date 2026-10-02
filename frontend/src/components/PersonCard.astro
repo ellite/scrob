@@ -1,0 +1,57 @@
+---
+interface Person {
+  tmdb_id?: number | null;
+  person_id?: number | null;
+  name: string;
+  profile_path?: string | null;
+}
+
+interface Props {
+  person: Person;
+  subtitle?: string | null;
+}
+
+const { person, subtitle } = Astro.props;
+
+function personHref(p: Person): string | null {
+  if (p.tmdb_id) return `/person/${p.tmdb_id}`;
+  if (p.person_id) return `https://www.thetvdb.com/people/${p.person_id}`;
+  return null;
+}
+function isExternal(p: Person): boolean {
+  return !p.tmdb_id && !!p.person_id;
+}
+
+const href = personHref(person);
+const external = isExternal(person);
+---
+
+{href ? (
+  <a href={href} target={external ? "_blank" : undefined} rel={external ? "noopener noreferrer" : undefined} class="group/cast bg-zinc-900/20 border border-zinc-800/40 p-4 rounded-3xl hover:bg-zinc-800/40 hover:border-blue-500/50 transition-all duration-500 hover:shadow-2xl hover:shadow-blue-900/10 active:scale-95 active:opacity-70">
+    <div class="aspect-square w-full rounded-2xl overflow-hidden mb-5 ring-2 ring-zinc-800/50 group-hover/cast:ring-blue-500 transition-all duration-500 shadow-lg">
+      {person.profile_path ? (
+        <img src={person.profile_path} alt={person.name} class="w-full h-full object-cover group-hover/cast:scale-110 transition-transform duration-700" loading="lazy" decoding="async" />
+      ) : (
+        <div class="w-full h-full bg-zinc-800 flex items-center justify-center text-zinc-600"><svg xmlns="http://www.w3.org/2000/svg" width="40%" height="40%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+      )}
+    </div>
+    <div class="space-y-1.5 text-center">
+      <p class="text-sm font-black text-zinc-100 group-hover/cast:text-blue-400 transition-colors line-clamp-1 leading-tight">{person.name}</p>
+      <p class="text-[11px] text-zinc-500 font-bold uppercase tracking-wider line-clamp-1 opacity-80">{subtitle}</p>
+    </div>
+  </a>
+) : (
+  <div class="group/cast bg-zinc-900/20 border border-zinc-800/40 p-4 rounded-3xl">
+    <div class="aspect-square w-full rounded-2xl overflow-hidden mb-5 ring-2 ring-zinc-800/50 group-hover/cast:ring-blue-500 transition-all duration-500 shadow-lg">
+      {person.profile_path ? (
+        <img src={person.profile_path} alt={person.name} class="w-full h-full object-cover group-hover/cast:scale-110 transition-transform duration-700" loading="lazy" decoding="async" />
+      ) : (
+        <div class="w-full h-full bg-zinc-800 flex items-center justify-center text-zinc-600"><svg xmlns="http://www.w3.org/2000/svg" width="40%" height="40%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+      )}
+    </div>
+    <div class="space-y-1.5 text-center">
+      <p class="text-sm font-black text-zinc-100 group-hover/cast:text-blue-400 transition-colors line-clamp-1 leading-tight">{person.name}</p>
+      <p class="text-[11px] text-zinc-500 font-bold uppercase tracking-wider line-clamp-1 opacity-80">{subtitle}</p>
+    </div>
+  </div>
+)}

@@ -5,6 +5,7 @@ import { ratingPosterUrl } from "../lib/posters";
 import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
 import { m } from "../paraglide/messages.js";
+import PosterFallback from "./PosterFallback.astro";
 
 interface Props {
   item: ContinueWatchingItem;
@@ -45,12 +46,7 @@ const href = episodeHref(media) ?? `/media/${media.type}/${media.tmdb_id}`;
             decoding="async"
           />
         ) : (
-          <div class="w-full h-full flex flex-col items-center justify-center text-zinc-700 bg-zinc-900 p-4 text-center">
-            <span class="text-3xl mb-2 opacity-30">🎬</span>
-            <span class="text-xs font-bold uppercase tracking-widest">
-              {media.title}
-            </span>
-          </div>
+          <PosterFallback kind={isEpisode ? "show" : "movie"} title={media.title} class="flex" />
         )
       }
 

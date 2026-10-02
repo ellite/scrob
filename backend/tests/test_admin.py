@@ -7,7 +7,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 from db import get_db
 from dependencies import require_admin
 from routers import admin
+import schemas
 
 
 class _Result:
@@ -95,6 +96,59 @@ class AdminHealTmdbKeyResolutionTests(unittest.IsolatedAsyncioTestCase):
         detail = res.json()["detail"]
         self.assertIn("TMDB", detail)
         self.assertIn("Settings", detail)  # points the user somewhere
+
+
+class AdminGlobalApiKeyConnectionTestTests(unittest.IsolatedAsyncioTestCase):
+    async def test_accepts_valid_tmdb_key(self):
+        response = Response()
+        with patch("core.tmdb.validate_api_key", AsyncMock(return_value=True)) as validate:
+            result = await admin.test_global_tmdb(
+                schemas.ApiKeyTestRequest(key="tmdb-key"),
+                response,
+                SimpleNamespace(id=1, is_admin=True),
+            )
+
+        self.assertEqual(result, {"status": "ok"})
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        validate.assert_awaited_once_with("tmdb-key")
+
+    async def test_tvdb_key_includes_optional_subscriber_pin(self):
+        response = Response()
+        with patch("core.tvdb.validate_api_key", AsyncMock(return_value=True)) as validate:
+            result = await admin.test_global_tvdb(
+                schemas.ApiKeyTestRequest(key="tvdb-key", pin="  subscriber-pin  "),
+                response,
+                SimpleNamespace(id=1, is_admin=True),
+            )
+
+        self.assertEqual(result, {"status": "ok"})
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        validate.assert_awaited_once_with("tvdb-key", pin="subscriber-pin")
+
+    async def test_accepts_valid_mdblist_key_without_saving_it(self):
+        response = Response()
+        with patch("core.mdblist.validate_api_key", AsyncMock(return_value=True)) as validate:
+            result = await admin.test_global_mdblist(
+                schemas.ApiKeyTestRequest(key="  valid-key  "),
+                response,
+                SimpleNamespace(id=1, is_admin=True),
+            )
+
+        self.assertEqual(result, {"status": "ok"})
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        validate.assert_awaited_once_with("valid-key")
+
+    async def test_rejects_invalid_mdblist_key(self):
+        with patch("core.mdblist.validate_api_key", AsyncMock(return_value=False)):
+            with self.assertRaises(HTTPException) as raised:
+                await admin.test_global_mdblist(
+                    schemas.ApiKeyTestRequest(key="invalid-key"),
+                    Response(),
+                    SimpleNamespace(id=1, is_admin=True),
+                )
+
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertEqual(raised.exception.detail, "Failed to connect to MDBList")
 
 
 class AdminCreateUserTests(unittest.IsolatedAsyncioTestCase):

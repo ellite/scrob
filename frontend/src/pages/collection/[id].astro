@@ -1,6 +1,7 @@
 ---
 import Base from "../../layouts/Base.astro";
 import MediaCard from "../../components/MediaCard.astro";
+import PersonCard from "../../components/PersonCard.astro";
 import { api, type CollectionDetail } from "../../lib/api";
 import { m } from "../../paraglide/messages.js";
 export const prerender = false;
@@ -75,7 +76,7 @@ if (!collection && !error) {
                 </button>
               ) : (
                 <div class="w-full h-full flex flex-col items-center justify-center text-zinc-400 p-4 text-center">
-                  <span class="text-4xl mb-2">🎬</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="30%" height="30%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 16.5h4M17 7.5h4M17 16.5h4M3 12h18"/></svg>
                   <span class="text-sm font-medium">{m.common_no_poster()}</span>
                 </div>
               )}
@@ -134,29 +135,7 @@ if (!collection && !error) {
             <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase mb-10">{m.common_top_cast()}</h2>
             <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
               {collection.cast.map((person) => (
-                <a href={`/person/${person.tmdb_id}`} class="group/cast bg-zinc-900/20 border border-zinc-800/40 p-4 rounded-3xl hover:bg-zinc-800/40 hover:border-blue-500/50 transition-all duration-500 hover:shadow-2xl hover:shadow-blue-900/10">
-                  <div class="aspect-square w-full rounded-2xl overflow-hidden mb-5 ring-2 ring-zinc-800/50 group-hover/cast:ring-blue-500 transition-all duration-500 shadow-lg">
-                    {person.profile_path ? (
-                      <img
-                        src={person.profile_path}
-                        alt={person.name}
-                        class="w-full h-full object-cover group-hover/cast:scale-110 transition-transform duration-700"
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    ) : (
-                      <div class="w-full h-full bg-zinc-800 flex items-center justify-center text-zinc-400 text-4xl">
-                        👤
-                      </div>
-                    )}
-                  </div>
-                  <div class="text-center">
-                    <p class="text-sm font-black text-zinc-100 group-hover/cast:text-blue-400 transition-colors line-clamp-1 leading-tight">{person.name}</p>
-                    {person.appearances > 1 && (
-                      <p class="text-[11px] text-zinc-500 font-bold uppercase tracking-wider mt-1">{m.tmdb_collection_appearances({ count: person.appearances })}</p>
-                    )}
-                  </div>
-                </a>
+                <PersonCard person={person} subtitle={person.appearances > 1 ? m.tmdb_collection_appearances({ count: person.appearances }) : undefined} />
               ))}
             </div>
           </div>
