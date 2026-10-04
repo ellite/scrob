@@ -2508,7 +2508,7 @@ const bottomNavItem = (active: boolean) =>
               btn.classList.add('bg-amber-500/10', 'text-amber-400');
               (btn as HTMLButtonElement).disabled = true;
             } else {
-              throw new Error('Failed to request');
+              throw new Error(m.request_failed());
             }
           } catch (err: any) {
             btn.innerHTML = originalContent;

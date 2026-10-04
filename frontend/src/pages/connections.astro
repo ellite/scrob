@@ -471,7 +471,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               <summary class="flex items-center justify-between px-5 py-3.5 cursor-pointer list-none select-none hover:bg-zinc-900/40 transition-colors">
                 <div>
                   <span class="text-sm font-semibold text-zinc-300">{m.conn_active_season_remaps()}</span>
-                  <span class="ml-2 text-xs text-zinc-500">{seasonOverrides.length} remap{seasonOverrides.length !== 1 ? 's' : ''}</span>
+                  <span class="ml-2 text-xs text-zinc-500">{m.conn_season_remaps_count({ count: seasonOverrides.length })}</span>
                 </div>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-500 transition-transform group-open:rotate-180 shrink-0">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
@@ -484,10 +484,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     <div class="flex items-center gap-3 py-2 px-3 bg-zinc-900 border border-zinc-800 rounded-xl" data-override-id={o.id}>
                       <div class="flex-1 min-w-0 text-sm">
                         <span class="text-zinc-200 font-medium">{o.source_show_title ?? `TMDB #${o.source_show_tmdb_id}`}</span>
-                        <span class="ml-1.5 text-zinc-500">Season {o.source_season_number}</span>
+                        <span class="ml-1.5 text-zinc-500">{m.media_season_number({ number: o.source_season_number })}</span>
                         <span class="mx-1.5 text-zinc-600">→</span>
                         <span class="text-zinc-300">{o.target_show_title ?? (o.target_source === 'tvdb' ? `TVDB #${o.target_show_tvdb_id}` : `TMDB #${o.target_show_tmdb_id}`)}</span>
-                        <span class="ml-1.5 text-zinc-500">Season {o.target_season_number}</span>
+                        <span class="ml-1.5 text-zinc-500">{m.media_season_number({ number: o.target_season_number })}</span>
                         <span class={`ml-1.5 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${o.target_source === 'tvdb' ? 'bg-blue-500/15 text-blue-400' : 'bg-emerald-500/15 text-emerald-400'}`}>
                           {o.target_source}
                         </span>
@@ -1422,7 +1422,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       <label for="radarr_quality_profile" class="block text-sm font-medium text-zinc-400">{m.customize_add_quality_profile()}</label>
                       <select name="radarr_quality_profile" id="radarr_quality_profile" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none">
                         <option value="">{m.admin_select_profile()}</option>
-                        {settings.radarr_quality_profile && <option value={settings.radarr_quality_profile} selected>Profile ID: {settings.radarr_quality_profile}</option>}
+                        {settings.radarr_quality_profile && <option value={settings.radarr_quality_profile} selected>{m.common_quality_profile_id({ id: settings.radarr_quality_profile })}</option>}
                       </select>
                     </div>
                     <div class="space-y-2">
@@ -1498,7 +1498,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       <label for="sonarr_quality_profile" class="block text-sm font-medium text-zinc-400">{m.customize_add_quality_profile()}</label>
                       <select name="sonarr_quality_profile" id="sonarr_quality_profile" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none">
                         <option value="">{m.admin_select_profile()}</option>
-                        {settings.sonarr_quality_profile && <option value={settings.sonarr_quality_profile} selected>Profile ID: {settings.sonarr_quality_profile}</option>}
+                        {settings.sonarr_quality_profile && <option value={settings.sonarr_quality_profile} selected>{m.common_quality_profile_id({ id: settings.sonarr_quality_profile })}</option>}
                       </select>
                     </div>
                     <div class="space-y-2">
@@ -1552,7 +1552,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 <div class="min-w-0">
                   <p class="font-semibold text-zinc-100 truncate">{g.client_name}</p>
                   <p class="text-xs text-zinc-500 mt-0.5">
-                    Linked {fmtGrantDate(g.approved_at ?? g.created_at)} · Last used {fmtGrantDate(g.last_seen_at)} · Scope: {g.scope}
+                    {m.conn_grant_details({ linked: fmtGrantDate(g.approved_at ?? g.created_at), lastUsed: fmtGrantDate(g.last_seen_at), scope: g.scope })}
                   </p>
                 </div>
                 <button
@@ -3189,7 +3189,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         const idKey = connType === 'plex' ? 'key' : 'id';
         listEl.classList.remove('italic', 'text-zinc-500');
         if (!data.libraries?.length) {
-          listEl.innerHTML = '<span class="not-italic text-zinc-500 text-sm">No supported libraries found.</span>';
+          listEl.innerHTML = `<span class="not-italic text-zinc-500 text-sm">${esc(m.conn_no_supported_libraries())}</span>`;
           return;
         }
         listEl.innerHTML = data.libraries.map((lib: any) => `
@@ -3227,7 +3227,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     if (!container) return;
     
     if (!tags || tags.length === 0) {
-      container.innerHTML = '<span class="text-xs text-zinc-500 italic px-2 py-1">No tags found</span>';
+      container.innerHTML = `<span class="text-xs text-zinc-500 italic px-2 py-1">${esc(m.customize_add_no_tags())}</span>`;
       return;
     }
 
@@ -5407,7 +5407,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const monitored: string[] = JSON.parse(picker.getAttribute('data-monitored') || '[]');
       const list = picker.querySelector('.plex-user-list') as HTMLElement;
       if (!list || list.querySelector('.plex-user-checkbox')) return; // already loaded
-      list.innerHTML = '<p class="text-xs text-zinc-500 italic">Loading users…</p>';
+      list.innerHTML = `<p class="text-xs text-zinc-500 italic">${esc(m.conn_loading_users())}</p>`;
       try {
         const res = await fetch(`/api/proxy/sync/connection/${connId}/plex-friends`, {
           headers: { 'Authorization': `Bearer ${token}` },
@@ -5415,7 +5415,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         if (!res.ok) throw new Error(m.conn_failed_to_load_users());
         const data = await res.json();
         if (!data.friends?.length) {
-          list.innerHTML = '<p class="text-xs text-zinc-500 italic">No friends found.</p>';
+          list.innerHTML = `<p class="text-xs text-zinc-500 italic">${esc(m.conn_no_plex_friends())}</p>`;
           return;
         }
         list.innerHTML = data.friends.map((f: any) => `
@@ -5430,7 +5430,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           </label>
         `).join('');
       } catch {
-        list.innerHTML = '<p class="text-xs text-red-400 italic">Could not load users.</p>';
+        list.innerHTML = `<p class="text-xs text-red-400 italic">${esc(m.conn_failed_to_load_users())}</p>`;
       }
     }
 
@@ -5550,7 +5550,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           row?.remove();
           const list = document.getElementById('device-grants-list');
           if (list && list.querySelectorAll('li[data-grant-id]').length === 0) {
-            list.innerHTML = '<li class="text-sm text-zinc-500 border border-zinc-800 rounded-lg px-4 py-3">No connected apps.</li>';
+            list.innerHTML = `<li class="text-sm text-zinc-500 border border-zinc-800 rounded-lg px-4 py-3">${esc(m.conn_no_connected_apps())}</li>`;
           }
           showMessage(m.conn_connected_app_revoked());
         } catch {
@@ -6182,7 +6182,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           const seasons: any[] = (showData?.seasons_meta ?? []).filter((s: any) => s.season_number >= 0);
           seasonsLoading.classList.add('hidden');
           if (!seasons.length) {
-            seasonsList.innerHTML = '<p class="text-xs text-zinc-500 py-1">No seasons found.</p>';
+            seasonsList.innerHTML = `<p class="text-xs text-zinc-500 py-1">${esc(m.conn_remap_no_seasons())}</p>`;
             return;
           }
           seasons.forEach((s: any) => {
@@ -6210,7 +6210,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           });
         } catch (_) {
           seasonsLoading.classList.add('hidden');
-          seasonsList.innerHTML = '<p class="text-xs text-red-400 py-1">Could not load seasons.</p>';
+          seasonsList.innerHTML = `<p class="text-xs text-red-400 py-1">${esc(m.conn_remap_seasons_load_failed())}</p>`;
         }
       });
     };
@@ -6219,7 +6219,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const q = searchInput.value.trim();
       if (!q) return;
       const resultsEl = document.getElementById('remap-search-results') as HTMLElement;
-      resultsEl.innerHTML = '<p class="text-xs text-zinc-500 py-2">Searching…</p>';
+      resultsEl.innerHTML = `<p class="text-xs text-zinc-500 py-2">${esc(m.common_searching())}</p>`;
       try {
         const searchType = modalMode === 'match-movie' ? 'movie' : 'series';
         const res = await fetch(`/api/proxy/media/search?q=${encodeURIComponent(q)}&type=${searchType}`, {
@@ -6229,7 +6229,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         const data = await res.json();
         const results: any[] = data.results?.slice(0, 8) ?? [];
         if (!results.length) {
-          resultsEl.innerHTML = '<p class="text-xs text-zinc-500 py-2">No results.</p>';
+          resultsEl.innerHTML = `<p class="text-xs text-zinc-500 py-2">${esc(m.common_no_results_found())}</p>`;
           return;
         }
         resultsEl.innerHTML = results.map((r: any) => {
@@ -6257,7 +6257,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         }).join('');
         resultsEl.querySelectorAll('.remap-result').forEach(btn => wireResultClick(btn as HTMLElement));
       } catch (_) {
-        resultsEl.innerHTML = '<p class="text-xs text-red-400 py-2">Search failed.</p>';
+        resultsEl.innerHTML = `<p class="text-xs text-red-400 py-2">${esc(m.conn_search_failed())}</p>`;
       }
     };
 
@@ -6265,7 +6265,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const q = (document.getElementById('remap-tvdb-input') as HTMLInputElement).value.trim();
       if (!q) return;
       const resultsEl = document.getElementById('remap-tvdb-results') as HTMLElement;
-      resultsEl.innerHTML = '<p class="text-xs text-zinc-500 py-2">Searching…</p>';
+      resultsEl.innerHTML = `<p class="text-xs text-zinc-500 py-2">${esc(m.common_searching())}</p>`;
       try {
         const res = await fetch(`/api/proxy/media/search-tvdb?q=${encodeURIComponent(q)}`, {
           headers: { 'Authorization': `Bearer ${token}` },
@@ -6284,7 +6284,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         }
         const results: any[] = await res.json();
         if (!results.length) {
-          resultsEl.innerHTML = '<p class="text-xs text-zinc-500 py-2">No results found on TVDB.</p>';
+          resultsEl.innerHTML = `<p class="text-xs text-zinc-500 py-2">${esc(m.search_tvdb_no_results())}</p>`;
           return;
         }
         resultsEl.innerHTML = results.slice(0, 8).map((r: any) => {

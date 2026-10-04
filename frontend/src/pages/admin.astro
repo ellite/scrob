@@ -239,7 +239,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                   <select name="radarr_quality_profile" id="radarr_quality_profile"
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none">
                     <option value="">{m.admin_select_profile()}</option>
-                    {globalSettings.radarr_quality_profile && <option value={globalSettings.radarr_quality_profile} selected>Profile ID: {globalSettings.radarr_quality_profile}</option>}
+                    {globalSettings.radarr_quality_profile && <option value={globalSettings.radarr_quality_profile} selected>{m.common_quality_profile_id({ id: globalSettings.radarr_quality_profile })}</option>}
                   </select>
                 </div>
                 <div class="space-y-2">
@@ -320,7 +320,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                   <select name="sonarr_quality_profile" id="sonarr_quality_profile"
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none">
                     <option value="">{m.admin_select_profile()}</option>
-                    {globalSettings.sonarr_quality_profile && <option value={globalSettings.sonarr_quality_profile} selected>Profile ID: {globalSettings.sonarr_quality_profile}</option>}
+                    {globalSettings.sonarr_quality_profile && <option value={globalSettings.sonarr_quality_profile} selected>{m.common_quality_profile_id({ id: globalSettings.sonarr_quality_profile })}</option>}
                   </select>
                 </div>
                 <div class="space-y-2">

@@ -49,6 +49,7 @@
   "customize_add_loading": "Loading options…",
   "customize_add_root_folder": "Root Folder",
   "customize_add_quality_profile": "Quality Profile",
+  "common_quality_profile_id": "Profile ID: {id}",
   "customize_add_tags": "Tags",
   "customize_add_season_folders": "Use season folders",
   "watch_history_title": "Watch History",
@@ -1777,6 +1778,22 @@
   "conn_collection_status": "Collection status",
   "conn_playback_progress": "Playback progress",
   "conn_active_season_remaps": "Active Season Remaps",
+  "conn_season_remaps_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} remap",
+        "countPlural=other": "{count} remaps",
+        "countPlural=*": "{count} remaps"
+      }
+    }
+  ],
   "conn_these_seasons_are_successfully_remapped_episodes": "These seasons are successfully remapped. Episodes sync correctly — you can edit or remove the mapping if needed.",
   "conn_edit_remap": "Edit remap",
   "conn_scrobble_only": "Scrobble-only",
@@ -1817,6 +1834,7 @@
   "conn_let_me_customize_root_folder_quality_2": "Let me customize root folder/quality profile/tags/season folders when adding",
   "conn_connected_apps": "Connected Apps",
   "conn_apps_and_devices_you_ve_linked": "Apps and devices you've linked with a one-time code (for example the Umbrella Kodi add-on). Each holds a write-scoped token — it can change your watch history, ratings and lists, but not your password, email or security settings. Revoking takes effect immediately.",
+  "conn_grant_details": "Linked {linked} · Last used {lastUsed} · Scope: {scope}",
   "conn_no_connected_apps": "No connected apps.",
   "conn_revoke": "Revoke",
   "conn_import": "Import",
@@ -1830,6 +1848,8 @@
   "conn_import_from_yamtrack_floppy_export": "Import from Yamtrack/Floppy export?",
   "conn_collection_and_lists_only_come_from": "Collection and Lists only come from a Floppy export - a vanilla Yamtrack file has neither, and simply won't add anything for those.",
   "conn_remap_season": "Remap Season",
+  "conn_remap_no_seasons": "No seasons found.",
+  "conn_remap_seasons_load_failed": "Could not load seasons.",
   "conn_search_for_the_correct_tmdb_show": "Search for the correct TMDB show",
   "conn_search_for_the_show_on_tvdb": "Search for the show on TVDB",
   "conn_change": "Change",
@@ -1924,6 +1944,7 @@
   "conn_import_failed": "Import failed",
   "conn_import_cancelled": "Import cancelled",
   "conn_could_not_load_libraries": "Could not load libraries.",
+  "conn_no_supported_libraries": "No supported libraries found.",
   "conn_could_not_reach_server": "Could not reach server.",
   "conn_failed_to_save_mdblist_options": "Failed to save MDBList options",
   "conn_stremio_connection_successful": "Stremio connection successful!",
@@ -2024,6 +2045,7 @@
   "conn_failed_to_create_scrobble_connection": "Failed to create scrobble connection",
   "conn_scrobble_connection_added_reloading": "Scrobble connection added! Reloading…",
   "conn_failed_to_load_users": "Failed to load users",
+  "conn_no_plex_friends": "No friends found.",
   "conn_are_you_sure_you_want_to": "Are you sure you want to regenerate your API key? The old key will stop working immediately.",
   "conn_regenerating": "Regenerating...",
   "conn_failed_to_regenerate_key": "Failed to regenerate key",

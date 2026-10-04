@@ -483,7 +483,7 @@ const COUNTRIES = [
       const preview = document.getElementById('avatar-preview');
       if (!preview) return;
       if (src) {
-        preview.innerHTML = `<img id="avatar-img" src="${esc(src)}" alt="Avatar" class="w-full h-full object-cover" />`;
+        preview.innerHTML = `<img id="avatar-img" src="${esc(src)}" alt="${esc(m.profile_settings_avatar_alt())}" class="w-full h-full object-cover" />`;
       } else {
         const initial = (document.getElementById('display_name') as HTMLInputElement | null)?.value.trim()[0]
           ?? (uploadLabel?.closest('section')?.querySelector('span')?.textContent?.trim()[0] ?? '?');

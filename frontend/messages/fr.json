@@ -49,6 +49,7 @@
   "customize_add_loading": "Chargement des options…",
   "customize_add_root_folder": "Dossier racine",
   "customize_add_quality_profile": "Profil de qualité",
+  "common_quality_profile_id": "ID de profil : {id}",
   "customize_add_tags": "Tags",
   "customize_add_season_folders": "Utiliser des dossiers par saison",
   "watch_history_title": "Historique de visionnage",
@@ -1777,6 +1778,22 @@
   "conn_collection_status": "État de la collection",
   "conn_playback_progress": "Progression de lecture",
   "conn_active_season_remaps": "Correspondances de saisons actives",
+  "conn_season_remaps_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} correspondance",
+        "countPlural=other": "{count} correspondances",
+        "countPlural=*": "{count} correspondances"
+      }
+    }
+  ],
   "conn_these_seasons_are_successfully_remapped_episodes": "Ces saisons sont correctement remappées. Les épisodes se synchronisent bien — vous pouvez modifier ou supprimer la correspondance si besoin.",
   "conn_edit_remap": "Modifier la correspondance",
   "conn_scrobble_only": "Scrobbling uniquement",
@@ -1817,6 +1834,7 @@
   "conn_let_me_customize_root_folder_quality_2": "Me laisser personnaliser le dossier racine, le profil de qualité, les tags et les dossiers par saison lors de l’ajout",
   "conn_connected_apps": "Applications connectées",
   "conn_apps_and_devices_you_ve_linked": "Les applications et appareils que vous avez associés avec un code à usage unique (par exemple l’extension Kodi Umbrella). Chacun dispose d’un jeton en écriture — il peut modifier votre historique de visionnage, vos notes et vos listes, mais pas votre mot de passe, votre adresse e-mail ni vos paramètres de sécurité. La révocation prend effet immédiatement.",
+  "conn_grant_details": "Association : {linked} · Dernière utilisation : {lastUsed} · Portée : {scope}",
   "conn_no_connected_apps": "Aucune application connectée.",
   "conn_revoke": "Révoquer",
   "conn_import": "Importer",
@@ -1830,6 +1848,8 @@
   "conn_import_from_yamtrack_floppy_export": "Importer depuis un export Yamtrack/Floppy ?",
   "conn_collection_and_lists_only_come_from": "La collection et les listes ne proviennent que d’un export Floppy - un fichier Yamtrack standard n’en contient pas et n’ajoutera donc rien pour ces éléments.",
   "conn_remap_season": "Remapper la saison",
+  "conn_remap_no_seasons": "Aucune saison trouvée.",
+  "conn_remap_seasons_load_failed": "Impossible de charger les saisons.",
   "conn_search_for_the_correct_tmdb_show": "Rechercher la bonne série sur TMDB",
   "conn_search_for_the_show_on_tvdb": "Rechercher la série sur TVDB",
   "conn_change": "Changer",
@@ -1924,6 +1944,7 @@
   "conn_import_failed": "Échec de l’import",
   "conn_import_cancelled": "Import annulé",
   "conn_could_not_load_libraries": "Impossible de charger les bibliothèques.",
+  "conn_no_supported_libraries": "Aucune bibliothèque compatible trouvée.",
   "conn_could_not_reach_server": "Impossible de joindre le serveur.",
   "conn_failed_to_save_mdblist_options": "Impossible d’enregistrer les options MDBList",
   "conn_stremio_connection_successful": "Connexion Stremio réussie !",
@@ -2024,6 +2045,7 @@
   "conn_failed_to_create_scrobble_connection": "Impossible de créer la connexion de scrobbling",
   "conn_scrobble_connection_added_reloading": "Connexion de scrobbling ajoutée ! Rechargement…",
   "conn_failed_to_load_users": "Impossible de charger les utilisateurs",
+  "conn_no_plex_friends": "Aucun ami trouvé.",
   "conn_are_you_sure_you_want_to": "Voulez-vous vraiment régénérer votre clé API ? L’ancienne clé cessera immédiatement de fonctionner.",
   "conn_regenerating": "Régénération…",
   "conn_failed_to_regenerate_key": "Impossible de régénérer la clé",
