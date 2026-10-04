@@ -35,6 +35,20 @@ export default defineConfig({
         cookieName: 'ui_language',
       }),
     ],
+    build: {
+      rollupOptions: {
+        // A misspelled message key (m.nav_hom()) only makes Rollup warn that
+        // "nav_hom" is not exported by src/paraglide/messages/_index.js: the
+        // build passes, then the page throws "m.nav_hom is not a function" when
+        // it renders. Nothing type-checks this project, so fail the build here.
+        onwarn(warning, warn) {
+          if (warning.code === 'MISSING_EXPORT' && /[\\/]paraglide[\\/]/.test(warning.exporter ?? '')) {
+            throw new Error(`Unknown message key: ${warning.message}`);
+          }
+          warn(warning);
+        },
+      },
+    },
     server: {
       allowedHosts: ['abstract-dev.bellamylab.com', 'scrob-dev.bellamylab.com'],
     }
