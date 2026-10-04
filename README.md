@@ -491,13 +491,12 @@ Stremio exposes a current watched state rather than Scrob's complete per-play hi
 
 ## Simkl Synchronization
 
-1. Create a Simkl application at [simkl.com/settings/developer](https://simkl.com/settings/developer) to get a Client ID.
-2. Open **Connections → Media Trackers → Simkl**, paste the Client ID in, and select **Connect Simkl**.
-3. Go to the shown URL and enter the displayed PIN to authorize, on simkl.com.
-4. Choose what to import under **Simkl → Scrob**, then select **Pull**.
-5. Enable the desired **Scrob → Simkl** options to push watched status, ratings, or live scrobbling back to Simkl.
+1. Open **Connections → Media Trackers → Simkl** and select **Connect Simkl**. There is no app to register or Client ID to enter.
+2. Go to the shown URL and enter the displayed PIN to authorize, on simkl.com.
+3. Choose what to import under **Simkl → Scrob**, then select **Pull**.
+4. Enable the desired **Scrob → Simkl** options to push watched status, ratings, or live scrobbling back to Simkl.
 
-Simkl uses PIN-based authentication - no client secret is needed.
+Scrob signs in with Simkl's AUTH V2 device flow through its own Simkl app, and refreshes the short-lived tokens automatically in the background. Connections made earlier through Simkl's retiring AUTH V1 keep working until Simkl switches it off (expected around April 2027); disconnect and connect again to move to V2.
 
 | Direction | Setting | Behavior |
 |---|---|---|

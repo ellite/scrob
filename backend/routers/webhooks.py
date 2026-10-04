@@ -31,6 +31,7 @@ from core.episode_order import (
     ensure_episode_order_mapping_for_season,
     get_episode_order,
     get_mapping_by_tvdb_position,
+    normalize_order_key,
     reconcile_divergent_episode_media,
 )
 from core.rewatch import record_rewatch_progress, get_active_rewatch
@@ -865,6 +866,7 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
             "is_paused": bool(play_state.get("IsPaused", False)),
             "session_id": session.get("Id") or session.get("PlaySessionId"),
             "username": session.get("UserName") or payload.get("NotificationUsername", ""),
+            "server_user_id": session.get("UserId") or payload.get("UserId"),
             "quality": quality,
             # Authoritative "finished the item" signal for a stop event - trusted
             # over the computed position ratio above, which the auto-play race
@@ -916,6 +918,7 @@ def parse_jellyfin_payload(payload: dict) -> dict | None:
         "is_paused": bool(payload.get("IsPaused", False)),
         "session_id": payload.get("PlaySessionId") or payload.get("DeviceId"),
         "username": payload.get("UserName") or payload.get("NotificationUsername", ""),
+        "server_user_id": payload.get("UserId"),
         "quality": {},
         # Only present on UserDataSaved events (manual watched/unwatched toggle,
         # rating change, favorite, etc. all raise this same notification type).
@@ -1045,7 +1048,7 @@ async def _translate_plex_tvdb_episode_position(
         return
     try:
         order_pref = await get_episode_order(db, user_id, series_tmdb_id)
-        if not order_pref or order_pref.episode_order != "tvdb":
+        if not order_pref or normalize_order_key(order_pref.episode_order) != "tvdb:official":
             return
         show_row = (
             await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
@@ -1310,6 +1313,23 @@ async def find_or_create_media_jellyfin_multi(
     return results
 
 
+def _normalize_server_user_id(value) -> str:
+    return str(value or "").replace("-", "").strip().lower()
+
+
+def _jellyfin_event_for_other_user(data: dict, conn) -> bool:
+    """True when a Jellyfin/Emby webhook event was raised by a different server
+    user than the one this connection is linked to. The webhook plugin posts
+    every user's playback to one destination, so without this check a second
+    household member's plays were attributed to this Scrob account (#405).
+    Only enforced when both sides carry an id - a payload without a UserId
+    (or a connection with none stored) keeps the old accept-everything
+    behaviour."""
+    event_user = _normalize_server_user_id(data.get("server_user_id"))
+    conn_user = _normalize_server_user_id(getattr(conn, "server_user_id", None)) if conn else ""
+    return bool(event_user and conn_user and event_user != conn_user)
+
+
 async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: str, connection_id: int | None = None):
     user_result = await db.execute(select(User).where(User.api_key == api_key))
     user = user_result.scalar_one_or_none()
@@ -1335,6 +1355,9 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
         conn = await _get_connection_by_id(db, user.id, connection_id)
     else:
         conn = await _get_oldest_connection(db, user.id, "jellyfin")
+
+    if _jellyfin_event_for_other_user(data, conn):
+        return {"status": "ignored", "reason": "event for a different server user than this connection"}
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
@@ -1605,6 +1628,9 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
     else:
         conn = await _get_oldest_connection(db, user.id, "emby")
 
+    if _jellyfin_event_for_other_user(data, conn):
+        return {"status": "ignored", "reason": "event for a different server user than this connection"}
+
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
     window_minutes = dedup_window_from_settings(settings)
@@ -1794,6 +1820,9 @@ async def _handle_jellyfin_scrobble_webhook(
     conn = await _get_scrobble_connection_by_id(db, user.id, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Scrobble connection not found")
+
+    if _jellyfin_event_for_other_user(data, conn):
+        return {"status": "ignored", "reason": "event for a different server user than this connection"}
 
     notification_type = data["notification_type"]
 

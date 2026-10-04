@@ -1,7 +1,16 @@
 """Simkl API client.
 
-Uses the PIN (device) authentication flow — only a client_id is needed,
-no client_secret. Access tokens are long-lived and do not expire or refresh.
+Two authentication generations are supported side by side, picked by what the
+user's Client ID was registered as:
+
+- AUTH V2 (RFC 8628 device flow): 7-day access token + 180-day refresh token.
+  Simkl is retiring V1 around April 2027, and new apps can only be V2.
+- AUTH V1 (PIN flow): 5-year access token, never refreshed. Connections made
+  this way keep working untouched until Simkl switches V1 off.
+
+Either way only a client_id is needed, no client_secret. New connections use
+Scrob's own V2 app (SCROB_CLIENT_ID); the V1 PIN helpers remain only for
+finishing a flow started before the upgrade.
 
 API base: https://api.simkl.com
 Rate limits: 1000 requests per 10 minutes per user.
@@ -18,6 +27,10 @@ from core.config import settings as app_settings
 logger = logging.getLogger(__name__)
 
 SIMKL_BASE = "https://api.simkl.com"
+# Scrob's own Simkl AUTH V2 app ("TV, devices & command line": device flow, no
+# secret). A V2 client ID is public by design - every user-data call also needs
+# the user's token - so it ships in source, like WETRAKR_CLIENT_ID.
+SCROB_CLIENT_ID = "4cf4eb7f537faafed03084ed995705a4f46e8494116a1fb81cce3949745716d8"
 TIMEOUT = 30.0
 USER_AGENT = f"scrob/{app_settings.app_version}"
 
@@ -94,6 +107,19 @@ def _history_not_found(payload: object) -> list:
     return []
 
 
+def _count_history_items(items: list) -> int:
+    """Number of individual movies/episodes in a list of `not_found` entries -
+    a show entry stands for every episode nested under its seasons."""
+    total = 0
+    for item in items:
+        seasons = item.get("seasons") if isinstance(item, dict) else None
+        if seasons:
+            total += sum(len(season.get("episodes") or []) or 1 for season in seasons)
+        else:
+            total += 1
+    return total
+
+
 def _raise_if_history_rejected(resp: httpx.Response, *, context: str) -> None:
     """For the single-item history helpers: a non-empty `not_found` means the
     one item we sent was rejected, so surface it instead of logging success."""
@@ -138,6 +164,123 @@ async def poll_pin_token(client_id: str, user_code: str) -> Optional[str]:
             return None
         resp.raise_for_status()
         return None
+
+
+# ── AUTH V2 (device flow + refresh) ───────────────────────────────────────────
+
+V2_SCOPE = "media:read media:write"
+# Refresh once the access token is this close to expiring (it lives 7 days).
+V2_REFRESH_SKEW_SECONDS = 2 * 24 * 3600
+
+
+class SimklNotV2Client(Exception):
+    """The Client ID is an AUTH V1 app: /oauth2/* answers 401 invalid_client
+    ("This client_id is not enabled for OAuth 2.0"). The caller falls back to
+    the V1 PIN flow."""
+
+
+class SimklAuthError(Exception):
+    """A permanent V2 failure (expired/denied/revoked) - polling or retrying
+    cannot fix it, the user has to connect again."""
+
+
+def _v2_headers() -> dict:
+    return {"Content-Type": "application/x-www-form-urlencoded", "User-Agent": USER_AGENT}
+
+
+def _error_code(resp: httpx.Response) -> str | None:
+    payload = _safe_json(resp)
+    return payload.get("error") if isinstance(payload, dict) else None
+
+
+async def start_device_auth_v2(client_id: str) -> dict:
+    """POST /oauth2/device. Returns {device_code, user_code, verification_uri,
+    verification_uri_complete, expires_in, interval}. Raises SimklNotV2Client
+    for a V1 Client ID."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{SIMKL_BASE}/oauth2/device",
+            data={"client_id": client_id, "scope": V2_SCOPE},
+            headers=_v2_headers(),
+        )
+    if resp.status_code == 401 and _error_code(resp) == "invalid_client":
+        raise SimklNotV2Client()
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def poll_device_token_v2(client_id: str, device_code: str) -> dict | None:
+    """Poll POST /oauth2/token. Returns the token response once approved, None
+    while still pending (including slow_down - the caller's own interval is
+    already >= Simkl's). Raises SimklAuthError when the code expired."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{SIMKL_BASE}/oauth2/token",
+            data={
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "client_id": client_id,
+                "device_code": device_code,
+            },
+            headers=_v2_headers(),
+        )
+    if resp.status_code == 200:
+        return resp.json()
+    error = _error_code(resp)
+    if error in ("authorization_pending", "slow_down"):
+        return None
+    if error == "expired_token":
+        raise SimklAuthError("The code expired. Start the connection again.")
+    resp.raise_for_status()
+    return None
+
+
+async def refresh_access_token_v2(client_id: str, refresh_token: str) -> dict:
+    """Refresh grant. Simkl's refresh token is non-rotating - the response
+    repeats it - and refreshing invalidates the previous access token. Raises
+    SimklAuthError when Simkl rejects the refresh token (revoked / 180 days
+    unused), anything else is a transient error left to propagate."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{SIMKL_BASE}/oauth2/token",
+            data={"grant_type": "refresh_token", "client_id": client_id, "refresh_token": refresh_token},
+            headers=_v2_headers(),
+        )
+    if resp.status_code == 200:
+        return resp.json()
+    if resp.status_code in (400, 401) and _error_code(resp) in ("invalid_grant", "invalid_client", "invalid_token"):
+        raise SimklAuthError("Simkl rejected the refresh token. Reconnect Simkl in Settings.")
+    resp.raise_for_status()
+    return {}
+
+
+async def revoke_token_v2(client_id: str, token: str) -> None:
+    """Best-effort RFC 7009 revoke; Simkl always answers 200."""
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            await client.post(
+                f"{SIMKL_BASE}/oauth2/revoke",
+                data={"client_id": client_id, "token": token},
+                headers=_v2_headers(),
+            )
+    except httpx.HTTPError as exc:
+        logger.info("Simkl token revoke failed (ignored): %s", exc)
+
+
+def token_expires_at(token_response: dict) -> int:
+    return int(datetime.now(timezone.utc).timestamp()) + int(token_response.get("expires_in") or 7 * 24 * 3600)
+
+
+def needs_refresh(settings, now: int | None = None) -> bool:
+    """True for a V2 connection whose access token is expired or about to be.
+    A V1 connection (no refresh token) never needs one. A refresh token with no
+    known expiry (e.g. restored from a backup) is refreshed straight away."""
+    if not getattr(settings, "simkl_refresh_token", None) or not getattr(settings, "simkl_client_id", None):
+        return False
+    expires_at = getattr(settings, "simkl_token_expires_at", None)
+    if not expires_at:
+        return True
+    now = now if now is not None else int(datetime.now(timezone.utc).timestamp())
+    return expires_at - now <= V2_REFRESH_SKEW_SECONDS
 
 
 async def validate_token(client_id: str, access_token: str) -> bool:
@@ -226,14 +369,18 @@ async def add_history_batch(
     access_token: str,
     movies: list[tuple[int, Optional[datetime]]],
     episodes: list[tuple[int, int, int, Optional[datetime]]],
-) -> None:
+) -> int:
     """Add multiple movies and/or episodes to Simkl history in a single API call.
 
     movies: list of (tmdb_id, watched_at)
     episodes: list of (show_tmdb_id, season_number, episode_number, watched_at)
+
+    Returns how many of the submitted items Simkl accepted the request for but
+    could not resolve (reported in `not_found`), so callers can count them as
+    failures instead of successes (#453).
     """
     if not movies and not episodes:
-        return
+        return 0
     body: dict = {}
     if movies:
         body["movies"] = []
@@ -278,6 +425,7 @@ async def add_history_batch(
                 "Simkl /sync/history accepted the batch but could not resolve %d item(s): %s",
                 len(rejected), rejected,
             )
+        return _count_history_items(rejected)
 
 
 async def remove_movie_from_history(client_id: str, access_token: str, tmdb_id: int) -> None:

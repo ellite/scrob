@@ -365,6 +365,7 @@ async def _settings_response(settings: UserSettings, db: AsyncSession) -> schema
     data = schemas.UserSettings.model_validate(settings)
     data.trakt_connected = bool(settings.trakt_access_token)
     data.simkl_connected = bool(settings.simkl_access_token)
+    data.simkl_auth_v1 = bool(settings.simkl_access_token and not settings.simkl_refresh_token)
     data.wetrakr_connected = bool(settings.wetrakr_access_token)
     data.mdblist_connected = bool(settings.mdblist_api_key)
     data.bingebase_connected = bool(settings.bingebase_webhook_url or settings.bingebase_api_key)
@@ -425,7 +426,7 @@ async def update_user_settings(
         db.add(settings)
 
     # Computed read-only fields; never write them back
-    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected", "wetrakr_connected", "mdblist_connected", "bingebase_connected", "has_rpdb_key", "has_global_tmdb_key", "has_effective_tmdb_key", "has_global_tvdb_key", "has_effective_tvdb_key", "has_global_mdblist_key"}
+    READ_ONLY_FIELDS = {"trakt_connected", "simkl_connected", "simkl_auth_v1", "wetrakr_connected", "mdblist_connected", "bingebase_connected", "has_rpdb_key", "has_global_tmdb_key", "has_effective_tmdb_key", "has_global_tvdb_key", "has_effective_tvdb_key", "has_global_mdblist_key"}
     update_data = {k: v for k, v in settings_in.model_dump(exclude_unset=True).items() if k not in READ_ONLY_FIELDS}
 
     new_rpdb_key = update_data.get("rpdb_api_key")
@@ -1366,6 +1367,8 @@ async def get_connection_status(
         from core import simkl as simkl_client
         if not user_settings or not (user_settings.simkl_access_token and user_settings.simkl_client_id):
             return {"configured": False, "connected": False}
+        from routers.simkl import ensure_simkl_token_fresh
+        await ensure_simkl_token_fresh(db, user_settings)
         connected = await simkl_client.validate_token(user_settings.simkl_client_id, user_settings.simkl_access_token)
         return {"configured": True, "connected": connected}
 

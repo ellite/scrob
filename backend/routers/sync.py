@@ -295,6 +295,11 @@ def provider_added_at(item: dict, source: CollectionSource) -> datetime | None:
             return None
         return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
 
+    if source is CollectionSource.nuvio:
+        # Nuvio's library RPC stamps every item with its own add time (epoch
+        # ms); _normalize_nuvio_item forwards it under this key (#244).
+        return _nuvio_datetime(item.get("NuvioAddedAt"))
+
     return None
 
 
@@ -4309,9 +4314,13 @@ def _normalize_nuvio_item(
         source_id = f"{source_id}:s{season}e{episode}"
     last_played = _nuvio_datetime(record.get("watched_at") or record.get("last_watched"))
     title = record.get("title") or record.get("name") or content_id
+    # Only a library record is a "collected" event; watched/progress records
+    # carry no add date of their own.
+    added_at = None if watched else record.get("added_at")
 
     item = {
         "Id": source_id,
+        "NuvioAddedAt": added_at,
         "Name": title,
         "ProviderIds": {} if is_episode else {"Tmdb": str(tmdb_id)},
         "MediaStreams": [],

@@ -175,6 +175,7 @@ class UserSettings(BaseModel):
     # Simkl — client_id only (PIN flow, no secret); OAuth token managed via /simkl/* endpoints
     simkl_client_id: Optional[str] = None
     simkl_connected: Optional[bool] = None  # read-only, derived from token presence
+    simkl_auth_v1: Optional[bool] = None  # read-only, connected through the deprecated AUTH V1 (no refresh token)
     simkl_sync_watched: Optional[bool] = None
     simkl_sync_ratings: Optional[bool] = None
     simkl_sync_lists: Optional[bool] = None

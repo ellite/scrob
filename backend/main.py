@@ -593,6 +593,30 @@ async def _show_metadata_refresher():
             log.error(f"Show metadata refresher: {e}")
 
 
+async def _simkl_token_refresher():
+    """Keeps Simkl AUTH V2 access tokens (7-day lifetime) fresh for every
+    other Simkl call site. Runs once at startup - which also recovers tokens
+    that expired while the server was down, the refresh token lasts 180 days -
+    then hourly. AUTH V1 connections have no refresh token and are skipped."""
+    import logging
+    log = logging.getLogger("uvicorn.error")
+
+    try:
+        from routers.simkl import refresh_expiring_simkl_tokens
+    except Exception as e:
+        log.error(f"Simkl token refresher: failed to import dependencies: {e}")
+        return
+
+    while True:
+        try:
+            refreshed = await refresh_expiring_simkl_tokens()
+            if refreshed:
+                log.info(f"Simkl token refresher: refreshed {refreshed} token(s)")
+        except Exception as e:
+            log.error(f"Simkl token refresher: {e}")
+        await asyncio.sleep(3600)
+
+
 async def _watchlist_poller():
     import logging
     log = logging.getLogger("uvicorn.error")
@@ -754,8 +778,15 @@ async def lifespan(app: FastAPI):
     manual_session_task = asyncio.create_task(_manual_session_completer())
     emby_progress_task = asyncio.create_task(_emby_progress_poller())
     show_metadata_task = asyncio.create_task(_show_metadata_refresher())
+    simkl_token_task = asyncio.create_task(_simkl_token_refresher())
 
     yield
+
+    simkl_token_task.cancel()
+    try:
+        await simkl_token_task
+    except asyncio.CancelledError:
+        pass
 
     scheduler_task.cancel()
     watchlist_task.cancel()

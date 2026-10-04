@@ -1653,6 +1653,22 @@ async def get_show_season(
                     }
                 )
 
+            # Episode votes keep moving after the row is first enriched, and
+            # nothing else refreshes them, so the show page's rating heat map
+            # (built from the stored value) drifted from this live one (#456).
+            ratings_changed = False
+            for ep in tmdb_episodes:
+                vote = ep.get("vote_average")
+                stored = local_media_by_tmdb.get(ep.get("id"))
+                if vote is not None and stored is not None and stored.tmdb_rating != vote:
+                    stored.tmdb_rating = vote
+                    ratings_changed = True
+            if ratings_changed:
+                try:
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+
             # Store episode translations for library browsing
             if metadata_lang:
                 try:

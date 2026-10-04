@@ -792,6 +792,19 @@ class ProviderAddedAtTests(unittest.TestCase):
                 sync.provider_added_at({"DateCreated": "2026-08-01T09:30:00Z"}, source)
             )
 
+    def test_nuvio_uses_its_own_epoch_ms_add_time(self):
+        # 2026-08-01T09:30:00Z (#244)
+        got = sync.provider_added_at({"NuvioAddedAt": 1785576600000}, sync.CollectionSource.nuvio)
+        self.assertEqual(got, datetime(2026, 8, 1, 9, 30, 0))
+        self.assertIsNone(sync.provider_added_at({"NuvioAddedAt": None}, sync.CollectionSource.nuvio))
+
+    def test_nuvio_library_record_forwards_added_at_but_watched_record_does_not(self):
+        record = {"content_id": "tt0111161", "content_type": "movie", "name": "X", "added_at": 1785576600000}
+        _, lib_item = sync._normalize_nuvio_item(record, 1, tmdb_id=278)
+        _, watched_item = sync._normalize_nuvio_item(record, 1, watched=True, tmdb_id=278)
+        self.assertEqual(lib_item["NuvioAddedAt"], 1785576600000)
+        self.assertIsNone(watched_item["NuvioAddedAt"])
+
     def test_missing_or_unusable_values_return_none(self):
         cases = [
             ({}, sync.CollectionSource.plex),

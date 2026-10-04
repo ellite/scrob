@@ -487,6 +487,7 @@ export interface UserSettings {
   // Simkl
   simkl_client_id: string | null;
   simkl_connected: boolean;
+  simkl_auth_v1?: boolean;
   simkl_sync_watched: boolean;
   simkl_sync_ratings: boolean;
   simkl_sync_lists: boolean;

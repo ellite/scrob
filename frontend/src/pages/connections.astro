@@ -838,7 +838,15 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 <div class="flex items-center gap-4 pointer-events-none">
                   <Fragment set:html={connectionIconHtml("simkl")} />
                   <div class="flex flex-col gap-0.5">
-                    <span class="font-medium text-zinc-200">Simkl</span>
+                    <span class="font-medium text-zinc-200 flex items-center gap-1.5">
+                      Simkl
+                      {settings.simkl_connected && settings.simkl_auth_v1 && (
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-amber-400 shrink-0" aria-label={m.conn_simkl_v1_retiring_icon()}>
+                          <title>{m.conn_simkl_v1_retiring_icon()}</title>
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                        </svg>
+                      )}
+                    </span>
                     <span id="simkl-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
                   </div>
                 </div>
@@ -875,18 +883,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 <div class="grid md:grid-cols-2 gap-8 px-6 py-6">
                   <!-- Left: Auth / Info -->
                   <div class="space-y-4">
-                    <div class="space-y-2">
-                      <label for="simkl_client_id" class="block text-sm font-medium text-zinc-400">{m.conn_client_id()}</label>
-                      <input
-                        type="text"
-                        name="simkl_client_id"
-                        id="simkl_client_id"
-                        value={settings.simkl_client_id || ""}
-                        placeholder={m.conn_your_simkl_application_client_id()}
-                        class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all"
-                      />
-                      <p class="text-xs text-zinc-500" set:html={m.conn_simkl_app_help({ site: '<span class="text-zinc-400">simkl.com/settings/developer</span>' })} />
-                    </div>
                     <div id="simkl-auth-panel" class="hidden space-y-3 bg-zinc-900/50 border border-zinc-700 rounded-xl p-4">
                       <p class="text-sm text-zinc-400" set:html={m.conn_go_to_enter_pin({ url: '<strong id="simkl-verify-url" class="text-zinc-100"></strong>' })} />
                       <div class="font-mono text-2xl font-bold tracking-widest text-zinc-100 bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-3 text-center select-all" id="simkl-user-code"></div>
@@ -897,6 +893,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         ? m.conn_simkl_connected_hint()
                         : m.conn_simkl_setup_hint()}
                     </p>
+                    {settings.simkl_connected && settings.simkl_auth_v1 && (
+                      <div id="simkl-v1-warning" class="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-2">
+                        <p class="text-sm font-semibold text-amber-400">{m.conn_simkl_v1_retiring_title()}</p>
+                        <p class="text-xs text-zinc-400">{m.conn_simkl_v1_retiring_body()}</p>
+                      </div>
+                    )}
                   </div>
                   <!-- Right: Sync Preferences (only if connected) -->
                   {settings.simkl_connected && (
@@ -3292,6 +3294,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       
       newBtn.addEventListener('click', async () => {
         const action = newBtn.getAttribute('data-action');
+        // The Disconnect buttons share this class for styling but have their own
+        // handlers; with no action there is nothing for this one to do.
+        if (!action) return;
         newBtn.disabled = true;
         const originalHTML = newBtn.innerHTML;
         newBtn.textContent = '...';
@@ -3470,7 +3475,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             return;
           } else if (action === 'save_simkl_settings') {
             const body: Record<string, any> = {
-              simkl_client_id: (document.getElementById('simkl_client_id') as HTMLInputElement)?.value || null,
               simkl_auto_sync_interval: (() => {
                 const v = (document.querySelector('[name="simkl_auto_sync_interval"]') as HTMLSelectElement)?.value;
                 return v ? parseFloat(v) : null;
@@ -3647,7 +3651,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           } else if (action === 'delete_scrobble_connection') {
             const connId = newBtn.getAttribute('data-conn-id');
             const connName = newBtn.getAttribute('data-conn-name');
-            if (!confirm(m.conn_delete_scrobble_connection_confirm({ name: connName }))) return;
+            if (!(await (window as any).showConfirm(m.conn_delete_scrobble_connection_title({ name: connName }), m.common_cannot_be_undone()))) return;
             const delRes = await fetch(`/api/proxy/auth/scrobble-connections/${connId}`, {
               method: 'DELETE',
               headers: { 'Authorization': `Bearer ${token}` },
@@ -3662,7 +3666,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           } else if (action === 'delete_connection') {
             const connId = newBtn.getAttribute('data-conn-id');
             const connName = newBtn.getAttribute('data-conn-name');
-            if (!confirm(m.conn_delete_connection_confirm({ name: connName }))) return;
+            if (!(await (window as any).showConfirm(m.conn_delete_connection_title({ name: connName }), m.common_cannot_be_undone()))) return;
             const delRes = await fetch(`/api/proxy/auth/connections/${connId}`, {
               method: 'DELETE',
               headers: { 'Authorization': `Bearer ${token}` },
@@ -4131,7 +4135,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
       if (disconnectBtn) {
         disconnectBtn.onclick = async () => {
-          if (!confirm(m.conn_disconnect_trakt_this_will_remove_your())) return;
+          if (!(await (window as any).showConfirm(m.conn_disconnect_service_title({ name: 'Trakt' }), m.conn_disconnect_tokens_body({ name: 'Trakt' })))) return;
           disconnectBtn.disabled = true;
           disconnectBtn.textContent = m.conn_disconnecting();
           try {
@@ -4400,20 +4404,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           connectBtn.disabled = true;
           connectBtn.textContent = m.common_starting();
           try {
-            // Auto-save client_id if not yet persisted
-            const clientIdInput = document.getElementById('simkl_client_id') as HTMLInputElement | null;
-            const clientId = clientIdInput?.value.trim() || '';
-            if (clientId) {
-              const saveRes = await fetch('/api/proxy/auth/settings', {
-                method: 'PATCH',
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ simkl_client_id: clientId }),
-              });
-              if (!saveRes.ok) {
-                throw new Error(await errorDetail(saveRes, m.conn_failed_to_save_simkl_client_id()));
-              }
-            }
-
             const res = await fetch('/api/proxy/simkl/auth/pin/start', {
               method: 'POST',
               headers: { 'Authorization': `Bearer ${token}` },
@@ -4473,7 +4463,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
       if (disconnectBtn) {
         disconnectBtn.onclick = async () => {
-          if (!confirm(m.conn_disconnect_simkl_this_will_remove_your())) return;
+          if (!(await (window as any).showConfirm(m.conn_disconnect_service_title({ name: 'Simkl' }), m.conn_disconnect_simkl_body()))) return;
           disconnectBtn.disabled = true;
           disconnectBtn.textContent = m.conn_disconnecting();
           try {
@@ -4563,7 +4553,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
       if (disconnectBtn) {
         disconnectBtn.onclick = async () => {
-          if (!confirm(m.conn_disconnect_service_confirm({ name: 'WeTrakr' }))) return;
+          if (!(await (window as any).showConfirm(m.conn_disconnect_service_title({ name: 'WeTrakr' }), m.conn_disconnect_tokens_body({ name: 'WeTrakr' })))) return;
           disconnectBtn.disabled = true;
           disconnectBtn.textContent = m.conn_disconnecting();
           try {
@@ -4587,7 +4577,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const disconnectBtn = document.getElementById('mdblist-disconnect-btn');
       if (disconnectBtn) {
         disconnectBtn.onclick = async () => {
-          if (!confirm(m.conn_disconnect_mdblist_this_will_remove_your())) return;
+          if (!(await (window as any).showConfirm(m.conn_disconnect_service_title({ name: 'MDBList' }), m.conn_disconnect_mdblist_body()))) return;
           disconnectBtn.disabled = true;
           disconnectBtn.textContent = m.conn_disconnecting();
           try {
@@ -5503,7 +5493,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     if (regenBtn && keyInput) {
       regenBtn.addEventListener('click', async () => {
-        if (!confirm(m.conn_are_you_sure_you_want_to())) return;
+        if (!(await (window as any).showConfirm(m.conn_regenerate_api_key_title(), m.conn_regenerate_api_key_body()))) return;
 
         regenBtn.disabled = true;
         const originalText = regenBtn.textContent;
@@ -5998,7 +5988,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       document.querySelectorAll<HTMLButtonElement>('#season-remaps-list .delete-override-btn').forEach((btn) => {
         btn.addEventListener('click', async () => {
           const overrideId = btn.dataset.overrideId;
-          if (!overrideId || !confirm(m.conn_remove_this_season_remap())) return;
+          if (!overrideId || !(await (window as any).showConfirm(m.conn_remove_this_season_remap(), m.common_cannot_be_undone()))) return;
           btn.disabled = true;
           btn.textContent = m.common_removing();
           try {

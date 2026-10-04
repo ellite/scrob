@@ -516,3 +516,37 @@ class StreamNextUpRefreshTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(msgs[0], {"total": 2})
         self.assertEqual(msgs[-1], {"done": 2, "total": 2, "complete": True})
         self.assertEqual(apply_calls, [2])  # only the one that succeeded
+
+
+class FetchMissingEpisodeTranslationsTests(unittest.IsolatedAsyncioTestCase):
+    """#450: Next Up cards for episodes with no stored translation must be
+    translated from TMDB instead of staying in the first-enriched language."""
+
+    def _ep(self, media_id, tmdb_show_id=10):
+        show = SimpleNamespace(tmdb_id=tmdb_show_id, tvdb_id=None, canonical_source="tmdb")
+        return SimpleNamespace(id=media_id, show=show, season_number=2, episode_number=3, title="Along Came a Spider")
+
+    async def test_fetches_stores_and_returns_translation(self):
+        from routers.history import _fetch_missing_episode_translations
+        db = AsyncMock()
+        tmdb_ep = {"name": "Die Spinne", "overview": "Ein Text", "still_path": "/s.jpg"}
+        with (
+            patch("routers.history.check_tmdb_key", return_value=True),
+            patch("routers.history.tmdb.get_episode", AsyncMock(return_value=tmdb_ep)) as get_ep,
+            patch("routers.history.upsert_media_translation", AsyncMock()) as upsert,
+        ):
+            out = await _fetch_missing_episode_translations(db, [self._ep(7)], "de", "key")
+        get_ep.assert_awaited_once_with(10, 2, 3, api_key="key", language="de")
+        upsert.assert_awaited_once()
+        self.assertEqual(out[7]["title"], "Die Spinne")
+
+    async def test_tmdb_failure_leaves_episode_untranslated(self):
+        from routers.history import _fetch_missing_episode_translations
+        with (
+            patch("routers.history.check_tmdb_key", return_value=True),
+            patch("routers.history.tmdb.get_episode", AsyncMock(side_effect=RuntimeError("boom"))),
+            patch("routers.history.upsert_media_translation", AsyncMock()) as upsert,
+        ):
+            out = await _fetch_missing_episode_translations(AsyncMock(), [self._ep(7)], "de", "key")
+        self.assertEqual(out, {})
+        upsert.assert_not_awaited()

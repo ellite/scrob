@@ -1,7 +1,7 @@
 """add user_settings.ui_language
 
 Revision ID: uilang
-Revises: cmttvdb446
+Revises: simklv2auth455
 Create Date: 2026-09-15
 
 Per-user web UI language (null = follow the browser's Accept-Language).
@@ -13,7 +13,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "uilang"
-down_revision = "cmttvdb446"
+down_revision = "simklv2auth455"
 branch_labels = None
 depends_on = None
 

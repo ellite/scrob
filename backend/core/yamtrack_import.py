@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 _REQUIRED_COLUMNS = {"media_id", "source", "media_type"}
 _STATUS_COMPLETED = "completed"
 _STATUS_PLANNING = "planning"
+_STATUS_DROPPED = "dropped"
 
 
 def _norm(value: str | None) -> str:
@@ -156,6 +157,8 @@ def _process_media_row(row: dict, data: ScrobImportData) -> None:
         show = {"ids": {"tmdb": tmdb_id}, "title": title}
         if status == _STATUS_PLANNING:
             data.watchlist.append({"type": "show", "show": show})
+        if status == _STATUS_DROPPED:
+            data.dropped_shows.append({"show": show})
         if score:
             data.ratings.setdefault("shows", []).append({"rating": score, "rated_at": rated_at, "show": show})
         if notes:

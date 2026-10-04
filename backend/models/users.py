@@ -116,7 +116,10 @@ class UserSettings(Base):
 
     # Simkl OAuth token
     simkl_access_token       : Mapped[Optional[str]]  = mapped_column(String(2000))
-    simkl_device_code        : Mapped[Optional[str]]  = mapped_column(String(255))  # user_code during PIN auth
+    simkl_device_code        : Mapped[Optional[str]]  = mapped_column(String(255))  # user_code during PIN auth (V1), "v2:<device_code>" during device auth (V2)
+    # AUTH V2 only: 7-day access token + 180-day refresh token. NULL on a V1 connection.
+    simkl_refresh_token      : Mapped[Optional[str]]  = mapped_column(String(2000))
+    simkl_token_expires_at   : Mapped[Optional[int]]  = mapped_column(BigInteger)  # Unix timestamp
 
     # Simkl inbound sync flags (Simkl → Scrob)
     simkl_sync_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")

@@ -1295,7 +1295,7 @@ class TranslatePlexTvdbEpisodePositionTests(IsolatedAsyncioTestCase):
         db.execute = AsyncMock(return_value=_ScalarResult(SimpleNamespace(id=9, tmdb_id=100, tvdb_id=42)))
         data = self._data(season_number=2, episode_number=1)
         with (
-            patch("routers.webhooks.get_episode_order", AsyncMock(return_value=SimpleNamespace(episode_order="tvdb"))),
+            patch("routers.webhooks.get_episode_order", AsyncMock(return_value=SimpleNamespace(episode_order="tvdb:official"))),
             patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(42, "tvdb-key", None))),
             patch("routers.webhooks._resolve_tvdb_episode_to_tmdb_position", AsyncMock(return_value=(1, 25))),
         ):
@@ -1307,7 +1307,7 @@ class TranslatePlexTvdbEpisodePositionTests(IsolatedAsyncioTestCase):
         db.execute = AsyncMock(return_value=_ScalarResult(SimpleNamespace(id=9, tmdb_id=100, tvdb_id=42)))
         data = self._data(season_number=0, episode_number=7)
         with (
-            patch("routers.webhooks.get_episode_order", AsyncMock(return_value=SimpleNamespace(episode_order="tvdb"))),
+            patch("routers.webhooks.get_episode_order", AsyncMock(return_value=SimpleNamespace(episode_order="tvdb:official"))),
             patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(42, "tvdb-key", None))),
             patch("routers.webhooks._resolve_tvdb_episode_to_tmdb_position", AsyncMock(return_value=None)),
         ):
@@ -2190,3 +2190,31 @@ class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JellyfinEventUserFilterTests(unittest.TestCase):
+    """#405: a Jellyfin/Emby webhook raised by another server user must not be
+    attributed to this connection's Scrob account."""
+
+    def test_flat_and_nested_payloads_expose_the_server_user_id(self):
+        from routers.webhooks import parse_jellyfin_payload
+        flat = parse_jellyfin_payload({"NotificationType": "PlaybackStop", "ItemType": "Movie", "UserId": "abc"})
+        nested = parse_jellyfin_payload({
+            "NotificationType": "PlaybackStop",
+            "Item": {"Type": "Movie", "Id": "1"},
+            "Session": {"UserId": "def"},
+        })
+        self.assertEqual(flat["server_user_id"], "abc")
+        self.assertEqual(nested["server_user_id"], "def")
+
+    def test_other_user_is_detected_ignoring_dashes_and_case(self):
+        from routers.webhooks import _jellyfin_event_for_other_user
+        conn = SimpleNamespace(server_user_id="AAAAAAAA-1111-2222-3333-444444444444")
+        self.assertFalse(_jellyfin_event_for_other_user({"server_user_id": "aaaaaaaa111122223333444444444444"}, conn))
+        self.assertTrue(_jellyfin_event_for_other_user({"server_user_id": "bbbbbbbb111122223333444444444444"}, conn))
+
+    def test_missing_id_on_either_side_is_accepted(self):
+        from routers.webhooks import _jellyfin_event_for_other_user
+        self.assertFalse(_jellyfin_event_for_other_user({"server_user_id": None}, SimpleNamespace(server_user_id="x")))
+        self.assertFalse(_jellyfin_event_for_other_user({"server_user_id": "x"}, SimpleNamespace(server_user_id=None)))
+        self.assertFalse(_jellyfin_event_for_other_user({"server_user_id": "x"}, None))

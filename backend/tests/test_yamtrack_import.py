@@ -65,6 +65,16 @@ class ParseYamtrackCsvVanillaTests(unittest.TestCase):
             data = parse_yamtrack_csv(_make_csv(_VANILLA_HEADER, [_movie_row(status=status)]))
             self.assertEqual(data.history_movies, [], f"status={status!r} should not produce history")
 
+    def test_dropped_tv_row_is_collected_for_the_dropped_shows_setting(self) -> None:
+        """#370: a Dropped show must not silently lose that status."""
+        rows = [
+            {"media_id": "1668", "source": "tmdb", "media_type": "tv", "title": "Friends", "status": "Dropped"},
+            {"media_id": "1399", "source": "tmdb", "media_type": "tv", "title": "GoT", "status": "Completed"},
+        ]
+        data = parse_yamtrack_csv(_make_csv(_VANILLA_HEADER, rows))
+        self.assertEqual(len(data.dropped_shows), 1)
+        self.assertEqual(data.dropped_shows[0]["show"]["ids"]["tmdb"], 1668)
+
     def test_episode_row_is_watched_regardless_of_status_field(self) -> None:
         data = parse_yamtrack_csv(_make_csv(_VANILLA_HEADER, [_episode_row()]))
         self.assertEqual(len(data.history_episodes), 1)

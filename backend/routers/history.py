@@ -23,7 +23,7 @@ from models.rewatch import ShowRewatch, RewatchProgress
 from models.ratings import Rating
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, _attach_episode_order_fields
 from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, resolve_display_to_canonical, normalize_order_key, is_aired_order
-from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations, get_show_translations
+from core.translations import get_user_metadata_language, get_media_translations, upsert_media_translation, apply_media_translations, get_show_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
 from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event
 from core.enrichment import create_media_safely
@@ -1471,6 +1471,18 @@ async def get_next_up(
         if lang:
             media_ids = [i["id"] for i in items if i.get("id")]
             translations = await get_media_translations(db, media_ids, lang)
+            # An episode nobody has opened yet (library-synced, or created on
+            # demand above) has no stored translation, so the card would stay
+            # in the language the row was first enriched in. Fetch the missing
+            # ones from TMDB now instead of waiting for a detail-page visit (#450).
+            missing_ids = {i for i in media_ids if i not in translations}
+            if missing_ids:
+                translations.update(
+                    await _fetch_missing_episode_translations(
+                        db, [m for m in next_up if m.id in missing_ids], lang,
+                        await get_user_tmdb_key(db, current_user.id),
+                    )
+                )
             apply_media_translations(items, translations)
 
             # The featured/hero card (and every row here) displays show_title
@@ -1488,6 +1500,51 @@ async def get_next_up(
                         item["show_title"] = t["title"]
 
     return {"next_up": items}
+
+
+async def _fetch_missing_episode_translations(
+    db: AsyncSession, episodes: list[Media], lang: str, api_key: str | None
+) -> dict[int, dict]:
+    """Fetch and store TMDB translations for episodes that have none yet.
+    Best-effort: bounded in time and concurrency; on failure the card keeps
+    its stored language."""
+    if not check_tmdb_key(api_key):
+        return {}
+    targets = [
+        m for m in episodes
+        if m.show and m.show.tmdb_id and m.season_number is not None
+        and m.episode_number is not None and not _is_tvdb_canonical(m.show)
+    ]
+    if not targets:
+        return {}
+    sem = asyncio.Semaphore(5)
+
+    async def _one(m: Media):
+        async with sem:
+            try:
+                return m, await tmdb.get_episode(
+                    m.show.tmdb_id, m.season_number, m.episode_number,
+                    api_key=api_key, language=lang,
+                )
+            except Exception:
+                return m, None
+
+    try:
+        results = await asyncio.wait_for(asyncio.gather(*[_one(m) for m in targets]), timeout=6.0)
+    except asyncio.TimeoutError:
+        return {}
+    out: dict[int, dict] = {}
+    for m, data in results:
+        if not data:
+            continue
+        title = data.get("name") or m.title
+        overview = data.get("overview")
+        still = data.get("still_path")
+        await upsert_media_translation(db, m.id, lang, title, overview, None, still)
+        out[m.id] = {"title": title, "overview": overview, "tagline": None, "poster_path": still}
+    if out:
+        await db.commit()
+    return out
 
 
 import schemas
