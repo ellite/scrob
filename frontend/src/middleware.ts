@@ -184,10 +184,16 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
   }
 
-  // Dates and numbers also follow the viewer's region (lib/format.ts).
-  const response = await withRequestRegion(context.request, () =>
-    paraglideMiddleware(context.request, () => next()),
-  );
+  // The backend proxy renders no UI text, so it skips both wrappers below.
+  // paraglideMiddleware clones the request it wraps, and for an upload (a
+  // backup restore, a Trakt export) that clone keeps a second copy of the whole
+  // body in memory until the request ends.
+  const response = pathname.startsWith("/api/")
+    ? await next()
+    : await withRequestRegion(context.request, () =>
+        // Dates and numbers also follow the viewer's region (lib/format.ts).
+        paraglideMiddleware(context.request, () => next()),
+      );
   for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
     response.headers.set(header, value);
   }
