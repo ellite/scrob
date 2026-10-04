@@ -681,6 +681,18 @@ npm run dev
 
 The frontend dev server starts on `http://localhost:4321` and proxies API calls to the backend on `7331`.
 
+### UI text and translations
+
+User-facing text lives in message catalogs in `frontend/messages/`, compiled by [Paraglide JS](https://inlang.com/m/gerre34r/library-inlang-paraglideJs). Only edit `en.json`: the other catalogs are translated on Crowdin, and a string shows in English until it is translated.
+
+1. Add a key to `frontend/messages/en.json`, prefixed with the page or area (`history_empty`). Reuse a `common_*` key when one fits.
+2. Call it in frontmatter or in a `<script>`: `import { m } from "../paraglide/messages.js"`, then `m.history_empty()`, or `m.episodes_left({ count })` with parameters. A key that doesn't exist fails `npm run build`.
+3. Format dates and numbers with the helpers in `frontend/src/lib/format.ts` (`formatDate`, `formatNumber`, ...) rather than `toLocaleString()`, so they follow the UI language and the viewer's region.
+
+Plurals use the variant format (see `episodes_left` in `en.json`), with a `=*` catch-all. A message rendered with `set:html` may contain markup: pass every interpolated value through `escapeHtml` from `format.ts`.
+
+To add a language, add its code to `locales` in `frontend/project.inlang/settings.json`. It appears in the language pickers right away, in English until its catalog comes back from Crowdin.
+
 </details>
 
 ## License
