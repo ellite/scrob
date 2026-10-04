@@ -9,8 +9,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro",
-    "i18n:check": "node scripts/check-i18n.mjs"
+    "astro": "astro"
   },
   "dependencies": {
     "@astrojs/node": "^10.0.4",
