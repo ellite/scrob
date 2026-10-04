@@ -538,7 +538,7 @@ try {
             }).join('')}
           </div>
           <div style="display:flex;gap:4px;margin-top:4px">
-            ${fullDist.map(d => `<div style="flex:1;text-align:center"><span style="font-size:9px;color:#52525b;font-weight:700;white-space:nowrap">${d.rating}★</span></div>`).join('')}
+            ${fullDist.map(d => `<div style="flex:1;text-align:center"><span style="font-size:9px;color:#52525b;font-weight:700;white-space:nowrap">${formatNumber(d.rating)}★</span></div>`).join('')}
           </div>
         `;
       } else {

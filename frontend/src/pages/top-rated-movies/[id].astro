@@ -91,7 +91,7 @@ function posterUrl(path: string | null): string | null {
                   )}
                   <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                   <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full border border-zinc-800 flex items-center gap-0.5">
-                    <span class="text-[10px] leading-none">★</span> {item.user_rating}
+                    <span class="text-[10px] leading-none">★</span> {formatNumber(item.user_rating, { maximumFractionDigits: 1 })}
                   </div>
                 </div>
                 <p class="text-sm font-bold text-zinc-300 truncate group-hover:text-zinc-100 transition-colors leading-snug">{item.title}</p>
