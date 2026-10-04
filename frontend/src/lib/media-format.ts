@@ -1,25 +1,35 @@
+import { m } from "../paraglide/messages.js";
+
+// Compact runtime ("1h 5m", "45m") in the UI language.
+export function formatShortDuration(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return m.duration_minutes({ minutes });
+  return minutes > 0 ? m.duration_hours_minutes({ hours, minutes }) : m.duration_hours({ hours });
+}
+
 export function formatEpisodesLeft(
   episodesLeft?: number | null,
   remainingRuntime?: number | null,
 ): string | null {
   if (episodesLeft == null || episodesLeft <= 0) return null;
-  const label = `${episodesLeft} episode${episodesLeft === 1 ? "" : "s"} left`;
+  const label = m.episodes_left({ count: episodesLeft });
   if (!remainingRuntime || remainingRuntime <= 0) return label;
-  const h = Math.floor(remainingRuntime / 60);
-  const m = remainingRuntime % 60;
-  const runtime = h > 0 ? (m > 0 ? `~${h}h ${m}m` : `~${h}h`) : `~${m}m`;
-  return `${label} · ${runtime}`;
+  return `${label} · ~${formatShortDuration(remainingRuntime)}`;
 }
 
 export function formatSeasonTitle(seasonNumber: number, name?: string | null): string {
   const isSpecials = seasonNumber === 0;
-  const fallback = isSpecials ? "Specials" : `Season ${seasonNumber}`;
+  const fallback = isSpecials ? m.season_specials() : m.media_season_number({ number: seasonNumber });
   const trimDecorators = (value: string) => value.replace(/^[-–—:·\s]+|[-–—:·\s]+$/g, "").trim();
   // Strip a redundant leading label ("Season 3 - ", or "Specials - " for season 0)
-  // so a name that only repeats the fallback collapses back to it.
+  // so a name that only repeats the fallback collapses back to it. Metadata may
+  // be in English or in the metadata language, and the fallback is in the UI
+  // language, so both the English form and the localized fallback are matched.
+  const escapeRe = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
   const prefixRe = isSpecials
-    ? /^(?:season\s+0|specials)\s*[-–—:·]?\s*/i
-    : new RegExp(`^season\\s+${seasonNumber}\\s*[-–—:·]?\\s*`, "i");
+    ? new RegExp(`^(?:season\\s+0|specials|${escapeRe(fallback)})\\s*[-–—:·]?\\s*`, "i")
+    : new RegExp(`^(?:season\\s+${seasonNumber}|${escapeRe(fallback)})\\s*[-–—:·]?\\s*`, "i");
   const customName = trimDecorators(trimDecorators(name ?? "").replace(prefixRe, ""));
   return customName ? `${fallback} · ${customName}` : fallback;
 }

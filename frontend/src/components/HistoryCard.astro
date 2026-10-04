@@ -4,6 +4,8 @@ import { tmdbImageUrl } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
 import { episodeHref } from "../lib/episodeHref";
 import { displaySeasonEpisode } from "../lib/media-format";
+import { formatNumber, formatTime } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 import { getViewerTimeZone } from "../lib/viewerTimeZone";
 
 interface Props {
@@ -16,8 +18,8 @@ const timeZone = getViewerTimeZone(Astro.cookies);
 const { media, watched_at } = event;
 
 const timeString = watched_at
-  ? new Date(watched_at + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: !use24h, timeZone })
-  : 'Unknown';
+  ? formatTime(watched_at + 'Z', { hour: '2-digit', minute: '2-digit', hour12: !use24h, timeZone })
+  : m.history_time_unknown();
 
 const isEpisode = media.type === 'episode';
 const { season: dispSeason, episode: dispEpisode } = displaySeasonEpisode(media);
@@ -71,14 +73,14 @@ const href = media.type === 'movie' ? `/media/movie/${media.tmdb_id}` : episodeH
         {media.user_rating != null && (
           <span class="flex items-center gap-0.5 text-xs font-bold text-amber-400">
             <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-            {media.user_rating % 1 === 0 ? media.user_rating : media.user_rating.toFixed(1)}
+            {formatNumber(media.user_rating, { maximumFractionDigits: 1 })}
           </span>
         )}
       </div>
       <button
         class="delete-history-event w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-zinc-950/50 border border-zinc-800 text-zinc-500 hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/10 transition-all duration-200 cursor-pointer"
-        title="Delete this entry"
-        aria-label="Delete history entry"
+        title={m.history_delete_entry_title()}
+        aria-label={m.history_delete_entry_label()}
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
@@ -109,6 +111,8 @@ const href = media.type === 'movie' ? `/media/movie/${media.tmdb_id}` : episodeH
 </div>
 
 <script>
+  import { m } from '../paraglide/messages.js';
+
   // Delegated from document, not bound per-card on mount: the /history live
   // search swaps #history-results in place, and those fresh cards must stay
   // clickable/deletable without this script re-running.
@@ -129,8 +133,8 @@ const href = media.type === 'movie' ? `/media/movie/${media.tmdb_id}` : episodeH
       }
 
       e.stopPropagation();
-      const title = card.querySelector('p.text-lg')?.textContent?.trim() || 'this entry';
-      const ok = await (window as any).showConfirm(`Delete "${title}"?`, 'This removes it from your watch history. This cannot be undone.');
+      const title = card.querySelector('p.text-lg')?.textContent?.trim() || m.history_delete_fallback_title();
+      const ok = await (window as any).showConfirm(m.history_delete_confirm_title({ title }), m.history_delete_confirm_body());
       if (!ok) return;
 
       const eventId = card.dataset.eventId;

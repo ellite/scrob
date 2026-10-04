@@ -3,6 +3,7 @@ import Base from "../layouts/Base.astro";
 import { api } from "../lib/api";
 import type { AdminUser } from "../lib/api";
 import { connectionIconHtml } from "../lib/connectionIcons";
+import { m } from "../paraglide/messages.js";
 
 const { token, user } = Astro.locals;
 
@@ -20,7 +21,7 @@ const [globalSettings, users] = await Promise.all([
 const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 ---
 
-<Base title="Admin">
+<Base title={m.nav_admin()}>
   <div id="app-data"
     data-token={token}
     data-current-user-id={user!.id}
@@ -29,14 +30,14 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   </div>
 
   <div class="max-w-4xl mx-auto space-y-10">
-    <h1 class="page-title">Admin Panel</h1>
+    <h1 class="page-title">{m.admin_admin_panel()}</h1>
 
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
     <!-- ── Global Server Settings ── -->
     <section>
-      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">Global Server Settings</h2>
-      <p class="text-zinc-400 text-sm mb-6">These settings apply to all users. A user's own settings always take priority if configured on their profile.</p>
+      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">{m.admin_global_server_settings()}</h2>
+      <p class="text-zinc-400 text-sm mb-6">{m.admin_these_settings_apply_to_all_users()}</p>
 
       <form id="global-settings-form" class="space-y-3">
 
@@ -52,7 +53,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             </div>
             <div class="flex items-center gap-2">
               <div onclick="event.stopPropagation()">
-                <button type="button" id="test-tmdb-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">Test</button>
+                <button type="button" id="test-tmdb-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">{m.conn_test()}</button>
               </div>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
@@ -62,7 +63,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           <div id="tmdb-body" class="border-t border-zinc-800 hidden">
             <div class="px-6 py-6">
               <div class="space-y-2 max-w-md">
-                <label for="tmdb_api_key" class="block text-sm font-medium text-zinc-400">Read Access Token</label>
+                <label for="tmdb_api_key" class="block text-sm font-medium text-zinc-400">{m.admin_read_access_token()}</label>
                 <div class="relative group/field">
                   <input
                     type="password"
@@ -72,12 +73,12 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                     placeholder="eyJhbGciOiJIUzI1NiJ9..."
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                   />
-                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle visibility">
+                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
                   </button>
                 </div>
-                <p class="text-xs text-zinc-500">Required for all users who don't set their own token.</p>
+                <p class="text-xs text-zinc-500">{m.admin_required_for_all_users_who_don()}</p>
               </div>
             </div>
           </div>
@@ -95,7 +96,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             </div>
             <div class="flex items-center gap-2">
               <div onclick="event.stopPropagation()">
-                <button type="button" id="test-tvdb-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">Test</button>
+                <button type="button" id="test-tvdb-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">{m.conn_test()}</button>
               </div>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
@@ -105,7 +106,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           <div id="tvdb-body" class="border-t border-zinc-800 hidden">
             <div class="px-6 py-6">
               <div class="space-y-2 max-w-md">
-                <label for="tvdb_api_key" class="block text-sm font-medium text-zinc-400">API Key</label>
+                <label for="tvdb_api_key" class="block text-sm font-medium text-zinc-400">{m.admin_api_key()}</label>
                 <div class="relative group/field">
                   <input
                     type="password"
@@ -115,24 +116,24 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                     placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                   />
-                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle visibility">
+                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
                   </button>
                 </div>
-                <p class="text-xs text-zinc-500">Server-wide fallback for TVDB-sourced shows and TVDB-ordered episode mapping. A free project key from <span class="text-zinc-400">thetvdb.com/api-information</span> needs no PIN; a subscriber-supported key needs the PIN below.</p>
+                <p class="text-xs text-zinc-500" set:html={m.admin_tvdb_help()} />
 
-                <label for="tvdb_subscriber_pin" class="block text-sm font-medium text-zinc-400 pt-3">Subscriber PIN <span class="text-zinc-600">(optional)</span></label>
+                <label for="tvdb_subscriber_pin" class="block text-sm font-medium text-zinc-400 pt-3" set:html={m.admin_tvdb_pin_label()} />
                 <div class="relative group/field">
                   <input
                     type="password"
                     name="tvdb_subscriber_pin"
                     id="tvdb_subscriber_pin"
                     value={globalSettings.tvdb_subscriber_pin ?? ""}
-                    placeholder="Only for a subscriber-supported key"
+                    placeholder={m.settings_only_for_a_subscriber_supported_key()}
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                   />
-                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle visibility">
+                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
                   </button>
@@ -154,7 +155,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             </div>
             <div class="flex items-center gap-2">
               <div onclick="event.stopPropagation()">
-                <button type="button" id="test-mdblist-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">Test</button>
+                <button type="button" id="test-mdblist-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">{m.conn_test()}</button>
               </div>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
@@ -164,22 +165,22 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           <div id="mdblist-body" class="border-t border-zinc-800 hidden">
             <div class="px-6 py-6">
               <div class="space-y-2 max-w-md">
-                <label for="mdblist_api_key" class="block text-sm font-medium text-zinc-400">API Key</label>
+                <label for="mdblist_api_key" class="block text-sm font-medium text-zinc-400">{m.admin_api_key()}</label>
                 <div class="relative group/field">
                   <input
                     type="password"
                     name="mdblist_api_key"
                     id="mdblist_api_key"
                     value={globalSettings.mdblist_api_key ?? ""}
-                    placeholder="MDBList API key"
+                    placeholder={m.admin_mdblist_key_placeholder()}
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                   />
-                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle visibility">
+                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
                   </button>
                 </div>
-                <p class="text-xs text-zinc-500">Server-wide fallback for importing public MDBList lists. User sync, push, and scrobble features still require a personal MDBList connection.</p>
+                <p class="text-xs text-zinc-500">{m.admin_mdblist_help()}</p>
               </div>
             </div>
           </div>
@@ -197,7 +198,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             </div>
             <div class="flex items-center gap-2">
               <div class="flex gap-2" onclick="event.stopPropagation()">
-                <button type="button" id="test-radarr-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Test & Fetch</button>
+                <button type="button" id="test-radarr-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">{m.admin_test_fetch()}</button>
               </div>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
@@ -208,16 +209,16 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             <div class="grid md:grid-cols-2 gap-8 px-6 py-6">
               <div class="space-y-4">
                 <div class="space-y-2">
-                  <label for="radarr_url" class="block text-sm font-medium text-zinc-400">Server URL</label>
+                  <label for="radarr_url" class="block text-sm font-medium text-zinc-400">{m.admin_server_url()}</label>
                   <input type="url" name="radarr_url" id="radarr_url" placeholder="http://192.168.1.100:7878" value={globalSettings.radarr_url ?? ""}
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                 </div>
                 <div class="space-y-2">
-                  <label for="radarr_token" class="block text-sm font-medium text-zinc-400">API Key</label>
+                  <label for="radarr_token" class="block text-sm font-medium text-zinc-400">{m.admin_api_key()}</label>
                   <div class="relative group/field">
                     <input type="password" name="radarr_token" id="radarr_token" value={globalSettings.radarr_token ?? ""}
                       class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
-                    <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle visibility">
+                    <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
                     </button>
@@ -226,25 +227,25 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
               </div>
               <div class="space-y-4">
                 <div class="space-y-2">
-                  <label for="radarr_root_folder" class="block text-sm font-medium text-zinc-400">Root Folder</label>
+                  <label for="radarr_root_folder" class="block text-sm font-medium text-zinc-400">{m.customize_add_root_folder()}</label>
                   <select name="radarr_root_folder" id="radarr_root_folder"
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none">
-                    <option value="">-- Select Folder --</option>
+                    <option value="">{m.admin_select_folder()}</option>
                     {globalSettings.radarr_root_folder && <option value={globalSettings.radarr_root_folder} selected>{globalSettings.radarr_root_folder}</option>}
                   </select>
                 </div>
                 <div class="space-y-2">
-                  <label for="radarr_quality_profile" class="block text-sm font-medium text-zinc-400">Quality Profile</label>
+                  <label for="radarr_quality_profile" class="block text-sm font-medium text-zinc-400">{m.customize_add_quality_profile()}</label>
                   <select name="radarr_quality_profile" id="radarr_quality_profile"
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none">
-                    <option value="">-- Select Profile --</option>
-                    {globalSettings.radarr_quality_profile && <option value={globalSettings.radarr_quality_profile} selected>Profile ID: {globalSettings.radarr_quality_profile}</option>}
+                    <option value="">{m.admin_select_profile()}</option>
+                    {globalSettings.radarr_quality_profile && <option value={globalSettings.radarr_quality_profile} selected>{m.common_quality_profile_id({ id: globalSettings.radarr_quality_profile })}</option>}
                   </select>
                 </div>
                 <div class="space-y-2">
-                  <label class="block text-sm font-medium text-zinc-400">Tags</label>
+                  <label class="block text-sm font-medium text-zinc-400">{m.customize_add_tags()}</label>
                   <div id="radarr_tags_list" class="flex flex-wrap gap-2 min-h-[42px] p-2 bg-zinc-950 border border-zinc-800 rounded-lg">
-                    <span class="text-xs text-zinc-500 italic px-2 py-1">Fetch profiles to see tags</span>
+                    <span class="text-xs text-zinc-500 italic px-2 py-1">{m.admin_fetch_profiles_to_see_tags()}</span>
                     {globalSettings.radarr_tags?.map((tid: number) => (
                       <input type="hidden" name="radarr_tags" value={tid} />
                     ))}
@@ -254,10 +255,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                   <input type="checkbox" name="radarr_require_approval" id="radarr_require_approval" value="true"
                     checked={globalSettings.radarr_require_approval ?? false}
                     class="w-4 h-4 rounded border-zinc-600 bg-zinc-950 text-blue-500 focus:ring-blue-500 cursor-pointer" />
-                  <span class="text-sm text-zinc-300">Require admin approval for requests</span>
+                  <span class="text-sm text-zinc-300">{m.admin_require_admin_approval_for_requests()}</span>
                 </label>
                 <label class="flex items-center justify-between gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:bg-zinc-800/60 transition-colors">
-                  <span class="text-sm text-zinc-300">Let admins customize root folder/quality profile/tags when adding</span>
+                  <span class="text-sm text-zinc-300">{m.admin_let_admins_customize_root_folder_quality()}</span>
                   <input type="checkbox" name="radarr_customize_on_add" id="radarr_customize_on_add" value="true" class="sr-only peer" checked={globalSettings.radarr_customize_on_add ?? false} />
                   <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
                 </label>
@@ -278,7 +279,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             </div>
             <div class="flex items-center gap-2">
               <div class="flex gap-2" onclick="event.stopPropagation()">
-                <button type="button" id="test-sonarr-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Test & Fetch</button>
+                <button type="button" id="test-sonarr-btn" class="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">{m.admin_test_fetch()}</button>
               </div>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
@@ -289,16 +290,16 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             <div class="grid md:grid-cols-2 gap-8 px-6 py-6">
               <div class="space-y-4">
                 <div class="space-y-2">
-                  <label for="sonarr_url" class="block text-sm font-medium text-zinc-400">Server URL</label>
+                  <label for="sonarr_url" class="block text-sm font-medium text-zinc-400">{m.admin_server_url()}</label>
                   <input type="url" name="sonarr_url" id="sonarr_url" placeholder="http://192.168.1.100:8989" value={globalSettings.sonarr_url ?? ""}
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                 </div>
                 <div class="space-y-2">
-                  <label for="sonarr_token" class="block text-sm font-medium text-zinc-400">API Key</label>
+                  <label for="sonarr_token" class="block text-sm font-medium text-zinc-400">{m.admin_api_key()}</label>
                   <div class="relative group/field">
                     <input type="password" name="sonarr_token" id="sonarr_token" value={globalSettings.sonarr_token ?? ""}
                       class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
-                    <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle visibility">
+                    <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
                     </button>
@@ -307,32 +308,32 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
               </div>
               <div class="space-y-4">
                 <div class="space-y-2">
-                  <label for="sonarr_root_folder" class="block text-sm font-medium text-zinc-400">Root Folder</label>
+                  <label for="sonarr_root_folder" class="block text-sm font-medium text-zinc-400">{m.customize_add_root_folder()}</label>
                   <select name="sonarr_root_folder" id="sonarr_root_folder"
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none">
-                    <option value="">-- Select Folder --</option>
+                    <option value="">{m.admin_select_folder()}</option>
                     {globalSettings.sonarr_root_folder && <option value={globalSettings.sonarr_root_folder} selected>{globalSettings.sonarr_root_folder}</option>}
                   </select>
                 </div>
                 <div class="space-y-2">
-                  <label for="sonarr_quality_profile" class="block text-sm font-medium text-zinc-400">Quality Profile</label>
+                  <label for="sonarr_quality_profile" class="block text-sm font-medium text-zinc-400">{m.customize_add_quality_profile()}</label>
                   <select name="sonarr_quality_profile" id="sonarr_quality_profile"
                     class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all appearance-none">
-                    <option value="">-- Select Profile --</option>
-                    {globalSettings.sonarr_quality_profile && <option value={globalSettings.sonarr_quality_profile} selected>Profile ID: {globalSettings.sonarr_quality_profile}</option>}
+                    <option value="">{m.admin_select_profile()}</option>
+                    {globalSettings.sonarr_quality_profile && <option value={globalSettings.sonarr_quality_profile} selected>{m.common_quality_profile_id({ id: globalSettings.sonarr_quality_profile })}</option>}
                   </select>
                 </div>
                 <div class="space-y-2">
-                  <label class="block text-sm font-medium text-zinc-400">Tags</label>
+                  <label class="block text-sm font-medium text-zinc-400">{m.customize_add_tags()}</label>
                   <div id="sonarr_tags_list" class="flex flex-wrap gap-2 min-h-[42px] p-2 bg-zinc-950 border border-zinc-800 rounded-lg">
-                    <span class="text-xs text-zinc-500 italic px-2 py-1">Fetch profiles to see tags</span>
+                    <span class="text-xs text-zinc-500 italic px-2 py-1">{m.admin_fetch_profiles_to_see_tags()}</span>
                     {globalSettings.sonarr_tags?.map((tid: number) => (
                       <input type="hidden" name="sonarr_tags" value={tid} />
                     ))}
                   </div>
                 </div>
                 <label class="flex items-center justify-between gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:bg-zinc-800/60 transition-colors">
-                  <span class="text-sm text-zinc-300">Use season folders</span>
+                  <span class="text-sm text-zinc-300">{m.customize_add_season_folders()}</span>
                   <input type="checkbox" name="sonarr_season_folder" id="sonarr_season_folder" value="true" class="sr-only peer" checked={globalSettings.sonarr_season_folder !== false} />
                   <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
                 </label>
@@ -340,10 +341,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                   <input type="checkbox" name="sonarr_require_approval" id="sonarr_require_approval" value="true"
                     checked={globalSettings.sonarr_require_approval ?? false}
                     class="w-4 h-4 rounded border-zinc-600 bg-zinc-950 text-blue-500 focus:ring-blue-500 cursor-pointer" />
-                  <span class="text-sm text-zinc-300">Require admin approval for requests</span>
+                  <span class="text-sm text-zinc-300">{m.admin_require_admin_approval_for_requests()}</span>
                 </label>
                 <label class="flex items-center justify-between gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:bg-zinc-800/60 transition-colors">
-                  <span class="text-sm text-zinc-300">Let admins customize root folder/quality profile/tags/season folders when adding</span>
+                  <span class="text-sm text-zinc-300">{m.admin_let_admins_customize_root_folder_quality_2()}</span>
                   <input type="checkbox" name="sonarr_customize_on_add" id="sonarr_customize_on_add" value="true" class="sr-only peer" checked={globalSettings.sonarr_customize_on_add ?? false} />
                   <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
                 </label>
@@ -356,11 +357,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
           <label class="flex items-center justify-between gap-3 has-[:disabled]:opacity-50 has-[:disabled]:cursor-not-allowed cursor-pointer">
             <div>
-              <span class="block text-sm font-semibold text-zinc-200">Allow browsing without an account</span>
+              <span class="block text-sm font-semibold text-zinc-200">{m.admin_allow_browsing_without_an_account()}</span>
               <span class="block text-xs text-zinc-500 mt-0.5">
                 {globalSettings.tmdb_api_key
-                  ? "Lets visitors navigate the app, and view public profiles and lists, without signing in."
-                  : "Requires a TMDB read access token (above) before this can be enabled."}
+                  ? m.admin_browse_anon_hint()
+                  : m.admin_browse_anon_requires_tmdb()}
               </span>
             </div>
             <input type="checkbox" name="enable_logged_out_navigation" id="enable_logged_out_navigation" value="true" class="sr-only peer"
@@ -374,8 +375,8 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
           <label class="flex items-center justify-between gap-3 cursor-pointer">
             <div>
-              <span class="block text-sm font-semibold text-zinc-200">Disable comments</span>
-              <span class="block text-xs text-zinc-500 mt-0.5">Hides the comments section from every media detail page for all users.</span>
+              <span class="block text-sm font-semibold text-zinc-200">{m.admin_disable_comments()}</span>
+              <span class="block text-xs text-zinc-500 mt-0.5">{m.admin_hides_the_comments_section_from_every()}</span>
             </div>
             <input type="checkbox" name="disable_comments" id="disable_comments" value="true" class="sr-only peer"
               checked={globalSettings.disable_comments ?? false} />
@@ -386,7 +387,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <div class="pt-2">
           <button type="submit" id="save-settings-btn"
             class="w-full sm:w-auto bg-zinc-100 text-zinc-950 font-bold px-8 py-3 rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50">
-            Save Changes
+            {m.common_save_changes()}
           </button>
         </div>
       </form>
@@ -394,15 +395,15 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
     <!-- ── Performance Settings ── -->
     <section>
-      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">Performance Settings</h2>
-      <p class="text-zinc-400 text-sm mb-6">Configure media caching, limits, and system performance optimizations.</p>
+      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">{m.admin_performance_settings()}</h2>
+      <p class="text-zinc-400 text-sm mb-6">{m.admin_configure_media_caching_limits_and_system()}</p>
 
       <form id="performance-settings-form" class="space-y-6 bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
         <!-- Enable Caching -->
         <label class="flex items-center justify-between gap-3 p-4 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:bg-zinc-800/40 transition-colors">
           <div>
-            <span class="block text-sm font-semibold text-zinc-200">Enable TMDB &amp; TheTVDB Image Cache</span>
-            <span class="block text-xs text-zinc-500 mt-0.5">Cache poster, backdrop, and still images from TMDB and TheTVDB locally on the server to improve load times and support offline mode.</span>
+            <span class="block text-sm font-semibold text-zinc-200">{m.admin_enable_tmdb_thetvdb_image_cache()}</span>
+            <span class="block text-xs text-zinc-500 mt-0.5">{m.admin_cache_poster_backdrop_and_still_images()}</span>
           </div>
           <input type="checkbox" name="image_cache_enabled" id="image_cache_enabled" value="true" class="sr-only peer" checked={globalSettings.image_cache_enabled ?? false} />
           <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
@@ -410,18 +411,18 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
         <!-- Size Limit -->
         <div class="space-y-2 max-w-md">
-          <label for="image_cache_limit_gb" class="block text-sm font-medium text-zinc-400">Image Cache Size Limit (GB)</label>
+          <label for="image_cache_limit_gb" class="block text-sm font-medium text-zinc-400">{m.admin_image_cache_size_limit_gb()}</label>
           <input
             type="number"
             name="image_cache_limit_gb"
             id="image_cache_limit_gb"
             min="0"
             step="0.1"
-            placeholder="0 (Unlimited)"
+            placeholder={m.admin_0_unlimited()}
             value={globalSettings.image_cache_limit_gb ?? ""}
             class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           />
-          <p class="text-xs text-zinc-500">Set a maximum storage limit in GB (fractional values allowed, e.g. 1.5). Oldest accessed images will be pruned when the limit is exceeded. Set to 0 or leave empty for unlimited.</p>
+          <p class="text-xs text-zinc-500">{m.admin_set_a_maximum_storage_limit_in()}</p>
         </div>
 
         <!-- Cache Usage -->
@@ -444,7 +445,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <div class="pt-2">
           <button type="submit" id="save-performance-btn"
             class="w-full sm:w-auto bg-zinc-100 text-zinc-950 font-bold px-8 py-3 rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50">
-            Save Performance Settings
+            {m.admin_save_performance_settings()}
           </button>
         </div>
       </form>
@@ -452,16 +453,16 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
     <!-- ── Users ── -->
     <section>
-      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">Users</h2>
+      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">{m.search_tab_users()}</h2>
 
       <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b border-zinc-800 text-left">
-              <th class="px-4 py-3 text-zinc-400 font-medium">Username</th>
-              <th class="px-4 py-3 text-zinc-400 font-medium hidden md:table-cell">Email</th>
-              <th class="px-4 py-3 text-zinc-400 font-medium">Role</th>
-              <th class="px-4 py-3 text-zinc-400 font-medium text-right hidden md:table-cell">Actions</th>
+              <th class="px-4 py-3 text-zinc-400 font-medium">{m.auth_username()}</th>
+              <th class="px-4 py-3 text-zinc-400 font-medium hidden md:table-cell">{m.auth_email()}</th>
+              <th class="px-4 py-3 text-zinc-400 font-medium">{m.admin_role()}</th>
+              <th class="px-4 py-3 text-zinc-400 font-medium text-right hidden md:table-cell">{m.admin_actions()}</th>
               <th class="px-4 py-3 md:hidden w-8"></th>
             </tr>
           </thead>
@@ -485,14 +486,14 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                   <td class="px-4 py-3 text-zinc-400 hidden md:table-cell">{u.email}</td>
                   <td class="px-4 py-3">
                     {u.is_admin
-                      ? <span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">Admin</span>
-                      : <span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-zinc-700/50 text-zinc-400 border border-zinc-700">User</span>
+                      ? <span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">{m.admin_role_admin()}</span>
+                      : <span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-zinc-700/50 text-zinc-400 border border-zinc-700">{m.admin_user()}</span>
                     }
                   </td>
                   <td class="px-4 py-3 text-right hidden md:table-cell">
                     <div class="flex items-center justify-end gap-2">
                       <button type="button" class="user-actions-btn inline-flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-all active:scale-95 cursor-pointer" aria-haspopup="menu" aria-expanded="false">
-                        Actions
+                        {m.admin_actions()}
                         <svg class="w-3 h-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                       </button>
                     </div>
@@ -509,10 +510,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                     <div class="space-y-3">
                       <div class="md:hidden text-xs text-zinc-400">{u.email}</div>
                       <div>
-                        <div class="text-xs text-zinc-500 mb-1">API Key</div>
+                        <div class="text-xs text-zinc-500 mb-1">{m.admin_api_key()}</div>
                         <div class="flex items-center gap-2">
                           <code class="user-api-key flex-1 block bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-300 font-mono break-all">{u.api_key}</code>
-                          <button class="copy-api-key-btn shrink-0 p-2 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700 rounded-lg transition-colors cursor-pointer" title="Copy API key" aria-label="Copy API key">
+                          <button class="copy-api-key-btn shrink-0 p-2 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700 rounded-lg transition-colors cursor-pointer" title={m.admin_copy_api_key()} aria-label={m.admin_copy_api_key()}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                               <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.976a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
                             </svg>
@@ -521,7 +522,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                       </div>
                       <div class="flex flex-wrap justify-end gap-2 md:hidden">
                         <button type="button" class="user-actions-btn inline-flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-all active:scale-95 cursor-pointer" aria-haspopup="menu" aria-expanded="false">
-                        Actions
+                        {m.admin_actions()}
                         <svg class="w-3 h-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                       </button>
                       </div>
@@ -541,7 +542,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 text-zinc-400 shrink-0">
               <path stroke-linecap="round" stroke-linejoin="round" d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z" />
             </svg>
-            <span class="font-medium text-zinc-200">Add a user</span>
+            <span class="font-medium text-zinc-200">{m.admin_add_a_user()}</span>
           </div>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
@@ -550,32 +551,32 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <div id="add-user-body" class="border-t border-zinc-800 hidden">
           <form id="add-user-form" class="px-6 py-6 space-y-4 max-w-md">
             <div class="space-y-1.5">
-              <label for="new-user-username" class="block text-sm font-medium text-zinc-400">Username</label>
+              <label for="new-user-username" class="block text-sm font-medium text-zinc-400">{m.auth_username()}</label>
               <input type="text" id="new-user-username" name="username" required autocomplete="off"
                 class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
             </div>
             <div class="space-y-1.5">
-              <label for="new-user-email" class="block text-sm font-medium text-zinc-400">Email</label>
+              <label for="new-user-email" class="block text-sm font-medium text-zinc-400">{m.auth_email()}</label>
               <input type="email" id="new-user-email" name="email" required autocomplete="off"
                 class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
             </div>
             <div class="space-y-1.5">
-              <label for="new-user-password" class="block text-sm font-medium text-zinc-400">Password</label>
+              <label for="new-user-password" class="block text-sm font-medium text-zinc-400">{m.auth_password()}</label>
               <div class="relative">
                 <input type="password" id="new-user-password" name="password" required autocomplete="new-password"
                   class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
-                <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle visibility">
+                <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
                 </button>
               </div>
             </div>
             <div class="space-y-1.5">
-              <label for="new-user-password-confirm" class="block text-sm font-medium text-zinc-400">Confirm password</label>
+              <label for="new-user-password-confirm" class="block text-sm font-medium text-zinc-400">{m.admin_confirm_password()}</label>
               <div class="relative">
                 <input type="password" id="new-user-password-confirm" name="password_confirm" required autocomplete="new-password"
                   class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
-                <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle visibility">
+                <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
                 </button>
@@ -583,11 +584,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             </div>
             <label class="flex items-center gap-2.5 text-sm text-zinc-300 cursor-pointer select-none">
               <input type="checkbox" name="is_admin" value="true" class="w-4 h-4 rounded border-zinc-700 bg-zinc-950 text-blue-600 focus:ring-blue-500 focus:ring-offset-0" />
-              Grant admin access
+              {m.admin_grant_admin_access()}
             </label>
             <button type="submit" id="add-user-submit"
               class="w-full sm:w-auto px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-              Create user
+              {m.admin_create_user()}
             </button>
           </form>
         </div>
@@ -596,23 +597,23 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
     <!-- ── Maintenance ── -->
     <section>
-      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">Maintenance</h2>
-      <p class="text-zinc-400 text-sm mb-6">Server-wide operations that run across all users' collections.</p>
+      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">{m.settings_maintenance()}</h2>
+      <p class="text-zinc-400 text-sm mb-6">{m.admin_server_wide_operations_that_run_across()}</p>
 
       <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
         <div class="p-6 flex flex-col sm:flex-row sm:items-center gap-4">
           <div class="flex-1">
-            <h3 class="font-semibold text-zinc-100 mb-1">Heal missing metadata</h3>
-            <p class="text-sm text-zinc-400">Re-enrich all items across every user's collection that are missing poster or date metadata. Uses the global TMDB Read Access Token, falling back to your own from account Settings.</p>
+            <h3 class="font-semibold text-zinc-100 mb-1">{m.settings_heal_missing_metadata()}</h3>
+            <p class="text-sm text-zinc-400">{m.admin_re_enrich_all_items_across_every()}</p>
           </div>
           <button id="admin-heal-btn"
             class="shrink-0 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-            Run Heal
+            {m.admin_run_heal()}
           </button>
         </div>
         <div id="admin-heal-progress" class="hidden border-t border-zinc-800 px-6 py-3">
           <div class="flex justify-between items-center mb-1.5">
-            <span id="admin-heal-job-label" class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Working…</span>
+            <span id="admin-heal-job-label" class="text-xs font-semibold uppercase tracking-wider text-zinc-500">{m.settings_working()}</span>
             <span id="admin-heal-job-pct" class="text-xs font-bold text-zinc-400"></span>
           </div>
           <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
@@ -626,12 +627,12 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <!-- Clear image cache -->
         <div class="p-6 border-t border-zinc-800 flex flex-col sm:flex-row sm:items-center gap-4">
           <div class="flex-1">
-            <h3 class="font-semibold text-zinc-100 mb-1">Clear image cache</h3>
-            <p class="text-sm text-zinc-400">Delete all locally cached TMDB and TheTVDB image files, and clear their database records. Files will be re-downloaded on-demand when requested.</p>
+            <h3 class="font-semibold text-zinc-100 mb-1">{m.admin_clear_image_cache()}</h3>
+            <p class="text-sm text-zinc-400">{m.admin_delete_all_locally_cached_tmdb_and()}</p>
           </div>
           <button id="admin-clear-cache-btn"
             class="shrink-0 px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-            Clear Cache
+            {m.admin_clear_cache()}
           </button>
         </div>
       </div>
@@ -639,33 +640,33 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
     <!-- ── Database ── -->
     <section>
-      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">Database</h2>
+      <h2 class="section-headline border-b border-zinc-800 pb-2 mb-6">{m.admin_database()}</h2>
 
       <div class="grid md:grid-cols-2 gap-6">
         <!-- Backup -->
         <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 flex flex-col gap-3">
           <div>
-            <h3 class="font-semibold text-zinc-100 mb-1">Backup</h3>
-            <p class="text-sm text-zinc-400">Download a full SQL dump of the database. Keep it somewhere safe.</p>
+            <h3 class="font-semibold text-zinc-100 mb-1">{m.admin_backup()}</h3>
+            <p class="text-sm text-zinc-400">{m.admin_download_a_full_sql_dump_of()}</p>
           </div>
           <button id="backup-btn"
             class="mt-auto w-full sm:w-auto px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50">
-            Download Backup
+            {m.admin_download_backup()}
           </button>
         </div>
 
         <!-- Restore -->
         <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 flex flex-col gap-3">
           <div>
-            <h3 class="font-semibold text-zinc-100 mb-1">Restore</h3>
-            <p class="text-sm text-zinc-400">Upload a <code class="text-zinc-300">.bak</code> backup file to restore. <span class="text-red-400 font-medium">All existing data will be overwritten.</span></p>
+            <h3 class="font-semibold text-zinc-100 mb-1">{m.auth_restore()}</h3>
+            <p class="text-sm text-zinc-400" set:html={m.admin_restore_help()} />
           </div>
           <div class="flex flex-col gap-3 mt-auto">
             <input id="restore-file" type="file" accept=".bak"
               class="block w-full text-sm text-zinc-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-zinc-800 file:text-zinc-300 hover:file:bg-zinc-700 file:cursor-pointer cursor-pointer" />
             <button id="restore-btn" disabled
               class="w-full sm:w-auto px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-              Restore Database
+              {m.auth_restore_database()}
             </button>
           </div>
         </div>
@@ -678,16 +679,16 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 <div id="admin-heal-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div id="admin-heal-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
   <div class="relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
-    <h2 class="text-xl font-black text-zinc-100 mb-2">Run server-wide heal?</h2>
-    <p class="text-sm text-zinc-400 mb-6">This will re-enrich all items across every user's collection that are missing poster or date metadata. It runs in the background and may take a while on large libraries.</p>
+    <h2 class="text-xl font-black text-zinc-100 mb-2">{m.admin_run_server_wide_heal()}</h2>
+    <p class="text-sm text-zinc-400 mb-6">{m.admin_this_will_re_enrich_all_items()}</p>
     <div class="flex gap-3">
       <button type="button" id="admin-heal-cancel-btn"
         class="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-colors text-sm cursor-pointer">
-        Cancel
+        {m.common_cancel()}
       </button>
       <button type="button" id="admin-heal-confirm-btn"
         class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-colors text-sm cursor-pointer">
-        Run Heal
+        {m.admin_run_heal()}
       </button>
     </div>
   </div>
@@ -696,31 +697,31 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 <!-- User actions dropdown (shared by every row, positioned next to the clicked button) -->
 <div id="user-actions-menu" role="menu" class="hidden fixed z-50 flex-col bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl p-2 text-sm">
   <button type="button" role="menuitem" id="menu-toggle-admin" class="w-full text-left px-3 py-2 rounded-lg transition active:opacity-70 cursor-pointer text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed"></button>
-  <button type="button" role="menuitem" id="menu-reset-password" class="w-full text-left px-3 py-2 rounded-lg transition active:opacity-70 cursor-pointer text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800">Reset Password</button>
-  <button type="button" role="menuitem" id="menu-disable-2fa" class="hidden w-full text-left px-3 py-2 rounded-lg transition active:opacity-70 cursor-pointer text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800">Disable 2FA</button>
+  <button type="button" role="menuitem" id="menu-reset-password" class="w-full text-left px-3 py-2 rounded-lg transition active:opacity-70 cursor-pointer text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800">{m.admin_reset_password()}</button>
+  <button type="button" role="menuitem" id="menu-disable-2fa" class="hidden w-full text-left px-3 py-2 rounded-lg transition active:opacity-70 cursor-pointer text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800">{m.settings_disable_2fa()}</button>
   <div class="h-px bg-zinc-800 my-1 mx-1"></div>
-  <button type="button" role="menuitem" id="menu-delete-user" class="w-full text-left px-3 py-2 rounded-lg transition active:opacity-70 cursor-pointer text-red-400 hover:text-red-300 hover:bg-zinc-800">Delete</button>
+  <button type="button" role="menuitem" id="menu-delete-user" class="w-full text-left px-3 py-2 rounded-lg transition active:opacity-70 cursor-pointer text-red-400 hover:text-red-300 hover:bg-zinc-800">{m.common_delete()}</button>
 </div>
 
 <!-- Reset Password Modal -->
 <div id="reset-password-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div id="reset-password-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
   <form id="reset-password-form" class="relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
-    <h2 class="text-xl font-black text-zinc-100 mb-2">Reset Password</h2>
+    <h2 class="text-xl font-black text-zinc-100 mb-2">{m.admin_reset_password()}</h2>
     <p id="reset-password-modal-body" class="text-sm text-zinc-400 mb-4"></p>
     <div class="space-y-3 mb-2">
       <div class="relative">
-        <input type="password" id="reset-password-input" autocomplete="new-password" placeholder="New password" required
+        <input type="password" id="reset-password-input" autocomplete="new-password" placeholder={m.reset_new_password()} required
           class="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-4 pr-11 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50" />
-        <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle visibility">
+        <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
         </button>
       </div>
       <div class="relative">
-        <input type="password" id="reset-password-confirm" autocomplete="new-password" placeholder="Confirm password" required
+        <input type="password" id="reset-password-confirm" autocomplete="new-password" placeholder={m.admin_confirm_password()} required
           class="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-4 pr-11 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50" />
-        <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle visibility">
+        <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label={m.admin_toggle_visibility()}>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
         </button>
@@ -730,11 +731,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     <div class="flex gap-3 mt-4">
       <button type="button" id="reset-password-cancel-btn"
         class="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-colors text-sm cursor-pointer">
-        Cancel
+        {m.common_cancel()}
       </button>
       <button type="submit" id="reset-password-save-btn"
         class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-colors text-sm cursor-pointer disabled:opacity-50">
-        Save
+        {m.common_save()}
       </button>
     </div>
   </form>
@@ -744,16 +745,16 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 <div id="delete-user-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div id="delete-user-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
   <div class="relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
-    <h2 class="text-xl font-black text-zinc-100 mb-2">Delete User?</h2>
+    <h2 class="text-xl font-black text-zinc-100 mb-2">{m.admin_delete_user()}</h2>
     <p id="delete-user-modal-body" class="text-sm text-zinc-400 mb-6"></p>
     <div class="flex gap-3">
       <button type="button" id="delete-user-cancel-btn"
         class="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-colors text-sm cursor-pointer">
-        Cancel
+        {m.common_cancel()}
       </button>
       <button type="button" id="delete-user-confirm-btn"
         class="flex-1 px-4 py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl transition-colors text-sm cursor-pointer">
-        Delete
+        {m.common_delete()}
       </button>
     </div>
   </div>
@@ -763,26 +764,29 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 <div id="restore-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div id="restore-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
   <div class="relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
-    <h2 class="text-xl font-black text-zinc-100 mb-2">Restore Database?</h2>
-    <p class="text-sm text-zinc-400 mb-1">Restoring from:</p>
+    <h2 class="text-xl font-black text-zinc-100 mb-2">{m.auth_restore_confirm_title()}</h2>
+    <p class="text-sm text-zinc-400 mb-1">{m.auth_restoring_from()}</p>
     <p id="restore-modal-filename" class="text-sm text-zinc-100 font-medium mb-4 break-all"></p>
     <div class="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 mb-6">
-      <p class="text-sm text-red-400 font-medium">All existing data will be permanently overwritten. This cannot be undone.</p>
+      <p class="text-sm text-red-400 font-medium">{m.auth_restore_warning()}</p>
     </div>
     <div class="flex gap-3">
       <button type="button" id="restore-cancel-btn"
         class="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl transition-colors text-sm cursor-pointer">
-        Cancel
+        {m.common_cancel()}
       </button>
       <button type="button" id="restore-confirm-btn"
         class="flex-1 px-4 py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl transition-colors text-sm cursor-pointer">
-        Restore
+        {m.auth_restore()}
       </button>
     </div>
   </div>
 </div>
 
 <script>
+  import { m } from '../paraglide/messages.js';
+  import { formatBytes, formatNumber } from '../lib/format';
+
   const appData = document.getElementById('app-data') as HTMLElement;
   const token = appData.dataset.token!;
   const currentUserId = parseInt(appData.dataset.currentUserId!);
@@ -826,13 +830,13 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     if (!el) return;
     el.classList.remove('hidden');
     if (state === 'checking') {
-      el.textContent = 'Checking…';
+      el.textContent = m.admin_checking();
       el.className = 'text-xs font-normal px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-400';
     } else if (state === 'connected') {
-      el.textContent = '● Connected';
+      el.textContent = m.admin_connected();
       el.className = 'text-xs font-normal px-1.5 py-0.5 rounded bg-green-500/15 text-green-400';
     } else {
-      el.textContent = '● Disconnected';
+      el.textContent = m.admin_disconnected();
       el.className = 'text-xs font-normal px-1.5 py-0.5 rounded bg-red-500/15 text-red-400';
     }
   }
@@ -841,7 +845,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     const container = document.getElementById(containerId);
     if (!container) return;
     if (!tags || tags.length === 0) {
-      container.innerHTML = '<span class="text-xs text-zinc-500 italic px-2 py-1">No tags available</span>';
+      container.innerHTML = `<span class="text-xs text-zinc-500 italic px-2 py-1">${esc(m.admin_no_tags())}</span>`;
       return;
     }
     container.innerHTML = tags.map(tag => {
@@ -899,7 +903,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     pinInputId?: string,
   ): Promise<void> {
     const key = (document.getElementById(keyInputId) as HTMLInputElement).value.trim();
-    if (!key) { showMessage(`Enter a ${label} API key first.`, 'error'); return; }
+    if (!key) { showMessage(m.admin_enter_api_key_first({ service: label }), 'error'); return; }
 
     const button = document.getElementById(`test-${provider}-btn`) as HTMLButtonElement;
     const body: { key: string; pin?: string } = { key };
@@ -920,14 +924,14 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         const error: unknown = await response.json();
         const detail = typeof error === 'object' && error !== null && 'detail' in error
           ? String(error.detail)
-          : `Failed to connect to ${label}`;
+          : m.admin_failed_to_connect_to({ service: label });
         throw new Error(detail);
       }
       setConnStatus(statusId, 'connected');
-      showMessage(`${label} connection successful.`);
+      showMessage(m.admin_connection_successful({ service: label }));
     } catch (error: unknown) {
       setConnStatus(statusId, 'disconnected');
-      showMessage(error instanceof Error ? error.message : `${label} error`, 'error');
+      showMessage(error instanceof Error ? error.message : m.admin_service_error({ service: label }), 'error');
     } finally {
       button.disabled = false;
     }
@@ -946,11 +950,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   document.getElementById('test-radarr-btn')?.addEventListener('click', async () => {
     const u = (document.getElementById('radarr_url') as HTMLInputElement).value.trim();
     const t = (document.getElementById('radarr_token') as HTMLInputElement).value.trim();
-    if (!u || !t) { showMessage('Enter Radarr URL and API key first.', 'error'); return; }
+    if (!u || !t) { showMessage(m.admin_enter_url_key_first({ service: 'Radarr' }), 'error'); return; }
     setConnStatus('radarr-conn-status', 'checking');
     try {
       const testRes = await postIntegrationCredentials('/api/proxy/auth/test-radarr', { url: u, token: t });
-      if (!testRes.ok) { setConnStatus('radarr-conn-status', 'disconnected'); throw new Error((await testRes.json()).detail || 'Failed to connect'); }
+      if (!testRes.ok) { setConnStatus('radarr-conn-status', 'disconnected'); throw new Error((await testRes.json()).detail || m.admin_failed_to_connect()); }
 
       const profRes = await postIntegrationCredentials('/api/proxy/auth/radarr/profiles', { url: u, token: t });
       const profData = await profRes.json();
@@ -959,10 +963,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       const qualSelect = document.getElementById('radarr_quality_profile') as HTMLSelectElement;
       const currentFolder = rootSelect.value;
       const currentProfile = qualSelect.value;
-      rootSelect.innerHTML = '<option value="">-- Select Folder --</option>' +
+      rootSelect.innerHTML = `<option value="">${esc(m.admin_select_folder())}</option>` +
         profData.root_folders.map((f: { path: string; freeSpace: number }) =>
-          `<option value="${esc(f.path)}" ${f.path === currentFolder ? 'selected' : ''}>${esc(f.path)} (${(f.freeSpace / 1024**3).toFixed(1)}GB free)</option>`).join('');
-      qualSelect.innerHTML = '<option value="">-- Select Profile --</option>' +
+          `<option value="${esc(f.path)}" ${f.path === currentFolder ? 'selected' : ''}>${esc(m.admin_folder_free_space({ path: f.path, free: formatNumber(f.freeSpace / 1024**3, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }))}</option>`).join('');
+      qualSelect.innerHTML = `<option value="">${esc(m.admin_select_profile())}</option>` +
         profData.quality_profiles.map((p: { id: number; name: string }) =>
           `<option value="${esc(String(p.id))}" ${String(p.id) === currentProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
 
@@ -973,20 +977,20 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       renderTags('radarr_tags_list', profData.tags, selectedTags, 'radarr');
 
       setConnStatus('radarr-conn-status', 'connected');
-      showMessage('Radarr connected and profiles fetched.');
+      showMessage(m.admin_connected_profiles_fetched({ service: 'Radarr' }));
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Radarr error', 'error');
+      showMessage(err instanceof Error ? err.message : m.admin_service_error({ service: 'Radarr' }), 'error');
     }
   });
 
   document.getElementById('test-sonarr-btn')?.addEventListener('click', async () => {
     const u = (document.getElementById('sonarr_url') as HTMLInputElement).value.trim();
     const t = (document.getElementById('sonarr_token') as HTMLInputElement).value.trim();
-    if (!u || !t) { showMessage('Enter Sonarr URL and API key first.', 'error'); return; }
+    if (!u || !t) { showMessage(m.admin_enter_url_key_first({ service: 'Sonarr' }), 'error'); return; }
     setConnStatus('sonarr-conn-status', 'checking');
     try {
       const testRes = await postIntegrationCredentials('/api/proxy/auth/test-sonarr', { url: u, token: t });
-      if (!testRes.ok) { setConnStatus('sonarr-conn-status', 'disconnected'); throw new Error((await testRes.json()).detail || 'Failed to connect'); }
+      if (!testRes.ok) { setConnStatus('sonarr-conn-status', 'disconnected'); throw new Error((await testRes.json()).detail || m.admin_failed_to_connect()); }
 
       const profRes = await postIntegrationCredentials('/api/proxy/auth/sonarr/profiles', { url: u, token: t });
       const profData = await profRes.json();
@@ -995,10 +999,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       const qualSelect = document.getElementById('sonarr_quality_profile') as HTMLSelectElement;
       const currentFolder = rootSelect.value;
       const currentProfile = qualSelect.value;
-      rootSelect.innerHTML = '<option value="">-- Select Folder --</option>' +
+      rootSelect.innerHTML = `<option value="">${esc(m.admin_select_folder())}</option>` +
         profData.root_folders.map((f: { path: string; freeSpace: number }) =>
-          `<option value="${esc(f.path)}" ${f.path === currentFolder ? 'selected' : ''}>${esc(f.path)} (${(f.freeSpace / 1024**3).toFixed(1)}GB free)</option>`).join('');
-      qualSelect.innerHTML = '<option value="">-- Select Profile --</option>' +
+          `<option value="${esc(f.path)}" ${f.path === currentFolder ? 'selected' : ''}>${esc(m.admin_folder_free_space({ path: f.path, free: formatNumber(f.freeSpace / 1024**3, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }))}</option>`).join('');
+      qualSelect.innerHTML = `<option value="">${esc(m.admin_select_profile())}</option>` +
         profData.quality_profiles.map((p: { id: number; name: string }) =>
           `<option value="${esc(String(p.id))}" ${String(p.id) === currentProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
 
@@ -1009,9 +1013,9 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       renderTags('sonarr_tags_list', profData.tags, selectedTags, 'sonarr');
 
       setConnStatus('sonarr-conn-status', 'connected');
-      showMessage('Sonarr connected and profiles fetched.');
+      showMessage(m.admin_connected_profiles_fetched({ service: 'Sonarr' }));
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Sonarr error', 'error');
+      showMessage(err instanceof Error ? err.message : m.admin_service_error({ service: 'Sonarr' }), 'error');
     }
   });
 
@@ -1042,10 +1046,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           const qualSelect = document.getElementById('radarr_quality_profile') as HTMLSelectElement;
           const currentFolder = rootSelect.value;
           const currentProfile = qualSelect.value;
-          rootSelect.innerHTML = '<option value="">-- Select Folder --</option>' +
+          rootSelect.innerHTML = `<option value="">${esc(m.admin_select_folder())}</option>` +
             profData.root_folders.map((f: { path: string; freeSpace: number }) =>
-              `<option value="${esc(f.path)}" ${f.path === currentFolder ? 'selected' : ''}>${esc(f.path)} (${(f.freeSpace / 1024**3).toFixed(1)}GB free)</option>`).join('');
-          qualSelect.innerHTML = '<option value="">-- Select Profile --</option>' +
+              `<option value="${esc(f.path)}" ${f.path === currentFolder ? 'selected' : ''}>${esc(m.admin_folder_free_space({ path: f.path, free: formatNumber(f.freeSpace / 1024**3, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }))}</option>`).join('');
+          qualSelect.innerHTML = `<option value="">${esc(m.admin_select_profile())}</option>` +
             profData.quality_profiles.map((p: { id: number; name: string }) =>
               `<option value="${esc(String(p.id))}" ${String(p.id) === currentProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
           const tagContainer = document.getElementById('radarr_tags_list')!;
@@ -1076,10 +1080,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           const qualSelect = document.getElementById('sonarr_quality_profile') as HTMLSelectElement;
           const currentFolder = rootSelect.value;
           const currentProfile = qualSelect.value;
-          rootSelect.innerHTML = '<option value="">-- Select Folder --</option>' +
+          rootSelect.innerHTML = `<option value="">${esc(m.admin_select_folder())}</option>` +
             profData.root_folders.map((f: { path: string; freeSpace: number }) =>
-              `<option value="${esc(f.path)}" ${f.path === currentFolder ? 'selected' : ''}>${esc(f.path)} (${(f.freeSpace / 1024**3).toFixed(1)}GB free)</option>`).join('');
-          qualSelect.innerHTML = '<option value="">-- Select Profile --</option>' +
+              `<option value="${esc(f.path)}" ${f.path === currentFolder ? 'selected' : ''}>${esc(m.admin_folder_free_space({ path: f.path, free: formatNumber(f.freeSpace / 1024**3, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }))}</option>`).join('');
+          qualSelect.innerHTML = `<option value="">${esc(m.admin_select_profile())}</option>` +
             profData.quality_profiles.map((p: { id: number; name: string }) =>
               `<option value="${esc(String(p.id))}" ${String(p.id) === currentProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
           const tagContainer = document.getElementById('sonarr_tags_list')!;
@@ -1102,7 +1106,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     e.preventDefault();
     const btn = document.getElementById('save-settings-btn') as HTMLButtonElement;
     btn.disabled = true;
-    btn.textContent = 'Saving…';
+    btn.textContent = m.common_saving();
 
     const form = e.target as HTMLFormElement;
     const fd = new FormData(form);
@@ -1134,13 +1138,13 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed to save');
-      showMessage('Settings saved successfully.');
+      if (!res.ok) throw new Error((await res.json()).detail || m.common_save_failed());
+      showMessage(m.admin_settings_saved());
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Failed to save', 'error');
+      showMessage(err instanceof Error ? err.message : m.common_save_failed(), 'error');
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Save Changes';
+      btn.textContent = m.common_save_changes();
     }
   });
 
@@ -1149,7 +1153,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     e.preventDefault();
     const btn = document.getElementById('save-performance-btn') as HTMLButtonElement;
     btn.disabled = true;
-    btn.textContent = 'Saving…';
+    btn.textContent = m.common_saving();
 
     const form = e.target as HTMLFormElement;
     const fd = new FormData(form);
@@ -1166,14 +1170,14 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed to save');
-      showMessage('Performance settings saved successfully.');
+      if (!res.ok) throw new Error((await res.json()).detail || m.common_save_failed());
+      showMessage(m.admin_performance_saved());
       loadCacheStats();
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Failed to save', 'error');
+      showMessage(err instanceof Error ? err.message : m.common_save_failed(), 'error');
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Save Performance Settings';
+      btn.textContent = m.admin_save_performance_settings();
     }
   });
 
@@ -1190,11 +1194,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       is_admin: fd.get('is_admin') === 'true',
     };
     if (payload.password !== ((fd.get('password_confirm') as string) ?? '')) {
-      showMessage('Passwords do not match.', 'error');
+      showMessage(m.admin_passwords_mismatch(), 'error');
       return;
     }
     btn.disabled = true;
-    btn.textContent = 'Creating…';
+    btn.textContent = m.admin_creating();
     try {
       const res = await fetch('/api/proxy/admin/users', {
         method: 'POST',
@@ -1203,16 +1207,16 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        const detail = Array.isArray(data.detail) ? (data.detail[0]?.msg ?? 'Invalid input') : data.detail;
-        throw new Error(detail || 'Failed to create user');
+        const detail = Array.isArray(data.detail) ? (data.detail[0]?.msg ?? m.admin_invalid_input()) : data.detail;
+        throw new Error(detail || m.admin_create_user_failed());
       }
-      showMessage(`User "${payload.username}" created.`);
+      showMessage(m.admin_user_created({ username: payload.username }));
       form.reset();
       setTimeout(() => location.reload(), 800);
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Failed to create user', 'error');
+      showMessage(err instanceof Error ? err.message : m.admin_create_user_failed(), 'error');
       btn.disabled = false;
-      btn.textContent = 'Create user';
+      btn.textContent = m.admin_create_user();
     }
   });
 
@@ -1220,14 +1224,14 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   document.getElementById('backup-btn')?.addEventListener('click', async () => {
     const btn = document.getElementById('backup-btn') as HTMLButtonElement;
     btn.disabled = true;
-    btn.textContent = 'Preparing…';
+    btn.textContent = m.export_preparing();
     try {
       const res = await fetch('/api/proxy/admin/backup', {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || 'Backup failed');
+        throw new Error(data.detail || m.admin_backup_failed());
       }
       const cd = res.headers.get('Content-Disposition');
       const filename = cd?.match(/filename="([^"]+)"/)?.[1] ?? 'scrob_backup.bak';
@@ -1238,12 +1242,12 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
-      showMessage('Backup downloaded successfully.');
+      showMessage(m.admin_backup_done());
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Backup failed', 'error');
+      showMessage(err instanceof Error ? err.message : m.admin_backup_failed(), 'error');
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Download Backup';
+      btn.textContent = m.admin_download_backup();
     }
   });
 
@@ -1277,7 +1281,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     if (!file) return;
     closeRestoreModal();
     restoreBtn.disabled = true;
-    restoreBtn.textContent = 'Restoring…';
+    restoreBtn.textContent = m.auth_restoring();
     try {
       const fd = new FormData();
       fd.append('file', file);
@@ -1288,10 +1292,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || 'Restore failed');
+        throw new Error(data.detail || m.auth_restore_failed());
       }
-      restoreBtn.textContent = 'Redirecting…';
-      showMessage('Database restored. Logging out…');
+      restoreBtn.textContent = m.admin_redirecting();
+      showMessage(m.admin_restored_logging_out());
       setTimeout(() => {
         const form = document.createElement('form');
         form.method = 'POST';
@@ -1300,9 +1304,9 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         form.submit();
       }, 1500);
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Restore failed', 'error');
+      showMessage(err instanceof Error ? err.message : m.auth_restore_failed(), 'error');
       restoreBtn.disabled = false;
-      restoreBtn.textContent = 'Restore Database';
+      restoreBtn.textContent = m.auth_restore_database();
     }
   });
 
@@ -1322,10 +1326,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     const badge = row.querySelector('td:nth-child(3) span')!;
     if (isAdmin) {
       badge.className = 'inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20';
-      badge.textContent = 'Admin';
+      badge.textContent = m.admin_role_admin();
     } else {
       badge.className = 'inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-zinc-700/50 text-zinc-400 border border-zinc-700';
-      badge.textContent = 'User';
+      badge.textContent = m.admin_role_user();
     }
     refreshToggleButtons();
   }
@@ -1368,9 +1372,9 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     pendingDelete = { userId, row, btn, isSelf };
     const body = document.getElementById('delete-user-modal-body')!;
     if (isSelf) {
-      body.innerHTML = `Deleting your own account (<strong class="text-zinc-100">${esc(username)}</strong>) will log you out immediately. This cannot be undone.`;
+      body.innerHTML = m.admin_delete_self_body({ username: `<strong class="text-zinc-100">${esc(username)}</strong>` });
     } else {
-      body.innerHTML = `Are you sure you want to delete <strong class="text-zinc-100">${esc(username)}</strong>? This cannot be undone.`;
+      body.innerHTML = m.admin_delete_user_body({ username: `<strong class="text-zinc-100">${esc(username)}</strong>` });
     }
     deleteUserModal.classList.remove('hidden');
   }
@@ -1392,7 +1396,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       const res = await fetch(`/api/proxy/admin/users/${userId}`, {
         method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+      if (!res.ok) throw new Error((await res.json()).detail || m.common_failed());
       if (isSelf) {
         const form = document.createElement('form');
         form.method = 'POST';
@@ -1404,10 +1408,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         detailRow?.remove();
         row.remove();
         refreshToggleButtons();
-        showMessage('User deleted.');
+        showMessage(m.admin_user_deleted());
       }
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Failed', 'error');
+      showMessage(err instanceof Error ? err.message : m.common_failed(), 'error');
       btn.disabled = false;
     }
   });
@@ -1448,16 +1452,16 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
     if (isFailed) {
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = 'Heal failed';
+      if (label) label.textContent = m.heal_failed();
       if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = job.error_message || 'Unknown error';
+      if (items) items.textContent = job.error_message || m.common_unknown_error();
       return;
     }
     if (isCompleted) {
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-blue-600'; bar.style.width = '100%'; }
-      if (label) label.textContent = 'Heal complete';
+      if (label) label.textContent = m.heal_complete();
       if (pctEl) pctEl.textContent = '100%';
-      if (items) items.textContent = `${job.processed_items} item${job.processed_items !== 1 ? 's' : ''} healed`;
+      if (items) items.textContent = m.heal_items_healed({ count: job.processed_items });
       return;
     }
 
@@ -1467,9 +1471,9 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       bar.className = `h-1.5 rounded-full transition-all duration-500 bg-blue-600${indeterminate ? ' animate-pulse' : ''}`;
       bar.style.width = indeterminate ? '100%' : `${pct}%`;
     }
-    if (label) label.textContent = isPending ? 'Heal queued…' : 'Healing…';
+    if (label) label.textContent = isPending ? m.heal_queued() : m.heal_healing();
     if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
-    if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
+    if (items) items.textContent = job.total_items > 0 ? m.common_items_progress({ processed: job.processed_items, total: job.total_items }) : m.common_loading();
   }
 
   async function pollAdminHealJob() {
@@ -1513,40 +1517,40 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   document.getElementById('admin-heal-confirm-btn')?.addEventListener('click', async () => {
     adminHealModal.classList.add('hidden');
     adminHealBtn.disabled = true;
-    adminHealBtn.textContent = 'Starting…';
+    adminHealBtn.textContent = m.common_starting();
     try {
       const res = await fetch('/api/proxy/admin/maintenance/heal', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed to start heal');
+      if (!res.ok) throw new Error((await res.json()).detail || m.heal_start_failed());
       startAdminHealPoller();
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Failed to start heal', 'error');
+      showMessage(err instanceof Error ? err.message : m.heal_start_failed(), 'error');
     } finally {
       adminHealBtn.disabled = false;
-      adminHealBtn.textContent = 'Run Heal';
+      adminHealBtn.textContent = m.admin_run_heal();
     }
   });
 
   const clearCacheBtn = document.getElementById('admin-clear-cache-btn') as HTMLButtonElement;
   clearCacheBtn?.addEventListener('click', async () => {
-    if (!confirm('Are you sure you want to clear the image cache? This will delete all cached posters and backdrops.')) {
+    if (!confirm(m.admin_clear_cache_confirm())) {
       return;
     }
     clearCacheBtn.disabled = true;
-    const originalText = clearCacheBtn.textContent || 'Clear Cache';
-    clearCacheBtn.textContent = 'Clearing…';
+    const originalText = clearCacheBtn.textContent || m.admin_clear_cache();
+    clearCacheBtn.textContent = m.common_clearing();
     try {
       const res = await fetch('/api/proxy/admin/maintenance/clear-cache', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed to clear cache');
-      showMessage('Image cache cleared successfully.');
+      if (!res.ok) throw new Error((await res.json()).detail || m.admin_clear_cache_failed());
+      showMessage(m.admin_cache_cleared());
       loadCacheStats();
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Failed to clear cache', 'error');
+      showMessage(err instanceof Error ? err.message : m.admin_clear_cache_failed(), 'error');
     } finally {
       clearCacheBtn.disabled = false;
       clearCacheBtn.textContent = originalText;
@@ -1584,10 +1588,10 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   function syncActionsMenu() {
     if (!menuCtx) return;
     const isAdmin = menuCtx.row.dataset.isAdmin === 'true';
-    menuToggleAdmin.textContent = isAdmin ? 'Remove Admin' : 'Make Admin';
+    menuToggleAdmin.textContent = isAdmin ? m.admin_remove_admin() : m.admin_make_admin();
     const blocked = isAdmin && menuCtx.userId === currentUserId && countAdmins() === 1;
     menuToggleAdmin.disabled = blocked;
-    menuToggleAdmin.title = blocked ? 'You are the sole admin. Promote another user first.' : '';
+    menuToggleAdmin.title = blocked ? m.admin_sole_admin() : '';
     menuDisable2fa.classList.toggle('hidden', menuCtx.row.dataset.totp !== 'true');
   }
 
@@ -1650,12 +1654,12 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       const res = await fetch(`/api/proxy/admin/users/${userId}/toggle-admin`, {
         method: 'PATCH', headers: { 'Authorization': `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+      if (!res.ok) throw new Error((await res.json()).detail || m.common_failed());
       const updated = await res.json();
       updateRow(row, updated.is_admin);
-      showMessage('User updated.');
+      showMessage(m.admin_user_updated());
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Failed', 'error');
+      showMessage(err instanceof Error ? err.message : m.common_failed(), 'error');
     }
   });
 
@@ -1665,19 +1669,19 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     closeActionsMenu();
     const username = row.querySelector('td')!.textContent!.trim();
     const ok = await (window as any).showConfirm(
-      'Disable 2FA?',
-      `${username} will be able to sign in with just their password until they set up 2FA again.`,
+      m.admin_disable_2fa_confirm_title(),
+      m.admin_disable_2fa_confirm_body({ username }),
     );
     if (!ok) return;
     try {
       const res = await fetch(`/api/proxy/admin/users/${userId}/disable-2fa`, {
         method: 'POST', headers: { 'Authorization': `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+      if (!res.ok) throw new Error((await res.json()).detail || m.common_failed());
       row.dataset.totp = 'false';
-      showMessage('2FA disabled.');
+      showMessage(m.admin_2fa_disabled());
     } catch (err: unknown) {
-      showMessage(err instanceof Error ? err.message : 'Failed', 'error');
+      showMessage(err instanceof Error ? err.message : m.common_failed(), 'error');
     }
   });
 
@@ -1716,7 +1720,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     resetPwUserId = userId;
     const username = row.querySelector('td')!.textContent!.trim();
     document.getElementById('reset-password-modal-body')!.innerHTML =
-      `Set a new password for <strong class="text-zinc-100">${esc(username)}</strong>.`;
+      m.admin_reset_password_body({ username: `<strong class="text-zinc-100">${esc(username)}</strong>` });
     resetPwModal.classList.remove('hidden');
     resetPwInput.focus();
   });
@@ -1728,7 +1732,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     e.preventDefault();
     if (resetPwUserId === null) return;
     if (resetPwInput.value !== resetPwConfirm.value) {
-      resetPwError.textContent = 'Passwords do not match.';
+      resetPwError.textContent = m.admin_passwords_mismatch();
       resetPwError.classList.remove('hidden');
       return;
     }
@@ -1739,11 +1743,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: resetPwInput.value }),
       });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+      if (!res.ok) throw new Error((await res.json()).detail || m.common_failed());
       closeResetPwModal();
-      showMessage('Password updated.');
+      showMessage(m.admin_password_updated());
     } catch (err: unknown) {
-      resetPwError.textContent = err instanceof Error ? err.message : 'Failed';
+      resetPwError.textContent = err instanceof Error ? err.message : m.common_failed();
       resetPwError.classList.remove('hidden');
     } finally {
       resetPwSave.disabled = false;
@@ -1751,12 +1755,6 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   });
 
   // ── Cache stats widget ──
-  function formatBytes(bytes: number): string {
-    if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(2)} GB`;
-    if (bytes >= 1048576)    return `${(bytes / 1048576).toFixed(1)} MB`;
-    if (bytes >= 1024)       return `${(bytes / 1024).toFixed(0)} KB`;
-    return `${bytes} B`;
-  }
 
   async function loadCacheStats() {
     try {
@@ -1776,20 +1774,20 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
       const usedStr = formatBytes(data.total_size_bytes);
       const count: number = data.entry_count;
-      label.textContent = `${usedStr} used · ${count.toLocaleString()} image${count !== 1 ? 's' : ''} cached`;
+      label.textContent = m.admin_cache_stats({ used: usedStr, count, formatted: formatNumber(count) });
       widget.classList.remove('hidden');
 
       if (data.limit_gb && data.limit_gb > 0) {
         const limitBytes = data.limit_gb * 1073741824;
         const pct = Math.min(100, (data.total_size_bytes / limitBytes) * 100);
-        pctEl.textContent = `${pct.toFixed(1)}%`;
+        pctEl.textContent = formatNumber(pct / 100, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
         progressWrap.classList.remove('hidden');
         progressBar.style.width = `${pct}%`;
         progressBar.className = `h-full rounded-full transition-all duration-500 ${
           pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : 'bg-blue-500'
         }`;
         usedLabel.textContent = usedStr;
-        limitLabel.textContent = `${Number(data.limit_gb.toFixed(2))} GB limit`;
+        limitLabel.textContent = m.admin_cache_limit({ limit: m.unit_gigabytes({ value: formatNumber(Number(data.limit_gb.toFixed(2))) }) });
       } else {
         pctEl.textContent = '';
         progressWrap.classList.add('hidden');

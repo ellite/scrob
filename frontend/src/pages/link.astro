@@ -2,6 +2,8 @@
 import Base from "../layouts/Base.astro";
 import PosterWall from "../components/PosterWall.astro";
 import { api } from "../lib/api";
+import { escapeHtml } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 
 export const prerender = false;
 
@@ -33,28 +35,25 @@ if (!token) {
 }
 
 const loginHref = `/login?next=${encodeURIComponent(`/link${rawCode ? `?code=${rawCode}` : ""}`)}`;
-const scopeLabel = scope === "write"
-  ? "view and change your watch history, ratings and lists"
-  : `use the "${scope}" scope on your account`;
 ---
 
-<Base title="Link a device" hideNav>
+<Base title={m.link_page_title()} hideNav>
   <PosterWall />
 
   <div class="relative z-10 min-h-[calc(100dvh-9rem)] md:min-h-[calc(100dvh-5rem)] flex items-center justify-center py-10">
   <div class="w-full max-w-md p-8 bg-zinc-900/85 backdrop-blur-md rounded-xl border border-zinc-800 shadow-2xl">
     <div class="flex flex-col items-center mb-6">
-      <img src="/scrob.png" alt="Scrob Logo" class="w-36 object-contain mb-2" />
-      <span class="text-zinc-100 font-bold text-xl tracking-tight">Link a device</span>
+      <img src="/scrob.png" alt={m.nav_logo_alt()} class="w-36 object-contain mb-2" />
+      <span class="text-zinc-100 font-bold text-xl tracking-tight">{m.link_page_title()}</span>
     </div>
 
     {state === "signed-out" && (
       <div class="text-center py-2">
         <p class="text-sm text-zinc-400 mb-6">
-          Sign in to your Scrob account to approve a device. You'll come right back here.
+          {m.link_signed_out()}
         </p>
         <a href={loginHref} class="inline-block bg-zinc-100 text-zinc-950 font-bold px-6 py-2 rounded-lg hover:bg-zinc-200 transition-colors">
-          Sign in
+          {m.auth_sign_in()}
         </a>
       </div>
     )}
@@ -62,7 +61,7 @@ const scopeLabel = scope === "write"
     {state === "enter-code" && (
       <form method="get" class="py-2">
         <label for="code" class="block text-sm text-zinc-400 mb-2">
-          Enter the code shown on your device
+          {m.link_enter_code()}
         </label>
         <input
           id="code"
@@ -76,7 +75,7 @@ const scopeLabel = scope === "write"
           class="w-full text-center tracking-[0.3em] font-mono text-lg uppercase bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:border-blue-500 mb-4"
         />
         <button type="submit" class="w-full bg-zinc-100 text-zinc-950 font-bold px-6 py-2.5 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer">
-          Continue
+          {m.common_continue()}
         </button>
       </form>
     )}
@@ -88,12 +87,12 @@ const scopeLabel = scope === "write"
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
           </svg>
         </div>
-        <h1 class="text-xl font-bold text-zinc-100 mb-2">Code not recognized</h1>
+        <h1 class="text-xl font-bold text-zinc-100 mb-2">{m.link_code_not_recognized()}</h1>
         <p class="text-sm text-zinc-400 mb-6">
-          This code is wrong, already used, or expired (codes last 15 minutes). Start the sign-in again on your device to get a fresh one.
+          {m.link_code_not_recognized_body()}
         </p>
         <a href="/link" class="inline-block bg-zinc-100 text-zinc-950 font-bold px-6 py-2 rounded-lg hover:bg-zinc-200 transition-colors">
-          Enter a different code
+          {m.link_enter_different_code()}
         </a>
       </div>
     )}
@@ -101,7 +100,7 @@ const scopeLabel = scope === "write"
     {state === "confirm" && (
       <div id="confirm" data-code={code} class="py-2">
         <div class="rounded-lg border border-zinc-800 bg-zinc-950/60 p-4 mb-4">
-          <label for="conn-name" class="block text-xs uppercase tracking-wider text-zinc-500 mb-1.5">Name this connection</label>
+          <label for="conn-name" class="block text-xs uppercase tracking-wider text-zinc-500 mb-1.5">{m.link_name_connection()}</label>
           <input
             id="conn-name"
             type="text"
@@ -110,20 +109,20 @@ const scopeLabel = scope === "write"
             autocomplete="off"
             class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           />
-          <p class="text-sm text-zinc-400 mt-2">Code <span class="font-mono text-zinc-200">{code}</span></p>
+          <p class="text-sm text-zinc-400 mt-2" set:html={m.link_code_label({ code: `<span class="font-mono text-zinc-200">${escapeHtml(code)}</span>` })} />
         </div>
         <p class="text-sm text-zinc-300 mb-3">
-          Approving lets this app {scopeLabel}. It will not be able to change your password, email, or security settings.
+          {m.link_approve_scope({ scope })}
         </p>
         <p class="text-sm text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 mb-5">
-          Only continue if you just started this on a device you own. If a code was sent to you by someone else, deny it.
+          {m.link_warning()}
         </p>
         <div class="flex gap-3">
           <button id="deny-btn" class="flex-1 border border-zinc-700 text-zinc-300 font-semibold px-4 py-2.5 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-            Deny
+            {m.link_deny()}
           </button>
           <button id="approve-btn" class="flex-1 bg-blue-600 text-white font-bold px-4 py-2.5 rounded-lg hover:bg-blue-500 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-            Approve
+            {m.link_approve()}
           </button>
         </div>
         <p id="confirm-error" class="hidden text-sm text-red-400 mt-3 text-center"></p>
@@ -138,8 +137,8 @@ const scopeLabel = scope === "write"
               <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
             </svg>
           </div>
-          <h1 class="text-xl font-bold text-zinc-100 mb-2">Device linked</h1>
-          <p class="text-sm text-zinc-400">You can close this page and return to your device. Revoke access anytime under Connections &rsaquo; Connected Apps.</p>
+          <h1 class="text-xl font-bold text-zinc-100 mb-2">{m.link_device_linked()}</h1>
+          <p class="text-sm text-zinc-400">{m.link_device_linked_body()}</p>
         </div>
       </template>
     )}
@@ -152,8 +151,8 @@ const scopeLabel = scope === "write"
               <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </div>
-          <h1 class="text-xl font-bold text-zinc-100 mb-2">Request denied</h1>
-          <p class="text-sm text-zinc-400">Nothing was granted. The device will stop waiting shortly.</p>
+          <h1 class="text-xl font-bold text-zinc-100 mb-2">{m.link_request_denied()}</h1>
+          <p class="text-sm text-zinc-400">{m.link_request_denied_body()}</p>
         </div>
       </template>
     )}
@@ -162,6 +161,8 @@ const scopeLabel = scope === "write"
 </Base>
 
 <script>
+  import { m } from '../paraglide/messages.js';
+
   const box = document.getElementById("confirm");
   if (box) {
     const token = (window as any).__AUTH_TOKEN__ ?? "";
@@ -198,7 +199,7 @@ const scopeLabel = scope === "write"
         if (approveBtn) approveBtn.disabled = false;
         if (denyBtn) denyBtn.disabled = false;
         if (errEl) {
-          errEl.textContent = "Something went wrong. The code may have just expired - try again from your device.";
+          errEl.textContent = m.link_error();
           errEl.classList.remove("hidden");
         }
       }

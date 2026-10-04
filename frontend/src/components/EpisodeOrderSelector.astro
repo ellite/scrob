@@ -6,6 +6,8 @@ interface Props {
   token: string;
 }
 
+import { m } from "../paraglide/messages.js";
+
 const { tmdbId, selected, selectedLabel, token } = Astro.props;
 const provider = selected.startsWith("tvdb:") ? "tvdb" : "tmdb";
 const pill =
@@ -22,12 +24,12 @@ const pillOff = "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800";
   class="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-4 py-3"
 >
   <div>
-    <p class="text-xs font-black uppercase tracking-wider text-zinc-300">Episode order</p>
-    <p class="text-[11px] text-zinc-500">Choose how this show's episodes are grouped and numbered.</p>
+    <p class="text-xs font-black uppercase tracking-wider text-zinc-300">{m.episode_order_title()}</p>
+    <p class="text-[11px] text-zinc-500">{m.episode_order_description()}</p>
   </div>
 
   <div class="ml-auto flex items-center gap-2">
-    <div data-provider-group class="flex rounded-xl border border-zinc-700 bg-zinc-950 p-1" role="group" aria-label="Metadata source">
+    <div data-provider-group class="flex rounded-xl border border-zinc-700 bg-zinc-950 p-1" role="group" aria-label={m.episode_order_metadata_source()}>
       <button type="button" data-provider="tmdb" aria-pressed={provider === "tmdb"}
         class:list={[pill, provider === "tmdb" ? pillOn : pillOff]}>TMDB</button>
       <button type="button" data-provider="tvdb" aria-pressed={provider === "tvdb"} hidden
@@ -38,26 +40,26 @@ const pillOff = "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800";
         type="button"
         data-order-toggle
         aria-expanded="false"
-        aria-label="Show all orderings"
+        aria-label={m.episode_order_show_all()}
         class:list={[pill, "flex items-center gap-1.5 !pr-2", pillOff]}
       >
-        <span data-order-toggle-label>{selectedLabel || (selected === "tmdb:aired" ? "Aired Order" : selected)}</span>
+        <span data-order-toggle-label>{selectedLabel || (selected === "tmdb:aired" ? m.episode_order_aired() : selected)}</span>
         <svg data-order-chevron xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
       </button>
     </div>
   </div>
 
   <div data-order-row class="flex w-full justify-end" hidden>
-    <div data-order-group class="flex flex-wrap justify-end gap-1 rounded-xl border border-zinc-700 bg-zinc-950 p-1" role="group" aria-label="Episode order">
+    <div data-order-group class="flex flex-wrap justify-end gap-1 rounded-xl border border-zinc-700 bg-zinc-950 p-1" role="group" aria-label={m.episode_order_title()}>
       <button type="button" data-order-key={selected} aria-pressed="true" class:list={[pill, pillOn]}>
-        {selectedLabel || (selected === "tmdb:aired" ? "Aired Order" : selected)}
+        {selectedLabel || (selected === "tmdb:aired" ? m.episode_order_aired() : selected)}
       </button>
     </div>
   </div>
 
   <div data-order-progress class="hidden w-full">
     <div class="flex justify-between items-center mb-1.5">
-      <span data-order-progress-label class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Building order…</span>
+      <span data-order-progress-label class="text-xs font-semibold uppercase tracking-wider text-zinc-500">{m.episode_order_building()}</span>
       <span data-order-progress-pct class="text-xs font-bold text-zinc-400"></span>
     </div>
     <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
@@ -71,6 +73,8 @@ const pillOff = "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800";
 </div>
 
 <script>
+  import { m } from '../paraglide/messages.js';
+
   interface OrderOption { key: string; label: string; provider: string }
 
   document.querySelectorAll<HTMLElement>('[data-episode-order-selector]').forEach((selector) => {
@@ -124,8 +128,8 @@ const pillOff = "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800";
       if (progressPct) progressPct.textContent = pct > 0 ? `${pct}%` : '';
       if (progressItems) {
         progressItems.textContent = job.total_items > 0
-          ? `${job.processed_items} / ${job.total_items} episodes`
-          : (job.status === 'pending' ? 'Queued…' : 'Loading…');
+          ? m.episode_order_progress({ processed: job.processed_items, total: job.total_items })
+          : (job.status === 'pending' ? m.common_queued() : m.common_loading());
       }
     }
 
@@ -146,20 +150,20 @@ const pillOff = "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800";
         const response = await fetch(`/api/proxy/shows/episode-order/jobs/${jobId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!response.ok) throw new Error('Unable to check episode order progress');
+        if (!response.ok) throw new Error(m.episode_order_check_failed());
         const job = await response.json();
         if (job.status === 'completed') {
           window.location.href = job.stats?.redirect ?? `/show/${tmdbId}`;
           return;
         }
         if (job.status === 'failed' || job.status === 'cancelled') {
-          throw new Error(job.error_message || 'Unable to update episode order');
+          throw new Error(job.error_message || m.episode_order_update_failed());
         }
         setBusy(true);
         renderProgress(job);
         setTimeout(() => pollJob(jobId), 1500);
       } catch (exception) {
-        fail(exception instanceof Error ? exception.message : 'Unable to update episode order');
+        fail(exception instanceof Error ? exception.message : m.episode_order_update_failed());
       }
     }
 
@@ -175,14 +179,14 @@ const pillOff = "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800";
           body: JSON.stringify({ episode_order: orderKey, order_label: label }),
         });
         const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.detail || 'Unable to update episode order');
+        if (!response.ok) throw new Error(data.detail || m.episode_order_update_failed());
         if (data.status === 'started' && data.job_id) {
           pollJob(data.job_id);
           return;
         }
         window.location.href = data.redirect ?? `/show/${tmdbId}`;
       } catch (exception) {
-        fail(exception instanceof Error ? exception.message : 'Unable to update episode order');
+        fail(exception instanceof Error ? exception.message : m.episode_order_update_failed());
       }
     }
 
@@ -225,7 +229,7 @@ const pillOff = "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800";
       if (orderToggleWrap.hidden) expanded = false;
       orderToggleLabel.textContent =
         orders.find((o) => o.key === applied)?.label
-        ?? (applied === 'tmdb:aired' ? 'Aired Order' : applied);
+        ?? (applied === 'tmdb:aired' ? m.episode_order_aired() : applied);
       orderToggle.setAttribute('aria-expanded', String(expanded));
       orderChevron.classList.toggle('rotate-180', expanded);
 

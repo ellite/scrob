@@ -1,5 +1,7 @@
 ---
 import { api, type Comment } from "../lib/api";
+import { formatDate, escapeHtml } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 
 interface Props {
   mediaType: string;
@@ -36,13 +38,13 @@ if (!commentsDisabled) {
 ---
 
 {!commentsDisabled && (
-<div class="mt-24 border-zinc-900 pt-16 mb-20">
+<div id="comments-section" class="mt-24 border-zinc-900 pt-16 mb-20" data-current-user-id={user?.id ?? ""} data-is-admin={String(user?.role === 'admin')}>
   <div class="flex items-center justify-between mb-10">
     <h2 class="text-3xl font-black text-zinc-100 tracking-tighter uppercase flex items-center gap-3">
       <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
       </svg>
-      Comments
+      {m.comments_title()}
       <span class="text-sm font-bold text-zinc-500 bg-zinc-900 px-3 py-1 rounded-full border border-zinc-800 ml-2">
         {comments.length}
       </span>
@@ -62,7 +64,7 @@ if (!commentsDisabled) {
           <textarea
             name="content"
             rows="3"
-            placeholder="What are your thoughts?"
+            placeholder={m.comments_placeholder()}
             class="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all resize-none"
             required
           ></textarea>
@@ -75,7 +77,7 @@ if (!commentsDisabled) {
                 class="w-4 h-4 accent-amber-500 cursor-pointer"
               />
               <span class="text-sm font-medium text-zinc-400 group-hover:text-amber-400 transition-colors">
-                Mark as spoiler
+                {m.comments_mark_spoiler()}
               </span>
             </label>
             <button
@@ -83,20 +85,20 @@ if (!commentsDisabled) {
               id="submit-comment"
               class="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-xl transition-all shadow-lg shadow-blue-900/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Post Comment
+              {m.comments_post()}
             </button>
           </div>
         </form>
       </div>
     ) : (
       <div class="mb-12 p-8 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-3xl text-center">
-        <p class="text-zinc-400 font-medium">Please <a href={loginNextUrl} class="text-blue-500 hover:underline">log in</a> to leave a comment.</p>
+        <p class="text-zinc-400 font-medium" set:html={m.comments_login_prompt({ login: `<a href="${escapeHtml(loginNextUrl)}" class="text-blue-500 hover:underline">${escapeHtml(m.comments_login_link())}</a>` })} />
       </div>
     )}
 
     <div id="comments-list" class="space-y-8">
       {comments.length === 0 ? (
-        <p id="no-comments" class="text-zinc-500 italic py-10 text-center font-medium">No comments yet. Be the first to share your thoughts!</p>
+        <p id="no-comments" class="text-zinc-500 italic py-10 text-center font-medium">{m.comments_empty()}</p>
       ) : (
         comments.map((comment) => {
           const canSeeProfile = comment.user_is_public || (user && (user.id === comment.user_id || user.role === 'admin'));
@@ -129,10 +131,10 @@ if (!commentsDisabled) {
                       <span class="font-black text-zinc-100 truncate">{comment.display_name}</span>
                     )}
                     <span class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest px-2 py-0.5 bg-zinc-900 border border-zinc-800 rounded shrink-0">
-                      {new Date(comment.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                      {formatDate(comment.created_at, { month: 'short', day: 'numeric', year: 'numeric' })}
                     </span>
                     <span class={`spoiler-badge text-[10px] font-bold text-amber-400 uppercase tracking-widest px-2 py-0.5 bg-amber-500/10 border border-amber-500/30 rounded shrink-0${comment.is_spoiler ? '' : ' hidden'}`}>
-                      Spoiler
+                      {m.comments_spoiler()}
                     </span>
                   </div>
                   {(isOwner || isAdmin) && (
@@ -141,7 +143,7 @@ if (!commentsDisabled) {
                         <button
                           class="edit-comment p-1.5 text-zinc-500 hover:text-blue-400 transition-colors rounded-lg hover:bg-zinc-800"
                           data-id={comment.id}
-                          title="Edit Comment"
+                          title={m.comments_edit()}
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -152,7 +154,7 @@ if (!commentsDisabled) {
                       <button
                         class="delete-comment p-1.5 text-zinc-500 hover:text-red-400 transition-colors rounded-lg hover:bg-zinc-800"
                         data-id={comment.id}
-                        title="Delete Comment"
+                        title={m.comments_delete()}
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                           <path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
@@ -165,7 +167,7 @@ if (!commentsDisabled) {
                 <div class="comment-body relative">
                   <p class={`comment-text text-zinc-300 leading-relaxed font-medium whitespace-pre-wrap break-words${comment.is_spoiler ? ' blur-sm select-none pointer-events-none' : ''}`}>{comment.content}</p>
                   <div class={`spoiler-overlay absolute inset-0 flex items-center justify-center rounded-lg cursor-pointer bg-zinc-950/70 backdrop-blur-sm${comment.is_spoiler ? '' : ' hidden'}`}>
-                    <span class="text-amber-400 font-bold text-sm">Click to reveal</span>
+                    <span class="text-amber-400 font-bold text-sm">{m.comments_click_to_reveal()}</span>
                   </div>
                 </div>
                 <div class="edit-form hidden mt-3 space-y-2">
@@ -180,11 +182,11 @@ if (!commentsDisabled) {
                         class="spoiler-edit-checkbox w-4 h-4 accent-amber-500 cursor-pointer"
                         checked={comment.is_spoiler}
                       />
-                      <span class="text-sm font-medium text-zinc-400 group-hover:text-amber-400 transition-colors">Spoiler</span>
+                      <span class="text-sm font-medium text-zinc-400 group-hover:text-amber-400 transition-colors">{m.comments_spoiler()}</span>
                     </label>
                     <div class="flex gap-2">
-                      <button class="cancel-edit px-4 py-2 text-sm font-bold text-zinc-400 hover:text-zinc-200 transition-colors">Cancel</button>
-                      <button class="save-edit px-5 py-2 text-sm font-black bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all active:scale-95 disabled:opacity-50" data-id={comment.id}>Save</button>
+                      <button class="cancel-edit px-4 py-2 text-sm font-bold text-zinc-400 hover:text-zinc-200 transition-colors">{m.common_cancel()}</button>
+                      <button class="save-edit px-5 py-2 text-sm font-black bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all active:scale-95 disabled:opacity-50" data-id={comment.id}>{m.common_save()}</button>
                     </div>
                   </div>
                 </div>
@@ -198,17 +200,25 @@ if (!commentsDisabled) {
 </div>
 )}
 
-{!commentsDisabled && (
-<script define:vars={{ token, currentUserId: user?.id, isAdmin: user?.role === 'admin' }}>
+<script>
+  import { m } from '../paraglide/messages.js';
+  import { formatDate } from '../lib/format';
+
+  const section = document.getElementById('comments-section');
+  if (section) {
+  const token = (window as any).__AUTH_TOKEN__ ?? '';
+  const currentUserId = section.dataset.currentUserId ? Number(section.dataset.currentUserId) : undefined;
+  const isAdmin = section.dataset.isAdmin === 'true';
+
   function esc(s) {
     if (s == null) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  const SPOILER_OVERLAY_HTML = `<span class="text-amber-400 font-bold text-sm">Click to reveal</span>`;
+  const SPOILER_OVERLAY_HTML = `<span class="text-amber-400 font-bold text-sm">${esc(m.comments_click_to_reveal())}</span>`;
 
   function buildCommentHTML(comment, canSeeProfile, showActions) {
-    const dateStr = new Date(comment.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const dateStr = formatDate(comment.created_at, { month: 'short', day: 'numeric', year: 'numeric' });
 
     const avatarInner = comment.avatar_url
       ? `<img src="/api/proxy${esc(comment.avatar_url)}" alt="${esc(comment.display_name)}" class="w-full h-full object-cover" />`
@@ -222,13 +232,13 @@ if (!commentsDisabled) {
       ? `<a href="/profile/${esc(String(comment.user_id))}" class="font-black text-zinc-100 truncate hover:text-blue-400 transition-colors">${esc(comment.display_name)}</a>`
       : `<span class="font-black text-zinc-100 truncate">${esc(comment.display_name)}</span>`;
 
-    const spoilerBadgeHtml = `<span class="spoiler-badge text-[10px] font-bold text-amber-400 uppercase tracking-widest px-2 py-0.5 bg-amber-500/10 border border-amber-500/30 rounded shrink-0${comment.is_spoiler ? '' : ' hidden'}">Spoiler</span>`;
+    const spoilerBadgeHtml = `<span class="spoiler-badge text-[10px] font-bold text-amber-400 uppercase tracking-widest px-2 py-0.5 bg-amber-500/10 border border-amber-500/30 rounded shrink-0${comment.is_spoiler ? '' : ' hidden'}">${esc(m.comments_spoiler())}</span>`;
 
     const editBtnHtml = showActions.edit
-      ? `<button class="edit-comment p-1.5 text-zinc-500 hover:text-blue-400 transition-colors rounded-lg hover:bg-zinc-800" data-id="${esc(String(comment.id))}" title="Edit Comment"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>`
+      ? `<button class="edit-comment p-1.5 text-zinc-500 hover:text-blue-400 transition-colors rounded-lg hover:bg-zinc-800" data-id="${esc(String(comment.id))}" title="${esc(m.comments_edit())}"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>`
       : '';
     const deleteBtnHtml = showActions.delete
-      ? `<button class="delete-comment p-1.5 text-zinc-500 hover:text-red-400 transition-colors rounded-lg hover:bg-zinc-800" data-id="${esc(String(comment.id))}" title="Delete Comment"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>`
+      ? `<button class="delete-comment p-1.5 text-zinc-500 hover:text-red-400 transition-colors rounded-lg hover:bg-zinc-800" data-id="${esc(String(comment.id))}" title="${esc(m.comments_delete())}"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>`
       : '';
     const actionBtns = (showActions.edit || showActions.delete)
       ? `<div class="flex items-center gap-1 shrink-0">${editBtnHtml}${deleteBtnHtml}</div>`
@@ -258,11 +268,11 @@ if (!commentsDisabled) {
           <div class="flex items-center justify-between">
             <label class="flex items-center gap-2 cursor-pointer select-none group">
               <input type="checkbox" class="spoiler-edit-checkbox w-4 h-4 accent-amber-500 cursor-pointer" ${editCheckboxChecked} />
-              <span class="text-sm font-medium text-zinc-400 group-hover:text-amber-400 transition-colors">Spoiler</span>
+              <span class="text-sm font-medium text-zinc-400 group-hover:text-amber-400 transition-colors">${esc(m.comments_spoiler())}</span>
             </label>
             <div class="flex gap-2">
-              <button class="cancel-edit px-4 py-2 text-sm font-bold text-zinc-400 hover:text-zinc-200 transition-colors">Cancel</button>
-              <button class="save-edit px-5 py-2 text-sm font-black bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all active:scale-95 disabled:opacity-50" data-id="${esc(String(comment.id))}">Save</button>
+              <button class="cancel-edit px-4 py-2 text-sm font-bold text-zinc-400 hover:text-zinc-200 transition-colors">${esc(m.common_cancel())}</button>
+              <button class="save-edit px-5 py-2 text-sm font-black bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all active:scale-95 disabled:opacity-50" data-id="${esc(String(comment.id))}">${esc(m.common_save())}</button>
             </div>
           </div>
         </div>
@@ -290,7 +300,7 @@ if (!commentsDisabled) {
       if (!content.trim()) return;
 
       submitBtn.disabled = true;
-      submitBtn.textContent = 'Posting...';
+      submitBtn.textContent = m.comments_posting();
 
       try {
         const res = await fetch('/api/proxy/comments', {
@@ -310,7 +320,7 @@ if (!commentsDisabled) {
           })
         });
 
-        if (!res.ok) throw new Error('Failed to post comment');
+        if (!res.ok) throw new Error(m.comments_post_failed());
 
         const comment = await res.json();
         form.reset();
@@ -331,7 +341,7 @@ if (!commentsDisabled) {
         alert(err.message);
       } finally {
         submitBtn.disabled = false;
-        submitBtn.textContent = 'Post Comment';
+        submitBtn.textContent = m.comments_post();
       }
     });
   }
@@ -411,7 +421,7 @@ if (!commentsDisabled) {
         if (!content) return;
 
         clone.disabled = true;
-        clone.textContent = 'Saving...';
+        clone.textContent = m.common_saving();
 
         try {
           const res = await fetch(`/api/proxy/comments/${commentId}`, {
@@ -436,10 +446,10 @@ if (!commentsDisabled) {
           const editCheckbox = editForm.querySelector('.spoiler-edit-checkbox');
           if (editCheckbox) editCheckbox.checked = updated.is_spoiler;
         } catch (err) {
-          alert('Failed to save comment');
+          alert(m.comments_save_failed());
         } finally {
           clone.disabled = false;
-          clone.textContent = 'Save';
+          clone.textContent = m.common_save();
         }
       });
     });
@@ -449,7 +459,7 @@ if (!commentsDisabled) {
       const clone = btn.cloneNode(true);
       btn.parentNode.replaceChild(clone, btn);
       clone.addEventListener('click', async () => {
-        const ok = await window.showConfirm('Delete comment?', 'This cannot be undone.');
+        const ok = await (window as any).showConfirm(m.comments_delete_confirm_title(), m.common_cannot_be_undone());
         if (!ok) return;
 
         const commentId = clone.dataset.id;
@@ -468,12 +478,12 @@ if (!commentsDisabled) {
             }
           }
         } catch (err) {
-          alert('Failed to delete comment');
+          alert(m.comments_delete_failed());
         }
       });
     });
   }
 
   attachListeners();
+  }
 </script>
-)}

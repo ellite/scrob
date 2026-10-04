@@ -9,6 +9,8 @@ interface Props {
   episodeNumber?: number | null;
   mediaId?: number | null;
 }
+import { m } from "../paraglide/messages.js";
+
 const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumber, mediaId } = Astro.props;
 ---
 
@@ -30,12 +32,14 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
         <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.641 0-8.573-3.007-9.963-7.178Z" />
         <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
       </svg>
-      Start watching session
+      {m.manual_start_session()}
     </button>
   </div>
 )}
 
 <script>
+import { m } from '../paraglide/messages.js';
+
 (function () {
   const container = document.getElementById('manual-scrobble');
   if (!container) return;
@@ -64,10 +68,10 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
   // ── UI helpers ─────────────────────────────────────────────────────────────
   function fmt(seconds: number): string {
     const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
+    const min = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
-    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    return `${m}:${String(s).padStart(2, '0')}`;
+    if (h > 0) return `${h}:${String(min).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${min}:${String(s).padStart(2, '0')}`;
   }
 
   function pct(): number {
@@ -83,7 +87,7 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
           <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.641 0-8.573-3.007-9.963-7.178Z" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
         </svg>
-        Start watching session
+        ${m.manual_start_session()}
       </button>
     `;
     document.getElementById('ms-start')?.addEventListener('click', startSession);
@@ -108,7 +112,7 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
         <div class="flex items-center gap-3 px-4 py-3">
           ${dotAnim}
           <span class="text-xs font-bold ${isPlaying ? 'text-green-400' : 'text-yellow-400'} uppercase tracking-widest">
-            ${isPlaying ? 'Watching' : 'Paused'}
+            ${isPlaying ? m.manual_watching() : m.np_paused()}
           </span>
           <span class="text-xs text-zinc-500 tabular-nums ml-auto" id="ms-time">
             ${elapsed} / ${totalFmt}
@@ -123,22 +127,22 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
             class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-zinc-300
                    bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors cursor-pointer">
             ${isPlaying
-              ? `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg> Pause`
-              : `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" /></svg> Resume`}
+              ? `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg> ${m.manual_pause()}`
+              : `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" /></svg> ${m.manual_resume()}`}
           </button>
           <button id="ms-stop"
             class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-zinc-400
                    hover:text-zinc-100 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800
                    hover:border-zinc-700 rounded-lg transition-colors cursor-pointer">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 7.5A2.25 2.25 0 0 1 7.5 5.25h9a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1-2.25 2.25h-9a2.25 2.25 0 0 1-2.25-2.25v-9Z" /></svg>
-            Stop
+            ${m.manual_stop()}
           </button>
           <button id="ms-complete"
             class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-green-400
                    hover:text-green-300 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800
                    hover:border-green-700 rounded-lg transition-colors cursor-pointer ml-auto">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-            Mark as watched
+            ${m.watch_mark_watched()}
           </button>
         </div>
       </div>
@@ -177,7 +181,7 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
   // ── API calls ─────────────────────────────────────────────────────────────
   async function startSession(): Promise<void> {
     const btn = document.getElementById('ms-start') as HTMLButtonElement | null;
-    if (btn) { btn.disabled = true; btn.textContent = 'Starting session…'; }
+    if (btn) { btn.disabled = true; btn.textContent = m.manual_starting(); }
     try {
       const res = await fetch(`${API}/history/session/start`, {
         method: 'POST',
@@ -202,7 +206,7 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
       renderActive();
       startDisplayTimer();
     } catch (e) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Start watching session'; }
+      if (btn) { btn.disabled = false; btn.textContent = m.manual_start_session(); }
       console.error('Failed to start session', e);
     }
   }
@@ -239,7 +243,7 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
     if (!btn || btn.getAttribute('data-watched') === 'true') return;
     btn.setAttribute('data-watched', 'true');
     btn.setAttribute('data-state', 'active');
-    btn.setAttribute('title', 'Mark as unwatched');
+    btn.setAttribute('title', m.watch_mark_unwatched());
     btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-green-500/10', 'hover:text-green-400');
     btn.classList.add('bg-green-500/50', 'text-green-300', 'hover:bg-green-400/50');
     btn.querySelector('circle')?.setAttribute('fill', 'currentColor');
@@ -253,7 +257,7 @@ const { tmdbId, mediaType, runtime, title, showTmdbId, seasonNumber, episodeNumb
     state = null;
     progressSeconds = 0;
     const btn = document.getElementById('ms-complete') as HTMLButtonElement | null;
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    if (btn) { btn.disabled = true; btn.textContent = m.common_saving(); }
     try {
       await fetch(`${API}/history/session/${key}/complete`, {
         method: 'POST',

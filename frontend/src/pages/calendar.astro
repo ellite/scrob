@@ -2,6 +2,8 @@
 import Base from "../layouts/Base.astro";
 import { api, tmdbImageUrl, type CalendarEntry } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
+import { formatDate } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 export const prerender = false;
 
 const { token } = Astro.locals;
@@ -32,10 +34,10 @@ function dayLabel(iso: string, today: string): string {
   const d = Date.UTC(...(iso.split('-').map(Number) as [number, number, number]));
   const t = Date.UTC(...(today.split('-').map(Number) as [number, number, number]));
   const diff = Math.round((d - t) / 86400000);
-  if (diff === 0) return 'Today';
-  if (diff === 1) return 'Tomorrow';
-  if (diff === -1) return 'Yesterday';
-  return new Date(iso + 'T00:00:00Z').toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+  if (diff === 0) return m.common_today();
+  if (diff === 1) return m.common_tomorrow();
+  if (diff === -1) return m.common_yesterday();
+  return formatDate(iso + 'T00:00:00Z', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
 }
 
 function entryHref(e: CalendarEntry): string {
@@ -54,9 +56,9 @@ for (const e of entries) {
 const days = Object.keys(byDay);
 ---
 
-<Base title="Calendar">
+<Base title={m.nav_calendar()}>
   <div class="mb-8 flex items-center justify-between gap-4">
-    <h1 class="page-title">Calendar</h1>
+    <h1 class="page-title">{m.nav_calendar()}</h1>
     <button
       id="cal-refresh-btn"
       class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer shrink-0"
@@ -65,16 +67,16 @@ const days = Object.keys(byDay);
         <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/>
         <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>
       </svg>
-      <span>Refresh</span>
+      <span>{m.common_refresh()}</span>
     </button>
   </div>
 
   {loadError ? (
-    <div class="py-20 text-center text-zinc-500">Could not load the calendar.</div>
+    <div class="py-20 text-center text-zinc-500">{m.calendar_error()}</div>
   ) : needsCompute ? (
-    <div id="cal-pending" class="py-20 text-center text-zinc-500">Checking air dates for your shows… (first time can take a minute)</div>
+    <div id="cal-pending" class="py-20 text-center text-zinc-500">{m.calendar_loading()}</div>
   ) : days.length === 0 ? (
-    <p class="text-zinc-500 text-center py-10">No episodes found for your shows in the last 7 or next 14 days.</p>
+    <p class="text-zinc-500 text-center py-10">{m.calendar_empty()}</p>
   ) : (
     <div class="space-y-8">
       {days.map((day) => (
@@ -102,10 +104,10 @@ const days = Object.keys(byDay);
                   <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-2">
                       <div class="font-bold text-zinc-100 truncate">{e.show_title}</div>
-                      {e.collected && <span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400">Collected</span>}
-                      {e.watched && <span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">Watched</span>}
+                      {e.collected && <span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400">{m.calendar_badge_collected()}</span>}
+                      {e.watched && <span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">{m.calendar_badge_watched()}</span>}
                     </div>
-                    <div class="text-sm text-zinc-500 truncate">{sxe && <span class="font-bold text-blue-400">{sxe}</span>} {sxe && '· '}{e.episode_name || 'TBA'}</div>
+                    <div class="text-sm text-zinc-500 truncate">{sxe && <span class="font-bold text-blue-400">{sxe}</span>} {sxe && '· '}{e.episode_name || m.common_tba()}</div>
                   </div>
                 </a>
               );
@@ -116,7 +118,7 @@ const days = Object.keys(byDay);
     </div>
   )}
 
-  <p class="text-zinc-500 mt-8">The last 7 days and next 14 days for shows you're collecting or watching</p>
+  <p class="text-zinc-500 mt-8">{m.calendar_footer()}</p>
 </Base>
 
 <script define:vars={{ token, needsCompute }}>

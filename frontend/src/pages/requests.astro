@@ -2,6 +2,8 @@
 import Base from "../layouts/Base.astro";
 import { api, type MediaRequestItem } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
+import { escapeHtml, formatDate } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 
 const { token, user } = Astro.locals;
 
@@ -19,18 +21,18 @@ const itemUrl = (r: MediaRequestItem) =>
   r.media_type === "movie" ? `/media/movie/${r.tmdb_id}` : `/show/${r.tmdb_id}`;
 ---
 
-<Base title="Requests">
+<Base title={m.nav_requests()}>
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
 
   <div class="max-w-4xl mx-auto py-8">
-    <h1 class="page-title mb-2">Media Requests</h1>
-    <p class="text-zinc-500 mb-8">{pending.length} pending · {approved.length} approved · {rejected.length} rejected</p>
+    <h1 class="page-title mb-2">{m.requests_title()}</h1>
+    <p class="text-zinc-500 mb-8">{m.requests_summary({ pending: pending.length, approved: approved.length, rejected: rejected.length })}</p>
 
     <!-- Pending -->
     <section class="mb-10">
-      <h2 class="text-sm font-black text-zinc-500 uppercase tracking-widest mb-4">Awaiting Approval ({pending.length})</h2>
+      <h2 class="text-sm font-black text-zinc-500 uppercase tracking-widest mb-4">{m.requests_awaiting({ count: pending.length })}</h2>
       {pending.length === 0 ? (
-        <p class="text-zinc-600 text-sm">No pending requests.</p>
+        <p class="text-zinc-600 text-sm">{m.requests_none_pending()}</p>
       ) : (
         <div class="space-y-3">
           {pending.map(r => {
@@ -43,8 +45,8 @@ const itemUrl = (r: MediaRequestItem) =>
               )}
               <div class="flex-1 min-w-0">
                 <p class="text-sm font-semibold text-zinc-100 truncate">{r.title}</p>
-                <p class="text-xs text-zinc-500">{r.media_type === "movie" ? "Movie" : "Show"} · requested by <span class="text-zinc-400">{r.user.display_name || r.user.username}</span></p>
-                <p class="text-xs text-zinc-600">{new Date(r.created_at).toLocaleDateString()}</p>
+                <p class="text-xs text-zinc-500" set:html={m.requests_requested_by({ type: escapeHtml(r.media_type === "movie" ? m.common_movie() : m.common_show()), user: `<span class="text-zinc-400">${escapeHtml(r.user.display_name || r.user.username)}</span>` })} />
+                <p class="text-xs text-zinc-600">{formatDate(r.created_at)}</p>
               </div>
               </a>
               <div class="flex gap-2 shrink-0">
@@ -52,13 +54,13 @@ const itemUrl = (r: MediaRequestItem) =>
                   class="approve-btn px-3 py-1.5 text-xs font-bold bg-green-600/20 hover:bg-green-600/40 text-green-400 border border-green-500/30 rounded-lg transition-colors cursor-pointer"
                   data-id={r.id}
                 >
-                  Approve
+                  {m.requests_approve()}
                 </button>
                 <button
                   class="reject-btn px-3 py-1.5 text-xs font-bold bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-500/30 rounded-lg transition-colors cursor-pointer"
                   data-id={r.id}
                 >
-                  Reject
+                  {m.requests_reject()}
                 </button>
               </div>
             </div>
@@ -77,11 +79,11 @@ const itemUrl = (r: MediaRequestItem) =>
         <svg id="approved-chevron" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
         </svg>
-        Approved ({approved.length})
+        {m.requests_approved_count({ count: approved.length })}
       </button>
       <div id="approved-list" class="hidden space-y-2">
       {approved.length === 0 ? (
-        <p class="text-zinc-600 text-sm">No approved requests.</p>
+        <p class="text-zinc-600 text-sm">{m.requests_none_approved()}</p>
       ) : (
         <div class="space-y-2">
           {approved.map(r => {
@@ -94,10 +96,10 @@ const itemUrl = (r: MediaRequestItem) =>
               )}
               <div class="flex-1 min-w-0">
                 <p class="text-sm font-semibold text-zinc-300 truncate">{r.title}</p>
-                <p class="text-xs text-zinc-500">{r.media_type === "movie" ? "Movie" : "Show"} · {r.user.display_name || r.user.username} · {new Date(r.updated_at).toLocaleDateString()}</p>
+                <p class="text-xs text-zinc-500">{r.media_type === "movie" ? m.common_movie() : m.common_show()} · {r.user.display_name || r.user.username} · {formatDate(r.updated_at)}</p>
               </div>
               </a>
-              <span class="text-xs font-bold text-green-500 bg-green-500/10 border border-green-500/20 px-2 py-1 rounded-lg shrink-0">Approved</span>
+              <span class="text-xs font-bold text-green-500 bg-green-500/10 border border-green-500/20 px-2 py-1 rounded-lg shrink-0">{m.requests_approved()}</span>
             </div>
             );
           })}
@@ -115,11 +117,11 @@ const itemUrl = (r: MediaRequestItem) =>
         <svg id="rejected-chevron" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
         </svg>
-        Rejected ({rejected.length})
+        {m.requests_rejected_count({ count: rejected.length })}
       </button>
       <div id="rejected-list" class="hidden space-y-2">
         {rejected.length === 0 ? (
-          <p class="text-zinc-600 text-sm">No rejected requests.</p>
+          <p class="text-zinc-600 text-sm">{m.requests_none_rejected()}</p>
         ) : (
           rejected.map(r => {
             const posterPath = ratingPosterUrl(r.poster_path, r, Astro.locals.hasRpdbKey);
@@ -131,16 +133,16 @@ const itemUrl = (r: MediaRequestItem) =>
               )}
               <div class="flex-1 min-w-0">
                 <p class="text-sm font-semibold text-zinc-300 truncate">{r.title}</p>
-                <p class="text-xs text-zinc-500">{r.media_type === "movie" ? "Movie" : "Show"} · {r.user.display_name || r.user.username} · {new Date(r.updated_at).toLocaleDateString()}</p>
+                <p class="text-xs text-zinc-500">{r.media_type === "movie" ? m.common_movie() : m.common_show()} · {r.user.display_name || r.user.username} · {formatDate(r.updated_at)}</p>
               </div>
               </a>
               <div class="flex items-center gap-2 shrink-0">
-                <span class="text-xs font-bold text-red-500 bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-lg">Rejected</span>
+                <span class="text-xs font-bold text-red-500 bg-red-500/10 border border-red-500/20 px-2 py-1 rounded-lg">{m.requests_rejected()}</span>
                 <button
                   class="approve-btn px-3 py-1.5 text-xs font-bold bg-green-600/20 hover:bg-green-600/40 text-green-400 border border-green-500/30 rounded-lg transition-colors cursor-pointer"
                   data-id={r.id}
                 >
-                  Approve
+                  {m.requests_approve()}
                 </button>
               </div>
             </div>
@@ -155,6 +157,8 @@ const itemUrl = (r: MediaRequestItem) =>
 </Base>
 
 <script>
+  import { m } from '../paraglide/messages.js';
+
   const token = (document.getElementById('app-data') as HTMLElement).dataset.token ?? '';
 
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
@@ -172,13 +176,13 @@ const itemUrl = (r: MediaRequestItem) =>
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
-      showToast('Request approved and sent to Radarr/Sonarr.');
+      if (!res.ok) throw new Error((await res.json()).detail || m.common_failed());
+      showToast(m.requests_approved_toast());
       setTimeout(() => location.reload(), 1200);
     } catch (e: unknown) {
-      showToast(e instanceof Error ? e.message : 'Failed to approve', 'error');
+      showToast(e instanceof Error ? e.message : m.requests_approve_failed(), 'error');
       btn.disabled = false;
-      btn.textContent = 'Approve';
+      btn.textContent = m.requests_approve();
     }
   }
 
@@ -190,13 +194,13 @@ const itemUrl = (r: MediaRequestItem) =>
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
-      showToast('Request rejected.');
+      if (!res.ok) throw new Error((await res.json()).detail || m.common_failed());
+      showToast(m.requests_rejected_toast());
       setTimeout(() => location.reload(), 1200);
     } catch (e: unknown) {
-      showToast(e instanceof Error ? e.message : 'Failed to reject', 'error');
+      showToast(e instanceof Error ? e.message : m.requests_reject_failed(), 'error');
       btn.disabled = false;
-      btn.textContent = 'Reject';
+      btn.textContent = m.requests_reject();
     }
   }
 

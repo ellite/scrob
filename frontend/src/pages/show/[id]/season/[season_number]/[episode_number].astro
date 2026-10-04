@@ -1,5 +1,7 @@
 ---
 import Base from "../../../../../layouts/Base.astro";
+import { formatDate, formatRating } from "../../../../../lib/format";
+import { m } from "../../../../../paraglide/messages.js";
 import ActionBar from "../../../../../components/ActionBar.astro";
 import CommentsSection from "../../../../../components/CommentsSection.astro";
 import TraktCommentsSection from "../../../../../components/TraktCommentsSection.astro";
@@ -33,18 +35,18 @@ const show = episode?.show;
 // response echoes back.
 const apiSeason = episode?.canonical_season_number ?? Number(season_number);
 const apiEpisode = episode?.canonical_episode_number ?? Number(episode_number);
-const rating = episode?.tmdb_rating ? episode.tmdb_rating.toFixed(1) : null;
+const rating = episode?.tmdb_rating ? formatRating(episode.tmdb_rating) : null;
 const thumbnail = episode?.still_path || show?.poster_path || null;
 ---
 
-<Base title={episode ? `${show?.title} - ${episode.title}` : "Episode Details"}>
+<Base title={episode ? m.page_title_pair({ parent: show?.title ?? "", child: episode.title }) : m.episode_details_title()}>
   {error && !episode && (
     <div class="max-w-md mx-auto mt-20 text-center">
       <div class="bg-red-500/10 border border-red-500/20 text-red-500 p-6 rounded-2xl mb-6">
-        <p class="font-bold text-lg mb-2">Oops!</p>
+        <p class="font-bold text-lg mb-2">{m.common_oops()}</p>
         <p class="text-sm opacity-80">{error}</p>
       </div>
-      <a href="/" class="text-blue-500 hover:underline">Return to Dashboard</a>
+      <a href="/" class="text-blue-500 hover:underline">{m.common_return_to_dashboard()}</a>
     </div>
   )}
 
@@ -61,13 +63,13 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
       <div class="relative z-20">
         <!-- Breadcrumb -->
         <nav class="flex items-center gap-2 text-sm text-zinc-400 mb-8 overflow-hidden whitespace-nowrap">
-          <a href="/shows" class="hover:text-zinc-100 transition shrink-0">Shows</a>
+          <a href="/shows" class="hover:text-zinc-100 transition shrink-0">{m.common_shows()}</a>
           <span class="text-zinc-700">/</span>
           <a href={`/show/${id}`} class="hover:text-zinc-100 transition truncate">{show?.title}</a>
           <span class="text-zinc-700 shrink-0">/</span>
-          <a href={`/show/${id}/season/${season_number}`} class="hover:text-zinc-100 transition shrink-0">{episode?.season?.name ?? `Season ${season_number}`}</a>
+          <a href={`/show/${id}/season/${season_number}`} class="hover:text-zinc-100 transition shrink-0">{episode?.season?.name ?? m.media_season_number({ number: season_number! })}</a>
           <span class="text-zinc-700 shrink-0">/</span>
-          <span class="text-zinc-100 font-bold shrink-0">Episode {episode_number}</span>
+          <span class="text-zinc-100 font-bold shrink-0">{m.media_episode_number({ number: episode_number })}</span>
         </nav>
 
         <div class="flex flex-col md:flex-row gap-8 lg:gap-12 mb-16">
@@ -75,7 +77,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
           <div class="w-full md:w-80 shrink-0">
             <div class="aspect-video rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 bg-zinc-900 ring-1 ring-white/10 relative">
               {thumbnail ? (
-                <button id="poster-zoom-btn" class="w-full h-full group/poster block cursor-zoom-in" aria-label={`Enlarge thumbnail for ${episode.title}`}>
+                <button id="poster-zoom-btn" class="w-full h-full group/poster block cursor-zoom-in" aria-label={m.episode_enlarge_thumbnail_for({ title: episode.title })}>
                   <img
                     src={thumbnail}
                     alt={episode.title}
@@ -92,7 +94,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
               ) : (
                 <div class="w-full h-full flex flex-col items-center justify-center text-zinc-400 p-4 text-center">
                   <svg xmlns="http://www.w3.org/2000/svg" width="30%" height="30%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-2"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
-                  <span class="text-sm font-medium">No Thumbnail</span>
+                  <span class="text-sm font-medium">{m.episode_no_thumbnail()}</span>
                 </div>
               )}
             </div>
@@ -154,7 +156,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
             <div class="flex flex-wrap items-center gap-4 text-zinc-300 text-sm mb-8 bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm inline-flex">
               {episode.air_date && (
                 <span class="font-bold">
-                  {new Date(episode.air_date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                  {formatDate(episode.air_date, { year: 'numeric', month: 'long', day: 'numeric' })}
                 </span>
               )}
               {rating && (
@@ -167,7 +169,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4 text-zinc-500">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                   </svg>
-                  {episode.runtime} min
+                  {m.media_runtime_minutes({ minutes: episode.runtime })}
                 </span>
               )}
             </div>
@@ -211,7 +213,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
               <div class="mb-4 flex flex-wrap gap-2">
                 {!!episode.play_count && (
                   <span class="inline-flex items-center px-3 py-1.5 bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs rounded-lg font-bold">
-                    {episode.play_count} {episode.play_count === 1 ? 'Play' : 'Plays'}
+                    {m.media_play_count({ count: episode.play_count })}
                   </span>
                 )}
                 {[
@@ -241,6 +243,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
               <div class="mb-8 flex flex-wrap gap-3 items-start">
                 <button
                   id="refresh-metadata-btn"
+                  data-show-id={id}
                   class="flex items-center gap-2 px-4 py-2 text-sm font-bold leading-none text-zinc-300 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors cursor-pointer"
                 >
                   <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -249,7 +252,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
                     <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
                     <path d="M8 16H3v5"/>
                   </svg>
-                  <span id="refresh-label">Refresh Metadata</span>
+                  <span id="refresh-label">{m.media_refresh_metadata()}</span>
                 </button>
                 <VideoPlayer
                   tmdbId={episode.tmdb_id}
@@ -266,7 +269,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
               <div>
                 <h2 class="text-xl font-black text-zinc-100 mb-4 flex items-center gap-2 uppercase tracking-tight">
                   <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
-                  Overview
+                  {m.common_overview()}
                 </h2>
                 <p class="text-zinc-300 leading-relaxed text-lg max-w-3xl font-medium opacity-90">
                   {episode.overview}
@@ -309,7 +312,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
     <button
       id="poster-modal-close"
       class="absolute top-4 right-4 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white/70 hover:text-white transition-all duration-200 cursor-pointer"
-      aria-label="Close"
+      aria-label={m.common_close()}
     >
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-5 h-5">
         <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
@@ -333,7 +336,11 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
   }
 </script>
 
-<script define:vars={{ showId: id, token: Astro.locals.token }}>
+<script>
+  import { m } from '../../../../../paraglide/messages.js';
+
+  const token = (window as any).__AUTH_TOKEN__ ?? '';
+  const showId = document.getElementById('refresh-metadata-btn')?.dataset.showId ?? '';
   const btn = document.getElementById('refresh-metadata-btn');
   if (btn) {
     btn.addEventListener('click', async () => {
@@ -344,7 +351,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
       btn.setAttribute('disabled', 'true');
       btn.classList.add('opacity-60', 'cursor-not-allowed');
       icon.classList.add('animate-spin');
-      label.textContent = 'Refreshing...';
+      label.textContent = m.media_refreshing();
 
       try {
         const res = await fetch(`/api/proxy/shows/${showId}/refresh`, {
@@ -353,17 +360,17 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.detail || 'Refresh failed');
+          throw new Error(data.detail || m.media_refresh_failed());
         }
-        label.textContent = 'Done!';
+        label.textContent = m.common_done();
         icon.classList.remove('animate-spin');
         setTimeout(() => { window.location.reload(); }, 800);
       } catch (err) {
         icon.classList.remove('animate-spin');
-        label.textContent = 'Refresh failed';
+        label.textContent = m.media_refresh_failed();
         btn.removeAttribute('disabled');
         btn.classList.remove('opacity-60', 'cursor-not-allowed');
-        setTimeout(() => { label.textContent = 'Refresh Metadata'; }, 3000);
+        setTimeout(() => { label.textContent = m.media_refresh_metadata(); }, 3000);
       }
     });
   }

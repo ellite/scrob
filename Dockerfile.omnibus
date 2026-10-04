@@ -6,7 +6,7 @@ COPY frontend/package*.json ./
 RUN npm ci
 
 COPY frontend/ .
-RUN npm run build
+RUN npm run build && npm prune --omit=dev
 
 # ── Stage 2: Runtime (Python + Node + supervisord + embedded PostgreSQL) ──────
 FROM python:3.12-slim

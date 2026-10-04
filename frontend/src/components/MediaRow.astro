@@ -1,6 +1,7 @@
 ---
 import type { MediaItem } from "../lib/api";
 import MediaCard from "./MediaCard.astro";
+import { m } from "../paraglide/messages.js";
 
 interface Props {
   title: string;
@@ -16,7 +17,7 @@ const { title, items, href } = Astro.props;
     <h2 class="section-headline">{title}</h2>
     {href && (
       <a href={href} class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-        See All 
+        {m.common_see_all()}
         <span class="group-hover/all:translate-x-1 transition-transform">→</span>
       </a>
     )}
@@ -24,7 +25,7 @@ const { title, items, href } = Astro.props;
   
   {items.length === 0 ? (
     <div class="p-12 rounded-3xl bg-zinc-900/20 border border-zinc-800/50 border-dashed text-center">
-      <p class="text-zinc-500 font-medium italic">Nothing here yet.</p>
+      <p class="text-zinc-500 font-medium italic">{m.common_nothing_here_yet()}</p>
     </div>
   ) : (
     <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">

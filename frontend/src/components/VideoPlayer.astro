@@ -1,5 +1,6 @@
 ---
 import { api } from "../lib/api";
+import { m } from "../paraglide/messages.js";
 
 interface Props {
   tmdbId: number;
@@ -27,7 +28,7 @@ const useHls = settings.use_hls_player === true;
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 shrink-0">
         <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" />
       </svg>
-      Play
+      {m.player_play()}
     </button>
 
     <dialog
@@ -55,14 +56,14 @@ const useHls = settings.use_hls_player === true;
             <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-red-400 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
             </svg>
-            <p id="player-error-msg" class="text-zinc-200 text-sm font-semibold mb-1">Playback failed</p>
+            <p id="player-error-msg" class="text-zinc-200 text-sm font-semibold mb-1">{m.player_failed()}</p>
             <p id="player-error-detail" class="text-zinc-400 text-xs mb-4"></p>
             <a id="player-error-link" href="/settings" class="hidden inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors">
               <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
                 <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
               </svg>
-              Enable HLS Player in Settings
+              {m.player_enable_hls()}
             </a>
           </div>
         </div>
@@ -74,6 +75,7 @@ const useHls = settings.use_hls_player === true;
 
 <script>
   import Hls from 'hls.js';
+  import { m } from '../paraglide/messages.js';
 
   function esc(str: string | null | undefined): string {
     if (str == null) return '';
@@ -215,7 +217,7 @@ const useHls = settings.use_hls_player === true;
         }
 
         track.srclang = sub.language || '';
-        track.label = sub.label || sub.language || 'Subtitle';
+        track.label = sub.label || sub.language || m.player_subtitle();
         video.appendChild(track);
         // Explicitly set mode to 'disabled' to register and load the track in the browser's TextTrackList
         track.track.mode = 'disabled';
@@ -250,8 +252,8 @@ const useHls = settings.use_hls_player === true;
         hlsInstance.on(Hls.Events.ERROR, (_ev, data) => {
           if (data.fatal) {
             const detail = data.type === Hls.ErrorTypes.MEDIA_ERROR
-              ? 'Your browser cannot decode this media format. Try a different source.'
-              : 'Failed to load the HLS stream. The server may be unreachable.';
+              ? m.player_hls_decode_error()
+              : m.player_hls_load_error();
             showPlaybackError(detail, false);
           }
         });
@@ -274,8 +276,8 @@ const useHls = settings.use_hls_player === true;
       const isCodecError = err.code === MediaError.MEDIA_ERR_DECODE || err.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
       if (!isCodecError) return;
       const detail = useHls
-        ? 'Your browser cannot decode this media format. Try a different source or check your browser\'s codec support.'
-        : 'Your browser may not support the codec used by this file.';
+        ? m.player_decode_error_hls()
+        : m.player_codec_unsupported();
       showPlaybackError(detail, !useHls);
     });
 
@@ -290,7 +292,7 @@ const useHls = settings.use_hls_player === true;
       hidePlaybackError();
       const willUseHls = useHls && (source === 'plex' || source === 'jellyfin' || source === 'emby');
       if (!willUseHls && !canBrowserPlay(videoCodec, audioCodec)) {
-        const detail = 'Your browser cannot play this codec combination.';
+        const detail = m.player_codec_combination();
         showPlaybackError(detail, true);
         return;
       }
@@ -353,7 +355,7 @@ const useHls = settings.use_hls_player === true;
       subtitles: { index: number; key?: string | null; language: string; label: string }[];
     }[]): void {
       if (sources.length === 0) {
-        sourcesEl.innerHTML = '<span class="text-xs text-zinc-500">No playback source found.</span>';
+        sourcesEl.innerHTML = `<span class="text-xs text-zinc-500">${esc(m.player_no_source())}</span>`;
         return;
       }
       const LOCAL_SOURCES = ['plex', 'jellyfin', 'emby'];
@@ -406,7 +408,7 @@ const useHls = settings.use_hls_player === true;
 
     playBtn?.addEventListener('click', async () => {
       titleEl.textContent = title;
-      sourcesEl.innerHTML = '<span class="text-xs text-zinc-400">Loading sources…</span>';
+      sourcesEl.innerHTML = `<span class="text-xs text-zinc-400">${esc(m.player_loading_sources())}</span>`;
       dialog.showModal();
 
       try {
@@ -419,7 +421,7 @@ const useHls = settings.use_hls_player === true;
           loadSource(sources[0].connection_id, sources[0].file_id ?? null, sources[0].source, sources[0].subtitles || [], sources[0].video_codec ?? null, sources[0].audio_codec ?? null);
         }
       } catch {
-        sourcesEl.innerHTML = '<span class="text-xs text-red-400">Failed to load sources.</span>';
+        sourcesEl.innerHTML = `<span class="text-xs text-red-400">${esc(m.player_sources_failed())}</span>`;
       }
     });
 

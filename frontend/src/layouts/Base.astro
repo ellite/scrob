@@ -3,6 +3,8 @@ import "../styles/global.css";
 import logo from "../assets/scrob.png";
 import WatchedAtPicker from "../components/WatchedAtPicker.astro";
 import { api } from "../lib/api";
+import { getLocale } from "../paraglide/runtime.js";
+import { m } from "../paraglide/messages.js";
 
 interface Props { title: string; hideNav?: boolean }
 const { title, hideNav } = Astro.props;
@@ -55,7 +57,7 @@ const bottomNavItem = (active: boolean) =>
   `flex flex-col items-center justify-center gap-1 flex-1 py-2 text-[10px] font-bold uppercase tracking-wider transition-colors active:bg-zinc-800/70 active:scale-95 ${active ? 'text-blue-400' : 'text-zinc-500'}`;
 ---
 <!doctype html>
-<html lang="en" class={blurExplicit ? "blur-explicit" : ""}>
+<html lang={getLocale()} class={blurExplicit ? "blur-explicit" : ""}>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
@@ -177,16 +179,16 @@ const bottomNavItem = (active: boolean) =>
         <!-- Left: logo + desktop links -->
         <div class="flex items-center gap-6 min-w-0">
           <a href="/" class="flex items-center gap-2 text-zinc-100 font-bold text-lg tracking-tight shrink-0 group active:opacity-70 transition-opacity">
-            <img src={logo.src} alt="Scrob Logo" width="32" height="32" loading="eager" class="w-7 h-7 md:w-8 md:h-8 object-contain group-hover:scale-105 transition-transform" />
+            <img src={logo.src} alt={m.nav_logo_alt()} width="32" height="32" loading="eager" class="w-7 h-7 md:w-8 md:h-8 object-contain group-hover:scale-105 transition-transform" />
             <span>Scrob</span>
           </a>
           {(user || showAnonNavLinks) && (
             <div class="hidden md:flex items-center gap-6 text-sm">
-              <a href="/movies" class={navLink(activeMovies)}>Movies</a>
-              <a href="/shows" class={navLink(activeShows)}>Shows</a>
-              <a href="/lists" class={navLink(activeLists)}>Lists</a>
+              <a href="/movies" class={navLink(activeMovies)}>{m.common_movies()}</a>
+              <a href="/shows" class={navLink(activeShows)}>{m.common_shows()}</a>
+              <a href="/lists" class={navLink(activeLists)}>{m.nav_lists()}</a>
               {user && (
-                <a href="/history" class={navLink(activeHistory)}>History</a>
+                <a href="/history" class={navLink(activeHistory)}>{m.nav_history()}</a>
               )}
             </div>
           )}
@@ -198,7 +200,7 @@ const bottomNavItem = (active: boolean) =>
                 type="text"
                 name="q"
                 value={navSearchValue}
-                placeholder="Search movies & shows..."
+                placeholder={m.nav_search_placeholder()}
                 class="bg-zinc-900 border border-zinc-800 rounded-full px-4 py-2 w-64 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-700 focus:border-zinc-700 transition-all placeholder:text-zinc-400"
               />
               <kbd id="desktop-search-hint" class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-sans pointer-events-none border border-zinc-800 rounded px-1.5 py-0.5 bg-zinc-950">/</kbd>
@@ -213,12 +215,12 @@ const bottomNavItem = (active: boolean) =>
         <div class="flex items-center gap-2">
           {(user || showAnonNavLinks) && (
             <!-- Mobile search icon -->
-            <button id="mobile-search-open" class="md:hidden p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors" aria-label="Search">
+            <button id="mobile-search-open" class="md:hidden p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors" aria-label={m.common_search()}>
               <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             </button>
           )}
           <!-- Theme toggle -->
-          <button id="theme-toggle" class="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-all hover:scale-110 active:scale-95" aria-label="Toggle Theme">
+          <button id="theme-toggle" class="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-all hover:scale-110 active:scale-95" aria-label={m.nav_toggle_theme()}>
             <span id="sun-icon">
               <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
             </span>
@@ -241,52 +243,52 @@ const bottomNavItem = (active: boolean) =>
                 <div class="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl p-2 text-base">
                   <a href="/discover" class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
-                    Discover
+                    {m.nav_discover()}
                   </a>
                   <a href="/calendar" class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
-                    Calendar
+                    {m.nav_calendar()}
                   </a>
                   <a href="/profile" class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-                    Profile
+                    {m.nav_profile()}
                   </a>
                   <a href={`/stats/${user.id}`} class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
-                    Statistics
+                    {m.nav_statistics()}
                   </a>
                   <a href="/progress" class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><line x1="4" x2="20" y1="7" y2="7"/><line x1="4" x2="14" y1="12" y2="12"/><line x1="4" x2="9" y1="17" y2="17"/></svg>
-                    Progress
+                    {m.nav_progress()}
                   </a>
                   <a href="/dropped" class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><circle cx="12" cy="12" r="10"/><line x1="8" x2="16" y1="12" y2="12"/></svg>
-                    Dropped
+                    {m.nav_dropped()}
                   </a>
                   <div class="h-px bg-zinc-800 my-1 mx-1"></div>
                   <a href="/user-settings" class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                    Profile Settings
+                    {m.nav_profile_settings()}
                   </a>
                   <a href="/connections" class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                    Connections
+                    {m.nav_connections()}
                   </a>
                   <a href="/settings" class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                    Settings
+                    {m.nav_settings()}
                   </a>
                   {user.is_admin && (
                     <a href="/admin" class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.79 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
-                      Admin
+                      {m.nav_admin()}
                     </a>
                   )}
                   {user.is_admin && (
                     <a href="/requests" class="flex items-center justify-between px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                       <span class="flex items-center gap-2.5">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
-                        Requests
+                        {m.nav_requests()}
                       </span>
                       {pendingRequestCount > 0 && (
                         <span class="ml-2 min-w-[1.25rem] h-5 px-1.5 flex items-center justify-center text-[10px] font-bold bg-blue-500 text-white rounded-full">{pendingRequestCount}</span>
@@ -295,20 +297,20 @@ const bottomNavItem = (active: boolean) =>
                   )}
                   <a href="/about" class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                    About
+                    {m.nav_about()}
                   </a>
                   <div class="h-px bg-zinc-800 my-1 mx-1"></div>
                   <form method="POST" action="/logout" style="margin:0">
                     <button type="submit" class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition cursor-pointer">
                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
-                      Logout
+                      {m.nav_logout()}
                     </button>
                   </form>
                 </div>
               </div>
             </div>
           ) : (
-            <a href={loginNextUrl} class="text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 transition-colors px-4 py-3 rounded-xl">Login</a>
+            <a href={loginNextUrl} class="text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 transition-colors px-4 py-3 rounded-xl">{m.nav_login()}</a>
           )}
         </div>
       </div>
@@ -316,7 +318,7 @@ const bottomNavItem = (active: boolean) =>
       {(user || showAnonNavLinks) && (
         <!-- Mobile search bar (hidden by default, shown when search icon tapped) -->
         <div id="nav-search" class="hidden items-center gap-2 safe-area-top">
-          <button id="mobile-search-close" class="p-2 text-zinc-400 hover:text-zinc-100 transition-colors shrink-0" aria-label="Close search">
+          <button id="mobile-search-close" class="p-2 text-zinc-400 hover:text-zinc-100 transition-colors shrink-0" aria-label={m.nav_close_search()}>
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </button>
           <form action="/search" method="GET" class="flex-1 flex items-center gap-2">
@@ -326,7 +328,7 @@ const bottomNavItem = (active: boolean) =>
                 type="text"
                 name="q"
                 value={navSearchValue}
-                placeholder="Search movies & shows..."
+                placeholder={m.nav_search_placeholder()}
                 class="w-full bg-zinc-900 border border-zinc-800 rounded-full px-4 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-zinc-500"
               />
               <svg id="mobile-search-spinner" class="hidden absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-zinc-400 pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -334,7 +336,7 @@ const bottomNavItem = (active: boolean) =>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
             </div>
-            <button type="submit" class="self-stretch px-4 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-full transition-colors shrink-0">Go</button>
+            <button type="submit" class="self-stretch px-4 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-full transition-colors shrink-0">{m.nav_search_go()}</button>
           </form>
         </div>
       )}
@@ -356,24 +358,24 @@ const bottomNavItem = (active: boolean) =>
     <nav id="bottom-nav" class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-zinc-900 border-t border-zinc-800 flex items-stretch safe-area-bottom">
       <a href="/" class={bottomNavItem(activeHome)}>
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        Home
+        {m.nav_home()}
       </a>
       <a href="/movies" class={bottomNavItem(activeMovies)}>
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></svg>
-        Movies
+        {m.common_movies()}
       </a>
       <a href="/shows" class={bottomNavItem(activeShows)}>
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
-        Shows
+        {m.common_shows()}
       </a>
       <a href="/lists" class={bottomNavItem(activeLists)}>
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-        Lists
+        {m.nav_lists()}
       </a>
       {user && (
         <a href="/history" class={bottomNavItem(activeHistory)}>
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          History
+          {m.nav_history()}
         </a>
       )}
     </nav>
@@ -383,8 +385,8 @@ const bottomNavItem = (active: boolean) =>
   <div id="rating-popover" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
       <div class="px-5 pt-5 pb-4 border-b border-zinc-800 flex items-center justify-between gap-3">
-        <span class="text-base font-bold text-zinc-100">Your rating</span>
-        <button id="rating-popover-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label="Close">
+        <span class="text-base font-bold text-zinc-100">{m.rating_your_rating()}</span>
+        <button id="rating-popover-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label={m.common_close()}>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
@@ -401,7 +403,7 @@ const bottomNavItem = (active: boolean) =>
       <div class="border-t border-zinc-800">
         <button id="rating-remove" class="hidden w-full px-3 py-2.5 text-sm text-red-400 hover:bg-zinc-800 transition flex items-center justify-center gap-2 cursor-pointer">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          Remove rating
+          {m.rating_remove()}
         </button>
       </div>
     </div>
@@ -411,8 +413,8 @@ const bottomNavItem = (active: boolean) =>
   <div id="list-popover" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
       <div class="px-5 pt-5 pb-4 border-b border-zinc-800 flex items-center justify-between gap-3">
-        <span class="text-base font-bold text-zinc-100">Add to list</span>
-        <button id="list-popover-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label="Close">
+        <span class="text-base font-bold text-zinc-100">{m.list_popover_title()}</span>
+        <button id="list-popover-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label={m.common_close()}>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
@@ -420,7 +422,7 @@ const bottomNavItem = (active: boolean) =>
       <div class="border-t border-zinc-800">
         <button id="list-popover-create" class="w-full px-3 py-2 text-sm text-blue-400 hover:bg-zinc-800 transition text-left flex items-center gap-2 cursor-pointer">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Create new list
+          {m.list_popover_create()}
         </button>
       </div>
     </div>
@@ -430,17 +432,17 @@ const bottomNavItem = (active: boolean) =>
   <div id="rewatch-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
       <div class="px-5 pt-5 pb-4 border-b border-zinc-800 flex items-center justify-between gap-3">
-        <h3 class="text-base font-bold text-zinc-100">Rewatching</h3>
-        <button id="rewatch-modal-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label="Close">
+        <h3 class="text-base font-bold text-zinc-100">{m.rewatch_modal_title()}</h3>
+        <button id="rewatch-modal-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label={m.common_close()}>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
       <div class="px-5 pt-4 pb-5 space-y-2.5">
         <button id="rewatch-modal-restart" class="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
-          Restart rewatch
+          {m.rewatch_restart()}
         </button>
         <button id="rewatch-modal-cancel" class="w-full px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
-          Cancel rewatch
+          {m.rewatch_cancel()}
         </button>
       </div>
     </div>
@@ -450,18 +452,18 @@ const bottomNavItem = (active: boolean) =>
   <div id="drop-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
       <div class="px-5 pt-5 pb-4 border-b border-zinc-800 flex items-center justify-between gap-3">
-        <h3 id="drop-modal-title" class="text-base font-bold text-zinc-100">Drop</h3>
-        <button id="drop-modal-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label="Close">
+        <h3 id="drop-modal-title" class="text-base font-bold text-zinc-100">{m.drop_modal_title()}</h3>
+        <button id="drop-modal-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label={m.common_close()}>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
       <div class="px-5 pt-4 pb-5 space-y-3">
         <p id="drop-modal-body" class="text-sm text-zinc-400"></p>
         <button id="drop-modal-hide" class="w-full px-4 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
-          Hide from Next Up
+          {m.drop_hide_from_next_up()}
         </button>
         <button id="drop-modal-drop" class="w-full px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
-          Drop
+          {m.drop_drop()}
         </button>
       </div>
     </div>
@@ -471,42 +473,42 @@ const bottomNavItem = (active: boolean) =>
   <div id="customize-add-popover" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
       <div class="px-5 pt-5 pb-4 border-b border-zinc-800 flex items-center justify-between gap-3">
-        <span id="customize-add-title" class="text-base font-bold text-zinc-100">Add options</span>
-        <button id="customize-add-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label="Close">
+        <span id="customize-add-title" class="text-base font-bold text-zinc-100">{m.customize_add_title()}</span>
+        <button id="customize-add-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label={m.common_close()}>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
-      <div id="customize-add-loading" class="px-5 py-10 text-center text-sm text-zinc-500">Loading options…</div>
+      <div id="customize-add-loading" class="px-5 py-10 text-center text-sm text-zinc-500">{m.customize_add_loading()}</div>
       <div id="customize-add-body" class="hidden px-5 py-5 space-y-4">
         <div class="space-y-1.5">
-          <label for="customize-add-root-folder" class="block text-sm font-medium text-zinc-400">Root Folder</label>
+          <label for="customize-add-root-folder" class="block text-sm font-medium text-zinc-400">{m.customize_add_root_folder()}</label>
           <select id="customize-add-root-folder" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"></select>
         </div>
         <div class="space-y-1.5">
-          <label for="customize-add-quality-profile" class="block text-sm font-medium text-zinc-400">Quality Profile</label>
+          <label for="customize-add-quality-profile" class="block text-sm font-medium text-zinc-400">{m.customize_add_quality_profile()}</label>
           <select id="customize-add-quality-profile" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"></select>
         </div>
         <div class="space-y-1.5">
-          <span class="block text-sm font-medium text-zinc-400">Tags</span>
+          <span class="block text-sm font-medium text-zinc-400">{m.customize_add_tags()}</span>
           <div id="customize-add-tags" class="flex flex-wrap gap-2 min-h-[42px] p-2 bg-zinc-950 border border-zinc-800 rounded-lg"></div>
         </div>
         <label id="customize-add-season-folder-row" class="hidden flex items-center justify-between gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:bg-zinc-800/60 transition-colors">
-          <span class="text-sm text-zinc-300">Use season folders</span>
+          <span class="text-sm text-zinc-300">{m.customize_add_season_folders()}</span>
           <input type="checkbox" id="customize-add-season-folder" class="sr-only peer" />
           <div class="relative w-10 h-5 bg-zinc-700 peer-checked:bg-blue-600 rounded-full transition-colors pointer-events-none shrink-0 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-5"></div>
         </label>
         <div id="customize-add-seasons-row" class="hidden space-y-1.5">
           <div class="flex items-center justify-between">
-            <span class="block text-sm font-medium text-zinc-400">Seasons to monitor</span>
-            <button type="button" id="customize-add-seasons-toggle" class="text-xs text-zinc-500 hover:text-zinc-200 transition cursor-pointer">Select none</button>
+            <span class="block text-sm font-medium text-zinc-400">{m.customize_seasons_to_monitor()}</span>
+            <button type="button" id="customize-add-seasons-toggle" class="text-xs text-zinc-500 hover:text-zinc-200 transition cursor-pointer">{m.customize_select_none()}</button>
           </div>
           <div id="customize-add-seasons" class="flex flex-wrap gap-2 p-2 bg-zinc-950 border border-zinc-800 rounded-lg"></div>
         </div>
         <div id="customize-add-error" class="hidden text-sm text-red-400"></div>
       </div>
       <div id="customize-add-footer" class="hidden border-t border-zinc-800 px-5 py-4 flex gap-2">
-        <button id="customize-add-cancel" class="flex-1 px-4 py-2.5 text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold rounded-lg transition cursor-pointer">Cancel</button>
-        <button id="customize-add-confirm" class="flex-1 px-4 py-2.5 text-sm bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition cursor-pointer">Add</button>
+        <button id="customize-add-cancel" class="flex-1 px-4 py-2.5 text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold rounded-lg transition cursor-pointer">{m.common_cancel()}</button>
+        <button id="customize-add-confirm" class="flex-1 px-4 py-2.5 text-sm bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition cursor-pointer">{m.common_add()}</button>
       </div>
     </div>
   </div>
@@ -515,26 +517,26 @@ const bottomNavItem = (active: boolean) =>
   <div id="watch-history-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
       <div class="px-5 pt-5 pb-4 border-b border-zinc-800 flex items-center justify-between gap-3">
-        <h3 id="watch-history-modal-title" class="text-base font-bold text-zinc-100">Watch History</h3>
-        <button id="watch-history-modal-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label="Close">
+        <h3 id="watch-history-modal-title" class="text-base font-bold text-zinc-100">{m.watch_history_title()}</h3>
+        <button id="watch-history-modal-close" class="text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0" aria-label={m.common_close()}>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
       <div id="watch-history-modal-events" class="watch-history-scroll max-h-52 overflow-y-auto divide-y divide-zinc-800/50"></div>
       <div class="px-4 pt-3 pb-4 border-t border-zinc-800 space-y-2.5">
         <button id="watch-history-unwatch-btn" class="hidden w-full px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95 disabled:opacity-50 disabled:pointer-events-none">
-          Mark as unwatched
+          {m.watch_mark_unwatched()}
         </button>
-        <p id="watch-history-add-play-label" class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Add a play</p>
+        <p id="watch-history-add-play-label" class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{m.watch_add_play()}</p>
         <div class="grid grid-cols-2 gap-2">
-          <button id="watch-history-now-btn" class="px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white">Just now</button>
-          <button id="watch-history-airdate-btn" class="hidden px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Air Date</button>
-          <button id="watch-history-custom-btn" class="px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Custom</button>
-          <button id="watch-history-unknown-btn" class="px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Unknown</button>
+          <button id="watch-history-now-btn" class="px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white">{m.watch_just_now()}</button>
+          <button id="watch-history-airdate-btn" class="hidden px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">{m.watch_air_date()}</button>
+          <button id="watch-history-custom-btn" class="px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">{m.watch_custom()}</button>
+          <button id="watch-history-unknown-btn" class="px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">{m.watch_unknown()}</button>
         </div>
         <input type="datetime-local" id="watch-history-date-input" class="hidden w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-sm text-zinc-200 focus:outline-none focus:border-green-500 [color-scheme:dark]" />
         <button id="watch-history-log-btn" class="w-full px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
-          Mark as watched
+          {m.watch_mark_watched()}
         </button>
       </div>
     </div>
@@ -545,12 +547,12 @@ const bottomNavItem = (active: boolean) =>
   <!-- Create list modal -->
   <div id="create-list-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4">
-      <h3 class="text-base font-bold text-zinc-100 mb-4">Create new list</h3>
-      <input id="create-list-name" type="text" placeholder="List name" maxlength="100"
+      <h3 class="text-base font-bold text-zinc-100 mb-4">{m.list_popover_create()}</h3>
+      <input id="create-list-name" type="text" placeholder={m.list_name_placeholder()} maxlength="100"
         class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500 mb-4" />
       <div class="flex gap-2 justify-end">
-        <button id="create-list-cancel" class="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-100 transition cursor-pointer">Cancel</button>
-        <button id="create-list-confirm" class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition cursor-pointer">Create</button>
+        <button id="create-list-cancel" class="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-100 transition cursor-pointer">{m.common_cancel()}</button>
+        <button id="create-list-confirm" class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition cursor-pointer">{m.common_create()}</button>
       </div>
     </div>
   </div>
@@ -560,14 +562,14 @@ const bottomNavItem = (active: boolean) =>
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl p-4 flex items-start gap-3">
       <img src="/web-app-manifest-192x192.png" alt="" aria-hidden="true" class="w-12 h-12 rounded-xl shrink-0" />
       <div class="flex-1 min-w-0">
-        <p class="text-sm font-bold text-zinc-100">Install Scrob</p>
-        <p id="pwa-banner-msg" class="text-xs text-zinc-400 mt-0.5 leading-snug">Add to your home screen for the full app experience.</p>
+        <p class="text-sm font-bold text-zinc-100">{m.pwa_install_title()}</p>
+        <p id="pwa-banner-msg" class="text-xs text-zinc-400 mt-0.5 leading-snug">{m.pwa_install_message()}</p>
       </div>
-      <button id="pwa-dismiss" aria-label="Dismiss" class="text-zinc-400 hover:text-zinc-300 transition shrink-0 cursor-pointer mt-0.5">
+      <button id="pwa-dismiss" aria-label={m.common_dismiss()} class="text-zinc-400 hover:text-zinc-300 transition shrink-0 cursor-pointer mt-0.5">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
       </button>
       <div id="pwa-install-wrap" class="hidden">
-        <button id="pwa-install-btn" class="shrink-0 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition cursor-pointer">Install</button>
+        <button id="pwa-install-btn" class="shrink-0 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition cursor-pointer">{m.pwa_install()}</button>
       </div>
     </div>
   </div>
@@ -578,8 +580,8 @@ const bottomNavItem = (active: boolean) =>
       <h3 id="confirm-title" class="text-base font-bold text-zinc-100 mb-2"></h3>
       <p id="confirm-body" class="text-sm text-zinc-400 mb-6"></p>
       <div class="flex gap-2 justify-end">
-        <button id="confirm-cancel" class="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-100 transition cursor-pointer">Cancel</button>
-        <button id="confirm-ok" class="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white font-semibold rounded-lg transition cursor-pointer">Confirm</button>
+        <button id="confirm-cancel" class="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-100 transition cursor-pointer">{m.common_cancel()}</button>
+        <button id="confirm-ok" class="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white font-semibold rounded-lg transition cursor-pointer">{m.common_confirm()}</button>
       </div>
     </div>
   </div>
@@ -702,6 +704,14 @@ const bottomNavItem = (active: boolean) =>
     window.__IS_ADMIN__ = __isAdmin;
     window.__RADARR_CUSTOMIZE_ON_ADD__ = __radarrCustomizeOnAdd;
     window.__SONARR_CUSTOMIZE_ON_ADD__ = __sonarrCustomizeOnAdd;
+  </script>
+
+  <script>
+    // Now Playing bar. A module script (not part of the define:vars block
+    // above) so it can use the translated messages; it only needs the
+    // window globals that block sets, and runs after the page is parsed.
+    import { m } from '../paraglide/messages.js';
+    import { formatTime } from '../lib/format';
 
     // ── Now Playing poller (Global) ──────────────────────────────────────────
     function esc(str) {
@@ -716,8 +726,8 @@ const bottomNavItem = (active: boolean) =>
     function tmdbImageUrl(path, size = 'w500') {
       if (!path) return null;
       if (path.startsWith('http://') || path.startsWith('https://')) {
-        const m = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
-        if (m) return `/api/proxy/media/image/${m[1]}${m[2]}`;
+        const tm = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
+        if (tm) return `/api/proxy/media/image/${tm[1]}${tm[2]}`;
         const t = /artworks\.thetvdb\.com(\/.+)$/.exec(path);
         if (t) return `/api/proxy/media/image/tvdb${t[1]}`;
         return path;
@@ -746,49 +756,49 @@ const bottomNavItem = (active: boolean) =>
     // "38 min left" / "1h 5m left" / "<1 min left"
     function fmtRemaining(seconds) {
       const mins = Math.round(seconds / 60);
-      if (mins < 1) return '<1 min left';
-      if (mins < 60) return mins + ' min left';
-      const h = Math.floor(mins / 60), m = mins % 60;
-      return (m ? h + 'h ' + m + 'm' : h + 'h') + ' left';
+      if (mins < 1) return m.np_remaining_under_minute();
+      if (mins < 60) return m.np_remaining_minutes({ minutes: mins });
+      const h = Math.floor(mins / 60), rest = mins % 60;
+      return rest ? m.np_remaining_hours_minutes({ hours: h, minutes: rest }) : m.np_remaining_hours({ hours: h });
     }
 
     // Local end time in the viewer's own timezone - "ends 22:47".
     function fmtEta(ms) {
-      return 'ends ' + new Date(ms).toLocaleTimeString([], {
+      return m.np_ends_at({ time: formatTime(ms, {
         hour: '2-digit', minute: '2-digit', hour12: !window.__USE_24H__,
-      });
+      }) });
     }
 
     function renderNowPlaying(sessions) {
       if (!sessions || !sessions.length) return '';
       const rows = sessions.map(session => {
-        const m = session.media;
-        const isEpisode = m.type === 'episode';
-        const title = isEpisode ? (m.show_title ?? m.title) : m.title;
-        const dispSeason = (m.show_episode_order && m.show_episode_order !== 'tmdb:aired' && m.display_season_number != null) ? m.display_season_number : m.season_number;
-        const dispEpisode = (m.show_episode_order && m.show_episode_order !== 'tmdb:aired' && m.display_episode_number != null) ? m.display_episode_number : m.episode_number;
+        const media = session.media;
+        const isEpisode = media.type === 'episode';
+        const title = isEpisode ? (media.show_title ?? media.title) : media.title;
+        const dispSeason = (media.show_episode_order && media.show_episode_order !== 'tmdb:aired' && media.display_season_number != null) ? media.display_season_number : media.season_number;
+        const dispEpisode = (media.show_episode_order && media.show_episode_order !== 'tmdb:aired' && media.display_episode_number != null) ? media.display_episode_number : media.episode_number;
         const subtitle = isEpisode
-          ? `S${String(dispSeason).padStart(2,'0')}E${String(dispEpisode).padStart(2,'0')} · ${m.title}`
+          ? `S${String(dispSeason).padStart(2,'0')}E${String(dispEpisode).padStart(2,'0')} · ${media.title}`
           : null;
         // Local copy of lib/episodeHref's episode branch - this define:vars
         // script can't import (see lib/episodeHref.ts's header comment for the
         // full list of duplicate sites to keep in sync). #174: use the display
         // position when the show is on a non-aired ordering.
-        const orderedEp = m.show_episode_order && m.show_episode_order !== 'tmdb:aired';
+        const orderedEp = media.show_episode_order && media.show_episode_order !== 'tmdb:aired';
         const href = isEpisode
-          ? (!m.tvdb_sourced && orderedEp && m.show_tmdb_id && m.display_season_number != null && m.display_episode_number != null
-              ? `/show/${m.show_tmdb_id}/season/${m.display_season_number}/${m.display_episode_number}`
-              : !m.tvdb_sourced && m.show_tmdb_id && m.season_number && m.episode_number
-              ? `/show/${m.show_tmdb_id}/season/${m.season_number}/${m.episode_number}`
-              : m.show_tvdb_id && m.season_number && m.episode_number
-                ? `/show/tvdb/${m.show_tvdb_id}/season/${m.season_number}/${m.episode_number}`
-                : m.show_tmdb_id ? `/show/${m.show_tmdb_id}` : m.show_tvdb_id ? `/show/tvdb/${m.show_tvdb_id}` : null)
-          : (m.tmdb_id ? `/media/movie/${m.tmdb_id}` : null);
+          ? (!media.tvdb_sourced && orderedEp && media.show_tmdb_id && media.display_season_number != null && media.display_episode_number != null
+              ? `/show/${media.show_tmdb_id}/season/${media.display_season_number}/${media.display_episode_number}`
+              : !media.tvdb_sourced && media.show_tmdb_id && media.season_number && media.episode_number
+              ? `/show/${media.show_tmdb_id}/season/${media.season_number}/${media.episode_number}`
+              : media.show_tvdb_id && media.season_number && media.episode_number
+                ? `/show/tvdb/${media.show_tvdb_id}/season/${media.season_number}/${media.episode_number}`
+                : media.show_tmdb_id ? `/show/${media.show_tmdb_id}` : media.show_tvdb_id ? `/show/tvdb/${media.show_tvdb_id}` : null)
+          : (media.tmdb_id ? `/media/movie/${media.tmdb_id}` : null);
         const isPaused = session.state === 'paused';
         const sourceLabels = { plex: 'Plex', emby: 'Emby', kodi: 'Kodi', jellyfin: 'Jellyfin', manual: 'Scrob' };
         const sourceLabel = sourceLabels[session.source] ?? session.source;
         const progressSeconds = session.progress_seconds ?? 0;
-        const runtime = m.runtime ?? 0;
+        const runtime = media.runtime ?? 0;
         const pct = runtime > 0
           ? calcLivePct(progressSeconds, session.updated_at, runtime, !isPaused)
           : Math.round((session.progress_percent ?? 0) * 100);
@@ -806,7 +816,7 @@ const bottomNavItem = (active: boolean) =>
           ? `<span data-npeta="${sessionKey}" class="text-[10px] text-zinc-500 tabular-nums leading-tight">${esc(fmtEta(Date.now() + remainingSeconds * 1000))}</span>`
           : '';
 
-        const statusLabel = isPaused ? 'Paused' : 'Now Playing';
+        const statusLabel = isPaused ? m.np_paused() : m.np_now_playing();
         const dotColor = isPaused ? 'bg-yellow-400' : 'bg-green-400';
         const labelColor = isPaused ? 'text-yellow-400' : 'text-green-400';
 
@@ -814,19 +824,19 @@ const bottomNavItem = (active: boolean) =>
           ? `<span class="shrink-0 w-2 h-2 rounded-full ${dotColor}"></span>`
           : `<span class="relative shrink-0 flex w-2 h-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full ${dotColor} opacity-75"></span><span class="relative inline-flex rounded-full w-2 h-2 ${dotColor}"></span></span>`;
 
-        const rawPoster = isEpisode ? (m.show_poster_path ?? m.poster_path) : m.poster_path;
-        const posterUrl = window.ratingPosterUrl(tmdbImageUrl(rawPoster, 'w185'), m, window.__HAS_RPDB__);
+        const rawPoster = isEpisode ? (media.show_poster_path ?? media.poster_path) : media.poster_path;
+        const posterUrl = window.ratingPosterUrl(tmdbImageUrl(rawPoster, 'w185'), media, window.__HAS_RPDB__);
 
         // #319 - movie-only mid/post-credits scene indicator. Movies never
         // use the subtitle line (that's episode-only), so it doubles as a
         // visible text label here - an icon alone read as unlabeled noise,
         // especially on mobile where there's no hover to explain it.
-        const hasCreditsScene = !isEpisode && (m.has_mid_credits_scene || m.has_post_credits_scene);
-        const creditsLabel = m.has_mid_credits_scene && m.has_post_credits_scene
-          ? 'Stay for Credits x2'
-          : m.has_mid_credits_scene
-          ? 'Mid-Credits Scene'
-          : 'Post-Credits Scene';
+        const hasCreditsScene = !isEpisode && (media.has_mid_credits_scene || media.has_post_credits_scene);
+        const creditsLabel = media.has_mid_credits_scene && media.has_post_credits_scene
+          ? m.credits_scene_both()
+          : media.has_mid_credits_scene
+          ? m.credits_scene_mid()
+          : m.credits_scene_post();
         const creditsLine = hasCreditsScene
           ? `<p class="credits-scene-icon flex items-center gap-1 text-[10px] font-bold text-amber-400 truncate leading-tight mt-0.5">
               <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" class="shrink-0 w-3 h-3"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/></svg>
@@ -858,7 +868,7 @@ const bottomNavItem = (active: boolean) =>
                 ${etaLine}
               </div>
             ${href ? '</a>' : '</div>'}
-            <button type="button" data-npdismiss="${sessionKey}" title="Remove from Now Playing" aria-label="Remove from Now Playing" class="absolute top-1 right-1 md:right-2 p-1.5 rounded-full text-zinc-600 hover:text-zinc-200 hover:bg-zinc-800/80 transition-colors z-10 cursor-pointer">
+            <button type="button" data-npdismiss="${sessionKey}" title="${esc(m.np_remove())}" aria-label="${esc(m.np_remove())}" class="absolute top-1 right-1 md:right-2 p-1.5 rounded-full text-zinc-600 hover:text-zinc-200 hover:bg-zinc-800/80 transition-colors z-10 cursor-pointer">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
             </button>
             <div class="absolute bottom-0 left-0 right-0" style="height:2px;background:rgba(0,0,0,0.12)">
@@ -958,6 +968,9 @@ const bottomNavItem = (active: boolean) =>
 
   <script>
     // ── Card action bar ────────────────────────────────────────────────────────
+    import { m } from '../paraglide/messages.js';
+    import { formatDateTime, formatRating } from '../lib/format';
+
     const API = '/api/proxy';
     const TOKEN = () => (window as any).__AUTH_TOKEN__ ?? '';
 
@@ -984,7 +997,7 @@ const bottomNavItem = (active: boolean) =>
 
     // apiFetch's Error.message is the raw response body — usually a JSON
     // {"detail": "..."} string from FastAPI, sometimes plain text.
-    function alertFromError(err: any, fallback = 'Something went wrong'): void {
+    function alertFromError(err: any, fallback = m.common_something_went_wrong()): void {
       let msg = fallback;
       try {
         const data = JSON.parse(err.message);
@@ -994,7 +1007,7 @@ const bottomNavItem = (active: boolean) =>
       }
       // A proxy/gateway error page comes back as HTML - never show markup.
       if (msg.trimStart().startsWith('<')) msg = fallback;
-      void showAlert(fallback, msg === fallback ? 'Please try again.' : msg);
+      void showAlert(fallback, msg === fallback ? m.common_please_try_again() : msg);
     }
 
     // Single-button variant of showConfirm, in place of the browser's alert().
@@ -1006,7 +1019,7 @@ const bottomNavItem = (active: boolean) =>
         const ok = document.getElementById('confirm-ok')!;
         const cancel = document.getElementById('confirm-cancel')!;
         cancel.classList.add('hidden');
-        ok.textContent = 'OK';
+        ok.textContent = m.common_ok();
         dialog.classList.remove('hidden');
         const close = () => {
           dialog.classList.add('hidden');
@@ -1014,7 +1027,7 @@ const bottomNavItem = (active: boolean) =>
           cancel.replaceWith(cancel.cloneNode(true));
           // The clones inherit this alert's state - put the confirm layout back.
           document.getElementById('confirm-cancel')!.classList.remove('hidden');
-          document.getElementById('confirm-ok')!.textContent = 'Confirm';
+          document.getElementById('confirm-ok')!.textContent = m.common_confirm();
           resolve();
         };
         ok.addEventListener('click', close, { once: true });
@@ -1133,9 +1146,9 @@ const bottomNavItem = (active: boolean) =>
       document.getElementById('rating-popover')!.classList.add('hidden');
       _activeRatingBtn = null;
       if (_pendingRatePrompt) {
-        const m = _pendingRatePrompt;
+        const pending = _pendingRatePrompt;
         _pendingRatePrompt = null;
-        setTimeout(() => showRatePromptPopover(m), 150);
+        setTimeout(() => showRatePromptPopover(pending), 150);
       }
     }
 
@@ -1218,15 +1231,15 @@ const bottomNavItem = (active: boolean) =>
               btn.classList.add('bg-amber-500/20', 'text-amber-400', 'hover:bg-amber-500/40');
               btn.querySelector('svg')!.setAttribute('fill', 'currentColor');
               const rateSpans = btn.querySelectorAll('span');
-              rateSpans[0]!.textContent = i.toFixed(1);
+              rateSpans[0]!.textContent = formatRating(i);
               let mobileRateSpan = rateSpans[1];
               if (!mobileRateSpan) {
                 mobileRateSpan = document.createElement('span');
                 mobileRateSpan.className = 'md:hidden text-[9px] font-bold leading-none';
                 btn.appendChild(mobileRateSpan);
               }
-              mobileRateSpan.textContent = i.toFixed(1);
-              btn.title = `Your rating: ${i.toFixed(1)}/10`;
+              mobileRateSpan.textContent = formatRating(i);
+              btn.title = m.rating_your_rating_value({ rating: formatRating(i) });
             }
             closeRatingPopover();
           } catch { /* ignore */ }
@@ -1258,9 +1271,9 @@ const bottomNavItem = (active: boolean) =>
             btn.classList.add('bg-zinc-800', 'text-zinc-500', 'hover:bg-amber-500/10', 'hover:text-amber-400');
             btn.querySelector('svg')!.setAttribute('fill', 'none');
             const rateSpans = btn.querySelectorAll('span');
-            rateSpans[0]!.textContent = 'Rate';
+            rateSpans[0]!.textContent = m.rating_rate();
             rateSpans[1]?.remove();
-            btn.title = 'Rate this';
+            btn.title = m.rating_rate_this();
           }
           closeRatingPopover();
         } catch { /* ignore */ }
@@ -1291,17 +1304,17 @@ const bottomNavItem = (active: boolean) =>
       return `https://image.tmdb.org/t/p/w500${path.startsWith('/') ? path : '/' + path}`;
     }
 
-    function showRatePromptPopover(m: any) {
-      const isEpisode = m.type === 'episode';
-      const sxe = m.season_number != null && m.episode_number != null
-        ? `S${String(m.season_number).padStart(2, '0')}E${String(m.episode_number).padStart(2, '0')}`
+    function showRatePromptPopover(media: any) {
+      const isEpisode = media.type === 'episode';
+      const sxe = media.season_number != null && media.episode_number != null
+        ? `S${String(media.season_number).padStart(2, '0')}E${String(media.episode_number).padStart(2, '0')}`
         : null;
-      openRatingPopover(null, String(m.tmdb_id), m.type, null, null, 'tmdb', {
-        title: isEpisode ? (m.show_title ?? m.title) : m.title,
-        subtitle: isEpisode ? [sxe, m.title].filter(Boolean).join(' · ') : undefined,
+      openRatingPopover(null, String(media.tmdb_id), media.type, null, null, 'tmdb', {
+        title: isEpisode ? (media.show_title ?? media.title) : media.title,
+        subtitle: isEpisode ? [sxe, media.title].filter(Boolean).join(' · ') : undefined,
         posterUrl: isEpisode
-          ? ratingPosterUrl(m.poster_path)
-          : window.ratingPosterUrl(ratingPosterUrl(m.poster_path), m, window.__HAS_RPDB__) ?? undefined,
+          ? ratingPosterUrl(media.poster_path)
+          : window.ratingPosterUrl(ratingPosterUrl(media.poster_path), media, window.__HAS_RPDB__) ?? undefined,
         landscape: isEpisode,
       });
     }
@@ -1353,7 +1366,7 @@ const bottomNavItem = (active: boolean) =>
       _listTvdbOnly = btn.closest<HTMLElement>('[data-card]')?.dataset.tvdbOnly === 'true';
       const popover = document.getElementById('list-popover')!;
       const itemsEl = document.getElementById('list-popover-items')!;
-      itemsEl.innerHTML = '<div class="px-3 py-2 text-xs text-zinc-500">Loading…</div>';
+      itemsEl.innerHTML = `<div class="px-3 py-2 text-xs text-zinc-500">${esc(m.common_loading())}</div>`;
       popover.classList.remove('hidden');
 
       // Fetch lists
@@ -1366,7 +1379,7 @@ const bottomNavItem = (active: boolean) =>
       const currentLists: number[] = JSON.parse(btn.dataset.inLists ?? '[]');
 
       if (!lists.length) {
-        itemsEl.innerHTML = '<div class="px-3 py-2 text-xs text-zinc-500">No lists yet.</div>';
+        itemsEl.innerHTML = `<div class="px-3 py-2 text-xs text-zinc-500">${esc(m.list_popover_empty())}</div>`;
         return;
       }
 
@@ -1487,7 +1500,7 @@ const bottomNavItem = (active: boolean) =>
           await apiFetch(`/history/rewatch?${seriesQuery}`, 'POST');
           window.location.reload();
         } catch (err: any) {
-          alertFromError(err, 'Failed to restart rewatch');
+          alertFromError(err, m.rewatch_restart_failed());
         }
       };
 
@@ -1497,7 +1510,7 @@ const bottomNavItem = (active: boolean) =>
           await apiFetch(`/history/rewatch?${seriesQuery}`, 'DELETE');
           window.location.reload();
         } catch (err: any) {
-          alertFromError(err, 'Failed to cancel rewatch');
+          alertFromError(err, m.rewatch_cancel_failed());
         }
       };
 
@@ -1519,10 +1532,10 @@ const bottomNavItem = (active: boolean) =>
 
     function openDropModal(mediaType: string, showId: string | undefined, mediaId: string, tmdbId?: string) {
       const isSeries = mediaType === 'series';
-      document.getElementById('drop-modal-title')!.textContent = isSeries ? 'Drop Show' : 'Drop Movie';
+      document.getElementById('drop-modal-title')!.textContent = isSeries ? m.drop_show_title() : m.drop_movie_title();
       document.getElementById('drop-modal-body')!.textContent = isSeries
-        ? 'Dropping hides this show from Next Up, Calendar, and recommendations, without touching your watch history.'
-        : 'Dropping hides this movie from Continue Watching and recommendations, without touching your watch history.';
+        ? m.drop_show_body()
+        : m.drop_movie_body();
 
       // "Hide from Next Up" only makes sense for shows - movies have no
       // Next Up concept to hide from.
@@ -1535,7 +1548,7 @@ const bottomNavItem = (active: boolean) =>
           await apiFetch('/history/next-up/hide', 'POST', { show_id: Number(showId) });
           window.location.reload();
         } catch (err: any) {
-          alertFromError(err, 'Failed to hide from Next Up');
+          alertFromError(err, m.drop_hide_failed());
         }
       };
 
@@ -1554,7 +1567,7 @@ const bottomNavItem = (active: boolean) =>
           }
           window.location.reload();
         } catch (err: any) {
-          alertFromError(err, 'Failed to drop');
+          alertFromError(err, m.drop_failed());
         }
       };
 
@@ -1585,9 +1598,9 @@ const bottomNavItem = (active: boolean) =>
         : 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-300';
       const draw = () => {
         container.innerHTML = seasons.map((s: any) =>
-          `<button type="button" data-season="${s.season_number}" class="px-2 py-1 text-xs font-medium rounded-md border transition-colors cursor-pointer ${pillClass(_customizeAddSeasons.includes(s.season_number))}">${s.season_number === 0 ? 'Specials' : 'S' + s.season_number}</button>`
+          `<button type="button" data-season="${s.season_number}" class="px-2 py-1 text-xs font-medium rounded-md border transition-colors cursor-pointer ${pillClass(_customizeAddSeasons.includes(s.season_number))}">${esc(s.season_number === 0 ? m.season_specials() : 'S' + s.season_number)}</button>`
         ).join('');
-        toggle.textContent = _customizeAddSeasons.length === seasons.length ? 'Select none' : 'Select all';
+        toggle.textContent = _customizeAddSeasons.length === seasons.length ? m.customize_select_none() : m.customize_select_all();
         container.querySelectorAll('button').forEach((pill) => {
           pill.addEventListener('click', () => {
             const n = parseInt((pill as HTMLElement).dataset.season!);
@@ -1612,7 +1625,7 @@ const bottomNavItem = (active: boolean) =>
     function renderCustomizeAddTags(tags: any[], selectedIds: number[]) {
       const container = document.getElementById('customize-add-tags')!;
       if (!tags || tags.length === 0) {
-        container.innerHTML = '<span class="text-xs text-zinc-500 italic px-1">No tags found</span>';
+        container.innerHTML = `<span class="text-xs text-zinc-500 italic px-1">${esc(m.customize_add_no_tags())}</span>`;
         return;
       }
       container.innerHTML = tags.map((tag: any) => {
@@ -1648,7 +1661,7 @@ const bottomNavItem = (active: boolean) =>
       const seasonRow = document.getElementById('customize-add-season-folder-row')!;
       const isSeries = mediaType === 'series';
 
-      document.getElementById('customize-add-title')!.textContent = isSeries ? 'Add to Sonarr' : 'Add to Radarr';
+      document.getElementById('customize-add-title')!.textContent = isSeries ? m.customize_add_to_sonarr() : m.customize_add_to_radarr();
       loading.classList.remove('hidden');
       body.classList.add('hidden');
       footer.classList.add('hidden');
@@ -1686,7 +1699,7 @@ const bottomNavItem = (active: boolean) =>
       } catch {
         loading.classList.add('hidden');
         body.classList.remove('hidden');
-        errorEl.textContent = 'Could not load options.';
+        errorEl.textContent = m.customize_add_load_failed();
         errorEl.classList.remove('hidden');
         return;
       }
@@ -1702,7 +1715,7 @@ const bottomNavItem = (active: boolean) =>
           // Only sent when the season list loaded; otherwise Sonarr's default applies.
           if (!document.getElementById('customize-add-seasons-row')!.classList.contains('hidden')) {
             if (_customizeAddSeasons.length === 0) {
-              errorEl.textContent = 'Select at least one season.';
+              errorEl.textContent = m.customize_select_one_season();
               errorEl.classList.remove('hidden');
               return;
             }
@@ -1795,7 +1808,7 @@ const bottomNavItem = (active: boolean) =>
       targetBtn.dataset.watched = String(isFullyWatched);
       targetBtn.dataset.watchPct = String(pct);
       targetBtn.dataset.state = active ? 'active' : 'inactive';
-      targetBtn.title = `${pct}% watched`;
+      targetBtn.title = m.watch_pct_watched({ pct });
       targetBtn.style.background = '';
       const labelEl = targetBtn.querySelector('span');
       if (labelEl) labelEl.textContent = `${pct}%`;
@@ -1813,7 +1826,7 @@ const bottomNavItem = (active: boolean) =>
         setSeriesWatchPctUI(targetBtn, watched ? 100 : 0);
         return;
       }
-      targetBtn.title = watched ? 'Mark as unwatched' : 'Mark as watched';
+      targetBtn.title = watched ? m.watch_mark_unwatched() : m.watch_mark_watched();
       setWatchedActiveClasses(targetBtn, watched);
     }
 
@@ -1938,12 +1951,12 @@ const bottomNavItem = (active: boolean) =>
       _watchHistoryEpisodeNumber = episodeNumber;
       _watchHistoryAirDate = airDate;
 
-      document.getElementById('watch-history-modal-title')!.textContent = 'Watch History';
+      document.getElementById('watch-history-modal-title')!.textContent = m.watch_history_title();
       document.getElementById('watch-history-modal-events')!.classList.remove('hidden');
       document.getElementById('watch-history-add-play-label')!.classList.remove('hidden');
       resetWatchHistoryDateUI();
 
-      document.getElementById('watch-history-log-btn')!.textContent = 'Mark as watched';
+      document.getElementById('watch-history-log-btn')!.textContent = m.watch_mark_watched();
       document.getElementById('watch-history-modal')!.classList.remove('hidden');
       await loadWatchHistoryEvents();
     }
@@ -1959,7 +1972,7 @@ const bottomNavItem = (active: boolean) =>
         if (job.state === 'done') return;
         if (job.state === 'error') throw new Error(JSON.stringify({ detail: job.detail }));
       }
-      throw new Error(JSON.stringify({ detail: 'Timed out waiting for the show to be marked as watched' }));
+      throw new Error(JSON.stringify({ detail: m.watch_show_job_timed_out() }));
     }
 
     function openBulkWatchModal(btn: HTMLElement, kind: 'season' | 'show', seriesId: string, season = '', episodeOrder = '', tvdbId = '') {
@@ -1967,12 +1980,12 @@ const bottomNavItem = (active: boolean) =>
       // No single date applies across a whole season/show - never offer it here.
       _watchHistoryAirDate = '';
 
-      document.getElementById('watch-history-modal-title')!.textContent = kind === 'season' ? 'Mark Season Watched' : 'Mark Show Watched';
+      document.getElementById('watch-history-modal-title')!.textContent = kind === 'season' ? m.watch_mark_season_watched() : m.watch_mark_show_watched();
       document.getElementById('watch-history-modal-events')!.classList.add('hidden');
       // Bulk mode has no per-item play list, so its own remove-everything
       // action lives on the same button.
       const bulkUnwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
-      bulkUnwatchBtn.textContent = kind === 'season' ? 'Remove all watched events for this season' : 'Remove all watched events';
+      bulkUnwatchBtn.textContent = kind === 'season' ? m.watch_remove_all_season() : m.watch_remove_all();
       bulkUnwatchBtn.disabled = false;
       bulkUnwatchBtn.classList.remove('hidden');
       // Below "Mark as watched" here; the single-item modal keeps it on top.
@@ -1980,7 +1993,7 @@ const bottomNavItem = (active: boolean) =>
       document.getElementById('watch-history-add-play-label')!.classList.add('hidden');
       resetWatchHistoryDateUI();
 
-      document.getElementById('watch-history-log-btn')!.textContent = 'Mark as watched';
+      document.getElementById('watch-history-log-btn')!.textContent = m.watch_mark_watched();
       document.getElementById('watch-history-modal')!.classList.remove('hidden');
     }
 
@@ -2023,10 +2036,10 @@ const bottomNavItem = (active: boolean) =>
 
     async function loadWatchHistoryEvents() {
       const eventsEl = document.getElementById('watch-history-modal-events')!;
-      eventsEl.innerHTML = '<div class="px-4 py-3 text-xs text-zinc-500">Loading…</div>';
+      eventsEl.innerHTML = `<div class="px-4 py-3 text-xs text-zinc-500">${esc(m.common_loading())}</div>`;
       const unwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
       unwatchBtn.classList.add('hidden');
-      unwatchBtn.textContent = 'Mark as unwatched';
+      unwatchBtn.textContent = m.watch_mark_unwatched();
       document.getElementById('watch-history-add-play-label')!.before(unwatchBtn);
       try {
         const seriesQuery = _watchHistoryMediaType === 'episode'
@@ -2038,15 +2051,15 @@ const bottomNavItem = (active: boolean) =>
           `/history/item-events?${itemIdQuery}&media_type=${_watchHistoryMediaType}${seriesQuery}`
         );
         if (events.length === 0) {
-          eventsEl.innerHTML = '<div class="px-4 py-3 text-sm text-zinc-500 italic">No plays recorded yet</div>';
+          eventsEl.innerHTML = `<div class="px-4 py-3 text-sm text-zinc-500 italic">${esc(m.watch_no_plays())}</div>`;
         } else {
           eventsEl.innerHTML = events.map(ev => {
             const fmt = ev.watched_at
-              ? new Date(ev.watched_at + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: !(window as any).__USE_24H__ })
-              : 'Unknown date';
+              ? formatDateTime(ev.watched_at + 'Z', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: !(window as any).__USE_24H__ })
+              : m.watch_unknown_date();
             return `<div class="flex items-center justify-between px-4 py-2.5 hover:bg-zinc-800/50 group">
               <span class="text-sm text-zinc-200">${esc(fmt)}</span>
-              <button class="text-zinc-600 group-hover:text-zinc-400 hover:!text-red-400 transition-colors cursor-pointer" data-delete-event="${ev.id}" aria-label="Remove">
+              <button class="text-zinc-600 group-hover:text-zinc-400 hover:!text-red-400 transition-colors cursor-pointer" data-delete-event="${ev.id}" aria-label="${esc(m.common_remove())}">
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>`;
@@ -2058,7 +2071,7 @@ const bottomNavItem = (active: boolean) =>
         // is active and every remaining play predates it.
         const hasEvents = events.length > 0;
         unwatchBtn.classList.toggle('hidden', !hasEvents);
-        document.getElementById('watch-history-log-btn')!.textContent = hasEvents ? 'Log a rewatch' : 'Mark as watched';
+        document.getElementById('watch-history-log-btn')!.textContent = hasEvents ? m.watch_log_rewatch() : m.watch_mark_watched();
         const cardSelector = _watchHistoryTmdbId
           ? `[data-card][data-tmdb-id="${_watchHistoryTmdbId}"][data-media-type="${_watchHistoryMediaType}"]`
           : `[data-card][data-media-id="${_watchHistoryMediaId}"][data-media-type="${_watchHistoryMediaType}"]`;
@@ -2066,7 +2079,7 @@ const bottomNavItem = (active: boolean) =>
           `${cardSelector} [data-action="watched"]`
         ).forEach(b => updateWatchedButtonUI(b, watched));
       } catch {
-        eventsEl.innerHTML = '<div class="px-4 py-2 text-xs text-red-400">Failed to load</div>';
+        eventsEl.innerHTML = `<div class="px-4 py-2 text-xs text-red-400">${esc(m.common_failed_to_load())}</div>`;
       }
     }
 
@@ -2096,17 +2109,15 @@ const bottomNavItem = (active: boolean) =>
     document.getElementById('watch-history-unwatch-btn')!.addEventListener('click', async () => {
       if (_watchHistoryBulkMode) {
         const { kind, seriesId, season, episodeOrder, btn: sourceBtn } = _watchHistoryBulkMode;
-        const label = kind === 'season' ? 'this season' : 'this show';
-        const ok = await showConfirm(
-          `Remove all watched events for ${label}?`,
-          `This removes every recorded play of every episode in ${label} and marks them as unwatched on enabled services. This cannot be undone.`
-        );
+        const ok = kind === 'season'
+          ? await showConfirm(m.watch_remove_all_season_confirm_title(), m.watch_remove_all_season_confirm_body())
+          : await showConfirm(m.watch_remove_all_show_confirm_title(), m.watch_remove_all_show_confirm_body());
         if (!ok) return;
 
         const bulkBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
         const idleLabel = bulkBtn.textContent || '';
         bulkBtn.disabled = true;
-        bulkBtn.textContent = 'Removing…';
+        bulkBtn.textContent = m.common_removing();
         try {
           // A TheTVDB-only show's card carries its TVDB id as its id.
           const idParam = sourceBtn.closest<HTMLElement>('[data-card]')?.dataset.tvdbOnly === 'true' ? 'series_tvdb_id' : 'series_tmdb_id';
@@ -2121,7 +2132,7 @@ const bottomNavItem = (active: boolean) =>
           }
           closeWatchHistoryModal();
         } catch (err) {
-          alertFromError(err, 'Failed to remove watched events');
+          alertFromError(err, m.watch_remove_all_failed());
         }
         bulkBtn.disabled = false;
         bulkBtn.textContent = idleLabel;
@@ -2129,14 +2140,14 @@ const bottomNavItem = (active: boolean) =>
       }
 
       const confirmed = await showConfirm(
-        'Mark as unwatched?',
-        'This will remove every recorded play for this item and mark it as unwatched on enabled services.'
+        m.watch_unwatch_confirm_title(),
+        m.watch_unwatch_confirm_body()
       );
       if (!confirmed) return;
 
       const unwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
       unwatchBtn.disabled = true;
-      unwatchBtn.textContent = 'Removing…';
+      unwatchBtn.textContent = m.common_removing();
       try {
         const unwatchIdQuery = _watchHistoryTmdbId
           ? `tmdb_id=${encodeURIComponent(_watchHistoryTmdbId)}`
@@ -2149,7 +2160,7 @@ const bottomNavItem = (active: boolean) =>
         syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
       } catch { /* keep the modal open so the user can retry */ }
       unwatchBtn.disabled = false;
-      unwatchBtn.textContent = 'Mark as unwatched';
+      unwatchBtn.textContent = m.watch_mark_unwatched();
     });
 
     (() => {
@@ -2208,9 +2219,9 @@ const bottomNavItem = (active: boolean) =>
               ? toUTC(new Date(_watchHistoryAirDate + 'T12:00:00'))
               : toUTC(new Date(input.value || toLocal(new Date())));
         const logBtn = document.getElementById('watch-history-log-btn') as HTMLButtonElement;
-        const idleLabel = logBtn.textContent || 'Mark as watched';
+        const idleLabel = logBtn.textContent || m.watch_mark_watched();
         logBtn.disabled = true;
-        logBtn.innerHTML = '<svg class="inline-block w-4 h-4 mr-2 -mt-0.5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Saving…';
+        logBtn.innerHTML = '<svg class="inline-block w-4 h-4 mr-2 -mt-0.5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>' + esc(m.common_saving());
 
         if (_watchHistoryBulkMode) {
           const { kind, seriesId, season, episodeOrder, btn: sourceBtn, tvdbId: bulkTvdbId } = _watchHistoryBulkMode;
@@ -2238,7 +2249,7 @@ const bottomNavItem = (active: boolean) =>
             closeWatchHistoryModal();
           } catch (err) {
             logBtn.textContent = idleLabel;
-            alertFromError(err, 'Failed to mark as watched');
+            alertFromError(err, m.watch_mark_watched_failed());
           }
           logBtn.disabled = false;
           return;
@@ -2285,8 +2296,8 @@ const bottomNavItem = (active: boolean) =>
           let forcedSuccess = false;
           if (duplicateDetail) {
             const proceed = await showConfirm(
-              'Possible duplicate',
-              duplicateDetail.message || 'This looks like a duplicate of an existing watch. Add anyway?',
+              m.watch_duplicate_title(),
+              duplicateDetail.message || m.watch_duplicate_body(),
             );
             if (proceed) {
               try {
@@ -2294,11 +2305,11 @@ const bottomNavItem = (active: boolean) =>
                 await submitWatch();
                 forcedSuccess = true;
               } catch (err2) {
-                alertFromError(err2, 'Failed to mark as watched');
+                alertFromError(err2, m.watch_mark_watched_failed());
               }
             }
           } else {
-            alertFromError(err, 'Failed to mark as watched');
+            alertFromError(err, m.watch_mark_watched_failed());
           }
           if (!forcedSuccess) logBtn.textContent = idleLabel;
         }
@@ -2359,9 +2370,9 @@ const bottomNavItem = (active: boolean) =>
         // Only the "unwatch" (remove all history) cases remain here — no date involved.
         let confirmed = true;
         if (mediaType === 'series' && season && isWatched) {
-          confirmed = await showConfirm('Mark season as unwatched?', 'This will remove all watch events for every episode in this season.');
+          confirmed = await showConfirm(m.watch_unwatch_season_title(), m.watch_unwatch_season_body());
         } else if (mediaType === 'series' && !season && isWatched) {
-          confirmed = await showConfirm('Remove all watch history?', 'This will remove all watch events for every episode of this show.');
+          confirmed = await showConfirm(m.watch_unwatch_show_title(), m.watch_unwatch_show_body());
         }
         if (!confirmed) return;
 
@@ -2380,7 +2391,7 @@ const bottomNavItem = (active: boolean) =>
         } catch { /* ignore */ }
 
       } else if (action === 'list') {
-        if (!tmdbId && !mediaId) { void showAlert('Cannot add to lists', 'This item is not matched, so it cannot be added to a list.'); return; }
+        if (!tmdbId && !mediaId) { void showAlert(m.list_unmatched_title(), m.list_unmatched_item()); return; }
         if (document.getElementById('list-popover')!.classList.contains('hidden') || _activeListBtn !== btn) {
           openListPopover(btn, tmdbId, mediaType, card.dataset.season || '', mediaId);
         } else {
@@ -2396,7 +2407,7 @@ const bottomNavItem = (active: boolean) =>
           if (mediaType === 'series' && !season) {
             // Show-level collect/uncollect — covers all seasons
             if (inLibrary) {
-              const ok = await showConfirm('Remove show from collection?', 'This will remove all collection entries for every episode in this show.');
+              const ok = await showConfirm(m.collection_remove_show_title(), m.collection_remove_show_body());
               if (!ok) return;
               await apiFetch(`/media/collect-show?tmdb_id=${tmdbId}`, 'DELETE');
             } else {
@@ -2405,7 +2416,7 @@ const bottomNavItem = (active: boolean) =>
           } else if (mediaType === 'series' && season) {
             // Season-level collect/uncollect
             if (inLibrary) {
-              const ok = await showConfirm('Remove season from collection?', 'This will remove all collection entries for this season.');
+              const ok = await showConfirm(m.collection_remove_season_title(), m.collection_remove_season_body());
               if (!ok) return;
               const orderQuery = nonAiredOrder(episodeOrder) ? '&episode_order=' + encodeURIComponent(episodeOrder) : '';
               await apiFetch(`/media/collect-season?series_tmdb_id=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
@@ -2419,12 +2430,12 @@ const bottomNavItem = (active: boolean) =>
             }
           } else {
             if (inLibrary) {
-              const ok = await showConfirm('Remove from collection?', 'This will remove all collection entries for this item.');
+              const ok = await showConfirm(m.collection_remove_title(), m.collection_remove_body());
               if (!ok) return;
               const query = tmdbId ? `tmdb_id=${tmdbId}` : `id=${mediaId}`;
               await apiFetch(`/media/collect?${query}&media_type=${mediaType}`, 'DELETE');
             } else {
-              if (!tmdbId && !mediaId) { void showAlert('Cannot add to collection', 'This item is not matched, so it cannot be collected manually.'); return; }
+              if (!tmdbId && !mediaId) { void showAlert(m.collection_unmatched_title(), m.collection_unmatched_item()); return; }
               const collectBody: Record<string, number | string> = { media_type: mediaType };
               if (tmdbId) collectBody.tmdb_id = Number(tmdbId);
               if (mediaId) collectBody.media_id = Number(mediaId);
@@ -2448,7 +2459,7 @@ const bottomNavItem = (active: boolean) =>
               btn.classList.remove('bg-purple-500/20', 'bg-purple-500/50', 'text-purple-400', 'text-purple-300', 'hover:bg-purple-500/40', 'hover:bg-purple-400/50');
               btn.classList.add(isCard ? 'bg-zinc-900' : 'bg-zinc-800', isCard ? 'text-zinc-400' : 'text-zinc-500');
             }
-            btn.title = nowInLibrary ? 'In collection' : 'Add to collection';
+            btn.title = nowInLibrary ? m.collection_in_collection() : m.collection_add();
             return;
           }
           // Season/show-level: reload so percentages and all sibling cards update
@@ -2487,22 +2498,22 @@ const bottomNavItem = (active: boolean) =>
               : `/media/${mediaType}/${tmdbId}/request`;
             const res = await apiFetch(requestPath, 'POST', overrides);
             if (res.status === 'added' || res.status === 'already_exists') {
-              btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-green-500"><polyline points="20 6 9 17 4 12"></polyline></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-green-500">' + (res.status === 'added' ? 'Added' : 'Exists') + '</span>';
+              btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-green-500"><polyline points="20 6 9 17 4 12"></polyline></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-green-500">' + esc(res.status === 'added' ? m.request_added() : m.request_exists()) + '</span>';
               btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-500/10', 'hover:text-orange-400');
               btn.classList.add('bg-green-500/10', 'text-green-500');
               (btn as HTMLButtonElement).disabled = true;
             } else if (res.status === 'pending_approval') {
-              btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-amber-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-amber-400">Pending</span>';
+              btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-amber-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-amber-400">' + esc(m.request_pending()) + '</span>';
               btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-500/10', 'hover:text-orange-400');
               btn.classList.add('bg-amber-500/10', 'text-amber-400');
               (btn as HTMLButtonElement).disabled = true;
             } else {
-              throw new Error('Failed to request');
+              throw new Error(m.request_failed());
             }
           } catch (err: any) {
             btn.innerHTML = originalContent;
             btn.classList.remove('pointer-events-none');
-            alertFromError(err, 'Request failed');
+            alertFromError(err, m.request_failed());
           }
         };
 
@@ -2538,7 +2549,7 @@ const bottomNavItem = (active: boolean) =>
           await apiFetch(`/history/rewatch?${seriesQuery}`, 'POST');
           window.location.reload();
         } catch (err: any) {
-          alertFromError(err, 'Failed to start rewatch');
+          alertFromError(err, m.rewatch_start_failed());
         }
 
       } else if (action === 'drop') {
@@ -2555,7 +2566,7 @@ const bottomNavItem = (active: boolean) =>
             }
             window.location.reload();
           } catch (err: any) {
-            alertFromError(err, 'Failed to undrop');
+            alertFromError(err, m.drop_undrop_failed());
           }
           return;
         }
@@ -2566,6 +2577,8 @@ const bottomNavItem = (active: boolean) =>
   </script>
   <script>
     // ── Radarr / Sonarr monitored check (deferred after page load) ────────────
+    import { m } from '../paraglide/messages.js';
+
     (async () => {
       const btn = document.querySelector<HTMLButtonElement>('[data-action="request"][data-request-loading="true"]');
       if (!btn) return;
@@ -2587,7 +2600,7 @@ const bottomNavItem = (active: boolean) =>
         const { monitored } = await res.json();
         btn.removeAttribute('data-request-loading');
         if (monitored) {
-          btn.title = mediaType === 'series' ? 'Already in Sonarr' : 'Already in Radarr';
+          btn.title = mediaType === 'series' ? m.request_already_in_sonarr() : m.request_already_in_radarr();
           btn.dataset.state = 'active';
           btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-300/60', 'hover:text-orange-400');
           btn.classList.add('bg-orange-500/50', 'text-orange-300', 'hover:bg-orange-400/50');
@@ -2601,6 +2614,8 @@ const bottomNavItem = (active: boolean) =>
   </script>
   <script>
     // ── PWA install prompt ─────────────────────────────────────────────────────
+    import { m } from '../paraglide/messages.js';
+
     const DISMISS_KEY = 'pwa-install-dismissed';
     const DISMISS_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -2663,7 +2678,7 @@ const bottomNavItem = (active: boolean) =>
     const isInStandaloneMode = (navigator as any).standalone === true;
 
     if (isIos && !isInStandaloneMode) {
-      msgEl.textContent = 'Tap the Share button, then "Add to Home Screen".';
+      msgEl.textContent = m.pwa_ios_instructions();
       setTimeout(showBanner, 2000);
     }
   </script>

@@ -3,6 +3,9 @@ import Base from "../../layouts/Base.astro";
 import ListCard from "../../components/ListCard.astro";
 import { api, type PublicProfile, type ProfileListItem, type ProfileFollowEntry, tmdbImageUrl } from "../../lib/api";
 import { ratingPosterUrl } from "../../lib/posters";
+import { formatDate, formatNumber, formatTimeAgo as timeAgo } from "../../lib/format";
+import { genreLabel } from "../../lib/labels";
+import { m } from "../../paraglide/messages.js";
 
 export const prerender = false;
 
@@ -16,17 +19,17 @@ try {
   profile = await api.profile.getPublic(Number(id), token);
 } catch (e: any) {
   if (e.message.includes("403")) {
-    error = "This profile is private.";
+    error = m.profile_private();
   } else if (e.message.includes("404")) {
-    error = "User not found.";
+    error = m.profile_not_found();
   } else {
-    error = "Failed to load profile.";
+    error = m.profile_load_failed();
   }
 }
 
 const isOwner = currentUser && currentUser.id === Number(id);
 const joinedDate = profile
-  ? new Date(profile.created_at).toLocaleDateString(undefined, { year: "numeric", month: "long" })
+  ? formatDate(profile.created_at, { year: "numeric", month: "long" })
   : "";
 
 // Collect all available backdrops, prefer top-rated, fall back to recently-watched
@@ -79,24 +82,12 @@ function commentUrl(item: { media_type: string; tmdb_id: number | null; tvdb_id:
 function commentLabel(item: { media_type: string; season_number: number | null; episode_number: number | null; title: string | null }): string {
   const kind = commentKind(item);
   if (kind === "season")
-    return `${item.title ?? "Unknown"} — Season ${item.season_number}`;
+    return m.profile_comment_season({ title: item.title ?? m.common_unknown(), season: item.season_number });
   if (kind === "episode")
-    return `${item.title ?? "Unknown"} — S${String(item.season_number).padStart(2, "0")}E${String(item.episode_number).padStart(2, "0")}`;
-  return item.title ?? "Unknown";
+    return `${item.title ?? m.common_unknown()} — S${String(item.season_number).padStart(2, "0")}E${String(item.episode_number).padStart(2, "0")}`;
+  return item.title ?? m.common_unknown();
 }
 
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.floor(months / 12)}y ago`;
-}
 
 function starFill(rating: number, star: number): "full" | "half" | "empty" {
   if (rating >= star * 2) return "full";
@@ -105,7 +96,7 @@ function starFill(rating: number, star: number): "full" | "half" | "empty" {
 }
 ---
 
-<Base title={profile ? `${profile.display_name}'s Profile` : "Profile"}>
+<Base title={profile ? m.profile_page_title({ name: profile.display_name }) : m.nav_profile()}>
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
   <div class="max-w-5xl mx-auto py-8 space-y-8">
 
@@ -116,10 +107,10 @@ function starFill(rating: number, star: number): "full" | "half" | "empty" {
           <div class="w-20 h-20 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-6">
             <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-zinc-500"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           </div>
-          <h2 class="text-2xl font-black text-zinc-100 tracking-tight mb-2">Access Restricted</h2>
+          <h2 class="text-2xl font-black text-zinc-100 tracking-tight mb-2">{m.profile_access_restricted()}</h2>
           <p class="text-zinc-400 font-medium mb-8">{error}</p>
           <a href="/" class="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-xl transition-all inline-block">
-            Return Home
+            {m.common_return_home()}
           </a>
         </div>
       </div>
@@ -167,7 +158,7 @@ function starFill(rating: number, star: number): "full" | "half" | "empty" {
                 {isOwner ? (
                   <a href="/user-settings" class="inline-flex items-center gap-1.5 px-3 py-1 bg-black/50 hover:bg-black/70 text-white/80 hover:text-white rounded-full text-xs font-bold transition-all border border-white/20 self-center sm:self-auto shrink-0 backdrop-blur-sm">
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                    Edit Profile
+                    {m.profile_edit()}
                   </a>
                 ) : currentUser && (
                   <button
@@ -179,12 +170,12 @@ function starFill(rating: number, star: number): "full" | "half" | "empty" {
                     {profile.is_following ? (
                       <>
                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-                        Following
+                        {m.follow_following()}
                       </>
                     ) : (
                       <>
                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg>
-                        Follow
+                        {m.follow_follow()}
                       </>
                     )}
                   </button>
@@ -194,7 +185,7 @@ function starFill(rating: number, star: number): "full" | "half" | "empty" {
               <div class="flex flex-wrap justify-center sm:justify-start items-center gap-4 text-sm text-white/70 font-medium" style="text-shadow:0 1px 4px rgba(0,0,0,0.8)">
                 <span class="flex items-center gap-1.5">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                  Joined {joinedDate}
+                  {m.profile_joined({ date: joinedDate })}
                 </span>
                 {profile.country && (
                   <span class="flex items-center gap-1.5">
@@ -211,25 +202,25 @@ function starFill(rating: number, star: number): "full" | "half" | "empty" {
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-5 text-center">
             <p class="text-3xl font-black text-zinc-100 tracking-tight">{profile.movies_watched}</p>
-            <p class="text-xs text-zinc-500 font-bold uppercase tracking-widest mt-1">Movies Watched</p>
+            <p class="text-xs text-zinc-500 font-bold uppercase tracking-widest mt-1">{m.profile_movies_watched()}</p>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-5 text-center">
             <p class="text-3xl font-black text-zinc-100 tracking-tight">{profile.shows_watched}</p>
-            <p class="text-xs text-zinc-500 font-bold uppercase tracking-widest mt-1">Shows Watched</p>
+            <p class="text-xs text-zinc-500 font-bold uppercase tracking-widest mt-1">{m.profile_shows_watched()}</p>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-5 text-center">
             <p class="text-3xl font-black text-zinc-100 tracking-tight">{profile.total_collected}</p>
-            <p class="text-xs text-zinc-500 font-bold uppercase tracking-widest mt-1">Items Collected</p>
+            <p class="text-xs text-zinc-500 font-bold uppercase tracking-widest mt-1">{m.profile_items_collected()}</p>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-5 text-center">
             <p class="text-3xl font-black text-zinc-100 tracking-tight">{profile.total_rated}</p>
-            <p class="text-xs text-zinc-500 font-bold uppercase tracking-widest mt-1">Items Rated</p>
+            <p class="text-xs text-zinc-500 font-bold uppercase tracking-widest mt-1">{m.profile_items_rated()}</p>
           </div>
         </div>
         <div class="flex justify-center">
           <a href={`/stats/${profile.id}`} class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 hover:text-zinc-100 bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 rounded-xl transition-all duration-200">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
-            View Statistics
+            {m.profile_view_statistics()}
           </a>
         </div>
 
@@ -244,10 +235,10 @@ function starFill(rating: number, star: number): "full" | "half" | "empty" {
               <section>
                 <div class="flex items-center justify-between mb-4">
                   <h2 class="section-headline">
-Recently Watched Movies
+{m.section_recently_watched_movies()}
                   </h2>
                   <a href={`/recently-watched-movies/${id}`} class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-                    See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+                    {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
                   </a>
                 </div>
                 <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none">
@@ -277,10 +268,10 @@ Recently Watched Movies
               <section>
                 <div class="flex items-center justify-between mb-4">
                   <h2 class="section-headline">
-Recently Watched Shows
+{m.section_recently_watched_shows()}
                   </h2>
                   <a href={`/recently-watched-shows/${id}`} class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-                    See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+                    {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
                   </a>
                 </div>
                 <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none">
@@ -327,10 +318,10 @@ Recently Watched Shows
               <section>
                 <div class="flex items-center justify-between mb-4">
                   <h2 class="section-headline">
-Top Rated Movies
+{m.section_top_rated_movies()}
                   </h2>
                   <a href={`/top-rated-movies/${id}`} class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-                    See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+                    {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
                   </a>
                 </div>
                 <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none">
@@ -347,7 +338,7 @@ Top Rated Movies
                           )}
                           <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                           <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full border border-zinc-800 flex items-center gap-0.5">
-                            <span class="text-[10px] leading-none">★</span> {item.user_rating}
+                            <span class="text-[10px] leading-none">★</span> {formatNumber(item.user_rating, { maximumFractionDigits: 1 })}
                           </div>
                         </div>
                         <p class="text-sm font-bold text-zinc-300 truncate group-hover:text-zinc-100 transition-colors leading-snug">{item.title}</p>
@@ -363,10 +354,10 @@ Top Rated Movies
               <section>
                 <div class="flex items-center justify-between mb-4">
                   <h2 class="section-headline">
-Top Rated Shows
+{m.section_top_rated_shows()}
                   </h2>
                   <a href={`/top-rated-shows/${id}`} class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-                    See All <span class="group-hover/all:translate-x-1 transition-transform">→</span>
+                    {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
                   </a>
                 </div>
                 <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none">
@@ -383,7 +374,7 @@ Top Rated Shows
                           )}
                           <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                           <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full border border-zinc-800 flex items-center gap-0.5">
-                            <span class="text-[10px] leading-none">★</span> {item.user_rating}
+                            <span class="text-[10px] leading-none">★</span> {formatNumber(item.user_rating, { maximumFractionDigits: 1 })}
                           </div>
                         </div>
                         <p class="text-sm font-bold text-zinc-300 truncate group-hover:text-zinc-100 transition-colors leading-snug">{item.title}</p>
@@ -398,7 +389,7 @@ Top Rated Shows
             {profile.recent_comments.length > 0 && (
               <section>
                 <h2 class="section-headline mb-4">
-Recent Comments
+{m.profile_recent_comments()}
                 </h2>
                 <div class="space-y-3">
                   {profile.recent_comments.map((comment) => {
@@ -425,7 +416,7 @@ Recent Comments
                             <button
                               class="delete-recent-comment cursor-pointer p-1 text-zinc-500 hover:text-red-400 transition-colors rounded-lg hover:bg-zinc-800"
                               data-id={comment.id}
-                              title="Delete Comment"
+                              title={m.comments_delete()}
                             >
                               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                             </button>
@@ -442,7 +433,7 @@ Recent Comments
             {profile.lists.length > 0 && (
               <section>
                 <h2 class="section-headline mb-4">
-Lists
+{m.nav_lists()}
                 </h2>
                 <div class="space-y-2">
                   {profile.lists.map((list) => (
@@ -463,7 +454,7 @@ Lists
             {profile.recently_watched_movies.length === 0 && profile.recently_watched_shows.length === 0 && profile.top_rated_movies.length === 0 && profile.top_rated_shows.length === 0 && profile.recent_comments.length === 0 && profile.lists.length === 0 && (
               <div class="bg-zinc-900/40 border border-zinc-800/60 rounded-2xl p-10 text-center">
                 <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-zinc-700 mx-auto mb-4"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-                <p class="text-zinc-500 font-medium">No activity to display yet.</p>
+                <p class="text-zinc-500 font-medium">{m.profile_no_activity()}</p>
               </div>
             )}
 
@@ -475,12 +466,12 @@ Lists
             <!-- Bio -->
             <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
               <h3 class="group-label mb-4">
-                About
+                {m.profile_about()}
               </h3>
               {profile.bio ? (
                 <p class="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{profile.bio}</p>
               ) : (
-                <p class="text-sm text-zinc-400 italic">No bio yet.</p>
+                <p class="text-sm text-zinc-400 italic">{m.profile_no_bio()}</p>
               )}
             </div>
 
@@ -488,16 +479,16 @@ Lists
             {(profile.movie_genres.length > 0 || profile.show_genres.length > 0) && (
               <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
                 <h3 class="group-label mb-4">
-                  Favorite Genres
+                  {m.profile_favorite_genres()}
                 </h3>
 
                 {profile.movie_genres.length > 0 && (
                   <div class="mb-4">
-                    <p class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Movies</p>
+                    <p class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">{m.common_movies()}</p>
                     <div class="flex flex-wrap gap-1.5">
                       {profile.movie_genres.map((g) => (
                         <span class="px-2.5 py-1 bg-sky-500/10 border border-sky-500/20 text-sky-400 text-[10px] font-bold uppercase rounded-full tracking-wide">
-                          {g}
+                          {genreLabel(g)}
                         </span>
                       ))}
                     </div>
@@ -506,11 +497,11 @@ Lists
 
                 {profile.show_genres.length > 0 && (
                   <div>
-                    <p class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Shows</p>
+                    <p class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">{m.common_shows()}</p>
                     <div class="flex flex-wrap gap-1.5">
                       {profile.show_genres.map((g) => (
                         <span class="px-2.5 py-1 bg-purple-500/10 border border-purple-500/20 text-purple-400 text-[10px] font-bold uppercase rounded-full tracking-wide">
-                          {g}
+                          {genreLabel(g)}
                         </span>
                       ))}
                     </div>
@@ -527,7 +518,7 @@ Lists
                     <h3 class="text-xs font-black text-zinc-500 uppercase tracking-[0.2em] mb-4 flex items-center justify-between">
                       <span class="flex items-center gap-2">
                         <span class="w-1 h-3.5 bg-yellow-500 rounded-full"></span>
-                        Following
+                        {m.profile_following()}
                       </span>
                       <span class="text-zinc-400 font-bold">{profile.following_count}</span>
                     </h3>
@@ -553,7 +544,7 @@ Lists
                     <h3 class="text-xs font-black text-zinc-500 uppercase tracking-[0.2em] mb-4 flex items-center justify-between">
                       <span class="flex items-center gap-2">
                         <span class="w-1 h-3.5 bg-yellow-500 rounded-full"></span>
-                        Followers
+                        {m.profile_followers()}
                       </span>
                       <span class="text-zinc-400 font-bold">{profile.follower_count}</span>
                     </h3>
@@ -619,8 +610,8 @@ Lists
             : 'bg-blue-600/70 hover:bg-blue-500/80 text-white border-blue-400/40'
         );
         btn.innerHTML = nowFollowing
-          ? `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Following`
-          : `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg> Follow`;
+          ? `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> ${m.follow_following()}`
+          : `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg> ${m.follow_follow()}`;
       } catch {
         // silently ignore — user sees no change
       } finally {
@@ -635,7 +626,7 @@ Lists
       delBtn.parentNode?.replaceChild(clone, delBtn);
       clone.addEventListener('click', async (e) => {
         e.preventDefault();
-        const ok = await window.showConfirm('Delete comment?', 'This cannot be undone.');
+        const ok = await (window as any).showConfirm(m.comments_delete_confirm_title(), m.common_cannot_be_undone());
         if (!ok) return;
 
         const commentId = (clone as HTMLElement).dataset.id;
@@ -653,7 +644,7 @@ Lists
             setTimeout(() => card.remove(), 300);
           }
         } catch {
-          alert('Failed to delete comment');
+          alert(m.comments_delete_failed());
         }
       });
     });

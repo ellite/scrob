@@ -1,5 +1,8 @@
 import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
+import { paraglideMiddleware } from "./paraglide/server.js";
+import { cookieMaxAge, cookieName, isLocale } from "./paraglide/runtime.js";
+import { setAccountLocale, withRequestRegion } from "./lib/ui-locale";
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -162,9 +165,52 @@ export const onRequest = defineMiddleware(async (context, next) => {
     context.locals.hasRpdbKey = !!context.locals.settings?.has_rpdb_key;
   }
 
-  const response = await next();
+  // UI language. Paraglide keeps it per-request (AsyncLocalStorage) for every
+  // m.*() call made while rendering; see astro.config.mjs for the resolution
+  // order. The account preference (user_settings.ui_language) is the source of
+  // truth for signed-in users, so hand it to the custom-account strategy, which
+  // renders this very request in it - a new device or browser has no cookie yet
+  // and should not have to wait for a visit to /settings. A null preference
+  // means "follow the browser" and falls through to the cookie (e.g. one picked
+  // on the login page) and then Accept-Language.
+  const accountLocale = context.locals.settings?.ui_language;
+  if (accountLocale && isLocale(accountLocale)) {
+    setAccountLocale(context.request, accountLocale);
+    // Client-side <script>s resolve the locale on their own, from the cookie -
+    // they can't see locals - so mirror the preference into it or the SSR HTML
+    // and anything rendered in the browser would disagree.
+    if (context.cookies.get(cookieName)?.value !== accountLocale) {
+      context.cookies.set(cookieName, accountLocale, { path: "/", sameSite: "lax", maxAge: cookieMaxAge });
+    }
+  }
+
+  // The backend proxy renders no UI text, so it skips both wrappers below.
+  // paraglideMiddleware clones the request it wraps, and for an upload (a
+  // backup restore, a Trakt export) that clone keeps a second copy of the whole
+  // body in memory until the request ends.
+  const response = pathname.startsWith("/api/")
+    ? await next()
+    : await withRequestRegion(context.request, () =>
+        // Dates and numbers also follow the viewer's region (lib/format.ts).
+        paraglideMiddleware(context.request, () => next()),
+      );
   for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
     response.headers.set(header, value);
+  }
+  // The same URL now renders differently depending on the ui_language cookie and
+  // Accept-Language. Paraglide only sets Vary on its own redirects (which the
+  // cookie strategy never triggers), so declare it here: a shared cache in front
+  // of Scrob - nginx, a CDN - would otherwise serve one user's language to the
+  // next. Merged rather than overwritten so an upstream Vary survives.
+  // HTML only: the proxy's JSON and images don't depend on either. Vary: Cookie
+  // on a poster served `immutable` ties its cache entry to every cookie the
+  // browser sends (session token, viewer_tz, ...): the browser refetches it
+  // whenever one of them changes, and a shared cache keeps a copy per session.
+  if (response.headers.get("content-type")?.includes("text/html")) {
+    const vary = new Set((response.headers.get("vary") ?? "").split(",").map(v => v.trim()).filter(Boolean));
+    vary.add("Cookie");
+    vary.add("Accept-Language");
+    response.headers.set("Vary", [...vary].join(", "));
   }
   return response;
 });

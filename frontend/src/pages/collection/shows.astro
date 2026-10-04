@@ -5,6 +5,9 @@ import Pagination from "../../components/Pagination.astro";
 import FilterPanel from "../../components/FilterPanel.astro";
 import SortButton from "../../components/SortButton.astro";
 import { api } from "../../lib/api";
+import { formatNumber } from "../../lib/format";
+import { genreLabel, showStatusLabel, sortByLabel } from "../../lib/labels";
+import { m } from "../../paraglide/messages.js";
 export const prerender = false;
 
 const sort = Astro.url.searchParams.get("sort") ?? "title";
@@ -48,15 +51,15 @@ if (inList) baseParams.set("in_list", inList);
 const baseUrl = `/collection/shows?${baseParams.toString()}`;
 ---
 
-<Base title="My Shows">
+<Base title={m.collection_my_shows()}>
   <div class="flex items-center gap-1 mb-6 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit">
-    <a href="/shows" class="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors active:scale-95 active:opacity-70">Explore</a>
-    <a href="/collection/shows" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors active:scale-95 active:opacity-70">My Collection</a>
+    <a href="/shows" class="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors active:scale-95 active:opacity-70">{m.explore_tab()}</a>
+    <a href="/collection/shows" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors active:scale-95 active:opacity-70">{m.explore_my_collection()}</a>
   </div>
   <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
     <div class="flex items-baseline gap-3">
-      <h1 class="page-title">My Shows</h1>
-      <span class="text-zinc-500 font-medium">{data.total_results.toLocaleString()} total</span>
+      <h1 class="page-title">{m.collection_my_shows()}</h1>
+      <span class="text-zinc-500 font-medium">{m.common_total_count({ count: formatNumber(data.total_results) })}</span>
     </div>
 
     <!-- Sort & filter controls -->
@@ -65,11 +68,11 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
         id="show-sort"
         current={sort}
         options={[
-          { value: "title", label: "A–Z" },
-          { value: "rating", label: "Top" },
-          { value: "release_date", label: "Newest" },
-          { value: "created_at", label: "Recently Added" },
-          { value: "last_watched", label: "Recently Watched" },
+          { value: "title", label: m.sort_az() },
+          { value: "rating", label: m.sort_top() },
+          { value: "release_date", label: m.sort_newest() },
+          { value: "created_at", label: m.sort_recently_added() },
+          { value: "last_watched", label: m.sort_recently_watched() },
         ]}
       />
       <FilterPanel
@@ -77,11 +80,11 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
         basePath="/collection/shows"
         currentSort={sort}
         sections={[
-          { key: "genre", label: "Genre", options: TV_GENRES.map((g) => ({ value: g, label: g })), selected: genres },
-          { key: "year", label: "Year", selected: years.map(String), dynamic: true, endpoint: "/api/proxy/shows/years" },
-          { key: "status", label: "Status", options: TV_STATUSES.map((s) => ({ value: s, label: s })), selected: statuses },
-          { key: "watched", label: "Progress", options: [{ value: "watched", label: "Started" }, { value: "unwatched", label: "Not Started" }], selected: watched },
-          { key: "in_list", label: "Lists", options: [{ value: "in", label: "In a List" }, { value: "out", label: "Not In a List" }], selected: inList ? [inList] : [], multi: false },
+          { key: "genre", label: m.filter_genre(), options: sortByLabel(TV_GENRES.map((g) => ({ value: g, label: genreLabel(g) }))), selected: genres },
+          { key: "year", label: m.filter_year(), selected: years.map(String), dynamic: true, endpoint: "/api/proxy/shows/years" },
+          { key: "status", label: m.filter_status(), options: TV_STATUSES.map((s) => ({ value: s, label: showStatusLabel(s) })), selected: statuses },
+          { key: "watched", label: m.filter_progress(), options: [{ value: "watched", label: m.filter_started() }, { value: "unwatched", label: m.filter_not_started() }], selected: watched },
+          { key: "in_list", label: m.filter_lists(), options: [{ value: "in", label: m.filter_in_a_list() }, { value: "out", label: m.filter_not_in_a_list() }], selected: inList ? [inList] : [], multi: false },
         ]}
       />
     </div>
@@ -90,11 +93,11 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
   {data.results.length === 0 ? (
     <div class="bg-zinc-900/50 rounded-2xl p-12 text-center border border-dashed border-zinc-800">
       <div class="text-zinc-500 mb-4 text-lg">
-        {hasFilters ? "No shows match the selected filters" : "Your library is empty"}
+        {hasFilters ? m.collection_no_shows_match() : m.collection_library_empty()}
       </div>
       {!hasFilters && (
         <a href="/settings" class="inline-flex items-center px-6 py-3 bg-zinc-100 text-zinc-950 font-bold rounded-xl hover:bg-zinc-200 transition">
-          Set up Sync
+          {m.collection_set_up_sync()}
         </a>
       )}
     </div>
