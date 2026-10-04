@@ -202,9 +202,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // cookie strategy never triggers), so declare it here: a shared cache in front
   // of Scrob - nginx, a CDN - would otherwise serve one user's language to the
   // next. Merged rather than overwritten so an upstream Vary survives.
-  const vary = new Set((response.headers.get("vary") ?? "").split(",").map(v => v.trim()).filter(Boolean));
-  vary.add("Cookie");
-  vary.add("Accept-Language");
-  response.headers.set("Vary", [...vary].join(", "));
+  // HTML only: the proxy's JSON and images don't depend on either. Vary: Cookie
+  // on a poster served `immutable` ties its cache entry to every cookie the
+  // browser sends (session token, viewer_tz, ...): the browser refetches it
+  // whenever one of them changes, and a shared cache keeps a copy per session.
+  if (response.headers.get("content-type")?.includes("text/html")) {
+    const vary = new Set((response.headers.get("vary") ?? "").split(",").map(v => v.trim()).filter(Boolean));
+    vary.add("Cookie");
+    vary.add("Accept-Language");
+    response.headers.set("Vary", [...vary].join(", "));
+  }
   return response;
 });
