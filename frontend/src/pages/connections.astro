@@ -3104,7 +3104,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           const currentProfile = document.getElementById('radarr_quality_profile')?.value;
           populateSelect('radarr_root_folder', (data.radarr.root_folders ?? []).map(f => ({
             value: f.path,
-            label: `${f.path} (${(f.freeSpace / 1024 ** 3).toFixed(1)} GB free)`
+            label: m.admin_folder_free_space({ path: f.path, free: formatNumber(f.freeSpace / 1024 ** 3, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })
           })), currentFolder);
           populateSelect('radarr_quality_profile', data.radarr.quality_profiles ?? [], currentProfile);
           const tagContainer = document.getElementById('radarr_tags_list');
@@ -3121,7 +3121,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           const currentProfile = document.getElementById('sonarr_quality_profile')?.value;
           populateSelect('sonarr_root_folder', (data.sonarr.root_folders ?? []).map(f => ({
             value: f.path,
-            label: `${f.path} (${(f.freeSpace / 1024 ** 3).toFixed(1)} GB free)`
+            label: m.admin_folder_free_space({ path: f.path, free: formatNumber(f.freeSpace / 1024 ** 3, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })
           })), currentFolder);
           populateSelect('sonarr_quality_profile', data.sonarr.quality_profiles ?? [], currentProfile);
           const tagContainer = document.getElementById('sonarr_tags_list');

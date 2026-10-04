@@ -68,14 +68,14 @@ const sortOptions = isCollection
       { value: "collection_asc", label: m.progress_sort_least_collected() },
       { value: "collection_desc", label: m.progress_sort_most_collected() },
       { value: "remaining", label: m.progress_sort_episodes_missing() },
-      { value: "title", label: "Title (A-Z)" },
+      { value: "title", label: m.sort_az() },
     ]
   : [
       { value: "recent", label: m.progress_sort_recent() },
       { value: "watch_desc", label: m.progress_sort_most_watched() },
       { value: "watch_asc", label: m.progress_sort_least_watched() },
       { value: "remaining", label: m.progress_sort_episodes_left() },
-      { value: "title", label: "Title (A-Z)" },
+      { value: "title", label: m.sort_az() },
     ];
 ---
 
