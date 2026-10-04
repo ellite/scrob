@@ -5,7 +5,7 @@ import SortButton from "../components/SortButton.astro";
 import { api, tmdbImageUrl, type ShowProgress } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
 import { m } from "../paraglide/messages.js";
-import { getLocale } from "../paraglide/runtime.js";
+import { formatDate } from "../lib/format";
 export const prerender = false;
 
 const { token } = Astro.locals;
@@ -46,8 +46,8 @@ const showHref = (s: ShowProgress) =>
 
 const fmtLastWatched = (iso: string | null) => {
   if (!iso) return "";
-  return new Date(iso + (iso.endsWith("Z") || iso.includes("+") ? "" : "Z"))
-    .toLocaleDateString(getLocale(), { month: "short", day: "numeric", year: "numeric" });
+  return formatDate(iso + (iso.endsWith("Z") || iso.includes("+") ? "" : "Z"),
+    { month: "short", day: "numeric", year: "numeric" });
 };
 
 // Page is always dropped here (Pagination re-adds it); a sort matching the

@@ -2,7 +2,7 @@ import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
 import { paraglideMiddleware } from "./paraglide/server.js";
 import { cookieMaxAge, cookieName, isLocale } from "./paraglide/runtime.js";
-import { setAccountLocale } from "./lib/ui-locale";
+import { setAccountLocale, withRequestRegion } from "./lib/ui-locale";
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -184,7 +184,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
   }
 
-  const response = await paraglideMiddleware(context.request, () => next());
+  // Dates and numbers also follow the viewer's region (lib/format.ts).
+  const response = await withRequestRegion(context.request, () =>
+    paraglideMiddleware(context.request, () => next()),
+  );
   for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
     response.headers.set(header, value);
   }

@@ -1926,8 +1926,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
 <script>
   import { m } from '../paraglide/messages.js';
-  import { formatList } from '../lib/format';
-  import { getLocale } from '../paraglide/runtime.js';
+  import { formatDateTime, formatList, formatNumber } from '../lib/format';
 
   const appData = document.getElementById('app-data');
   const token = appData?.dataset.token ?? '';
@@ -3769,7 +3768,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             if (rootSelect) {
               const current = rootSelect.value;
               rootSelect.innerHTML = `<option value="">${esc(m.admin_select_folder())}</option>` + 
-                profData.root_folders.map(f => `<option value="${esc(f.path)}" ${f.path === current ? 'selected' : ''}>${esc(m.admin_folder_free_space({ path: f.path, free: (f.freeSpace / 1024**3).toLocaleString(getLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }))}</option>`).join('');
+                profData.root_folders.map(f => `<option value="${esc(f.path)}" ${f.path === current ? 'selected' : ''}>${esc(m.admin_folder_free_space({ path: f.path, free: formatNumber(f.freeSpace / 1024**3, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }))}</option>`).join('');
             }
             if (qualSelect) {
               const current = qualSelect.value;
@@ -3808,7 +3807,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             if (rootSelect) {
               const current = rootSelect.value;
               rootSelect.innerHTML = `<option value="">${esc(m.admin_select_folder())}</option>` + 
-                profData.root_folders.map(f => `<option value="${esc(f.path)}" ${f.path === current ? 'selected' : ''}>${esc(m.admin_folder_free_space({ path: f.path, free: (f.freeSpace / 1024**3).toLocaleString(getLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }))}</option>`).join('');
+                profData.root_folders.map(f => `<option value="${esc(f.path)}" ${f.path === current ? 'selected' : ''}>${esc(m.admin_folder_free_space({ path: f.path, free: formatNumber(f.freeSpace / 1024**3, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }))}</option>`).join('');
             }
             if (qualSelect) {
               const current = qualSelect.value;
@@ -5659,7 +5658,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const formatJobDate = (job: any) => {
         const raw = job.updated_at as string;
         const stamped = raw.endsWith('Z') || raw.includes('+') ? raw : raw + 'Z';
-        return new Date(stamped).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+        return formatDateTime(stamped, { dateStyle: 'short', timeStyle: 'short' });
       };
 
       // Pull unmatched-TMDB / enrichment vs push lookup-failed must not share a

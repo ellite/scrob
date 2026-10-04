@@ -10,20 +10,67 @@ type DateInput = Date | string | number;
 
 const toDate = (d: DateInput) => (d instanceof Date ? d : new Date(d));
 
+// Dates and numbers follow the viewer's region as well as the UI language. UI
+// locales are bare languages, which Intl reads with a default region ("en" as
+// en-US): on its own, that would give a British viewer - or one whose language
+// isn't shipped and falls back to English - 10/3/2026 instead of 03/10/2026,
+// where the browser's own locale used to apply. So the region of the viewer's
+// first preferred language is grafted onto the UI language: en-GB, en-DE
+// (03/10/2026, 24h), fr-CA (2026-10-03). A pair Intl has no data for (en-BR)
+// resolves to the bare language. The first preferred language is
+// navigator.languages[0] in the browser and the first Accept-Language entry on
+// the server - the same tag, so SSR and client-rendered dates agree.
+let serverRegion: () => string | undefined = () => undefined;
+
+/** Hands the server the current request's region: navigator doesn't exist there (see lib/ui-locale.ts). */
+export function setServerRegionResolver(resolve: () => string | undefined): void {
+  serverRegion = resolve;
+}
+
+/** The region subtag of a language tag ("en-GB" -> "GB"), inferred when it has none ("de" -> "DE"). */
+export function regionOf(tag: string | undefined): string | undefined {
+  if (!tag) return undefined;
+  try {
+    return new Intl.Locale(tag).maximize().region;
+  } catch {
+    return undefined; // "*" or a malformed tag
+  }
+}
+
+let browserRegion: string | undefined | null = null;
+
+function viewerRegion(): string | undefined {
+  if (typeof window === "undefined") return serverRegion();
+  if (browserRegion === null) browserRegion = regionOf(navigator.languages?.[0] ?? navigator.language);
+  return browserRegion;
+}
+
+/** The UI language combined with the viewer's region ("en-GB"), for date and number formats. */
+export function formatLocale(): string {
+  const language = getLocale();
+  const region = viewerRegion();
+  if (!region) return language;
+  try {
+    return new Intl.Locale(language, { region }).baseName;
+  } catch {
+    return language;
+  }
+}
+
 export function formatDate(date: DateInput, options?: Intl.DateTimeFormatOptions): string {
-  return toDate(date).toLocaleDateString(getLocale(), options);
+  return toDate(date).toLocaleDateString(formatLocale(), options);
 }
 
 export function formatTime(date: DateInput, options?: Intl.DateTimeFormatOptions): string {
-  return toDate(date).toLocaleTimeString(getLocale(), options);
+  return toDate(date).toLocaleTimeString(formatLocale(), options);
 }
 
 export function formatDateTime(date: DateInput, options?: Intl.DateTimeFormatOptions): string {
-  return toDate(date).toLocaleString(getLocale(), options);
+  return toDate(date).toLocaleString(formatLocale(), options);
 }
 
 export function formatNumber(n: number, options?: Intl.NumberFormatOptions): string {
-  return n.toLocaleString(getLocale(), options);
+  return n.toLocaleString(formatLocale(), options);
 }
 
 export function formatRelative(value: number, unit: Intl.RelativeTimeFormatUnit, options?: Intl.RelativeTimeFormatOptions): string {

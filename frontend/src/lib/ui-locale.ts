@@ -13,7 +13,14 @@
 // variable: two requests are in flight at once under any real load, and a shared
 // variable would hand one user's language to another. The map is weak, so an
 // entry disappears with the request that owns it.
+//
+// It also hands the viewer's region to the date/number helpers in format.ts
+// during server rendering. That value is per request too, but those helpers run
+// deep inside components with no Request at hand, so it travels in an
+// AsyncLocalStorage rather than in a map keyed on the Request.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { defineCustomServerStrategy, type Locale } from "../paraglide/runtime.js";
+import { regionOf, setServerRegionResolver } from "./format";
 
 export const ACCOUNT_STRATEGY = "custom-account";
 
@@ -29,3 +36,14 @@ defineCustomServerStrategy(ACCOUNT_STRATEGY, {
   // next strategy, which is the ui_language cookie.
   getLocale: (request?: Request) => (request ? accountLocales.get(request) : undefined),
 });
+
+const requestRegions = new AsyncLocalStorage<string | undefined>();
+setServerRegionResolver(() => requestRegions.getStore());
+
+/** Runs `render` with the request's region visible to formatLocale() in format.ts. */
+export function withRequestRegion<T>(request: Request, render: () => T): T {
+  // The first Accept-Language entry is the tag the browser exposes as
+  // navigator.languages[0], which client-side formatting reads.
+  const preferred = request.headers.get("accept-language")?.split(",")[0]?.split(";")[0]?.trim();
+  return requestRegions.run(regionOf(preferred), render);
+}
