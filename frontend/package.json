@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@inlang/paraglide-js": "^2.25.2",
+    "@inlang/plugin-m-function-matcher": "^2.2.15",
     "@inlang/plugin-message-format": "^4.4.4"
   }
 }

@@ -689,6 +689,8 @@ User-facing text lives in message catalogs in `frontend/messages/`, compiled by 
 2. Call it in frontmatter or in a `<script>`: `import { m } from "../paraglide/messages.js"`, then `m.history_empty()`, or `m.episodes_left({ count })` with parameters. A key that doesn't exist fails `npm run build`.
 3. Format dates and numbers with the helpers in `frontend/src/lib/format.ts` (`formatDate`, `formatNumber`, ...) rather than `toLocaleString()`, so they follow the UI language and the viewer's region.
 
+In VS Code, the [Sherlock](https://marketplace.visualstudio.com/items?itemName=inlang.vs-code-extension) extension shows each message's English text next to its `m.*()` call, and extracts selected text into a new key.
+
 Plurals use the variant format (see `episodes_left` in `en.json`), with a `=*` catch-all. A message rendered with `set:html` may contain markup: pass every interpolated value through `escapeHtml` from `format.ts`.
 
 To add a language, add its code to `locales` in `frontend/project.inlang/settings.json`. It appears in the language pickers right away, in English until its catalog comes back from Crowdin.
