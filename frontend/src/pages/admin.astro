@@ -1780,7 +1780,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       if (data.limit_gb && data.limit_gb > 0) {
         const limitBytes = data.limit_gb * 1073741824;
         const pct = Math.min(100, (data.total_size_bytes / limitBytes) * 100);
-        pctEl.textContent = `${pct.toFixed(1)}%`;
+        pctEl.textContent = formatNumber(pct / 100, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
         progressWrap.classList.remove('hidden');
         progressBar.style.width = `${pct}%`;
         progressBar.className = `h-full rounded-full transition-all duration-500 ${

@@ -223,7 +223,7 @@ try {
 
 <script>
   import { m } from '../../paraglide/messages.js';
-  import { formatDate, formatNumber } from '../../lib/format';
+  import { formatDate, formatNumber, formatRating } from '../../lib/format';
   import { formatShortDuration } from '../../lib/media-format';
 
   const token = (window as any).__AUTH_TOKEN__ ?? '';
@@ -602,7 +602,7 @@ try {
         <div class="flex items-center justify-between bg-zinc-800/40 rounded-xl px-4 py-3">
           <span class="text-sm font-bold text-zinc-300">${label}</span>
           ${value != null
-            ? `<span class="flex items-center gap-1.5 font-black text-lg" style="color:${textColor}"><span class="text-sm text-yellow-400">★</span>${value.toFixed(1)}</span>`
+            ? `<span class="flex items-center gap-1.5 font-black text-lg" style="color:${textColor}"><span class="text-sm text-yellow-400">★</span>${formatRating(value)}</span>`
             : `<span class="text-zinc-600 text-sm font-medium">${m.stats_no_ratings()}</span>`
           }
         </div>
@@ -626,7 +626,7 @@ try {
           const color = isPeak ? 'rgba(14,165,233,0.9)' : 'rgba(63,63,70,0.8)';
           return `
             <div style="flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px">
-              <span style="font-size:10px;font-weight:700;color:${isPeak ? 'rgba(14,165,233,0.9)' : '#52525b'}">${d.avg > 0 ? d.avg.toFixed(1) : ''}</span>
+              <span style="font-size:10px;font-weight:700;color:${isPeak ? 'rgba(14,165,233,0.9)' : '#52525b'}">${d.avg > 0 ? formatNumber(d.avg, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : ''}</span>
               <div style="height:${Math.max(pct, 3)}%;width:100%;background:${color};border-radius:4px 4px 0 0" title="${m.stats_weekday_tooltip({ day: dayLabel(d.day), avg: formatNumber(d.avg) })}"></div>
               <span style="font-size:11px;font-weight:800;color:${isPeak ? '#e4e4e7' : '#71717a'};text-transform:uppercase;letter-spacing:.05em">${dayLabel(d.day)}</span>
             </div>

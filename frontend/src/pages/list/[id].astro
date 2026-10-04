@@ -412,6 +412,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
 
 <script>
   import { m } from '../../paraglide/messages.js';
+  import { formatRating } from '../../lib/format';
 
   const token = (window as any).__AUTH_TOKEN__ ?? '';
   const listId = document.getElementById('list-page')?.dataset.listId;
@@ -747,7 +748,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
         const poster = window.ratingPosterUrl(tmdbImageUrl(item.poster_path, 'w300'), item, window.__HAS_RPDB__);
         const year = item.release_date?.slice(0, 4) || '';
         const isPerson = item.type === 'person';
-        const rating = item.tmdb_rating ? Number(item.tmdb_rating).toFixed(1) : '';
+        const rating = item.tmdb_rating ? formatRating(item.tmdb_rating) : '';
         const meta = [rating ? '★ ' + rating : '', year].filter(Boolean).join(' · ');
 
         const el = document.createElement('button');
@@ -812,7 +813,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
     const originalPoster = tmdbImageUrl(isSeason && media.show_poster_path ? media.show_poster_path : media.poster_path, 'w500');
     const poster = window.ratingPosterUrl(originalPoster, media, window.__HAS_RPDB__);
 
-    const rating = media.tmdb_rating ? Number(media.tmdb_rating).toFixed(1) : null;
+    const rating = media.tmdb_rating ? formatRating(media.tmdb_rating) : null;
     const year = media.release_date?.slice(0, 4) ?? '';
     const watched = media.watched ?? false;
     const inLists = media.in_lists ?? [];

@@ -73,6 +73,12 @@ export function formatNumber(n: number, options?: Intl.NumberFormatOptions): str
   return n.toLocaleString(formatLocale(), options);
 }
 
+// Ratings (TMDB's 0-10, the user's half-star steps) always show one decimal,
+// with the locale's separator: 8.5 in English, 8,5 in French.
+export function formatRating(value: number | string): string {
+  return formatNumber(Number(value), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
 export function formatRelative(value: number, unit: Intl.RelativeTimeFormatUnit, options?: Intl.RelativeTimeFormatOptions): string {
   return new Intl.RelativeTimeFormat(getLocale(), { numeric: "auto", ...options }).format(value, unit);
 }

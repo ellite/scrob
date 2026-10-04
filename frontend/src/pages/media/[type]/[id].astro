@@ -10,7 +10,7 @@ import ManualScrobble from "../../../components/ManualScrobble.astro";
 import TrailerButton from "../../../components/TrailerButton.astro";
 import { api, type MediaItem } from "../../../lib/api";
 import { ratingPosterUrl } from "../../../lib/posters";
-import { escapeHtml, formatDate } from "../../../lib/format";
+import { escapeHtml, formatDate, formatRating } from "../../../lib/format";
 import { languageName, movieStatusLabel } from "../../../lib/labels";
 import { m } from "../../../paraglide/messages.js";
 export const prerender = false;
@@ -33,7 +33,7 @@ if (!item && !error) {
 }
 
 const year = item?.release_date?.slice(0, 4) ?? null;
-const rating = item?.tmdb_rating ? item.tmdb_rating.toFixed(1) : null;
+const rating = item?.tmdb_rating ? formatRating(item.tmdb_rating) : null;
 const isEpisode = item?.type === "episode";
 const isMovie = item?.type === "movie";
 const collection = item?.collection;

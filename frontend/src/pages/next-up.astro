@@ -93,6 +93,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
 <script>
   import { m } from '../paraglide/messages.js';
   import { formatEpisodesLeft } from '../lib/media-format';
+  import { formatRating } from '../lib/format';
 
   const token = (window as any).__AUTH_TOKEN__ ?? '';
   function esc(str) {
@@ -167,7 +168,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
     const originalPosterSrc = tmdbImageUrl(item.show_poster_path || item.poster_path, 'w500');
     const posterSrc = window.ratingPosterUrl(originalPosterSrc, item, window.__HAS_RPDB__);
 
-    const rating = item.tmdb_rating ? Number(item.tmdb_rating).toFixed(1) : null;
+    const rating = item.tmdb_rating ? formatRating(item.tmdb_rating) : null;
     const sxe = item.season_number != null && item.episode_number != null
       ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`
       : null;

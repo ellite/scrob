@@ -969,7 +969,7 @@ const bottomNavItem = (active: boolean) =>
   <script>
     // ── Card action bar ────────────────────────────────────────────────────────
     import { m } from '../paraglide/messages.js';
-    import { formatDateTime } from '../lib/format';
+    import { formatDateTime, formatRating } from '../lib/format';
 
     const API = '/api/proxy';
     const TOKEN = () => (window as any).__AUTH_TOKEN__ ?? '';
@@ -1231,15 +1231,15 @@ const bottomNavItem = (active: boolean) =>
               btn.classList.add('bg-amber-500/20', 'text-amber-400', 'hover:bg-amber-500/40');
               btn.querySelector('svg')!.setAttribute('fill', 'currentColor');
               const rateSpans = btn.querySelectorAll('span');
-              rateSpans[0]!.textContent = i.toFixed(1);
+              rateSpans[0]!.textContent = formatRating(i);
               let mobileRateSpan = rateSpans[1];
               if (!mobileRateSpan) {
                 mobileRateSpan = document.createElement('span');
                 mobileRateSpan.className = 'md:hidden text-[9px] font-bold leading-none';
                 btn.appendChild(mobileRateSpan);
               }
-              mobileRateSpan.textContent = i.toFixed(1);
-              btn.title = m.rating_your_rating_value({ rating: i.toFixed(1) });
+              mobileRateSpan.textContent = formatRating(i);
+              btn.title = m.rating_your_rating_value({ rating: formatRating(i) });
             }
             closeRatingPopover();
           } catch { /* ignore */ }

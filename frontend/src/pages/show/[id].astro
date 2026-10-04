@@ -13,6 +13,7 @@ import RatingHeatmap from "../../components/RatingHeatmap.astro";
 import { api, type Show } from "../../lib/api";
 import { countAiredRegularSeasons } from "../../lib/seasonCount";
 import { ratingPosterUrl } from "../../lib/posters";
+import { formatRating } from "../../lib/format";
 export const prerender = false;
 
 const { id } = Astro.params;
@@ -64,7 +65,7 @@ const heatmapSeasons = seasons
 const hasHeatmapRatings = heatmapSeasons.some((s) => s.episodes.some((e) => e.rating && e.rating > 0));
 
 const year = show?.first_air_date?.slice(0, 4) ?? null;
-const rating = show?.tmdb_rating ? show.tmdb_rating.toFixed(1) : null;
+const rating = show?.tmdb_rating ? formatRating(show.tmdb_rating) : null;
 const originalLanguage = show?.original_language
   ? languageName(show.original_language)
   : null;
@@ -343,7 +344,7 @@ const posterPath = show
                                 {s.tmdb_rating != null && s.tmdb_rating > 0 && (
                                     <div class="bg-zinc-950 border border-zinc-800 px-2 py-1 rounded-xl flex items-center gap-1.5 shrink-0 shadow-sm">
                                         <span class="text-yellow-400 text-xs">★</span>
-                                        <span class="text-zinc-100 text-xs font-bold">{s.tmdb_rating.toFixed(1)}</span>
+                                        <span class="text-zinc-100 text-xs font-bold">{formatRating(s.tmdb_rating)}</span>
                                     </div>
                                 )}
                             </div>

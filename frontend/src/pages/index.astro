@@ -8,6 +8,7 @@ import { api, type ContinueWatchingItem, type MediaItem, tmdbImageUrl } from "..
 import { formatEpisodesLeft } from "../lib/media-format";
 import { episodeHref } from "../lib/episodeHref";
 import { m } from "../paraglide/messages.js";
+import { formatRating } from "../lib/format";
 
 const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -147,7 +148,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
             <a href={heroHref} class="block max-w-2xl group">
               {hero.tmdb_rating != null && hero.tmdb_rating > 0 && (
                 <span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-3 py-1 rounded-full mb-3">
-                  <span class="text-sm leading-none">★</span> {hero.tmdb_rating.toFixed(1)}
+                  <span class="text-sm leading-none">★</span> {formatRating(hero.tmdb_rating)}
                 </span>
               )}
               <h3 class="text-2xl sm:text-4xl font-black text-zinc-100 leading-tight mb-1 drop-shadow-lg group-hover:text-blue-200 transition-colors">
@@ -390,6 +391,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
 
 <script>
   import { m } from '../paraglide/messages.js';
+  import { formatRating } from '../lib/format';
 
   // Set by the layout for signed-in viewers only.
   const token = (window as any).__AUTH_TOKEN__ ?? '';
@@ -422,7 +424,7 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
             ? `/show/${item.tmdb_id}`
             : `/media/${item.type}/${item.tmdb_id}`;
           const year = item.release_date ? item.release_date.slice(0, 4) : null;
-          const rating = item.tmdb_rating ? Number(item.tmdb_rating).toFixed(1) : null;
+          const rating = item.tmdb_rating ? formatRating(item.tmdb_rating) : null;
           const raw = item.poster_path;
           const posterUrl = window.ratingPosterUrl(tmdbImageUrl(raw, 'w500'), item, window.__HAS_RPDB__);
           const typeLabel = isSeries ? m.common_show() : m.common_movie();

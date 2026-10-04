@@ -1,6 +1,6 @@
 ---
 import Base from "../../../../layouts/Base.astro";
-import { formatDate } from "../../../../lib/format";
+import { formatDate, formatRating } from "../../../../lib/format";
 import { m } from "../../../../paraglide/messages.js";
 import ActionBar from "../../../../components/ActionBar.astro";
 import CommentsSection from "../../../../components/CommentsSection.astro";
@@ -143,7 +143,7 @@ const activeOrder = season?.episode_order ?? "tmdb:aired";
               <span class="font-bold text-zinc-300">{m.show_episode_count_label({ count: season.episodes?.length || 0 })}</span>
               {season.tmdb_rating != null && season.tmdb_rating > 0 && (
                 <span class="flex items-center gap-1.5 text-yellow-400 font-black">
-                  <span class="text-base leading-none">★</span> {season.tmdb_rating.toFixed(1)}
+                  <span class="text-base leading-none">★</span> {formatRating(season.tmdb_rating)}
                 </span>
               )}
               {season.air_date && (
@@ -266,7 +266,7 @@ const activeOrder = season?.episode_order ?? "tmdb:aired";
                       {ep.tmdb_rating > 0 && (
                         <div class="bg-zinc-950 border border-zinc-800 px-2 py-1 rounded-xl flex items-center gap-1.5 shrink-0 shadow-sm">
                           <span class="text-yellow-400 text-xs">★</span>
-                          <span class="text-zinc-100 text-xs font-bold">{ep.tmdb_rating.toFixed(1)}</span>
+                          <span class="text-zinc-100 text-xs font-bold">{formatRating(ep.tmdb_rating)}</span>
                         </div>
                       )}
                     </div>

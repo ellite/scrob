@@ -7,6 +7,7 @@ import PosterFallback from "./PosterFallback.astro";
 import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
 import { m } from "../paraglide/messages.js";
+import { formatRating } from "../lib/format";
 
 interface Props {
   item: MediaItem;
@@ -20,7 +21,7 @@ const isCollection = item.type === "collection";
 const isShowLike = item.type === "series" || item.type === "episode";
 const fallbackKind = isPerson ? "person" : isShowLike ? "show" : "movie";
 const year = item.release_date?.slice(0, 4) ?? null;
-const rating = item.tmdb_rating ? item.tmdb_rating.toFixed(1) : null;
+const rating = item.tmdb_rating ? formatRating(item.tmdb_rating) : null;
 const isEpisode = item.type === "episode";
 // A "series" item with season_number set is a season list item (see routers/lists.py) -
 // it shares media with the whole show, so it's split out from the plain whole-show case.

@@ -74,10 +74,11 @@ const {
 } = Astro.props;
 
 import { m } from "../paraglide/messages.js";
+import { formatRating } from "../lib/format";
 
 const isSeries = mediaType === "series";
 const showRequest = !hideRequest && requestEnabled && (mediaType === "movie" || mediaType === "series");
-const ratingLabel = userRating != null ? userRating.toFixed(1) : m.rating_rate();
+const ratingLabel = userRating != null ? formatRating(userRating) : m.rating_rate();
 
 // Rating-popover header subtitle: callers pass the episode/season name in
 // ratingSubtitle; for an episode we prefix the SxxExx from the numbers we
