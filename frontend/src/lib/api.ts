@@ -1120,6 +1120,8 @@ export interface ProfileCommentItem {
   title: string | null;
   poster_path: string | null;
   created_at: string;
+  wetrakr_comment_id?: number | null;
+  wetrakr_source?: string | null;
 }
 
 export interface PublicProfile {
@@ -1180,6 +1182,8 @@ export interface Comment {
   is_spoiler: boolean;
   created_at: string;
   updated_at?: string | null;
+  wetrakr_comment_id?: number | null;
+  wetrakr_source?: string | null;
 }
 
 export interface TraktComment {

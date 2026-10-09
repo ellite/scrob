@@ -35,5 +35,9 @@ class Comment(Base):
     # range (e.g. 3000053946) — likely a large id-space offset from imported
     # data, not a bug on their side.
     wetrakr_comment_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    # WeTrakr's `source` for that comment: "wetrakr" when written there, or the
+    # service it was imported from there ("tvtime", "trakt", "letterboxd"...).
+    # Shown as the platform credit WeTrakr requires on every comment.
+    wetrakr_source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     user: Mapped["User"] = relationship()

@@ -3,6 +3,7 @@ import Base from "../../layouts/Base.astro";
 import ListCard from "../../components/ListCard.astro";
 import { api, type PublicProfile, type ProfileListItem, type ProfileFollowEntry, tmdbImageUrl } from "../../lib/api";
 import { ratingPosterUrl } from "../../lib/posters";
+import { wetrakrCredit } from "../../lib/wetrakrAttribution";
 
 export const prerender = false;
 
@@ -415,10 +416,18 @@ Recent Comments
                             <img src={thumb} alt={label} class="w-full h-full object-cover" loading="lazy" />
                           </a>
                         )}
-                        <a href={href} class="flex-1 min-w-0">
-                          <p class="text-xs font-bold text-zinc-400 group-hover:text-zinc-200 transition-colors truncate mb-1.5">{label}</p>
-                          <p class="text-sm text-zinc-300 leading-relaxed line-clamp-2">{comment.content}</p>
-                        </a>
+                        <div class="flex-1 min-w-0">
+                          <a href={href} class="block">
+                            <p class="text-xs font-bold text-zinc-400 group-hover:text-zinc-200 transition-colors truncate mb-1.5">{label}</p>
+                            <p class="text-sm text-zinc-300 leading-relaxed line-clamp-2">{comment.content}</p>
+                          </a>
+                          {wetrakrCredit(comment.wetrakr_source, comment.wetrakr_comment_id) && (
+                            <a href={wetrakrCredit(comment.wetrakr_source, comment.wetrakr_comment_id)!.url} target="_blank" rel="noopener" class="wetrakr-credit mt-1.5 inline-flex items-center gap-1.5 text-[11px] leading-none font-medium text-zinc-400 hover:text-zinc-200 transition-colors">
+                              <img src="/wetrakr.png" alt="WeTrakr" class="block w-4 h-4 rounded shrink-0" loading="lazy" />
+                              {wetrakrCredit(comment.wetrakr_source, comment.wetrakr_comment_id)!.label}
+                            </a>
+                          )}
+                        </div>
                         <div class="flex flex-col items-end justify-between shrink-0 gap-2">
                           <span class="text-[10px] text-zinc-400 font-medium">{timeAgo(comment.created_at)}</span>
                           {isOwner && (

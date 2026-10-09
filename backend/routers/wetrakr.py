@@ -708,9 +708,15 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
             if settings.wetrakr_sync_comments:
                 print("  Fetching comments from WeTrakr…")
                 existing_comments_result = await db.execute(select(Comment).where(Comment.user_id == user_id))
+                existing_comments = existing_comments_result.scalars().all()
                 existing_comment_keys = {
                     (c.media_type, c.tmdb_id, c.season_number, c.episode_number, c.content)
-                    for c in existing_comments_result.scalars().all()
+                    for c in existing_comments
+                }
+                # Comments pulled before the platform credit existed have no source yet.
+                unsourced_by_wetrakr_id = {
+                    c.wetrakr_comment_id: c for c in existing_comments
+                    if c.wetrakr_comment_id and not c.wetrakr_source
                 }
                 lookup_caches: dict[str, dict[int, dict]] = {}
                 for target in ("movies", "shows", "seasons", "episodes"):
@@ -720,6 +726,8 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                         logger.warning("Failed to fetch WeTrakr %s comments: %s", target, exc)
                         continue
                     for entry in entries:
+                        if (unsourced := unsourced_by_wetrakr_id.get(entry.get("id"))) is not None:
+                            unsourced.wetrakr_source = (entry.get("source") or "wetrakr")[:32]
                         resolved = await _resolve_wetrakr_comment_target(entry, lookup_caches)
                         if not resolved:
                             stats["skipped"] += 1
@@ -742,6 +750,7 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                                     is_spoiler=bool(entry.get("spoiler")),
                                     created_at=_parse_wetrakr_datetime(entry.get("comment_added_at")) or datetime.utcnow(),
                                     wetrakr_comment_id=entry.get("id"),
+                                    wetrakr_source=(entry.get("source") or "wetrakr")[:32],
                                 ))
                             existing_comment_keys.add(key)
                             stats["comments"] += 1
@@ -1119,6 +1128,7 @@ async def _run_wetrakr_push(user_id: int, job_id: int) -> None:
                             spoiler=comment.is_spoiler,
                         )
                         comment.wetrakr_comment_id = created.get("id")
+                        comment.wetrakr_source = (created.get("source") or "wetrakr")[:32]
                         await db.commit()
                         succeeded += 1
                     except Exception as exc:

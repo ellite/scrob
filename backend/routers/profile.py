@@ -810,6 +810,8 @@ async def get_public_profile(
             "title": info[0] if info else None,
             "poster_path": info[1] if info else None,
             "created_at": c.created_at.isoformat(),
+            "wetrakr_comment_id": c.wetrakr_comment_id,
+            "wetrakr_source": (c.wetrakr_source or "wetrakr") if c.wetrakr_comment_id else None,
         })
 
     # --- Followers / Following ---
