@@ -1733,6 +1733,25 @@ async def _fan_out_changes_to_other_connections(
                     )
                 )
 
+    # ── WeTrakr fan-out ─────────────────────────────────────────────────────
+    push_wetrakr = bool(
+        settings
+        and exclude_cloud_source != CollectionSource.wetrakr
+        and getattr(settings, "wetrakr_access_token", None)
+        and (getattr(settings, "wetrakr_push_watched", False) or getattr(settings, "wetrakr_push_ratings", False))
+    )
+    if push_wetrakr:
+        from routers.wetrakr import push_live_changes as wetrakr_push_live
+        wetrakr_watched_at = await _latest_watched_at(db, user_id, list(new_watched_ids)) if new_watched_ids else {}
+        # A sync-detected watch is a title newly marked watched, never a
+        # confirmed rewatch, so allow_rewatch stays false.
+        push_tasks.append(wetrakr_push_live(
+            user_id,
+            new_watched_ids,
+            wetrakr_watched_at,
+            {mid: rating for (mid, season), rating in new_ratings.items() if season is None},
+        ))
+
     # ── Bingebase fan-out ───────────────────────────────────────────────────
     push_bingebase_watched = (
         settings
@@ -1753,6 +1772,7 @@ async def _fan_out_changes_to_other_connections(
         target_count += 1 if (push_mdblist_watched or push_mdblist_ratings) else 0
         target_count += 1 if (push_simkl_watched or push_simkl_ratings) else 0
         target_count += 1 if push_bingebase_watched else 0
+        target_count += 1 if push_wetrakr else 0
         print(f"  Fanning out {len(push_tasks)} changes to {target_count} other connection(s)...")
         # Chunked rather than one giant gather() — a large one-time import can
         # produce thousands of individual per-item media-server push tasks (Plex/

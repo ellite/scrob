@@ -464,6 +464,11 @@ async def update_user_settings(
         if field in update_data and update_data[field]:
             update_data[field] = await validate_service_url(update_data[field], label)
 
+    # Turning a WeTrakr push flag on needs one full push of the existing
+    # history, so drop the incremental bookmark.
+    if any(update_data.get(f) and not getattr(settings, f) for f in ("wetrakr_push_watched", "wetrakr_push_ratings")):
+        settings.wetrakr_last_push_at = None
+
     for field, value in update_data.items():
         if hasattr(settings, field):
             setattr(settings, field, value)
@@ -1376,8 +1381,15 @@ async def get_connection_status(
         from core import wetrakr as wetrakr_client
         if not user_settings or not user_settings.wetrakr_access_token:
             return {"configured": False, "connected": False}
-        connected = await wetrakr_client.validate_token(user_settings.wetrakr_access_token)
-        return {"configured": True, "connected": connected}
+        # Refresh an expired token first (as Simkl's check does) - validating
+        # the stored one as-is reported a perfectly recoverable connection as
+        # disconnected once its short-lived access token lapsed.
+        from routers.wetrakr import WeTrakrTokenError, ensure_valid_wetrakr_token
+        try:
+            await ensure_valid_wetrakr_token(db, user_settings, force_check=True)
+        except WeTrakrTokenError:
+            return {"configured": True, "connected": False}
+        return {"configured": True, "connected": True}
 
     async def check_mdblist():
         from core import mdblist

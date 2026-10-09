@@ -160,6 +160,11 @@ class UserSettings(Base):
     # WeTrakr auto sync/push interval, in hours (null = disabled)
     wetrakr_auto_sync_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     wetrakr_auto_push_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Incremental-sync bookmarks: the push only sends what is newer than
+    # wetrakr_last_push_at, and the pull is skipped while WeTrakr's
+    # /sync/last_activities "all" stamp still equals wetrakr_last_activity.
+    wetrakr_last_push_at       : Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    wetrakr_last_activity      : Mapped[Optional[str]]      = mapped_column(String(64), nullable=True)
 
     preferences    : Mapped[Optional[dict]] = mapped_column(JSONB)
     blur_explicit   : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")

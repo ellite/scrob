@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, func, Index
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, func, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -38,6 +38,9 @@ class WatchEvent(Base):
     # these instead of exact-matching against it and creating a duplicate
     # (see GitHub #135).
     provisional      : Mapped[bool]            = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    # Set when the row was pulled from a cloud service ("wetrakr"), so that service's
+    # push never sends the play straight back to where it came from.
+    origin           : Mapped[Optional[str]]   = mapped_column(String(16), nullable=True)
 
     user  : Mapped["User"]  = relationship(back_populates="watch_events")
     media : Mapped["Media"] = relationship(back_populates="watch_events")

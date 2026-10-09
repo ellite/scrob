@@ -341,3 +341,48 @@ class ResolveWetrakrCommentTargetTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WeTrakrRequestPolicyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_429_is_retried_after_retry_after(self):
+        import httpx
+        from unittest import mock
+        from core import wetrakr
+
+        calls = []
+
+        def handler(request):
+            calls.append(request)
+            if len(calls) == 1:
+                return httpx.Response(429, headers={"Retry-After": "2"})
+            return httpx.Response(200, json={"ok": True})
+
+        sleeps = []
+
+        async def fake_sleep(seconds):
+            sleeps.append(seconds)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with mock.patch.object(wetrakr.asyncio, "sleep", fake_sleep):
+                resp = await wetrakr._send(client, "POST", "/sync/tracking", "tok", json={})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(sleeps, [2.0])
+
+    async def test_watched_push_never_allows_rewatch(self):
+        import json
+        import httpx
+        from core import wetrakr
+
+        bodies = []
+
+        def handler(request):
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={})
+
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(handler)
+        from unittest import mock
+        with mock.patch.object(wetrakr.httpx, "AsyncClient", lambda **kw: real_client(transport=transport)):
+            await wetrakr.add_to_watched_batch("tok", [(1, None)], [])
+        self.assertIs(bodies[0]["allow_rewatch"], False)

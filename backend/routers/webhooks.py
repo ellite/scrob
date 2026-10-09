@@ -282,6 +282,29 @@ async def _maybe_mdblist_scrobble(
         logging.getLogger(__name__).warning("[MDBList scrobble] %s failed: %s", action, exc)
 
 
+async def _maybe_wetrakr_scrobble(
+    settings: UserSettings | None,
+    media: "Media",
+    action: str,
+    progress_percent: float,
+    db: AsyncSession | None = None,
+) -> None:
+    """Push a finished play to WeTrakr right away (stop events at 90%+ only; the
+    other WeTrakr paths are the scheduled push and the history/sync fan-outs).
+    Errors are swallowed - the scheduled push is the safety net."""
+    if action != "stop" or progress_percent < 0.90:
+        return
+    if not (settings and getattr(settings, "wetrakr_push_watched", False) and getattr(settings, "wetrakr_access_token", None)):
+        return
+    try:
+        from routers.wetrakr import push_live_changes
+        await push_live_changes(
+            settings.user_id, {media.id}, {media.id: datetime.utcnow()}, allow_rewatch=True,
+        )
+    except Exception as exc:
+        print(f"Can't send finished play to WeTrakr because {exc}")
+
+
 async def _maybe_bingebase_scrobble(
     settings: UserSettings | None,
     media: "Media",
@@ -1489,6 +1512,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             await _maybe_mdblist_scrobble(settings, m, "stop", progress_percent, db=db)
             await _maybe_simkl_scrobble(settings, m, "stop", progress_percent, db=db)
             await _maybe_bingebase_scrobble(settings, m, "stop", progress_percent, db=db)
+            await _maybe_wetrakr_scrobble(settings, m, "stop", progress_percent, db=db)
 
     elif notification_type in ("MarkPlayed", "item.markplayed"):
         # Same reasoning as PlaybackStop above: _close_session's pending delete
@@ -1509,6 +1533,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
             await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
             await _maybe_bingebase_scrobble(settings, m, "stop", 1.0, db=db)
+            await _maybe_wetrakr_scrobble(settings, m, "stop", 1.0, db=db)
 
     elif notification_type == "UserDataSaved":
         # Jellyfin's official Webhook plugin has no dedicated "mark played"
@@ -1530,6 +1555,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                     await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
                     await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
                     await _maybe_bingebase_scrobble(settings, m, "stop", 1.0, db=db)
+                    await _maybe_wetrakr_scrobble(settings, m, "stop", 1.0, db=db)
             elif played is False:
                 changed_ids = [
                     m.id for m in media_list
@@ -1742,6 +1768,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             await _maybe_mdblist_scrobble(settings, m, "stop", progress_percent, db=db)
             await _maybe_simkl_scrobble(settings, m, "stop", progress_percent, db=db)
             await _maybe_bingebase_scrobble(settings, m, "stop", progress_percent, db=db)
+            await _maybe_wetrakr_scrobble(settings, m, "stop", progress_percent, db=db)
 
     elif notification_type in ("MarkPlayed", "item.markplayed"):
         # Same reasoning as PlaybackStop above: _close_session's pending delete
@@ -1760,6 +1787,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
             await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
             await _maybe_bingebase_scrobble(settings, m, "stop", 1.0, db=db)
+            await _maybe_wetrakr_scrobble(settings, m, "stop", 1.0, db=db)
 
     elif notification_type in ("MarkUnplayed", "item.markunplayed"):
         # Emby's webhook plugin reports mark-unwatched as its own distinct
@@ -1919,6 +1947,7 @@ async def _handle_jellyfin_scrobble_webhook(
                 await _maybe_mdblist_scrobble(settings, m, "stop", progress_percent, db=db)
                 await _maybe_simkl_scrobble(settings, m, "stop", progress_percent, db=db)
                 await _maybe_bingebase_scrobble(settings, m, "stop", progress_percent, db=db)
+                await _maybe_wetrakr_scrobble(settings, m, "stop", progress_percent, db=db)
 
     elif notification_type in ("MarkPlayed", "item.markplayed"):
         # Same reasoning as PlaybackStop above: _close_session's pending delete
@@ -1938,6 +1967,7 @@ async def _handle_jellyfin_scrobble_webhook(
                 await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
                 await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
                 await _maybe_bingebase_scrobble(settings, m, "stop", 1.0, db=db)
+                await _maybe_wetrakr_scrobble(settings, m, "stop", 1.0, db=db)
 
     elif notification_type == "UserDataSaved":
         # Jellyfin's official Webhook plugin has no dedicated "mark played"
@@ -1961,6 +1991,7 @@ async def _handle_jellyfin_scrobble_webhook(
                         await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
                         await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
                         await _maybe_bingebase_scrobble(settings, m, "stop", 1.0, db=db)
+                        await _maybe_wetrakr_scrobble(settings, m, "stop", 1.0, db=db)
             elif played is False:
                 changed_ids = [
                     m.id for m in media_list
@@ -2854,6 +2885,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
         await _maybe_mdblist_scrobble(settings, media, "stop", progress_percent, db=db)
         await _maybe_simkl_scrobble(settings, media, "stop", progress_percent, db=db)
         await _maybe_bingebase_scrobble(settings, media, "stop", progress_percent, db=db)
+        await _maybe_wetrakr_scrobble(settings, media, "stop", progress_percent, db=db)
 
     elif event == "media.scrobble":
         await _close_session(db, session_key)
@@ -3176,6 +3208,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
             await _maybe_mdblist_scrobble(settings, media, "stop", progress_percent, db=db)
             await _maybe_simkl_scrobble(settings, media, "stop", progress_percent, db=db)
             await _maybe_bingebase_scrobble(settings, media, "stop", progress_percent, db=db)
+            await _maybe_wetrakr_scrobble(settings, media, "stop", progress_percent, db=db)
 
     elif event == "media.scrobble":
         await _close_session(db, session_key)
@@ -3584,6 +3617,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
         await _maybe_mdblist_scrobble(settings, media, "stop", progress_percent, db=db)
         await _maybe_simkl_scrobble(settings, media, "stop", progress_percent, db=db)
         await _maybe_bingebase_scrobble(settings, media, "stop", progress_percent, db=db)
+        await _maybe_wetrakr_scrobble(settings, media, "stop", progress_percent, db=db)
 
     return {"status": "ok", "event": notification_type, "title": data["title"]}
 

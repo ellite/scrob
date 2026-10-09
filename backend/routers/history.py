@@ -201,6 +201,10 @@ async def _push_watch_state(
                     else:
                         tasks.append((f"trakt remove episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", trakt_client.remove_episode_from_history(settings.trakt_client_id, trakt_token, show.tmdb_id, media.season_number, media.episode_number)))
 
+    if watched and settings and getattr(settings, "wetrakr_push_watched", False) and getattr(settings, "wetrakr_access_token", None):
+        from routers.wetrakr import push_live_changes as wetrakr_push_live
+        tasks.append(("wetrakr watched", wetrakr_push_live(user_id, set(media_ids), resolved_watched_at, allow_rewatch=True)))
+
     if push_mdblist:
         from core import mdblist as mdblist_client
         from routers.mdblist import _empty_payload, _merge_show_entries, _payload_item

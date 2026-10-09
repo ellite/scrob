@@ -11,6 +11,7 @@ Every request needs wetrakr-api-key + wetrakr-api-version; user-scoped calls
 also need Authorization: Bearer <access_token>.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Literal, Optional
@@ -23,6 +24,46 @@ WETRAKR_BASE = "https://api.wetrakr.com"
 WETRAKR_CLIENT_ID = "e91f5041de433d4e7df4432cd1b04f94"
 TIMEOUT = 30.0
 PAGE_SIZE = 100
+MAX_RETRIES = 4
+MAX_RETRY_WAIT = 120.0
+
+# One lock per access token: every call made on a user's behalf is serialised,
+# so a user never has two requests in flight at once (the WeTrakr dev asked
+# for this after bursts of parallel POST /sync/tracking exhausted their API).
+_user_locks: dict[str, asyncio.Lock] = {}
+
+
+def _user_lock(access_token: Optional[str]) -> asyncio.Lock:
+    return _user_locks.setdefault(access_token or "", asyncio.Lock())
+
+
+def _retry_after(resp: httpx.Response) -> float:
+    try:
+        return max(1.0, min(float(resp.headers.get("Retry-After", "5")), MAX_RETRY_WAIT))
+    except ValueError:
+        return 5.0
+
+
+async def _send(
+    client: httpx.AsyncClient,
+    method: str,
+    path: str,
+    access_token: Optional[str],
+    **kwargs,
+) -> httpx.Response:
+    """One request, serialised per user, retried after the Retry-After delay on
+    a 429 (or 503). Raises on any other error status."""
+    async with _user_lock(access_token):
+        for attempt in range(MAX_RETRIES + 1):
+            resp = await client.request(method, f"{WETRAKR_BASE}{path}", headers=_headers(access_token), **kwargs)
+            if resp.status_code in (429, 503) and attempt < MAX_RETRIES:
+                wait = _retry_after(resp)
+                logger.warning("WeTrakr %s %s answered %s, retrying in %.0fs", method, path, resp.status_code, wait)
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp
+    raise RuntimeError("unreachable")
 
 
 def _iso_utc(value: datetime) -> str:
@@ -41,7 +82,7 @@ def _iso_utc(value: datetime) -> str:
 async def _get_all_pages(
     client: httpx.AsyncClient,
     path: str,
-    headers: dict,
+    access_token: str,
     extra_params: dict[str, str] | None = None,
 ) -> list[dict]:
     items: list[dict] = []
@@ -49,8 +90,7 @@ async def _get_all_pages(
     while True:
         params = dict(extra_params or {})
         params.update({"page": page, "limit": PAGE_SIZE})
-        response = await client.get(f"{WETRAKR_BASE}{path}", headers=headers, params=params)
-        response.raise_for_status()
+        response = await _send(client, "GET", path, access_token, params=params)
         page_items = response.json()
         if not isinstance(page_items, list):
             raise TypeError(f"WeTrakr {path} returned a non-list response")
@@ -210,7 +250,7 @@ async def get_watched_history(access_token: str, target: Literal["movies", "epis
         return await _get_all_pages(
             client,
             f"/sync/tracking/watched/history/{target}",
-            _headers(access_token),
+            access_token,
         )
 
 
@@ -224,7 +264,7 @@ async def get_ratings(access_token: str, target: Literal["movies", "shows"]) -> 
         return await _get_all_pages(
             client,
             f"/sync/ratings/{target}",
-            _headers(access_token),
+            access_token,
         )
 
 
@@ -233,7 +273,7 @@ async def get_ratings(access_token: str, target: Literal["movies", "shows"]) -> 
 async def get_lists(access_token: str) -> list[dict]:
     """Fetch every list the user owns."""
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(f"{WETRAKR_BASE}/sync/lists", headers=_headers(access_token))
+        resp = await _send(client, "GET", "/sync/lists", access_token)
         resp.raise_for_status()
         return resp.json()
 
@@ -244,7 +284,7 @@ async def create_list(access_token: str, name: str, description: Optional[str] =
     if description:
         body["description"] = description
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.post(f"{WETRAKR_BASE}/sync/lists", json=body, headers=_headers(access_token))
+        resp = await _send(client, "POST", "/sync/lists", access_token, json=body)
         resp.raise_for_status()
         return resp.json()
 
@@ -255,7 +295,7 @@ async def get_list_items(access_token: str, list_id: int) -> list[dict]:
         return await _get_all_pages(
             client,
             f"/sync/lists/{list_id}/items",
-            _headers(access_token),
+            access_token,
         )
 
 
@@ -275,12 +315,7 @@ async def add_items_to_list(access_token: str, list_id: int, movies: list[int], 
     if shows:
         body["shows"] = [{"ids": {"tmdb": tmdb_id}} for tmdb_id in shows]
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.post(
-            f"{WETRAKR_BASE}/sync/lists/{list_id}/items",
-            json=body,
-            headers=_headers(access_token),
-        )
-        resp.raise_for_status()
+        resp = await _send(client, "POST", f"/sync/lists/{list_id}/items", access_token, json=body)
         _log_unresolved("list items push", resp)
 
 
@@ -300,7 +335,7 @@ async def get_comments(access_token: str, target: Literal["movies", "shows", "se
         return await _get_all_pages(
             client,
             f"/sync/comments/{target}",
-            _headers(access_token),
+            access_token,
         )
 
 
@@ -329,7 +364,7 @@ async def write_comment(
     else:
         body["show"] = {"ids": {"tmdb": show_tmdb_id}}
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.post(f"{WETRAKR_BASE}/sync/comments", json=body, headers=_headers(access_token))
+        resp = await _send(client, "POST", "/sync/comments", access_token, json=body)
         resp.raise_for_status()
         return resp.json()
 
@@ -380,6 +415,7 @@ async def add_to_watched_batch(
     access_token: str,
     movies: list[tuple[int, Optional[datetime]]],
     episodes: list[tuple[int, int, int, Optional[datetime]]],
+    allow_rewatch: bool = False,
 ) -> None:
     """Mark multiple movies and/or episodes as watched on WeTrakr in one call.
 
@@ -390,7 +426,10 @@ async def add_to_watched_batch(
     """
     if not movies and not episodes:
         return
-    body: dict = {}
+    # allow_rewatch defaults to false: a title the account already has comes back in
+    # errored as "Already watched!" instead of becoming another play. Without
+    # it every re-send (and every undated item) logged a brand-new play.
+    body: dict = {"allow_rewatch": allow_rewatch}
     if movies:
         body["movies"] = []
         for tmdb_id, watched_at in movies:
@@ -429,12 +468,7 @@ async def add_to_watched_batch(
             for show_tmdb_id, seasons in shows_map.items()
         ]
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.post(
-            f"{WETRAKR_BASE}/sync/tracking",
-            json=body,
-            headers=_headers(access_token),
-        )
-        resp.raise_for_status()
+        resp = await _send(client, "POST", "/sync/tracking", access_token, json=body)
         _log_unresolved("watched push", resp)
 
 
@@ -463,10 +497,16 @@ async def set_ratings_batch(
             for tmdb_id, rating in show_ratings
         ]
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.post(
-            f"{WETRAKR_BASE}/sync/ratings",
-            json=body,
-            headers=_headers(access_token),
-        )
-        resp.raise_for_status()
+        resp = await _send(client, "POST", "/sync/ratings", access_token, json=body)
         _log_unresolved("ratings push", resp)
+
+
+# ── Change detection ──────────────────────────────────────────────────────────
+
+async def get_last_activities(access_token: str) -> dict:
+    """GET /sync/last_activities: timestamps of the last change per section.
+    One cheap call that says whether anything moved since the last sync."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await _send(client, "GET", "/sync/last_activities", access_token)
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
