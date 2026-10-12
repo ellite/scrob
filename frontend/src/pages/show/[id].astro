@@ -63,6 +63,8 @@ const hasHeatmapRatings = heatmapSeasons.some((s) => s.episodes.some((e) => e.ra
 
 const year = show?.first_air_date?.slice(0, 4) ?? null;
 const rating = show?.tmdb_rating ? show.tmdb_rating.toFixed(1) : null;
+let popcorn: number | null = null;
+try { popcorn = (await api.extRatings.get("show", Number(id), token)).popcorn; } catch {}
 const langNames = new Intl.DisplayNames(["en"], { type: "language" });
 const originalLanguage = show?.original_language
   ? langNames.of(show.original_language) ?? show.original_language
@@ -145,7 +147,11 @@ const posterPath = show
             <div class="flex flex-wrap items-center gap-3 mb-10">
               <div class="flex flex-wrap items-center gap-4 text-zinc-300 text-sm bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm">
                 {year && <span class="font-bold">{year}</span>}
-                {rating && (
+                {popcorn != null ? (
+          <span class="flex items-center gap-1.5 text-red-400 font-black item-rating" title="Rotten Tomatoes Popcornmeter">
+            <span class="text-lg leading-none">🍿</span> {popcorn}%
+          </span>
+        ) : rating && (
                   <span class="flex items-center gap-1.5 text-yellow-400 font-black">
                     <span class="text-lg leading-none">★</span> {rating}
                   </span>
