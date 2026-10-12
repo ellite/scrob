@@ -1,14 +1,16 @@
 ---
 // Lokal patch (Popcornmeter). Laddas först i <body> i Base.astro, så att kort
 // som ritas av andra skript får 🍿 innan sidan hinner visa ★.
-import { popcornMap } from "../lib/extRatings";
+import { popcornMap, popcornHotKeys } from "../lib/extRatings";
 const known = popcornMap();
+const hotKeys = popcornHotKeys();
 ---
-<script is:inline define:vars={{ known }}>
+<script is:inline define:vars={{ known, hotKeys }}>
 (() => {
   if (window.__extRatings) return;
   window.__extRatings = true;
   const map = Object.assign({}, known);
+  const hot = new Set(hotKeys);
   const inflight = new Map();
   let active = 0;
   const waiting = [];
@@ -31,12 +33,14 @@ const known = popcornMap();
       : card && card.dataset.tmdbId) || "";
     return kind && id ? kind + "/" + id : "";
   }
-  function show(b, p) {
+  const HOT = ' <span class="text-[0.8em] opacity-80">(hot)</span>';
+  function show(b, p, isHot) {
     const [icon, cls] = look(p);
     b.classList.remove(...COLORS, "hidden");
     b.classList.add(cls);
     b.title = "Rotten Tomatoes Popcornmeter";
-    b.innerHTML = '<span class="text-xs leading-none">' + icon + "</span>" + p + "%";
+    b.innerHTML = '<span class="text-xs leading-none">' + icon + "</span>" + p + "%" + (isHot ? HOT : "");
+    if (isHot) b.title = "Rotten Tomatoes Popcornmeter – Verified Hot (uppskattat)";
     b.dataset.extDone = "1";
   }
   function fallback(b) {
@@ -61,7 +65,7 @@ const known = popcornMap();
       inflight.set(key, slot().then(() =>
         fetch("/api/proxy/ext-ratings/" + key, { credentials: "same-origin" })
           .then((r) => r.ok ? r.json() : null)
-          .then((d) => d && d.popcorn != null && isFinite(+d.popcorn) ? +d.popcorn : null)
+          .then((d) => d && d.popcorn != null && isFinite(+d.popcorn) ? { p: +d.popcorn, hot: !!d.hot } : null)
           .catch(() => null)
           .finally(release)));
     }
@@ -73,10 +77,11 @@ const known = popcornMap();
       const b = e.target;
       io.unobserve(b);
       const key = target(b);
-      fetchPop(key).then((p) => {
-        if (p == null) return fallback(b);
-        map[key] = p;
-        show(b, p);
+      fetchPop(key).then((r) => {
+        if (r == null) return fallback(b);
+        map[key] = r.p;
+        if (r.hot) hot.add(key);
+        show(b, r.p, r.hot);
       });
     }
   }, { rootMargin: "400px" });
@@ -87,7 +92,7 @@ const known = popcornMap();
     if (b.dataset.extDone) return;
     const key = target(b);
     if (!key) { if (b.dataset.fallback != null) fallback(b); return; }
-    if (map[key] != null) return show(b, map[key]);
+    if (map[key] != null) return show(b, map[key], hot.has(key));
     if (!b.classList.contains("hidden")) pending(b);
     io.observe(b);
   }

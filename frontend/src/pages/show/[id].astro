@@ -66,7 +66,8 @@ const year = show?.first_air_date?.slice(0, 4) ?? null;
 const rating = show?.tmdb_rating ? show.tmdb_rating.toFixed(1) : null;
 let popcorn: number | null = null;
 let popcornUrl: string | null = null;
-try { const ext = await api.extRatings.get("show", Number(id), token ); popcorn = ext.popcorn; popcornUrl = ext.url; } catch {}
+let popcornIsHot = false;
+try { const ext = await api.extRatings.get("show", Number(id), token ); popcorn = ext.popcorn; popcornUrl = ext.url; popcornIsHot = !!ext.hot; } catch {}
 const popcornHref = (popcornUrl ?? `https://www.rottentomatoes.com/search?search=${encodeURIComponent(show?.title ?? "")}`);
 const popcornLookV = popcorn != null ? popcornLook(popcorn) : null;
 const popcornClass = popcornLookV?.cls ?? "";
@@ -155,7 +156,7 @@ const posterPath = show
                 {year && <span class="font-bold">{year}</span>}
                 {popcorn != null ? (
           <a href={popcornHref} target="_blank" rel="noopener noreferrer" class={`flex items-center gap-1.5 font-black item-rating hover:underline ${popcornClass}`} title="Öppna på Rotten Tomatoes">
-            <span class="text-lg leading-none">{popcornIcon}</span>{popcorn}%
+            <span class="text-lg leading-none">{popcornIcon}</span>{popcorn}%{popcornIsHot && <span class="text-[0.75em] opacity-80">(hot)</span>}
           </a>
         ) : rating && (
                   <span class="flex items-center gap-1.5 text-yellow-400 font-black">

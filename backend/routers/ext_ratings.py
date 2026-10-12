@@ -71,19 +71,42 @@ def _rt_url(entry: dict[str, Any]) -> str | None:
     return None
 
 
-def _parse(data: Any) -> dict[str, Any]:
-    out: dict[str, Any] = {}
+_HOT_MIN = 90        # Verified Hot: minst 90 % ...
+_HOT_VOTES = 500     # ... och minst 500 verifierade röster (bred biopremiär)
+_HOT_FROM_YEAR = 2019  # verifierade biljettbetyg finns sedan 2019; äldre röster är inte verifierade
+_SCHEMA = 2
+
+
+def _parse(data: Any, kind: str) -> dict[str, Any]:
+    out: dict[str, Any] = {"v": _SCHEMA}
     if not isinstance(data, dict):
         return out
+    year = data.get("year")
+    if not year and isinstance(data.get("released"), str):
+        year = data["released"][:4]
+    try:
+        year = int(year) if year else None
+    except (TypeError, ValueError):
+        year = None
     for r in data.get("ratings") or []:
         if not isinstance(r, dict):
             continue
         src = r.get("source")
         if src in ("popcorn", "tomatoesaudience") and r.get("value") is not None:
             out["popcorn"] = r.get("value")
+            out["votes"] = r.get("votes")
             out["url"] = out.get("url") or _rt_url(r)
         elif src == "tomatoes":
             out["url"] = out.get("url") or _rt_url(r)
+    try:
+        p, votes = float(out.get("popcorn")), int(out.get("votes") or 0)
+    except (TypeError, ValueError):
+        p, votes = 0.0, 0
+    # Uppskattning av RT:s Verified Hot. MDBList anger inte märket självt.
+    out["hot"] = bool(
+        kind == "movie" and p >= _HOT_MIN and votes >= _HOT_VOTES
+        and year is not None and year >= _HOT_FROM_YEAR
+    )
     return out
 
 
@@ -92,7 +115,7 @@ async def _fetch(api_key: str, kind: str, tmdb_id: int) -> dict[str, Any]:
     key = f"{kind}/{tmdb_id}"
     hit = _cache.get(key)
     now = time.time()
-    if hit and now - hit[0] < _FRESH:
+    if hit and now - hit[0] < _FRESH and hit[1].get("v") == _SCHEMA:
         return hit[1]
     stale = hit[1] if hit else {}
     if now < _paused_until:
@@ -106,7 +129,7 @@ async def _fetch(api_key: str, kind: str, tmdb_id: int) -> dict[str, Any]:
         return stale
     except Exception:
         return stale
-    out = _parse(data)
+    out = _parse(data, kind)
     async with _lock:
         _cache[key] = (now, out)
         _save()
@@ -128,6 +151,6 @@ async def get_ext_ratings(
     ).scalar_one_or_none()
     api_key = getattr(settings, "mdblist_api_key", None)
     if not api_key:
-        return {"popcorn": None, "url": None}
+        return {"popcorn": None, "url": None, "hot": False}
     r = await _fetch(api_key, kind, tmdb_id)
-    return {"popcorn": r.get("popcorn"), "url": r.get("url")}
+    return {"popcorn": r.get("popcorn"), "url": r.get("url"), "hot": bool(r.get("hot"))}
