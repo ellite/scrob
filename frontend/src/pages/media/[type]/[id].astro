@@ -33,7 +33,7 @@ const year = item?.release_date?.slice(0, 4) ?? null;
 const rating = item?.tmdb_rating ? item.tmdb_rating.toFixed(1) : null;
 let popcorn: number | null = null;
 try { popcorn = (await api.extRatings.get(type!, Number(id), token)).popcorn; } catch {}
-const popcornClass = popcorn == null ? "" : popcorn >= 90 ? "text-sky-400" : popcorn >= 75 ? "text-green-400" : popcorn >= 60 ? "text-yellow-400" : "text-red-400";
+const popcornClass = popcorn == null ? "" : popcorn >= 90 ? "text-[#a335ee]" : popcorn >= 75 ? "text-green-400" : popcorn >= 60 ? "text-yellow-400" : "text-red-400";
 const popcornHot = popcorn != null && popcorn >= 90;
 const isEpisode = item?.type === "episode";
 const isMovie = item?.type === "movie";
@@ -160,7 +160,7 @@ const refreshUrl = isEpisode
                 {popcorn != null ? (
           <span class={`flex items-center gap-1.5 font-black item-rating ${popcornClass}`} title={popcornHot ? "Rotten Tomatoes Popcornmeter – 90 % eller mer" : "Rotten Tomatoes Popcornmeter"}>
             <span class="text-lg leading-none">🍿</span> {popcorn}%
-            {popcornHot && <span class="ml-0.5 rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-sky-300">🔥 Hot</span>}
+            {popcornHot && <span class="ml-0.5 rounded-full bg-[#a335ee]/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-[#c77dff]">🔥 Hot</span>}
           </span>
         ) : rating && (
                   <span class="flex items-center gap-1.5 text-yellow-400 font-black item-rating">
