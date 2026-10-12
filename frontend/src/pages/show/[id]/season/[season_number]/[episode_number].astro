@@ -7,7 +7,7 @@ import CastCrewSection from "../../../../../components/CastCrewSection.astro";
 import VideoPlayer from "../../../../../components/VideoPlayer.astro";
 import ManualScrobble from "../../../../../components/ManualScrobble.astro";
 import { api, type EpisodeDetail } from "../../../../../lib/api";
-import { popcornLook, popcornIconHtml, isBig } from "../../../../../lib/extRatings";
+import { popcornLook, ratingIconHtml, isBig } from "../../../../../lib/extRatings";
 
 export const prerender = false;
 
@@ -172,7 +172,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
               )}
               {showPopcorn != null && (
                 <a href={showPopcornHref} target="_blank" rel="noopener noreferrer" class={`flex items-center gap-1.5 font-black hover:underline ${showPopcornClass}`} title="Seriens Popcornmeter (finns inte per avsnitt). Öppna på Rotten Tomatoes">
-                  <span class="text-lg leading-none inline-flex" set:html={showPopcorn != null ? popcornIconHtml(showPopcorn, isBig(showPopcorn, showPopcornVotes), "w-5 h-5") : "🍿"} />{showPopcorn}%
+                  <span class="text-lg leading-none inline-flex" set:html={ratingIconHtml(showPopcorn, isBig(showPopcorn, showPopcornVotes), "w-5 h-5")} />{showPopcorn}%
                   <span class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">serien</span>
                 </a>
               )}
