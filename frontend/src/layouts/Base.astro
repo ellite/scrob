@@ -171,6 +171,7 @@ const bottomNavItem = (active: boolean) =>
   </script>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen overflow-x-hidden">
+  <ExtRatings />
   {!hideNav && (
     <nav class="px-4 md:px-6 py-3 md:py-4 text-sm sticky top-0 z-30 bg-zinc-950">
       <!-- Default bar -->
@@ -350,7 +351,6 @@ const bottomNavItem = (active: boolean) =>
   ]}>
     {hideNav && <div class="safe-area-top" />}
     <slot />
-    <ExtRatings />
   </main>
 
   <!-- Mobile bottom nav -->

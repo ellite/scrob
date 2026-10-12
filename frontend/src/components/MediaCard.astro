@@ -2,6 +2,7 @@
 import type { MediaItem } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
+import { popcornFor, popcornLook } from "../lib/extRatings";
 import CardActionBar from "./CardActionBar.astro";
 import PosterFallback from "./PosterFallback.astro";
 import { episodeHref } from "../lib/episodeHref";
@@ -20,6 +21,12 @@ const isShowLike = item.type === "series" || item.type === "episode";
 const fallbackKind = isPerson ? "person" : isShowLike ? "show" : "movie";
 const year = item.release_date?.slice(0, 4) ?? null;
 const rating = item.tmdb_rating ? item.tmdb_rating.toFixed(1) : null;
+// Lokal patch: Popcornmeter först, TMDB som reserv.
+const popKind = item.type === "movie" ? "movie" : (item.type === "series" || item.type === "episode") ? "show" : null;
+const popId = popKind === "show" ? (item.show_tmdb_id || (item.type === "series" ? item.tmdb_id : null)) : item.tmdb_id;
+const popcorn = popcornFor(popKind, popId);
+const popLook = popcorn != null ? popcornLook(popcorn) : null;
+const popPending = popcorn == null && !!popKind && !!popId;
 const isEpisode = item.type === "episode";
 // A "series" item with season_number set is a season list item (see routers/lists.py) -
 // it shares media with the whole show, so it's split out from the plain whole-show case.
@@ -84,8 +91,16 @@ const inLibrary = item.in_library ?? false;
 
         <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
 
-        {rating && (
-          <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
+        {popLook ? (
+          <div class={`ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md ${popLook.cls} text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1`} data-ext-done="1" title="Rotten Tomatoes Popcornmeter">
+            <span class="text-xs leading-none">{popLook.icon}</span>{popcorn}%
+          </div>
+        ) : popPending ? (
+          <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-zinc-500 animate-pulse text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1" data-fallback={rating ?? ""}>
+            <span class="text-xs leading-none">🍿</span>…
+          </div>
+        ) : rating && (
+          <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
             <span class="text-xs leading-none">★</span> {rating}
           </div>
         )}
@@ -111,8 +126,16 @@ const inLibrary = item.in_library ?? false;
         ) : (
           <PosterFallback kind={fallbackKind} title={cardTitle} class="flex" />
         )}
-        {rating && (
-          <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
+        {popLook ? (
+          <div class={`ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md ${popLook.cls} text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1`} data-ext-done="1" title="Rotten Tomatoes Popcornmeter">
+            <span class="text-xs leading-none">{popLook.icon}</span>{popcorn}%
+          </div>
+        ) : popPending ? (
+          <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-zinc-500 animate-pulse text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1" data-fallback={rating ?? ""}>
+            <span class="text-xs leading-none">🍿</span>…
+          </div>
+        ) : rating && (
+          <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
             <span class="text-xs leading-none">★</span> {rating}
           </div>
         )}

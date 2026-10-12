@@ -1,61 +1,101 @@
 ---
-// Lokal patch (Popcornmeter). Laddas en gång i Base.astro.
+// Lokal patch (Popcornmeter). Laddas först i <body> i Base.astro, så att kort
+// som ritas av andra skript får 🍿 innan sidan hinner visa ★.
+import { popcornMap } from "../lib/extRatings";
+const known = popcornMap();
 ---
-
-<script>
-  // Lokal patch: byt ★ TMDB mot 🍿 Popcornmeter på alla affischkort (.ext-rate) när de syns.
-  const cache = new Map<string, Promise<number | null>>();
+<script is:inline define:vars={{ known }}>
+(() => {
+  if (window.__extRatings) return;
+  window.__extRatings = true;
+  const map = Object.assign({}, known);
+  const inflight = new Map();
   let active = 0;
-  const waiting: Array<() => void> = [];
-  const slot = () => (active < 4 ? (active++, Promise.resolve()) : new Promise<void>((r) => waiting.push(() => { active++; r(); })));
-  const release = () => { active--; waiting.shift()?.(); };
+  const waiting = [];
+  const slot = () => active < 4 ? (active++, Promise.resolve()) : new Promise((r) => waiting.push(() => { active++; r(); }));
+  const release = () => { active--; const n = waiting.shift(); if (n) n(); };
+  const COLORS = ["text-yellow-400", "text-red-400", "text-green-400", "text-cyan-400", "text-zinc-500", "animate-pulse"];
 
-  function popcorn(kind: string, id: string): Promise<number | null> {
-    const key = `${kind}/${id}`;
-    if (!cache.has(key)) {
-      cache.set(key, slot().then(() =>
-        fetch(`/api/proxy/ext-ratings/${key}`, { credentials: "same-origin" })
-          .then((r) => (r.ok ? r.json() : null))
-          .then((d) => (d && typeof d.popcorn === "number" ? d.popcorn : null))
+  function look(p) {
+    if (p >= 90) return ["🔥", "text-cyan-400"];
+    if (p >= 75) return ["🍿", "text-green-400"];
+    if (p >= 60) return ["🍿", "text-yellow-400"];
+    return ["🍿", "text-red-400"];
+  }
+  function target(b) {
+    const card = b.closest("[data-card]");
+    const t = card && card.dataset.mediaType;
+    const kind = b.dataset.extKind || (t === "movie" ? "movie" : (t === "series" || t === "episode") ? "show" : "");
+    const id = b.dataset.extId || (kind === "show"
+      ? (card && card.dataset.showTmdbId) || (t === "series" ? card && card.dataset.tmdbId : "")
+      : card && card.dataset.tmdbId) || "";
+    return kind && id ? kind + "/" + id : "";
+  }
+  function show(b, p) {
+    const [icon, cls] = look(p);
+    b.classList.remove(...COLORS, "hidden");
+    b.classList.add(cls);
+    b.title = "Rotten Tomatoes Popcornmeter";
+    b.innerHTML = '<span class="text-xs leading-none">' + icon + "</span>" + p + "%";
+    b.dataset.extDone = "1";
+  }
+  function fallback(b) {
+    const r = b.dataset.fallback;
+    b.dataset.extDone = "1";
+    if (!r) { b.remove(); return; }
+    b.classList.remove(...COLORS);
+    b.classList.add("text-yellow-400");
+    b.innerHTML = '<span class="text-xs leading-none">★</span> ' + r;
+  }
+  function pending(b) {
+    if (b.dataset.fallback == null) {
+      const txt = b.textContent.replace("★", "").trim();
+      b.dataset.fallback = txt;
+    }
+    b.classList.remove("text-yellow-400");
+    b.classList.add("text-zinc-500", "animate-pulse");
+    b.innerHTML = '<span class="text-xs leading-none">🍿</span>…';
+  }
+  function fetchPop(key) {
+    if (!inflight.has(key)) {
+      inflight.set(key, slot().then(() =>
+        fetch("/api/proxy/ext-ratings/" + key, { credentials: "same-origin" })
+          .then((r) => r.ok ? r.json() : null)
+          .then((d) => d && d.popcorn != null && isFinite(+d.popcorn) ? +d.popcorn : null)
           .catch(() => null)
           .finally(release)));
     }
-    return cache.get(key)!;
+    return inflight.get(key);
   }
-
-  function color(p: number) {
-    return p >= 90 ? "text-[#a335ee]" : p >= 75 ? "text-green-400" : p >= 60 ? "text-yellow-400" : "text-red-400";
-  }
-
   const io = new IntersectionObserver((entries) => {
     for (const e of entries) {
       if (!e.isIntersecting) continue;
-      const badge = e.target as HTMLElement;
-      io.unobserve(badge);
-      const card = badge.closest<HTMLElement>("[data-card]");
-      const t = card?.dataset.mediaType;
-      // Serier, säsonger och avsnitt visar seriens betyg (RT har inget per avsnitt).
-      const kind = badge.dataset.extKind || (t === "movie" ? "movie" : t === "series" || t === "episode" ? "show" : null);
-      const id = badge.dataset.extId || (kind === "show" ? card?.dataset.showTmdbId || (t === "series" ? card?.dataset.tmdbId : "") : card?.dataset.tmdbId);
-      if (!id || !kind) continue;
-      popcorn(kind, id).then((p) => {
-        if (p == null) return;
-        badge.classList.remove("text-yellow-400", "hidden");
-        badge.classList.add(color(p));
-        badge.title = "Rotten Tomatoes Popcornmeter";
-        badge.innerHTML = `<span class="text-xs leading-none">🍿</span> ${p}%${p >= 90 ? " 🔥" : ""}`;
+      const b = e.target;
+      io.unobserve(b);
+      const key = target(b);
+      fetchPop(key).then((p) => {
+        if (p == null) return fallback(b);
+        map[key] = p;
+        show(b, p);
       });
     }
-  }, { rootMargin: "300px" });
+  }, { rootMargin: "400px" });
 
-  function scan(root: ParentNode = document) {
-    root.querySelectorAll<HTMLElement>(".ext-rate:not([data-ext-seen])").forEach((b) => {
-      b.dataset.extSeen = "1";
-      io.observe(b);
-    });
+  function handle(b) {
+    if (b.dataset.extSeen) return;
+    b.dataset.extSeen = "1";
+    if (b.dataset.extDone) return;
+    const key = target(b);
+    if (!key) { if (b.dataset.fallback != null) fallback(b); return; }
+    if (map[key] != null) return show(b, map[key]);
+    if (!b.classList.contains("hidden")) pending(b);
+    io.observe(b);
   }
+  function scan() { document.querySelectorAll(".ext-rate:not([data-ext-seen])").forEach(handle); }
 
+  new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
+  document.addEventListener("DOMContentLoaded", scan);
+  document.addEventListener("astro:page-load", scan);
   scan();
-  document.addEventListener("astro:page-load", () => scan());
-  new MutationObserver(() => scan()).observe(document.body, { childList: true, subtree: true });
+})();
 </script>

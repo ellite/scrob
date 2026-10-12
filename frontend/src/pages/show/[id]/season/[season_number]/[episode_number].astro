@@ -7,6 +7,7 @@ import CastCrewSection from "../../../../../components/CastCrewSection.astro";
 import VideoPlayer from "../../../../../components/VideoPlayer.astro";
 import ManualScrobble from "../../../../../components/ManualScrobble.astro";
 import { api, type EpisodeDetail } from "../../../../../lib/api";
+import { popcornLook } from "../../../../../lib/extRatings";
 
 export const prerender = false;
 
@@ -38,7 +39,8 @@ let showPopcorn: number | null = null;
 let showPopcornUrl: string | null = null;
 try { const ext = await api.extRatings.get("show", Number(id), token); showPopcorn = ext.popcorn; showPopcornUrl = ext.url; } catch {}
 const showPopcornHref = showPopcornUrl ?? `https://www.rottentomatoes.com/search?search=${encodeURIComponent(show?.title ?? "")}`;
-const showPopcornClass = showPopcorn == null ? "" : showPopcorn >= 90 ? "text-[#a335ee]" : showPopcorn >= 75 ? "text-green-400" : showPopcorn >= 60 ? "text-yellow-400" : "text-red-400";
+const showPopLook = showPopcorn != null ? popcornLook(showPopcorn) : null;
+const showPopcornClass = showPopLook?.cls ?? "";
 const thumbnail = episode?.still_path || show?.poster_path || null;
 ---
 
@@ -169,7 +171,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
               )}
               {showPopcorn != null && (
                 <a href={showPopcornHref} target="_blank" rel="noopener noreferrer" class={`flex items-center gap-1.5 font-black hover:underline ${showPopcornClass}`} title="Seriens Popcornmeter (finns inte per avsnitt). Öppna på Rotten Tomatoes">
-                  <span class="text-lg leading-none">🍿</span> {showPopcorn}%{showPopcorn >= 90 && " 🔥"}
+                  <span class="text-lg leading-none">{showPopLook?.icon ?? "🍿"}</span>{showPopcorn}%
                   <span class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">serien</span>
                 </a>
               )}
