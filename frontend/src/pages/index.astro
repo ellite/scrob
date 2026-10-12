@@ -227,6 +227,9 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
                   {episodeLabel}
                 </span>
               )}
+              {hero.show_tmdb_id && (
+                <span class="ext-rate hidden inline-flex items-center gap-1.5 text-xs font-black tracking-widest bg-black/40 border border-white/10 px-3 py-1 rounded-full mb-3 ml-2" data-ext-kind="show" data-ext-id={String(hero.show_tmdb_id)}></span>
+              )}
               <h3 class="text-2xl sm:text-4xl font-black text-zinc-100 leading-tight mb-1 drop-shadow-lg group-hover:text-blue-200 transition-colors">
                 {hero.show_title ?? hero.title}
               </h3>

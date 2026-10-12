@@ -1237,7 +1237,7 @@ export interface CalendarResponse {
 export const api = {
   extRatings: {
     get: (type: string, tmdbId: number, token?: string) =>
-      get<{ popcorn: number | null; tomatoes: number | null }>(`/ext-ratings/${type}/${tmdbId}`, undefined, token),
+      get<{ popcorn: number | null; url: string | null }>(`/ext-ratings/${type}/${tmdbId}`, undefined, token),
   },
   auth: {
     login: (body: FormData) =>

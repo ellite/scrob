@@ -40,7 +40,7 @@
       if (!id || !kind) continue;
       popcorn(kind, id).then((p) => {
         if (p == null) return;
-        badge.classList.remove("text-yellow-400");
+        badge.classList.remove("text-yellow-400", "hidden");
         badge.classList.add(color(p));
         badge.title = "Rotten Tomatoes Popcornmeter";
         badge.innerHTML = `<span class="text-xs leading-none">🍿</span> ${p}%${p >= 90 ? " 🔥" : ""}`;

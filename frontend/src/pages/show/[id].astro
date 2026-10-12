@@ -64,7 +64,9 @@ const hasHeatmapRatings = heatmapSeasons.some((s) => s.episodes.some((e) => e.ra
 const year = show?.first_air_date?.slice(0, 4) ?? null;
 const rating = show?.tmdb_rating ? show.tmdb_rating.toFixed(1) : null;
 let popcorn: number | null = null;
-try { popcorn = (await api.extRatings.get("show", Number(id), token)).popcorn; } catch {}
+let popcornUrl: string | null = null;
+try { const ext = await api.extRatings.get("show", Number(id), token ); popcorn = ext.popcorn; popcornUrl = ext.url; } catch {}
+const popcornHref = (popcornUrl ?? `https://www.rottentomatoes.com/search?search=${encodeURIComponent(show?.title ?? "")}`);
 const popcornClass = popcorn == null ? "" : popcorn >= 90 ? "text-[#a335ee]" : popcorn >= 75 ? "text-green-400" : popcorn >= 60 ? "text-yellow-400" : "text-red-400";
 const popcornHot = popcorn != null && popcorn >= 90;
 const langNames = new Intl.DisplayNames(["en"], { type: "language" });
@@ -150,10 +152,10 @@ const posterPath = show
               <div class="flex flex-wrap items-center gap-4 text-zinc-300 text-sm bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm">
                 {year && <span class="font-bold">{year}</span>}
                 {popcorn != null ? (
-          <span class={`flex items-center gap-1.5 font-black item-rating ${popcornClass}`} title={popcornHot ? "Rotten Tomatoes Popcornmeter – 90 % eller mer" : "Rotten Tomatoes Popcornmeter"}>
+          <a href={popcornHref} target="_blank" rel="noopener noreferrer" class={`flex items-center gap-1.5 font-black item-rating hover:underline ${popcornClass}`} title="Öppna på Rotten Tomatoes">
             <span class="text-lg leading-none">🍿</span> {popcorn}%
             {popcornHot && <span class="ml-0.5 rounded-full bg-[#a335ee]/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-[#c77dff]">🔥 Hot</span>}
-          </span>
+          </a>
         ) : rating && (
                   <span class="flex items-center gap-1.5 text-yellow-400 font-black">
                     <span class="text-lg leading-none">★</span> {rating}
