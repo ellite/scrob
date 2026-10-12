@@ -2,7 +2,7 @@
 import type { MediaItem } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
-import { popcornFor, popcornHot, popcornLook } from "../lib/extRatings";
+import { popcornFor, popcornHot, popcornLook, HOT_SVG } from "../lib/extRatings";
 import CardActionBar from "./CardActionBar.astro";
 import PosterFallback from "./PosterFallback.astro";
 import { episodeHref } from "../lib/episodeHref";
@@ -94,7 +94,7 @@ const inLibrary = item.in_library ?? false;
 
         {popLook ? (
           <div class={`ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md ${popLook.cls} text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1`} data-ext-done="1" title="Rotten Tomatoes Popcornmeter">
-            <span class="text-xs leading-none">{popLook.icon}</span>{popcorn}%{popIsHot && <span class="text-[0.8em] opacity-80">(hot)</span>}
+            <span class="text-xs leading-none">{popLook.icon}</span>{popcorn}%{popIsHot && <span class="inline-flex w-4 h-4 ml-0.5 shrink-0" title="Verified Hot (uppskattat)" set:html={HOT_SVG} />}
           </div>
         ) : popPending ? (
           <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-zinc-500 animate-pulse text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1" data-fallback={rating ?? ""}>
@@ -129,7 +129,7 @@ const inLibrary = item.in_library ?? false;
         )}
         {popLook ? (
           <div class={`ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md ${popLook.cls} text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1`} data-ext-done="1" title="Rotten Tomatoes Popcornmeter">
-            <span class="text-xs leading-none">{popLook.icon}</span>{popcorn}%{popIsHot && <span class="text-[0.8em] opacity-80">(hot)</span>}
+            <span class="text-xs leading-none">{popLook.icon}</span>{popcorn}%{popIsHot && <span class="inline-flex w-4 h-4 ml-0.5 shrink-0" title="Verified Hot (uppskattat)" set:html={HOT_SVG} />}
           </div>
         ) : popPending ? (
           <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-zinc-500 animate-pulse text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1" data-fallback={rating ?? ""}>

@@ -1,11 +1,12 @@
 ---
 // Lokal patch (Popcornmeter). Laddas först i <body> i Base.astro, så att kort
 // som ritas av andra skript får 🍿 innan sidan hinner visa ★.
-import { popcornMap, popcornHotKeys } from "../lib/extRatings";
+import { popcornMap, popcornHotKeys, HOT_SVG } from "../lib/extRatings";
+const hotSvg = HOT_SVG;
 const known = popcornMap();
 const hotKeys = popcornHotKeys();
 ---
-<script is:inline define:vars={{ known, hotKeys }}>
+<script is:inline define:vars={{ known, hotKeys, hotSvg }}>
 (() => {
   if (window.__extRatings) return;
   window.__extRatings = true;
@@ -33,7 +34,7 @@ const hotKeys = popcornHotKeys();
       : card && card.dataset.tmdbId) || "";
     return kind && id ? kind + "/" + id : "";
   }
-  const HOT = ' <span class="text-[0.8em] opacity-80">(hot)</span>';
+  const HOT = '<span class="inline-flex w-4 h-4 ml-0.5 shrink-0" title="Verified Hot (uppskattat)">' + hotSvg + "</span>";
   function show(b, p, isHot) {
     const [icon, cls] = look(p);
     b.classList.remove(...COLORS, "hidden");
