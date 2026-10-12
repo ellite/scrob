@@ -2,6 +2,7 @@
 import "../styles/global.css";
 import logo from "../assets/scrob.png";
 import WatchedAtPicker from "../components/WatchedAtPicker.astro";
+import ExtRatings from "../components/ExtRatings.astro";
 import { api } from "../lib/api";
 
 interface Props { title: string; hideNav?: boolean }
@@ -349,6 +350,7 @@ const bottomNavItem = (active: boolean) =>
   ]}>
     {hideNav && <div class="safe-area-top" />}
     <slot />
+    <ExtRatings />
   </main>
 
   <!-- Mobile bottom nav -->
