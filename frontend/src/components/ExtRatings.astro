@@ -1,17 +1,20 @@
 ---
 // Lokal patch (Popcornmeter). Laddas först i <body> i Base.astro, så att kort
 // som ritas av andra skript får 🍿 innan sidan hinner visa ★.
-import { popcornMap, popcornHotKeys, HOT_SVG } from "../lib/extRatings";
+import { popcornMap, popcornHotKeys, popcornBigKeys, HOT_SVG, RT_AUDIENCE_ICON } from "../lib/extRatings";
+const bigKeys = popcornBigKeys();
+const rtIcon = RT_AUDIENCE_ICON;
 const hotSvg = HOT_SVG;
 const known = popcornMap();
 const hotKeys = popcornHotKeys();
 ---
-<script is:inline define:vars={{ known, hotKeys, hotSvg }}>
+<script is:inline define:vars={{ known, hotKeys, hotSvg, bigKeys, rtIcon }}>
 (() => {
   if (window.__extRatings) return;
   window.__extRatings = true;
   const map = Object.assign({}, known);
   const hot = new Set(hotKeys);
+  const big = new Set(bigKeys);
   const inflight = new Map();
   let active = 0;
   const waiting = [];
@@ -35,8 +38,9 @@ const hotKeys = popcornHotKeys();
     return kind && id ? kind + "/" + id : "";
   }
   const HOT = '<span class="inline-flex w-4 h-4 ml-0.5 shrink-0" title="Verified Hot (uppskattat)">' + hotSvg + "</span>";
-  function show(b, p, isHot) {
-    const [icon, cls] = look(p);
+  function show(b, p, isHot, isBig) {
+    let [icon, cls] = look(p);
+    if (isBig) icon = '<img src="' + rtIcon + '" alt="" class="w-3.5 h-3.5 inline-block" loading="lazy" referrerpolicy="no-referrer" onerror="this.outerHTML=\'🔥\'">';
     b.classList.remove(...COLORS, "hidden");
     b.classList.add(cls);
     b.title = "Rotten Tomatoes Popcornmeter";
@@ -66,7 +70,7 @@ const hotKeys = popcornHotKeys();
       inflight.set(key, slot().then(() =>
         fetch("/api/proxy/ext-ratings/" + key, { credentials: "same-origin" })
           .then((r) => r.ok ? r.json() : null)
-          .then((d) => d && d.popcorn != null && isFinite(+d.popcorn) ? { p: +d.popcorn, hot: !!d.hot } : null)
+          .then((d) => d && d.popcorn != null && isFinite(+d.popcorn) ? { p: +d.popcorn, hot: !!d.hot, big: +d.popcorn >= 90 && +d.votes >= 500 } : null)
           .catch(() => null)
           .finally(release)));
     }
@@ -82,7 +86,8 @@ const hotKeys = popcornHotKeys();
         if (r == null) return fallback(b);
         map[key] = r.p;
         if (r.hot) hot.add(key);
-        show(b, r.p, r.hot);
+        if (r.big) big.add(key);
+        show(b, r.p, r.hot, r.big);
       });
     }
   }, { rootMargin: "400px" });
@@ -93,7 +98,7 @@ const hotKeys = popcornHotKeys();
     if (b.dataset.extDone) return;
     const key = target(b);
     if (!key) { if (b.dataset.fallback != null) fallback(b); return; }
-    if (map[key] != null) return show(b, map[key], hot.has(key));
+    if (map[key] != null) return show(b, map[key], hot.has(key), big.has(key));
     if (!b.classList.contains("hidden")) pending(b);
     io.observe(b);
   }

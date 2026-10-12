@@ -4,23 +4,42 @@ import fs from "node:fs";
 
 const FILE = process.env.EXT_RATINGS_FILE ?? "/app/backend/data/ext_ratings.json";
 let mtime = -1;
+
+/** RT:s publikikon (Wikimedia Commons). Länkas, läggs inte i forken. */
+export const RT_AUDIENCE_ICON = "https://upload.wikimedia.org/wikipedia/commons/d/da/Rotten_Tomatoes_positive_audience.svg";
+
+/** 90 % eller mer och minst 500 röster: RT:s publikikon i stället för 🔥. */
+export function isBig(p: unknown, votes: unknown): boolean {
+  return Number(p) >= 90 && Number(votes) >= 500;
+}
+
+export function popcornIconHtml(p: number, bigIcon: boolean, size: string): string {
+  if (bigIcon) {
+    return `<img src="${RT_AUDIENCE_ICON}" alt="" class="${size} inline-block" loading="lazy" referrerpolicy="no-referrer" onerror="this.outerHTML='🔥'">`;
+  }
+  return p >= 90 ? "🔥" : "🍿";
+}
 let map: Record<string, number> = {};
 let hot = new Set<string>();
+let big = new Set<string>();
 
 export function popcornMap(): Record<string, number> {
   try {
     const st = fs.statSync(FILE);
     if (st.mtimeMs !== mtime) {
-      const raw = JSON.parse(fs.readFileSync(FILE, "utf8")) as Record<string, [number, { popcorn?: unknown; hot?: unknown }]>;
+      const raw = JSON.parse(fs.readFileSync(FILE, "utf8")) as Record<string, [number, { popcorn?: unknown; hot?: unknown; votes?: unknown }]>;
       const next: Record<string, number> = {};
       const nextHot = new Set<string>();
+      const nextBig = new Set<string>();
       for (const [k, v] of Object.entries(raw)) {
         const p = Number(v?.[1]?.popcorn);
         if (v?.[1]?.popcorn != null && Number.isFinite(p)) next[k] = p;
         if (v?.[1]?.hot === true) nextHot.add(k);
+        if (isBig(p, v?.[1]?.votes)) nextBig.add(k);
       }
       map = next;
       hot = nextHot;
+      big = nextBig;
       mtime = st.mtimeMs;
     }
   } catch {
@@ -39,6 +58,17 @@ export function popcornHot(kind: string | null, id: number | string | null | und
   if (!kind || id == null || id === "") return false;
   popcornMap();
   return hot.has(`${kind}/${id}`);
+}
+
+export function popcornBigKeys(): string[] {
+  popcornMap();
+  return [...big];
+}
+
+export function popcornBig(kind: string | null, id: number | string | null | undefined): boolean {
+  if (!kind || id == null || id === "") return false;
+  popcornMap();
+  return big.has(`${kind}/${id}`);
 }
 
 export function popcornFor(kind: string | null, id: number | string | null | undefined): number | null {

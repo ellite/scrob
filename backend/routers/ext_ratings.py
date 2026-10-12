@@ -151,6 +151,6 @@ async def get_ext_ratings(
     ).scalar_one_or_none()
     api_key = getattr(settings, "mdblist_api_key", None)
     if not api_key:
-        return {"popcorn": None, "url": None, "hot": False}
+        return {"popcorn": None, "url": None, "hot": False, "votes": None}
     r = await _fetch(api_key, kind, tmdb_id)
-    return {"popcorn": r.get("popcorn"), "url": r.get("url"), "hot": bool(r.get("hot"))}
+    return {"popcorn": r.get("popcorn"), "url": r.get("url"), "hot": bool(r.get("hot")), "votes": r.get("votes")}

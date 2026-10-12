@@ -2,7 +2,7 @@
 import type { MediaItem } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
-import { popcornFor, popcornHot, popcornLook, HOT_SVG } from "../lib/extRatings";
+import { popcornFor, popcornHot, popcornBig, popcornLook, popcornIconHtml, HOT_SVG } from "../lib/extRatings";
 import CardActionBar from "./CardActionBar.astro";
 import PosterFallback from "./PosterFallback.astro";
 import { episodeHref } from "../lib/episodeHref";
@@ -27,6 +27,7 @@ const popId = popKind === "show" ? (item.show_tmdb_id || (item.type === "series"
 const popcorn = popcornFor(popKind, popId);
 const popLook = popcorn != null ? popcornLook(popcorn) : null;
 const popIsHot = popcorn != null && popcornHot(popKind, popId);
+const popIcon = popcorn != null ? popcornIconHtml(popcorn, popcornBig(popKind, popId), "w-3.5 h-3.5") : "";
 const popPending = popcorn == null && !!popKind && !!popId;
 const isEpisode = item.type === "episode";
 // A "series" item with season_number set is a season list item (see routers/lists.py) -
@@ -94,7 +95,7 @@ const inLibrary = item.in_library ?? false;
 
         {popLook ? (
           <div class={`ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md ${popLook.cls} text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1`} data-ext-done="1" title="Rotten Tomatoes Popcornmeter">
-            <span class="text-xs leading-none">{popLook.icon}</span>{popcorn}%{popIsHot && <span class="inline-flex w-4 h-4 ml-0.5 shrink-0" title="Verified Hot (uppskattat)" set:html={HOT_SVG} />}
+            <span class="text-xs leading-none inline-flex" set:html={popIcon} />{popcorn}%{popIsHot && <span class="inline-flex w-4 h-4 ml-0.5 shrink-0" title="Verified Hot (uppskattat)" set:html={HOT_SVG} />}
           </div>
         ) : popPending ? (
           <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-zinc-500 animate-pulse text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1" data-fallback={rating ?? ""}>
@@ -129,7 +130,7 @@ const inLibrary = item.in_library ?? false;
         )}
         {popLook ? (
           <div class={`ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md ${popLook.cls} text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1`} data-ext-done="1" title="Rotten Tomatoes Popcornmeter">
-            <span class="text-xs leading-none">{popLook.icon}</span>{popcorn}%{popIsHot && <span class="inline-flex w-4 h-4 ml-0.5 shrink-0" title="Verified Hot (uppskattat)" set:html={HOT_SVG} />}
+            <span class="text-xs leading-none inline-flex" set:html={popIcon} />{popcorn}%{popIsHot && <span class="inline-flex w-4 h-4 ml-0.5 shrink-0" title="Verified Hot (uppskattat)" set:html={HOT_SVG} />}
           </div>
         ) : popPending ? (
           <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-zinc-500 animate-pulse text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1" data-fallback={rating ?? ""}>

@@ -7,7 +7,7 @@ import CastCrewSection from "../../../../../components/CastCrewSection.astro";
 import VideoPlayer from "../../../../../components/VideoPlayer.astro";
 import ManualScrobble from "../../../../../components/ManualScrobble.astro";
 import { api, type EpisodeDetail } from "../../../../../lib/api";
-import { popcornLook } from "../../../../../lib/extRatings";
+import { popcornLook, popcornIconHtml, isBig } from "../../../../../lib/extRatings";
 
 export const prerender = false;
 
@@ -37,7 +37,8 @@ const apiEpisode = episode?.canonical_episode_number ?? Number(episode_number);
 const rating = episode?.tmdb_rating ? episode.tmdb_rating.toFixed(1) : null;
 let showPopcorn: number | null = null;
 let showPopcornUrl: string | null = null;
-try { const ext = await api.extRatings.get("show", Number(id), token); showPopcorn = ext.popcorn; showPopcornUrl = ext.url; } catch {}
+let showPopcornVotes: number | null = null;
+try { const ext = await api.extRatings.get("show", Number(id), token); showPopcorn = ext.popcorn; showPopcornUrl = ext.url; showPopcornVotes = ext.votes ?? null; } catch {}
 const showPopcornHref = showPopcornUrl ?? `https://www.rottentomatoes.com/search?search=${encodeURIComponent(show?.title ?? "")}`;
 const showPopLook = showPopcorn != null ? popcornLook(showPopcorn) : null;
 const showPopcornClass = showPopLook?.cls ?? "";
@@ -171,7 +172,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
               )}
               {showPopcorn != null && (
                 <a href={showPopcornHref} target="_blank" rel="noopener noreferrer" class={`flex items-center gap-1.5 font-black hover:underline ${showPopcornClass}`} title="Seriens Popcornmeter (finns inte per avsnitt). Öppna på Rotten Tomatoes">
-                  <span class="text-lg leading-none">{showPopLook?.icon ?? "🍿"}</span>{showPopcorn}%
+                  <span class="text-lg leading-none inline-flex" set:html={showPopcorn != null ? popcornIconHtml(showPopcorn, isBig(showPopcorn, showPopcornVotes), "w-5 h-5") : "🍿"} />{showPopcorn}%
                   <span class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">serien</span>
                 </a>
               )}
