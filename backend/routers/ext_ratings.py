@@ -17,6 +17,7 @@ router = APIRouter()
 
 _TTL = 24 * 3600
 _cache: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
+_paused_until = 0.0  # pausa MDBList-anrop en stund om dygnskvoten tar slut
 
 
 async def _fetch(api_key: str, kind: str, tmdb_id: int) -> dict[str, Any]:
@@ -24,10 +25,16 @@ async def _fetch(api_key: str, kind: str, tmdb_id: int) -> dict[str, Any]:
     hit = _cache.get(key)
     if hit and time.time() - hit[0] < _TTL:
         return hit[1]
+    global _paused_until
+    if time.time() < _paused_until:
+        return {}
     try:
         data = await mdblist_client._request_json(
             "GET", f"/tmdb/{kind}/{tmdb_id}", api_key, rate_limit_retries=0
         )
+    except mdblist_client.MDBListDailyLimitError:
+        _paused_until = time.time() + 3600
+        return {}
     except Exception:
         return {}
     out: dict[str, Any] = {}
