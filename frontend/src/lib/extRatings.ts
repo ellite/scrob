@@ -96,11 +96,8 @@ export function popcornFor(kind: string | null, id: number | string | null | und
   return popcornMap()[`${kind}/${id}`] ?? null;
 }
 
-/** Textfärg för procenten. */
-export function popcornLook(p: number): { cls: string } {
-  if (p >= 90) return { cls: "text-cyan-400" };
-  if (p >= 75) return { cls: "text-green-400" };
-  if (p >= 60) return { cls: "text-yellow-400" };
-  return { cls: "text-red-400" };
+/** Textfärg för procenten: samma mjukvita på alla nivåer (ikonen visar nivån). */
+export function popcornLook(_p: number): { cls: string } {
+  return { cls: "text-zinc-100" };
 }
 

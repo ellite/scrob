@@ -17,11 +17,11 @@ const icons = ratingIcons();
   const waiting = [];
   const slot = () => active < 4 ? (active++, Promise.resolve()) : new Promise((r) => waiting.push(() => { active++; r(); }));
   const release = () => { active--; const n = waiting.shift(); if (n) n(); };
-  const COLORS = ["text-yellow-400", "text-red-400", "text-green-400", "text-cyan-400", "text-zinc-500", "animate-pulse"];
+  const COLORS = ["text-yellow-400", "text-red-400", "text-green-400", "text-cyan-400", "text-zinc-100", "text-zinc-500", "animate-pulse"];
   const FALLBACK = { fresh: "🍅", rotten: "🟢", noScore: "·", banner: "🍅" };
 
   function color(p) {
-    return p >= 90 ? "text-cyan-400" : p >= 75 ? "text-green-400" : p >= 60 ? "text-yellow-400" : "text-red-400";
+    return "text-zinc-100"; // mjukvit på alla nivåer
   }
   function icon(name) {
     const svg = icons[name];
@@ -52,7 +52,7 @@ const icons = ratingIcons();
     b.dataset.extDone = "1";
     if (b.classList.contains("hidden")) { b.remove(); return; }
     b.classList.remove(...COLORS);
-    b.classList.add("text-zinc-500");
+    b.classList.add("text-zinc-100");
     b.title = "Inget Popcornmeter-betyg";
     b.innerHTML = icon("noScore") + "–";
   }
