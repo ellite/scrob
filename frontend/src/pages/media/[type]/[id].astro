@@ -162,15 +162,18 @@ const refreshUrl = isEpisode
             <div class="flex flex-wrap items-center gap-3 mb-10">
               <div class="flex flex-wrap items-center gap-4 text-zinc-300 text-sm bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm">
                 {year && <span class="font-bold">{year}</span>}
-                {popcorn != null ? (
-          <a href={popcornHref} target="_blank" rel="noopener noreferrer" class={`flex items-center gap-1.5 font-black item-rating hover:underline ${popcornClass}`} title="Öppna på Rotten Tomatoes">
-            <span class="text-lg leading-none inline-flex" set:html={popcornIcon} />{popcorn}%
-          </a>
-        ) : (
-                  <span class="flex items-center gap-1.5 text-zinc-100 font-black item-rating" title="Inget Popcornmeter-betyg">
-                    <span class="text-lg leading-none inline-flex" set:html={popcornIcon} />–
-                  </span>
-                )}
+                {/* Lokal patch (v2): ★ TMDB | Rotten Tomatoes Popcornmeter */}
+                <span class="flex items-center gap-2 font-black item-rating">
+                  {rating && (
+                    <span class="flex items-center gap-1.5 text-yellow-400">
+                      <span class="text-lg leading-none">★</span> {rating}
+                    </span>
+                  )}
+                  {rating && <span class="w-px h-4 bg-zinc-600"></span>}
+                  <a href={popcornHref} target="_blank" rel="noopener noreferrer" class="flex items-center gap-1.5 text-zinc-100 hover:underline" title={popcorn != null ? "Öppna på Rotten Tomatoes" : "Inget Popcornmeter-betyg"}>
+                    <span class="text-lg leading-none inline-flex" set:html={popcornIcon} />{popcorn != null ? `${popcorn}%` : "–"}
+                  </a>
+                </span>
                 {item.runtime && (
                   <span class="flex items-center gap-1.5 font-medium">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4 text-zinc-500">

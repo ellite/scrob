@@ -1,6 +1,6 @@
 ---
 // Lokal patch (Popcornmeter). Laddas först i <body> i Base.astro, så att kort
-// som ritas av andra skript får rätt ikon innan sidan hinner visa ★.
+// som ritas av andra skript får rätt ikon direkt. v2: ★ TMDB | RT-ikon och procent i samma bricka.
 import { popcornMap, popcornBigKeys, popcornStaleKeys, ratingIcons } from "../lib/extRatings";
 const staleKeys = popcornStaleKeys();
 const known = popcornMap();
@@ -43,25 +43,39 @@ const icons = ratingIcons();
       : card && card.dataset.tmdbId) || "";
     return kind && id ? kind + "/" + id : "";
   }
+  // Delar brickan i ★ TMDB | RT. Returnerar RT-delen, som är det enda skriptet ändrar.
+  function rtPart(b) {
+    let rt = b.querySelector(".ext-rt");
+    if (rt) return rt;
+    const m = (b.textContent || "").match(/★\s*([\d.]+)/);
+    b.classList.remove(...COLORS);
+    b.innerHTML = (m ? '<span class="text-yellow-400 inline-flex items-center gap-1"><span class="text-xs leading-none">★</span>' + m[1] + '</span><span class="ext-sep w-px h-3 bg-zinc-600 mx-0.5"></span>' : "")
+      + '<span class="ext-rt inline-flex items-center gap-1"></span>';
+    return b.querySelector(".ext-rt");
+  }
   function show(b, p, isBig) {
-    b.classList.remove(...COLORS, "hidden");
-    b.classList.add(color(p));
-    b.title = "Rotten Tomatoes Popcornmeter";
-    b.innerHTML = icon(iconFor(p, isBig)) + p + "%";
+    const rt = rtPart(b);
+    b.classList.remove("hidden");
+    rt.classList.remove(...COLORS);
+    rt.classList.add(color(p));
+    rt.title = "Rotten Tomatoes Popcornmeter";
+    rt.innerHTML = icon(iconFor(p, isBig)) + p + "%";
     b.dataset.extDone = "1";
   }
   function noScore(b) {
     b.dataset.extDone = "1";
     if (b.classList.contains("hidden")) { b.remove(); return; }
-    b.classList.remove(...COLORS);
-    b.classList.add("text-zinc-100");
-    b.title = "Inget Popcornmeter-betyg";
-    b.innerHTML = icon("noScore") + "–";
+    const rt = rtPart(b);
+    rt.classList.remove(...COLORS);
+    rt.classList.add("text-zinc-100");
+    rt.title = "Inget Popcornmeter-betyg";
+    rt.innerHTML = icon("noScore") + "–";
   }
   function pending(b) {
-    b.classList.remove("text-yellow-400");
-    b.classList.add("text-zinc-500", "animate-pulse");
-    b.innerHTML = icon("noScore") + "…";
+    const rt = rtPart(b);
+    rt.classList.remove(...COLORS);
+    rt.classList.add("text-zinc-500", "animate-pulse");
+    rt.innerHTML = icon("noScore") + "…";
   }
   function fetchPop(key) {
     if (!inflight.has(key)) {

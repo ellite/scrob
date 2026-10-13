@@ -21,7 +21,7 @@ const isShowLike = item.type === "series" || item.type === "episode";
 const fallbackKind = isPerson ? "person" : isShowLike ? "show" : "movie";
 const year = item.release_date?.slice(0, 4) ?? null;
 const rating = item.tmdb_rating ? item.tmdb_rating.toFixed(1) : null;
-// Lokal patch: Popcornmeter först, TMDB som reserv.
+// Lokal patch (v2): TMDB ★ och Rotten Tomatoes Popcornmeter i samma bricka.
 const popKind = item.type === "movie" ? "movie" : (item.type === "series" || item.type === "episode") ? "show" : null;
 const popId = popKind === "show" ? (item.show_tmdb_id || (item.type === "series" ? item.tmdb_id : null)) : item.tmdb_id;
 const popcorn = popcornFor(popKind, popId);
@@ -29,6 +29,7 @@ const popLook = popcorn != null ? popcornLook(popcorn) : null;
 const popIcon = popcorn != null ? ratingIconHtml(popcorn, popcornBig(popKind, popId), "w-3.5 h-3.5") : "";
 const popNoScoreIcon = ratingIconHtml(null, false, "w-3.5 h-3.5");
 const popPending = popcorn == null && !!popKind && !!popId;
+const showBadge = !!rating || !!popKind && !!popId;
 const isEpisode = item.type === "episode";
 // A "series" item with season_number set is a season list item (see routers/lists.py) -
 // it shares media with the whole show, so it's split out from the plain whole-show case.
@@ -93,17 +94,17 @@ const inLibrary = item.in_library ?? false;
 
         <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
 
-        {popLook ? (
-          <div class={`ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md ${popLook.cls} text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1`} data-ext-done="1" title="Rotten Tomatoes Popcornmeter">
-            <span class="leading-none inline-flex" set:html={popIcon} />{popcorn}%
-          </div>
-        ) : popPending ? (
-          <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-zinc-500 animate-pulse text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
-            <span class="leading-none inline-flex" set:html={popNoScoreIcon} />…
-          </div>
-        ) : rating && (
-          <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
-            <span class="text-xs leading-none">★</span> {rating}
+        {showBadge && (
+          <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1" data-ext-done={popcorn != null ? "1" : undefined}>
+            {rating && <span class="text-yellow-400 inline-flex items-center gap-1"><span class="text-xs leading-none">★</span>{rating}</span>}
+            {rating && popKind && popId && <span class="ext-sep w-px h-3 bg-zinc-600 mx-0.5"></span>}
+            {popKind && popId && (
+              popcorn != null ? (
+                <span class={`ext-rt inline-flex items-center gap-1 ${popLook?.cls ?? ""}`} title="Rotten Tomatoes Popcornmeter"><span class="leading-none inline-flex" set:html={popIcon} />{popcorn}%</span>
+              ) : (
+                <span class="ext-rt inline-flex items-center gap-1 text-zinc-500 animate-pulse"><span class="leading-none inline-flex" set:html={popNoScoreIcon} />…</span>
+              )
+            )}
           </div>
         )}
 
@@ -128,17 +129,17 @@ const inLibrary = item.in_library ?? false;
         ) : (
           <PosterFallback kind={fallbackKind} title={cardTitle} class="flex" />
         )}
-        {popLook ? (
-          <div class={`ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md ${popLook.cls} text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1`} data-ext-done="1" title="Rotten Tomatoes Popcornmeter">
-            <span class="leading-none inline-flex" set:html={popIcon} />{popcorn}%
-          </div>
-        ) : popPending ? (
-          <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-zinc-500 animate-pulse text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
-            <span class="leading-none inline-flex" set:html={popNoScoreIcon} />…
-          </div>
-        ) : rating && (
-          <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
-            <span class="text-xs leading-none">★</span> {rating}
+        {showBadge && (
+          <div class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1" data-ext-done={popcorn != null ? "1" : undefined}>
+            {rating && <span class="text-yellow-400 inline-flex items-center gap-1"><span class="text-xs leading-none">★</span>{rating}</span>}
+            {rating && popKind && popId && <span class="ext-sep w-px h-3 bg-zinc-600 mx-0.5"></span>}
+            {popKind && popId && (
+              popcorn != null ? (
+                <span class={`ext-rt inline-flex items-center gap-1 ${popLook?.cls ?? ""}`} title="Rotten Tomatoes Popcornmeter"><span class="leading-none inline-flex" set:html={popIcon} />{popcorn}%</span>
+              ) : (
+                <span class="ext-rt inline-flex items-center gap-1 text-zinc-500 animate-pulse"><span class="leading-none inline-flex" set:html={popNoScoreIcon} />…</span>
+              )
+            )}
           </div>
         )}
       </div>
