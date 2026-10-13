@@ -175,6 +175,11 @@ class UserSettings(Base):
     use_hls_player  : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     shuffle_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     minimalist_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Which rating badges show on posters and detail pages: "tmdb" (default) or
+    # an MDBList source - see core/external_ratings.SOURCES. rating_show_tmdb
+    # keeps the TMDB star next to the chosen source instead of replacing it.
+    rating_source      : Mapped[str]  = mapped_column(String(20), nullable=False, default="tmdb", server_default="tmdb")
+    rating_show_tmdb   : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     next_up_hidden_shows : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="'[]'")
     # Dropped is stronger than hidden - unlike next_up_hidden_shows, dropped
     # items are also excluded from the Calendar and from Discover/

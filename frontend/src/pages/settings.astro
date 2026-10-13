@@ -2,6 +2,7 @@
 import Base from "../layouts/Base.astro";
 import { api } from "../lib/api";
 import type { TotpBackupCode } from "../lib/api";
+import { SOURCE_OPTIONS } from "../lib/externalRatings";
 
 const { token } = Astro.locals;
 const [settings, me] = await Promise.all([
@@ -251,6 +252,42 @@ if (me.totp_enabled) {
               />
               <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
             </label>
+          </div>
+          <div class="p-4 bg-zinc-900/60 rounded-xl border border-zinc-800 space-y-3">
+            <div class="flex items-start justify-between gap-6">
+              <div>
+                <p class="text-sm font-semibold text-zinc-100 mb-1">Rating source</p>
+                <p class="text-xs text-zinc-400">Which rating the poster badges and title pages show. Sources other than TMDB come from MDBList and fall back to TMDB when a title has no rating there.</p>
+                {!(settings.mdblist_connected || settings.has_global_mdblist_key) && (
+                  <p class="text-xs text-amber-400 mt-2">Needs an MDBList API key - add one under <a href="/connections" class="underline">Connections</a>. Until then only TMDB is shown.</p>
+                )}
+              </div>
+              <select
+                id="rating-source-select"
+                name="rating_source"
+                class="shrink-0 bg-zinc-800 border border-zinc-700 text-zinc-100 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500"
+              >
+                {SOURCE_OPTIONS.map((o) => (
+                  <option value={o.value} selected={(settings.rating_source ?? "tmdb") === o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div id="rating-show-tmdb-row" class:list={["flex items-start justify-between gap-6 pt-3 border-t border-zinc-800", { hidden: (settings.rating_source ?? "tmdb") === "tmdb" }]}>
+              <div>
+                <p class="text-sm font-semibold text-zinc-100 mb-1">Show TMDB next to it</p>
+                <p class="text-xs text-zinc-400">Keep the TMDB star in the same badge, e.g. "★ 8.3 | 🍿 94%".</p>
+              </div>
+              <label class="relative inline-flex items-center shrink-0 cursor-pointer mt-0.5">
+                <input
+                  type="checkbox"
+                  name="rating_show_tmdb"
+                  id="rating-show-tmdb-toggle"
+                  class="sr-only peer"
+                  checked={settings.rating_show_tmdb === true}
+                />
+                <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+              </label>
+            </div>
           </div>
           <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
             <div>
@@ -1806,6 +1843,24 @@ if (me.totp_enabled) {
       });
     });
   }
+
+  const ratingSourceSelect = document.getElementById('rating-source-select') as HTMLSelectElement | null;
+  const ratingShowTmdbToggle = document.getElementById('rating-show-tmdb-toggle') as HTMLInputElement | null;
+  const patchRatingSettings = async (body: Record<string, unknown>) => {
+    const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
+    await fetch('/api/proxy/auth/settings', {
+      method: 'PATCH',
+      headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  };
+  ratingSourceSelect?.addEventListener('change', async () => {
+    document.getElementById('rating-show-tmdb-row')?.classList.toggle('hidden', ratingSourceSelect.value === 'tmdb');
+    await patchRatingSettings({ rating_source: ratingSourceSelect.value });
+  });
+  ratingShowTmdbToggle?.addEventListener('change', async () => {
+    await patchRatingSettings({ rating_show_tmdb: ratingShowTmdbToggle.checked });
+  });
 
   const minimalistNextUpToggle = document.getElementById('minimalist-next-up-toggle') as HTMLInputElement | null;
   if (minimalistNextUpToggle) {

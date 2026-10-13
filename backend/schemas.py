@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field, SecretStr, field_validator, model_validator
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime
 from models.base import UserRole, MediaType, PrivacyLevel
 
@@ -226,6 +226,8 @@ class UserSettings(BaseModel):
     use_hls_player: Optional[bool] = None
     shuffle_next_up: Optional[bool] = None
     minimalist_next_up: Optional[bool] = None
+    rating_source: Optional[Literal["tmdb", "imdb", "tomatometer", "popcornmeter", "metacritic", "letterboxd", "trakt"]] = None
+    rating_show_tmdb: Optional[bool] = None
     hide_watched_from_recently_added: Optional[bool] = None
     condense_history_by_show: Optional[bool] = None
     rate_prompt_movies: Optional[bool] = None

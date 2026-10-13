@@ -6,6 +6,7 @@ import CardActionBar from "./CardActionBar.astro";
 import PosterFallback from "./PosterFallback.astro";
 import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
+import { ratingContext, cardTarget, shortKey, cardBadgeHtml } from "../lib/externalRatings";
 
 interface Props {
   item: MediaItem;
@@ -20,6 +21,12 @@ const isShowLike = item.type === "series" || item.type === "episode";
 const fallbackKind = isPerson ? "person" : isShowLike ? "show" : "movie";
 const year = item.release_date?.slice(0, 4) ?? null;
 const rating = item.tmdb_rating ? item.tmdb_rating.toFixed(1) : null;
+// Selectable rating source: null keeps the plain TMDB badge below.
+const ratingCtx = await ratingContext(Astro.locals);
+const ratingTarget = ratingCtx ? cardTarget(item) : null;
+const ratingKey = ratingTarget ? shortKey(ratingTarget.kind, ratingTarget.id) : null;
+const extBadge = ratingCtx ? cardBadgeHtml(ratingCtx, rating, ratingKey) : null;
+const extStale = !!(ratingKey && ratingCtx?.stale.includes(ratingKey));
 const isEpisode = item.type === "episode";
 // A "series" item with season_number set is a season list item (see routers/lists.py) -
 // it shares media with the whole show, so it's split out from the plain whole-show case.
@@ -84,7 +91,15 @@ const inLibrary = item.in_library ?? false;
 
         <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
 
-        {rating && (
+        {extBadge ? (
+          <div
+            class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1"
+            data-ext-key={ratingKey}
+            data-tmdb-rating={rating ?? ""}
+            data-ext-stale={extStale ? "1" : undefined}
+            set:html={extBadge}
+          />
+        ) : rating && (
           <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
             <span class="text-xs leading-none">★</span> {rating}
           </div>
@@ -111,7 +126,15 @@ const inLibrary = item.in_library ?? false;
         ) : (
           <PosterFallback kind={fallbackKind} title={cardTitle} class="flex" />
         )}
-        {rating && (
+        {extBadge ? (
+          <div
+            class="ext-rate absolute top-2 left-2 bg-black/80 backdrop-blur-md text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1"
+            data-ext-key={ratingKey}
+            data-tmdb-rating={rating ?? ""}
+            data-ext-stale={extStale ? "1" : undefined}
+            set:html={extBadge}
+          />
+        ) : rating && (
           <div class="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-yellow-400 text-xs font-bold px-2 py-0.5 rounded-full shadow-lg border border-zinc-800 flex items-center gap-1">
             <span class="text-xs leading-none">★</span> {rating}
           </div>

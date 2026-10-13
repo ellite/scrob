@@ -31,8 +31,10 @@ from .calendar_cache import UserCalendarCache
 from .plex_pending_push import PlexPendingPush
 from .connection_push_state import ConnectionPushState
 from .oauth_device import OAuthDeviceGrant
+from .external_rating import ExternalRating
 
 __all__ = [
+    "ExternalRating",
     "Base",
     "UserRole", "MediaType", "CollectionSource",
     "User", "UserSettings", "TotpBackupCode",

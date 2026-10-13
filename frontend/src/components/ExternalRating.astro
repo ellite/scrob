@@ -1,0 +1,51 @@
+---
+// The rating in a title page's info row. With the default TMDB source this is
+// exactly the original star; otherwise the chosen MDBList source (linked to the
+// source's page when MDBList provides one), with TMDB next to it or as fallback.
+import { api } from "../lib/api";
+import { SOURCE_META, formatValue, type ExtSource, type RatingSource } from "../lib/externalRatings";
+
+interface Props {
+  kind: "movie" | "show";
+  tmdbId: number | null | undefined;
+  tmdbRating: string | null;
+  class?: string;
+}
+const { kind, tmdbId, tmdbRating, class: extraClass = "" } = Astro.props;
+const { token, settings } = Astro.locals;
+const source = ((settings as any)?.rating_source ?? "tmdb") as RatingSource;
+
+let ext: { source: ExtSource; value: number | null; url: string | null } | null = null;
+let showTmdb = true;
+if (source !== "tmdb" && token && tmdbId) {
+  try {
+    const r = await api.externalRatings.get(kind, tmdbId, token);
+    if (r.source !== "tmdb" && r.source in SOURCE_META) {
+      const entry = r.ratings[r.source];
+      ext = { source: r.source as ExtSource, value: entry?.value ?? null, url: entry?.url ?? null };
+      showTmdb = r.show_tmdb || ext.value == null;
+    }
+  } catch {}
+}
+const meta = ext ? SOURCE_META[ext.source] : null;
+const Tag = ext?.url ? "a" : "span";
+---
+{(showTmdb && tmdbRating) && (
+  <span class={`flex items-center gap-1.5 text-yellow-400 font-black ${extraClass}`}>
+    <span class="text-lg leading-none">★</span> {tmdbRating}
+  </span>
+)}
+{ext && meta && (ext.value != null || !tmdbRating) && (
+  <Tag
+    href={ext.url ?? undefined}
+    target={ext.url ? "_blank" : undefined}
+    rel={ext.url ? "noopener noreferrer" : undefined}
+    class={`flex items-center gap-1.5 font-black text-zinc-100 ${ext.url ? "hover:underline" : ""} ${showTmdb && tmdbRating ? "" : extraClass}`}
+    title={ext.value != null ? meta.name : `No ${meta.name} rating`}
+  >
+    {meta.icon
+      ? <span class="text-lg leading-none">{meta.icon}</span>
+      : <span class="text-xs font-black tracking-tight opacity-80">{meta.short}</span>}
+    {ext.value != null ? formatValue(ext.source, ext.value) : "–"}
+  </Tag>
+)}

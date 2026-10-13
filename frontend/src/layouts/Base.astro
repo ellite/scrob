@@ -7,6 +7,9 @@ import { api } from "../lib/api";
 interface Props { title: string; hideNav?: boolean }
 const { title, hideNav } = Astro.props;
 const { user, token } = Astro.locals;
+// Settings -> Display -> Rating source: anything but TMDB needs the client script.
+const ratingSource = (Astro.locals.settings as any)?.rating_source;
+const externalRatings = !!token && !!ratingSource && ratingSource !== "tmdb";
 
 let pendingRequestCount = 0;
 let radarrCustomizeOnAdd = false;
@@ -170,6 +173,12 @@ const bottomNavItem = (active: boolean) =>
   </script>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen overflow-x-hidden">
+  {externalRatings && (
+    <Fragment>
+      <script is:inline src="/external-ratings.js"></script>
+      <script is:inline src="/external-ratings-client.js"></script>
+    </Fragment>
+  )}
   {!hideNav && (
     <nav class="px-4 md:px-6 py-3 md:py-4 text-sm sticky top-0 z-30 bg-zinc-950">
       <!-- Default bar -->

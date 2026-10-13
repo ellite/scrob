@@ -529,6 +529,8 @@ export interface UserSettings {
   rate_prompt_episodes: boolean;
   duplicate_watch_window_minutes: number | null;
   condense_history_by_show: boolean;
+  rating_source: 'tmdb' | 'imdb' | 'tomatometer' | 'popcornmeter' | 'metacritic' | 'letterboxd' | 'trakt';
+  rating_show_tmdb: boolean;
 }
 
 export interface MediaServerConnection {
@@ -1239,6 +1241,12 @@ export interface CalendarResponse {
 
 // API calls
 export const api = {
+  externalRatings: {
+    map: (token: string) =>
+      get<{ source: string; show_tmdb: boolean; values: Record<string, number>; stale: string[]; missing: string[] }>("/external-ratings/map", undefined, token),
+    get: (mediaType: string, tmdbId: number, token?: string) =>
+      get<{ source: string; show_tmdb: boolean; has_api_key: boolean; ratings: Record<string, { value: number; votes: number | null; url: string | null }> }>(`/external-ratings/${mediaType}/${tmdbId}`, undefined, token),
+  },
   auth: {
     login: (body: FormData) =>
       post<LoginResponse>("/auth/login", body),
