@@ -57,27 +57,40 @@ export function ratingIconHtml(p: number | null, big: boolean, size: string): st
 
 let map: Record<string, number> = {};
 let big = new Set<string>();
+let fetchedAt: Record<string, number> = {};
+const FRESH_S = 24 * 3600;
 
 export function popcornMap(): Record<string, number> {
   try {
     const st = fs.statSync(FILE);
     if (st.mtimeMs !== mtime) {
-      const raw = JSON.parse(fs.readFileSync(FILE, "utf8")) as Record<string, [number, { popcorn?: unknown; hot?: unknown; votes?: unknown }]>;
+      const raw = JSON.parse(fs.readFileSync(FILE, "utf8")) as Record<string, [number, { popcorn?: unknown; votes?: unknown; v?: unknown }]>;
       const next: Record<string, number> = {};
       const nextBig = new Set<string>();
+      const nextFetched: Record<string, number> = {};
       for (const [k, v] of Object.entries(raw)) {
         const p = Number(v?.[1]?.popcorn);
         if (v?.[1]?.popcorn != null && Number.isFinite(p)) next[k] = p;
         if (isBig(p, v?.[1]?.votes)) nextBig.add(k);
+        // Äldre poster (utan röstantal) räknas som gamla direkt.
+        nextFetched[k] = v?.[1]?.v === 2 ? Number(v?.[0]) || 0 : 0;
       }
       map = next;
       big = nextBig;
+      fetchedAt = nextFetched;
       mtime = st.mtimeMs;
     }
   } catch {
     /* filen finns inte än */
   }
   return map;
+}
+
+/** Betyg som är äldre än ett dygn (eller saknar röstantal): visas direkt men hämtas om i bakgrunden. */
+export function popcornStaleKeys(): string[] {
+  popcornMap();
+  const now = Date.now() / 1000;
+  return Object.keys(map).filter((k) => now - (fetchedAt[k] ?? 0) >= FRESH_S);
 }
 
 export function popcornBigKeys(): string[] {

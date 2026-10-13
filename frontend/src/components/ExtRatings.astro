@@ -1,17 +1,19 @@
 ---
 // Lokal patch (Popcornmeter). Laddas först i <body> i Base.astro, så att kort
 // som ritas av andra skript får rätt ikon innan sidan hinner visa ★.
-import { popcornMap, popcornBigKeys, ratingIcons } from "../lib/extRatings";
+import { popcornMap, popcornBigKeys, popcornStaleKeys, ratingIcons } from "../lib/extRatings";
+const staleKeys = popcornStaleKeys();
 const known = popcornMap();
 const bigKeys = popcornBigKeys();
 const icons = ratingIcons();
 ---
-<script is:inline define:vars={{ known, bigKeys, icons }}>
+<script is:inline define:vars={{ known, bigKeys, staleKeys, icons }}>
 (() => {
   if (window.__extRatings) return;
   window.__extRatings = true;
   const map = Object.assign({}, known);
   const big = new Set(bigKeys);
+  const stale = new Set(staleKeys);
   const inflight = new Map();
   let active = 0;
   const waiting = [];
@@ -78,10 +80,12 @@ const icons = ratingIcons();
       const b = e.target;
       io.unobserve(b);
       const key = target(b);
+      const reval = b.dataset.extReval === "1";
       fetchPop(key).then((r) => {
-        if (r == null) return noScore(b);
+        stale.delete(key);
+        if (r == null) return reval ? undefined : noScore(b);
         map[key] = r.p;
-        if (r.big) big.add(key);
+        if (r.big) big.add(key); else big.delete(key);
         show(b, r.p, r.big);
       });
     }
@@ -90,10 +94,12 @@ const icons = ratingIcons();
   function handle(b) {
     if (b.dataset.extSeen) return;
     b.dataset.extSeen = "1";
-    if (b.dataset.extDone) return;
     const key = target(b);
     if (!key) return;
-    if (map[key] != null) return show(b, map[key], big.has(key));
+    // Visa sparat betyg direkt; är det gammalt hämtas det om när kortet syns.
+    const revalidate = () => { if (stale.has(key)) { b.dataset.extReval = "1"; io.observe(b); } };
+    if (b.dataset.extDone) return revalidate();
+    if (map[key] != null) { show(b, map[key], big.has(key)); return revalidate(); }
     if (!b.classList.contains("hidden")) pending(b);
     io.observe(b);
   }
