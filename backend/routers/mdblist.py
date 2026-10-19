@@ -481,6 +481,7 @@ async def _import_watched(
                         continue
                     event = WatchEvent(
                         user_id=user_id,
+                        source="mdblist",
                         media_id=media.id,
                         watched_at=watched_at,
                         completed=True,

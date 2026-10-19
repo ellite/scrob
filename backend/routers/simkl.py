@@ -450,6 +450,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                                 watched_at = _parse_watched_at(item.get("last_watched_at"))
                                 db.add(WatchEvent(
                                     user_id=user_id,
+                                    source="simkl",
                                     media_id=media.id,
                                     # A dateless Simkl play stays dateless (the
                                     # column is nullable, same as the Trakt
@@ -515,6 +516,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                                             watched_at = _parse_watched_at(ep_entry.get("watched_at"))
                                             event = WatchEvent(
                                                 user_id=user_id,
+                                                source="simkl",
                                                 media_id=media.id,
                                                 # See the movie branch above (#127).
                                                 watched_at=watched_at,
@@ -658,12 +660,30 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
 
                 await db.commit()
 
+            # ── Dropped shows (#474) ──────────────────────────────────────────
+            if settings.simkl_sync_dropped:
+                from routers.trakt import _apply_dropped_shows_import
+
+                # Simkl returns ids.tmdb as a string, and the shared importer
+                # filters Show.tmdb_id (an integer column) with these as-is.
+                dropped_items = []
+                for s in raw_shows:
+                    if s.get("status") != "dropped":
+                        continue
+                    try:
+                        tmdb_id = int((s.get("show") or {}).get("ids", {}).get("tmdb"))
+                    except (TypeError, ValueError):
+                        continue
+                    dropped_items.append({"show": {"ids": {"tmdb": tmdb_id}}})
+                stats["dropped"] = await _apply_dropped_shows_import(db, user_id, dropped_items)
+
             print(
                 f"Simkl sync job {job_id} completed. "
                 f"Movies: {stats['movies']} new. "
                 f"Episodes: {stats['episodes']} new. "
                 f"Ratings: {stats['ratings']} new. "
                 f"Lists: {stats['lists']} new, {stats['list_items']} items. "
+                f"Dropped: {stats.get('dropped', 0)} new. "
                 f"Skipped: {stats['skipped']}. Errors: {stats['errors']}."
             )
             # A pull only populates scrob's own data — it never automatically pushes
@@ -751,6 +771,26 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                 return
             await ensure_simkl_token_fresh(db, settings)
 
+            # Dropped shows Simkl is missing. The one-shot push at drop time is
+            # best-effort (#329), so reconcile against Simkl's own dropped list.
+            dropped_to_push: list[int] = []
+            if settings.simkl_push_dropped:
+                try:
+                    from routers.trakt import _local_dropped_show_tmdb_ids
+
+                    local_dropped = await _local_dropped_show_tmdb_ids(db, settings)
+                    if local_dropped:
+                        remote_all = await simkl_client.get_all_items(settings.simkl_client_id, settings.simkl_access_token)
+                        remote_dropped = {
+                            int(tid)
+                            for item in (remote_all.get("shows") or [])
+                            if item.get("status") == "dropped"
+                            and (tid := (item.get("show") or {}).get("ids", {}).get("tmdb"))
+                        }
+                        dropped_to_push = sorted(local_dropped - remote_dropped)
+                except Exception as exc:
+                    logger.warning("Simkl push job %s: could not reconcile dropped shows: %s", job_id, exc)
+
             all_media_ids: set[int] = set()
             watched_ids:   set[int] = set()
             ratings_map:   dict[int, float] = {}
@@ -777,12 +817,12 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                 ratings_map = {row[0]: row[1] for row in ratings_result.all()}
                 all_media_ids |= set(ratings_map.keys())
 
-            if not all_media_ids:
+            if not all_media_ids and not dropped_to_push:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats={"succeeded": 0, "failed": 0}, processed_items=0, total_items=0))
                 await db.commit()
                 return
 
-            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(all_media_ids)))
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(all_media_ids) + len(dropped_to_push)))
             await db.commit()
 
             media_rows = await _select_in_chunks(
@@ -916,9 +956,9 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                     simkl_client.set_ratings_batch(settings.simkl_client_id, settings.simkl_access_token, movie_ratings, show_ratings),
                 ))
 
-            total = sum(item_count for _, item_count, _ in push_tasks)
+            total = sum(item_count for _, item_count, _ in push_tasks) + len(dropped_to_push)
 
-            if not push_tasks:
+            if not push_tasks and not dropped_to_push:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats={"succeeded": 0, "failed": 0}, processed_items=0))
                 await db.commit()
                 return
@@ -940,6 +980,24 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                         rejected = min(item_count, result) if isinstance(result, int) else 0
                         failed += rejected
                         succeeded += item_count - rejected
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=succeeded + failed))
+                await db.commit()
+                await _raise_if_cancelled(db, job_id)
+
+            # Dropped goes last: a history/rating push can move a show back to
+            # watching on Simkl's side, and the drop has to be the final word.
+            for i in range(0, len(dropped_to_push), SIMKL_PUSH_BATCH_SIZE):
+                chunk = dropped_to_push[i:i + SIMKL_PUSH_BATCH_SIZE]
+                try:
+                    rejected = await simkl_client.add_shows_to_dropped(
+                        settings.simkl_client_id, settings.simkl_access_token, chunk
+                    )
+                    rejected = min(len(chunk), rejected)
+                    failed += rejected
+                    succeeded += len(chunk) - rejected
+                except Exception as exc:
+                    failed += len(chunk)
+                    logger.warning("Simkl push batch failed (dropped, %d shows): %s", len(chunk), exc)
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=succeeded + failed))
                 await db.commit()
                 await _raise_if_cancelled(db, job_id)
@@ -980,7 +1038,7 @@ async def push_simkl(
     _require_simkl_config(settings)
     if not settings or not settings.simkl_access_token:
         raise HTTPException(status_code=400, detail="Simkl is not connected")
-    if not settings.simkl_push_watched and not settings.simkl_push_ratings:
+    if not settings.simkl_push_watched and not settings.simkl_push_ratings and not settings.simkl_push_dropped:
         raise HTTPException(status_code=400, detail="Enable 'Scrob → Simkl' push flags first")
     job = SyncJob(user_id=current_user.id, source=CollectionSource.simkl, status=SyncStatus.pending, job_type="push")
     db.add(job)

@@ -40,6 +40,8 @@ def format_rating(rating: Rating, media: Media) -> dict:
         "media": {
             "id": media.id,
             "tmdb_id": media.tmdb_id,
+            "tvdb_id": media.tvdb_id,
+            "imdb_id": media.imdb_id,
             "type": media.media_type,
             "title": media.title,
             "poster_path": media.poster_path,

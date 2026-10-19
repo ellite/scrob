@@ -69,6 +69,23 @@ from core.translations import (
 router = APIRouter()
 
 
+async def _last_watched_by_media(db: AsyncSession, user_id: int, media_ids: list[int]) -> dict[int, str]:
+    """media_id -> ISO time of the user's most recent dated play (#317)."""
+    if not media_ids:
+        return {}
+    rows = await db.execute(
+        select(WatchEvent.media_id, func.max(WatchEvent.watched_at))
+        .where(
+            WatchEvent.user_id == user_id,
+            WatchEvent.completed == True,
+            WatchEvent.watched_at.isnot(None),
+            WatchEvent.media_id.in_(media_ids),
+        )
+        .group_by(WatchEvent.media_id)
+    )
+    return {media_id: at.isoformat() for media_id, at in rows.all()}
+
+
 async def get_user_tvdb_key(db: AsyncSession, user_id: int) -> str | None:
     """Resolve the effective TVDB key (personal override, else server-wide) and
     register its subscriber PIN with the TVDB client so every downstream request
@@ -1503,6 +1520,7 @@ async def get_show_season(
             ]
 
             watched_ep_ids: set = set()
+            last_watched_at: dict[int, str] = {}
             episode_ratings: dict = {}
 
             # Find all local Media rows for these episodes (even if show_id is null)
@@ -1537,6 +1555,7 @@ async def get_show_season(
                         ).distinct()
                     )
                 watched_ep_ids = {r[0] for r in watched_q.all()}
+                last_watched_at = await _last_watched_by_media(db, effective_user_id, local_media_ids)
 
                 ep_ratings_q = await db.execute(
                     select(Rating.media_id, Rating.rating).where(
@@ -1648,6 +1667,7 @@ async def get_show_season(
                         "in_library": is_in_library,
                         "runtime": ep.get("runtime"),
                         "watched": local_media_id in watched_ep_ids if local_media_id else False,
+                        "last_watched_at": last_watched_at.get(local_media_id) if local_media_id in watched_ep_ids else None,
                         "user_rating": episode_ratings.get(local_media_id) if local_media_id else None,
                         "in_lists": episode_in_lists.get(ep.get("id"), []),
                     }
@@ -2046,6 +2066,7 @@ async def get_episode_detail(
             "collection_pct": ep_state.get("collection_pct", 100 if local_ep else 0),
             "user_rating": ep_state.get("user_rating"),
             "play_count": ep_state.get("play_count", 0),
+            "last_watched_at": ep_state.get("last_watched_at"),
             "episode_order": order_key,
             "episode_number": display_episode,
             "season_number": display_season,
@@ -2863,6 +2884,7 @@ async def get_tvdb_season(
         if local_episode
     })
     watched_ep_ids: set[int] = set()
+    last_watched_at: dict[int, str] = {}
     collected_ep_ids: set[int] = set()
     episode_ratings: dict[int, float] = {}
     if local_media_ids:
@@ -2886,6 +2908,7 @@ async def get_tvdb_season(
                 .distinct()
             )
         watched_ep_ids = {row[0] for row in watched_q.all()}
+        last_watched_at = await _last_watched_by_media(db, effective_user_id, local_media_ids)
         collected_q = await db.execute(
             select(Collection.media_id)
             .where(
@@ -2971,6 +2994,7 @@ async def get_tvdb_season(
             "unmatched": unmatched_ep,
             "in_library": local_episode.id in collected_ep_ids if local_episode else False,
             "watched": local_episode.id in watched_ep_ids if local_episode else False,
+            "last_watched_at": last_watched_at.get(local_episode.id) if local_episode and local_episode.id in watched_ep_ids else None,
             "user_rating": episode_ratings.get(local_episode.id) if local_episode else None,
             "in_lists": tvdb_episode_in_lists.get(local_episode.id, []) if local_episode else [],
         })

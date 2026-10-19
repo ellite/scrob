@@ -31,6 +31,7 @@ from .calendar_cache import UserCalendarCache
 from .plex_pending_push import PlexPendingPush
 from .connection_push_state import ConnectionPushState
 from .oauth_device import OAuthDeviceGrant
+from .oidc_identity import OidcIdentity
 
 __all__ = [
     "Base",
@@ -64,4 +65,5 @@ __all__ = [
     "PlexPendingPush",
     "ConnectionPushState",
     "OAuthDeviceGrant",
+    "OidcIdentity",
 ]

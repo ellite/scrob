@@ -37,6 +37,9 @@ services:
       # ENABLE_REGISTRATIONS: "true"
       # REGISTRATION_MAX_ALLOWED_USERS: "0"  # 0 = unlimited
 
+      # Days a login lasts when "Stay logged in" is ticked (7 days otherwise)
+      # SESSION_REMEMBER_DAYS: "30"
+
       # ── Nuvio (optional) ───────────────────────────────────────────────────
       # Set this to the anon/public key when using a self-hosted Nuvio backend.
       # NUVIO_APP_ANON_KEY: ""
@@ -55,11 +58,16 @@ services:
       # OIDC_TOKEN_URL: ""
       # OIDC_USERINFO_URL: ""
       # OIDC_REDIRECT_URL: http://your-server:7330/oidc-callback
-      # OIDC_LOGOUT_URL: ""
+      # OIDC_DISCOVERY_URL: https://your-idp.example.com/.well-known/openid-configuration   # recommended — enables id_token verification + (issuer, sub) binding
+      # OIDC_ISSUER: ""        # explicit fallback when discovery isn't available
+      # OIDC_JWKS_URL: ""      # explicit fallback when discovery isn't available
+      # OIDC_LOGOUT_URL: ""    # end_session endpoint; populated from discovery when unset
+      # OIDC_POST_LOGOUT_REDIRECT_URL: ""   # defaults to SERVER_URL + /login
       # OIDC_SCOPES: "openid email profile"
-      # OIDC_IDENTIFIER_FIELD: email
+      # OIDC_IDENTIFIER_FIELD: email         # only used in compat (no-discovery) mode
       # OIDC_AUTO_CREATE_USERS: "true"
       # OIDC_DISABLE_PASSWORD_LOGIN: "false"
+      # OIDC_PKCE: "true"      # escape hatch; leave on unless the IdP breaks on PKCE
 
       # ── User & timezone ──────────────────────────────────────────────────────
       # Run the process as a specific user/group (defaults to 1000:1000)

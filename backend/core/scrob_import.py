@@ -52,8 +52,8 @@ _CONNECTIONS_SETTINGS_FIELDS = (
     "trakt_sync_watched", "trakt_sync_ratings", "trakt_sync_lists", "trakt_watchlist_split",
     "trakt_push_watched", "trakt_push_ratings", "trakt_push_collection", "trakt_push_lists", "trakt_scrobble",
     "simkl_client_id", "simkl_access_token", "simkl_refresh_token", "simkl_token_expires_at",
-    "simkl_sync_watched", "simkl_sync_ratings", "simkl_sync_lists",
-    "simkl_push_watched", "simkl_push_ratings", "simkl_scrobble",
+    "simkl_sync_watched", "simkl_sync_ratings", "simkl_sync_lists", "simkl_sync_dropped",
+    "simkl_push_watched", "simkl_push_ratings", "simkl_push_dropped", "simkl_scrobble",
     "mdblist_api_key", "mdblist_sync_watched", "mdblist_sync_ratings", "mdblist_sync_watchlist",
     "mdblist_push_watched", "mdblist_push_ratings", "mdblist_push_watchlist", "mdblist_push_collection", "mdblist_scrobble",
 )
@@ -317,7 +317,7 @@ async def apply_scrob_import(
                             continue
                         watched_at = _parse_iso(entry.get("watched_at"))
                         if not _is_duplicate_play(media.id, watched_at):
-                            db.add(WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1))
+                            db.add(WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1, source="import"))
                             existing_times.setdefault(media.id, []).append(watched_at or datetime.utcnow())
                             stats["movies"] += 1
                         else:
@@ -356,7 +356,7 @@ async def apply_scrob_import(
                             continue
                         watched_at = _parse_iso(entry.get("watched_at"))
                         if not _is_duplicate_play(media.id, watched_at):
-                            event = WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1)
+                            event = WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1, source="import")
                             db.add(event)
                             await db.flush()
                             await record_rewatch_progress(db, user_id, media.id, event.id)

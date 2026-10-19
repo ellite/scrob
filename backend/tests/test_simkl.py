@@ -1,6 +1,7 @@
+import json
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -135,6 +136,125 @@ class AddToHistoryRejectionTests(unittest.IsolatedAsyncioTestCase):
 
         with self._patched(handler):
             self.assertEqual(await simkl.add_history_batch("cid", "tok", [], [(1, 1, 1, None)]), 0)
+
+
+class AddShowsToDroppedTests(unittest.IsolatedAsyncioTestCase):
+    """#474: dropped shows are pushed through /sync/add-to-list with to=dropped."""
+
+    def _patched(self, handler):
+        transport = httpx.MockTransport(handler)
+        return patch.object(
+            simkl.httpx, "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        )
+
+    async def test_posts_each_show_with_to_dropped(self):
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["path"] = request.url.path
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(201, json={"added": {"shows": 2}, "not_found": {"shows": []}})
+
+        with self._patched(handler):
+            rejected = await simkl.add_shows_to_dropped("cid", "tok", [1396, 95479])
+
+        self.assertEqual(seen["path"], "/sync/add-to-list")
+        self.assertEqual(seen["body"], {"shows": [
+            {"to": "dropped", "ids": {"tmdb": 1396}},
+            {"to": "dropped", "ids": {"tmdb": 95479}},
+        ]})
+        self.assertEqual(rejected, 0)
+
+    async def test_set_show_list_status_sends_each_status(self):
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(201, json={"added": {"shows": 2}, "not_found": {}})
+
+        with self._patched(handler):
+            await simkl.set_show_list_status("cid", "tok", [(1396, "watching"), (95479, "hold")])
+        self.assertEqual(seen["body"], {"shows": [
+            {"to": "watching", "ids": {"tmdb": 1396}},
+            {"to": "hold", "ids": {"tmdb": 95479}},
+        ]})
+
+    async def test_get_dropped_ids_parses_string_tmdb_ids(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/sync/all-items/shows/dropped")
+            return httpx.Response(200, json={"shows": [
+                {"status": "dropped", "show": {"ids": {"tmdb": "155", "simkl": 1884}}},
+                {"status": "dropped", "show": {"ids": {"simkl": 5}}},
+            ]})
+
+        with self._patched(handler):
+            self.assertEqual(await simkl.get_dropped_show_tmdb_ids("cid", "tok"), {155})
+
+    async def test_get_dropped_ids_tolerates_empty_response(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={})
+
+        with self._patched(handler):
+            self.assertEqual(await simkl.get_dropped_show_tmdb_ids("cid", "tok"), set())
+
+    async def test_returns_number_of_unresolved_shows(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(201, json={
+                "added": {"shows": 1}, "not_found": {"shows": [{"ids": {"tmdb": 95479}}]},
+            })
+
+        with self._patched(handler):
+            rejected = await simkl.add_shows_to_dropped("cid", "tok", [1396, 95479])
+        self.assertEqual(rejected, 1)
+
+    async def test_empty_list_makes_no_request(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError("no request expected")
+
+        with self._patched(handler):
+            self.assertEqual(await simkl.add_shows_to_dropped("cid", "tok", []), 0)
+
+
+class UndroppedShowStatusTests(unittest.IsolatedAsyncioTestCase):
+    """#474: which Simkl list an un-dropped show is moved to."""
+
+    async def _status(self, *, show, watched_rows, season_counts):
+        from routers import history
+
+        show_result = MagicMock()
+        show_result.scalar_one_or_none.return_value = show
+        rows_result = MagicMock()
+        rows_result.all.return_value = watched_rows
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=[show_result, rows_result])
+        with patch.object(history, "capped_season_episode_counts", return_value=season_counts):
+            return await history._simkl_status_for_undropped_show(db, 1, 155)
+
+    async def test_unknown_show_goes_on_hold(self):
+        self.assertEqual(await self._status(show=None, watched_rows=[], season_counts={}), "hold")
+
+    async def test_nothing_watched_goes_on_hold(self):
+        show = MagicMock(status="Ended")
+        self.assertEqual(await self._status(show=show, watched_rows=[], season_counts={1: 10}), "hold")
+
+    async def test_partly_watched_is_watching(self):
+        show = MagicMock(status="Ended")
+        self.assertEqual(await self._status(show=show, watched_rows=[(1, 4)], season_counts={1: 10}), "watching")
+
+    async def test_ended_and_fully_watched_is_completed(self):
+        show = MagicMock(status="Ended")
+        status = await self._status(show=show, watched_rows=[(1, 10), (2, 8)], season_counts={0: 3, 1: 10, 2: 8})
+        self.assertEqual(status, "completed")
+
+    async def test_caught_up_on_a_returning_show_stays_watching(self):
+        show = MagicMock(status="Returning Series")
+        status = await self._status(show=show, watched_rows=[(1, 10)], season_counts={1: 10})
+        self.assertEqual(status, "watching")
+
+    async def test_canceled_and_fully_watched_is_completed(self):
+        show = MagicMock(status="Canceled")
+        self.assertEqual(await self._status(show=show, watched_rows=[(1, 6)], season_counts={1: 6}), "completed")
 
 
 class SimklAuthV2ClientTests(unittest.IsolatedAsyncioTestCase):

@@ -23,6 +23,7 @@ from models.playback_progress import PlaybackProgress
 from models.library_selections import JellyfinLibrarySelection, EmbyLibrarySelection, PlexLibrarySelection
 from models.plex_pending_push import PlexPendingPush
 from models.season_override import ShowSeasonOverride
+from models.episode_order import EpisodeOrderMapping
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from models.base import MediaType, CollectionSource
@@ -32,7 +33,11 @@ from core.jellyfin import get_jellyfin_tmdb_id
 import core.trakt as trakt_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely, enrich_media_safely, apply_media_change_safely, enrich_episode_from_tvdb
 from core.identity import coerce_id, link_show_ids
-from core.episode_order import load_tvdb_episode_id_positions, reconcile_divergent_episode_media
+from core.episode_order import (
+    ensure_episode_order_mapping,
+    load_tvdb_episode_id_positions,
+    reconcile_divergent_episode_media,
+)
 from core.image_cache import pre_cache_all_collected_bg
 from core.translations import get_user_metadata_language
 from core.rewatch import record_rewatch_progress, get_active_rewatches_for_shows
@@ -1733,6 +1738,25 @@ async def _fan_out_changes_to_other_connections(
                     )
                 )
 
+    # ── WeTrakr fan-out ─────────────────────────────────────────────────────
+    push_wetrakr = bool(
+        settings
+        and exclude_cloud_source != CollectionSource.wetrakr
+        and getattr(settings, "wetrakr_access_token", None)
+        and (getattr(settings, "wetrakr_push_watched", False) or getattr(settings, "wetrakr_push_ratings", False))
+    )
+    if push_wetrakr:
+        from routers.wetrakr import push_live_changes as wetrakr_push_live
+        wetrakr_watched_at = await _latest_watched_at(db, user_id, list(new_watched_ids)) if new_watched_ids else {}
+        # A sync-detected watch is a title newly marked watched, never a
+        # confirmed rewatch, so allow_rewatch stays false.
+        push_tasks.append(wetrakr_push_live(
+            user_id,
+            new_watched_ids,
+            wetrakr_watched_at,
+            {mid: rating for (mid, season), rating in new_ratings.items() if season is None},
+        ))
+
     # ── Bingebase fan-out ───────────────────────────────────────────────────
     push_bingebase_watched = (
         settings
@@ -1753,6 +1777,7 @@ async def _fan_out_changes_to_other_connections(
         target_count += 1 if (push_mdblist_watched or push_mdblist_ratings) else 0
         target_count += 1 if (push_simkl_watched or push_simkl_ratings) else 0
         target_count += 1 if push_bingebase_watched else 0
+        target_count += 1 if push_wetrakr else 0
         print(f"  Fanning out {len(push_tasks)} changes to {target_count} other connection(s)...")
         # Chunked rather than one giant gather() — a large one-time import can
         # produce thousands of individual per-item media-server push tasks (Plex/
@@ -1860,25 +1885,139 @@ def _expand_multi_episode_items(items: list, media_type: MediaType, source: Coll
     return expanded
 
 
-def _canonical_episode_position(
-    item: dict, series_tmdb_id: int | None, positions: dict[tuple[int, int], tuple[int, int]]
-) -> tuple[int, int] | None:
-    """The canonical TMDB (season, episode) of a Jellyfin/Emby episode item, found
-    through the episode's own TVDB id (#447), or None to keep the raw numbers.
+def _episode_tvdb_id(item: dict, source: CollectionSource) -> int | None:
+    """Return an episode-level TVDB id that is safe for canonicalisation.
 
-    The server's SeasonNumber/EpisodeNumber follow whatever metadata provider it
-    uses, so they are never assumed to be TVDB's - only an exact episode-id match
-    against an EpisodeOrderMapping row counts. A multi-episode file is skipped: its
-    ProviderIds belong to the first episode only, not to each expanded copy."""
-    if not series_tmdb_id or item.get("IndexNumberEnd") is not None:
+    Jellyfin/Emby expose this explicitly in ProviderIds. Modern Plex items use
+    a direct ``tvdb://<episode id>`` Guid. Legacy Plex/HAMA GUIDs instead embed
+    the *series* id followed by a season/episode path, so they must not be fed
+    into an episode-id mapping lookup.
+    """
+    if source in _MEDIA_BROWSER_ITEM_SOURCES:
+        if item.get("IndexNumberEnd") is not None:
+            return None
+        return jellyfin.get_jellyfin_tvdb_id(item.get("ProviderIds") or {})
+    if source is CollectionSource.plex:
+        for guid in item.get("Guid") or []:
+            raw = str(guid.get("id") or "") if isinstance(guid, dict) else ""
+            match = re.fullmatch(r"tvdb://(\d+)(?:\?.*)?", raw, flags=re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+    return None
+
+
+def _canonical_episode_position(
+    item: dict,
+    source: CollectionSource,
+    series_tmdb_id: int | None,
+    positions: dict[tuple[int, int], tuple[int, int]],
+) -> tuple[int, int] | None:
+    """Return an item's canonical TMDB position from its exact TVDB episode id.
+
+    A server's season/episode numbers follow whichever metadata provider it
+    uses, so they are never assumed to be TVDB's. Only an exact episode-id
+    match against an EpisodeOrderMapping row counts.
+    """
+    if not series_tmdb_id:
         return None
-    tvdb_id = jellyfin.get_jellyfin_tvdb_id(item.get("ProviderIds") or {})
+    tvdb_id = _episode_tvdb_id(item, source)
     return positions.get((series_tmdb_id, tvdb_id)) if tvdb_id else None
+
+
+def _episode_parent_source_id(item: dict, source: CollectionSource) -> str:
+    raw = (
+        item.get("grandparentRatingKey")
+        if source is CollectionSource.plex
+        else item.get("SeriesId")
+    )
+    return str(raw) if raw is not None else ""
+
+
+async def _load_episode_tvdb_positions(
+    db: AsyncSession,
+    items: list,
+    source: CollectionSource,
+    show_map: dict,
+    show_id_to_tmdb: dict,
+    user_id: int,
+    tmdb_api_key: str | None,
+) -> dict[tuple[int, int], tuple[int, int]]:
+    """Load exact TVDB-id translations, building missing Plex mappings once.
+
+    Jellyfin/Emby mapping creation is handled by their webhook/order flows.
+    Plex bulk sync previously only consumed raw season/episode coordinates and
+    therefore created divergent twins before a user opened the order picker.
+    Direct Plex TVDB episode GUIDs give enough identity to safely build and
+    cache the same mapping without changing the user's display-order setting.
+    """
+    ids_by_series: dict[int, set[int]] = {}
+    for item in items:
+        # Plex items carrying their own TMDB episode id already resolve through
+        # media_by_tmdb; mapping those too would turn every ordinary first sync
+        # into an unnecessary full-show TVDB mapping job.
+        if source is CollectionSource.plex and plex.extract_tmdb_id(item.get("Guid") or []):
+            continue
+        local_show_id = show_map.get(_episode_parent_source_id(item, source))
+        series_tmdb_id = show_id_to_tmdb.get(local_show_id)
+        tvdb_episode_id = _episode_tvdb_id(item, source)
+        if series_tmdb_id and tvdb_episode_id:
+            ids_by_series.setdefault(series_tmdb_id, set()).add(tvdb_episode_id)
+    if not ids_by_series:
+        return {}
+
+    series_ids = sorted(ids_by_series)
+    item_tvdb_ids = sorted({eid for ids in ids_by_series.values() for eid in ids})
+    positions = await load_tvdb_episode_id_positions(db, series_ids, item_tvdb_ids)
+    if source is not CollectionSource.plex or not tmdb_api_key:
+        return positions
+
+    missing_series = {
+        series_tmdb_id
+        for series_tmdb_id, episode_ids in ids_by_series.items()
+        if any((series_tmdb_id, episode_id) not in positions for episode_id in episode_ids)
+    }
+    if not missing_series:
+        return positions
+
+    from routers.shows import get_user_tvdb_key
+
+    tvdb_api_key = await get_user_tvdb_key(db, user_id)
+    if not tvdb_api_key:
+        return positions
+
+    mapped_result = await db.execute(
+        select(EpisodeOrderMapping.series_tmdb_id)
+        .where(EpisodeOrderMapping.series_tmdb_id.in_(missing_series))
+        .distinct()
+    )
+    already_mapped_series = set(mapped_result.scalars().all())
+
+    for series_tmdb_id in sorted(missing_series):
+        try:
+            # A partial/stale mapping needs a refresh; with no rows yet the
+            # ordinary ensure path builds it. Keep each show isolated so one
+            # provider failure cannot discard mappings built for other shows.
+            async with db.begin_nested():
+                await ensure_episode_order_mapping(
+                    db,
+                    series_tmdb_id,
+                    tmdb_api_key,
+                    tvdb_api_key,
+                    force=series_tmdb_id in already_mapped_series,
+                )
+        except Exception:
+            logger.exception(
+                "Plex sync could not build TVDB episode mapping for show tmdb_id=%s",
+                series_tmdb_id,
+            )
+
+    return await load_tvdb_episode_id_positions(db, series_ids, item_tvdb_ids)
 
 
 async def _fold_divergent_episodes(
     db: AsyncSession,
     items: list,
+    source: CollectionSource,
     show_map: dict,
     show_id_to_tmdb: dict,
     tvdb_positions: dict[tuple[int, int], tuple[int, int]],
@@ -1895,9 +2034,19 @@ async def _fold_divergent_episodes(
     reconcile_show_ids: set[int] = set()
     moved_rows: list[Media] = []
     for it in items:
-        sid = show_map.get(str(it.get("SeriesId")))
-        pos = _canonical_episode_position(it, show_id_to_tmdb.get(sid), tvdb_positions)
-        raw = (sid, it.get("ParentIndexNumber"), it.get("IndexNumber"))
+        if source is CollectionSource.plex:
+            parent_id = it.get("grandparentRatingKey")
+            season_number = it.get("parentIndex")
+            episode_number = it.get("index")
+        else:
+            parent_id = it.get("SeriesId")
+            season_number = it.get("ParentIndexNumber")
+            episode_number = it.get("IndexNumber")
+        sid = show_map.get(str(parent_id))
+        pos = _canonical_episode_position(
+            it, source, show_id_to_tmdb.get(sid), tvdb_positions
+        )
+        raw = (sid, season_number, episode_number)
         divergent = media_by_episode.get(raw) if pos and sid else None
         if divergent is None:
             continue
@@ -1911,7 +2060,7 @@ async def _fold_divergent_episodes(
         # just as well hold a genuinely different TMDB episode. Same identity
         # rule as reconcile_divergent_episode_media (tmdb_id only as the legacy
         # stand-in for a TVDB id when tvdb_id was never set).
-        item_tvdb_id = jellyfin.get_jellyfin_tvdb_id(it.get("ProviderIds") or {})
+        item_tvdb_id = _episode_tvdb_id(it, source)
         row_tvdb_id = divergent.tvdb_id if divergent.tvdb_id is not None else divergent.tmdb_id
         if row_tvdb_id != item_tvdb_id:
             continue
@@ -2044,24 +2193,21 @@ async def sync_items(
             for m in medias:
                 media_by_tmdb[(m.tmdb_id, m.media_type)] = m
 
-    # #447: Jellyfin/Emby report their own numbering, which for a show whose TVDB and
-    # TMDB layouts diverge is not the canonical TMDB position every other path uses.
-    # Resolve each item through its episode-level TVDB id so the lookups below land
-    # on the canonical row instead of creating a divergent twin on every sync.
+    # #447/#472: media servers may report TVDB numbering for a show whose TVDB
+    # and TMDB layouts diverge. Resolve each item through its episode-level TVDB
+    # id so the lookups below land on the canonical row instead of creating a
+    # divergent twin on every sync. Plex also builds a missing mapping here;
+    # previously that happened only after selecting TVDB order on the show page.
     tvdb_positions: dict[tuple[int, int], tuple[int, int]] = {}
     moved_rows: list[Media] = []
-    if media_type == MediaType.episode and source in _MEDIA_BROWSER_ITEM_SOURCES and show_ids:
-        series_ids = sorted({t for t in show_id_to_tmdb.values() if t})
-        item_tvdb_ids = sorted({
-            tid for it in items
-            if it.get("IndexNumberEnd") is None
-            and (tid := jellyfin.get_jellyfin_tvdb_id(it.get("ProviderIds") or {}))
-        })
-        tvdb_positions = await load_tvdb_episode_id_positions(db, series_ids, item_tvdb_ids)
+    if media_type == MediaType.episode and show_ids:
+        tvdb_positions = await _load_episode_tvdb_positions(
+            db, items, source, show_map, show_id_to_tmdb, user_id, api_key
+        )
 
     if tvdb_positions:
         merged_any, moved_rows = await _fold_divergent_episodes(
-            db, items, show_map, show_id_to_tmdb, tvdb_positions, media_by_episode
+            db, items, source, show_map, show_id_to_tmdb, tvdb_positions, media_by_episode
         )
         if merged_any:
             await db.commit()
@@ -2166,7 +2312,9 @@ async def sync_items(
                     episode_num = item.get("IndexNumber")
                     if tvdb_positions:
                         canonical_pos = _canonical_episode_position(
-                            item, show_id_to_tmdb.get(show_map.get(str(parent_id))), tvdb_positions
+                            item, source,
+                            show_id_to_tmdb.get(show_map.get(str(parent_id))),
+                            tvdb_positions,
                         )
                         if canonical_pos:
                             season_num, episode_num = canonical_pos
@@ -2178,6 +2326,14 @@ async def sync_items(
                     name = item.get("title")
                     season_num = item.get("parentIndex")
                     episode_num = item.get("index")
+                    if tvdb_positions:
+                        canonical_pos = _canonical_episode_position(
+                            item, source,
+                            show_id_to_tmdb.get(show_map.get(str(parent_id))),
+                            tvdb_positions,
+                        )
+                        if canonical_pos:
+                            season_num, episode_num = canonical_pos
 
                 added_at = provider_added_at(item, source)
 
@@ -2504,6 +2660,7 @@ async def sync_items(
                             # -supported state for this column - see Simkl's import path.
                             watch_event = WatchEvent(
                                 user_id=user_id,
+                                source=getattr(source, "value", source),
                                 media_id=media_id_for_watch,
                                 watched_at=watch_state["last_played"],
                                 completed=watch_state["completed"],
@@ -3440,6 +3597,7 @@ async def _backfill_plex_watch_history(
             else:
                 watch_event = WatchEvent(
                     user_id=user_id,
+                    source="plex",
                     media_id=media_id,
                     watched_at=watched_at,
                     completed=True,
@@ -4450,6 +4608,7 @@ async def _apply_nuvio_watch_history(
             continue
         event = WatchEvent(
             user_id=user_id,
+            source="nuvio",
             media_id=media.id,
             watched_at=watched_at,
             completed=True,
@@ -5628,6 +5787,7 @@ async def _apply_arvio_watched_movie(
     if not existing:
         event = WatchEvent(
             user_id=user_id,
+            source="arvio",
             media_id=media.id,
             completed=True,
             watched_at=watched_at or datetime.now(timezone.utc).replace(tzinfo=None),
@@ -5758,6 +5918,7 @@ async def _apply_arvio_watched_episode(
     if not existing:
         event = WatchEvent(
             user_id=user_id,
+            source="arvio",
             media_id=media.id,
             completed=True,
             watched_at=watched_at or datetime.now(timezone.utc).replace(tzinfo=None),

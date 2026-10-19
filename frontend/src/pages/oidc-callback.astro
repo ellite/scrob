@@ -3,8 +3,8 @@ import Base from "../layouts/Base.astro";
 import { api } from "../lib/api";
 import { m } from "../paraglide/messages.js";
 
-// This page is the OIDC redirect_uri — the provider sends the browser here with
-// ?code=...&state=... after the user authenticates.
+// Provider redirects the browser here with ?code=&state=. We check state,
+// then post the code + PKCE verifier + nonce back to /auth/oidc/exchange.
 
 let error = "";
 
@@ -14,28 +14,39 @@ if (urlError) {
   error = errorDescription || urlError;
 }
 
+const clearOidcCookies = () => {
+  Astro.cookies.delete("oidc_state", { path: "/" });
+  Astro.cookies.delete("oidc_next", { path: "/" });
+  Astro.cookies.delete("oidc_code_verifier", { path: "/" });
+  Astro.cookies.delete("oidc_nonce", { path: "/" });
+  Astro.cookies.delete("oidc_remember", { path: "/" });
+};
+
 if (!error) {
   const code = Astro.url.searchParams.get("code") ?? "";
   const state = Astro.url.searchParams.get("state") ?? "";
   const storedState = Astro.cookies.get("oidc_state")?.value ?? "";
+  const codeVerifier = Astro.cookies.get("oidc_code_verifier")?.value;
+  const nonce = Astro.cookies.get("oidc_nonce")?.value;
+  const storedNext = Astro.cookies.get("oidc_next")?.value ?? "/";
+  const remember = Astro.cookies.get("oidc_remember")?.value === "1";
 
   if (!code) {
     error = m.oidc_no_code();
+    clearOidcCookies();
   } else if (!storedState || storedState !== state) {
     error = m.oidc_invalid_state();
+    clearOidcCookies();
   } else {
-    Astro.cookies.delete("oidc_state", { path: "/" });
-    const storedNext = Astro.cookies.get("oidc_next")?.value ?? "/";
-    Astro.cookies.delete("oidc_next", { path: "/" });
-
+    clearOidcCookies();
     try {
-      const { access_token } = await api.auth.oidcExchange(code);
+      const { access_token, expires_in } = await api.auth.oidcExchange({ code, code_verifier: codeVerifier, nonce, remember });
       Astro.cookies.set("token", access_token, {
         path: "/",
         httpOnly: true,
         secure: import.meta.env.PROD,
         sameSite: "lax",
-        maxAge: 60 * 60 * 24 * 7,
+        maxAge: expires_in ?? 60 * 60 * 24 * 7,
       });
       return Astro.redirect(storedNext);
     } catch (e: unknown) {

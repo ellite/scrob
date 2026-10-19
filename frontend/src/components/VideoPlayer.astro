@@ -15,9 +15,11 @@ interface Props {
 const { tmdbId, mediaType, inLibrary, title, token, secondary = false, mediaId } = Astro.props;
 const settings = await api.auth.getSettings(token);
 const useHls = settings.use_hls_player === true;
+// Opt-out (#485): defaults to shown, only an explicit false hides it.
+const showPlayButton = settings.show_play_button !== false;
 ---
 
-{inLibrary && (
+{inLibrary && showPlayButton && (
   <>
     <button
       id="play-btn"

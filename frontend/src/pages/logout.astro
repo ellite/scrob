@@ -1,4 +1,6 @@
 ---
+import { api } from "../lib/api";
+
 // Only allow POST to prevent logout CSRF via crafted GET links.
 // SameSite=Lax permits top-level cross-site navigations, so a GET logout
 // would allow any external site to log out the user by tricking them into
@@ -6,6 +8,16 @@
 if (Astro.request.method !== "POST") {
   return Astro.redirect("/login");
 }
+
 Astro.cookies.delete("token", { path: "/" });
+
+// When OIDC + a logout URL are configured, bounce the browser to the IdP's
+// end_session_endpoint so the SSO session ends too; otherwise we only cleared
+// our own cookie, which leaves the user signed in at the IdP (unexpected).
+const oidcConfig = await api.auth.oidcConfig().catch(() => null);
+if (oidcConfig?.sso_logout_available && oidcConfig.logout_url) {
+  return Astro.redirect(oidcConfig.logout_url);
+}
+
 return Astro.redirect("/login");
 ---

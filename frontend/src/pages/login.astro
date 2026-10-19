@@ -77,7 +77,7 @@ if (Astro.request.method === "POST") {
           path: "/",
           httpOnly: true,
           sameSite: "lax",
-          maxAge: 60 * 60 * 24 * 7,
+          maxAge: result.expires_in ?? 60 * 60 * 24 * 7,
         });
         return Astro.redirect(postNext);
       }
@@ -94,7 +94,7 @@ if (Astro.request.method === "POST") {
           path: "/",
           httpOnly: true,
           sameSite: "lax",
-          maxAge: 60 * 60 * 24 * 7,
+          maxAge: result.expires_in ?? 60 * 60 * 24 * 7,
         });
         return Astro.redirect(postNext);
       }
@@ -167,6 +167,7 @@ const heroMinHeightClass = showNav
         {/* OIDC button */}
         {oidcConfig.enabled && (
           <a
+            id="oidc-login-link"
             href={`/oidc-start?next=${encodeURIComponent(nextPath)}`}
             tabindex="2"
             class="flex items-center justify-center gap-2 w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 font-bold py-2 rounded-lg transition-colors cursor-pointer mb-4"
@@ -176,6 +177,17 @@ const heroMinHeightClass = showNav
             </svg>
             {m.auth_login_with({ provider: oidcConfig.provider_name })}
           </a>
+        )}
+
+        {/* SSO-only installs have no password form to carry the checkbox */}
+        {oidcConfig.enabled && oidcConfig.disable_password_login && (
+          <label class="mb-4 flex items-center justify-between gap-4 px-4 py-3 bg-zinc-900/60 rounded-lg border border-zinc-800 cursor-pointer select-none">
+              <span class="text-sm text-zinc-300">{m.auth_stay_logged_in()}</span>
+              <span class="relative inline-flex items-center shrink-0">
+                <input type="checkbox" role="switch" id="remember-me" tabindex="3" class="sr-only peer" />
+                <div class="w-11 h-6 bg-zinc-700 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+              </span>
+            </label>
         )}
 
         {/* Divider when both options are visible */}
@@ -240,6 +252,13 @@ const heroMinHeightClass = showNav
                 </button>
               </div>
             </div>
+            <label class="mt-1 flex items-center justify-between gap-4 px-4 py-3 bg-zinc-900/60 rounded-lg border border-zinc-800 cursor-pointer select-none">
+              <span class="text-sm text-zinc-300">{m.auth_stay_logged_in()}</span>
+              <span class="relative inline-flex items-center shrink-0">
+                <input type="checkbox" role="switch" id="remember-me" name="remember" tabindex="6" class="sr-only peer" />
+                <div class="w-11 h-6 bg-zinc-700 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+              </span>
+            </label>
             <button
               type="submit"
               tabindex="6"
@@ -352,6 +371,22 @@ const heroMinHeightClass = showNav
 
 <script>
   import { m } from '../paraglide/messages.js';
+
+  // "Stay logged in" also applies to SSO: carry the choice through /oidc-start,
+  // which hands it to the callback in a short-lived cookie.
+  function setupRememberForSso() {
+    const link = document.getElementById('oidc-login-link') as HTMLAnchorElement | null;
+    const box = document.getElementById('remember-me') as HTMLInputElement | null;
+    if (!link || !box) return;
+    link.addEventListener('click', (event) => {
+      const url = new URL(link.href, window.location.origin);
+      if (box.checked) url.searchParams.set('remember', '1');
+      else url.searchParams.delete('remember');
+      event.preventDefault();
+      window.location.href = url.pathname + url.search;
+    });
+  }
+  setupRememberForSso();
 
   function setupPasswordToggles() {
     const toggles = document.querySelectorAll('.password-toggle');

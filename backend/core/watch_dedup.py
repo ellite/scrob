@@ -82,6 +82,11 @@ async def find_duplicate_watch_event(
     which source produced it - or None if there isn't one. candidate_time
     defaults to "now" to match how an unknown-dated play is itself recorded.
 
+    Only completed rows count: every caller is about to insert a completed
+    play, and an in-progress row (completed=False, e.g. a Jellyfin/Emby pull
+    reporting PlayCount > 0 mid-playback, see #253) is not the same play
+    finished, so it must not swallow the real completion (#481).
+
     Callers that follow a None result by inserting the new WatchEvent get
     race protection for free: see _acquire_dedup_lock."""
     if not window_minutes:
@@ -93,6 +98,7 @@ async def find_duplicate_watch_event(
     query = select(WatchEvent).where(
         WatchEvent.user_id == user_id,
         WatchEvent.media_id == media_id,
+        WatchEvent.completed.is_(True),
         effective_time.between(at - delta, at + delta),
     )
     if exclude_id is not None:

@@ -7,6 +7,7 @@ import { api, type WatchEvent } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { m } from "../paraglide/messages.js";
 import { getViewerTimeZone } from "../lib/viewerTimeZone";
+import { formatWatchTime } from "../lib/media-format";
 
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -39,6 +40,16 @@ const groupedHistory = history.results.reduce<Record<string, WatchEvent[]>>((acc
 }, {});
 
 const dates = Object.keys(groupedHistory);
+
+// #484: total watch time per day, summed from each play's runtime. Plays with
+// no known runtime add nothing, and a day with no known runtime at all (and
+// the undated bucket) shows no total rather than "0m".
+const watchTimeByDate: Record<string, string | null> = {};
+for (const date of dates) {
+  watchTimeByDate[date] = date === m.history_date_unknown()
+    ? null
+    : formatWatchTime(groupedHistory[date].reduce((sum, event) => sum + (event.media.runtime ?? 0), 0));
+}
 
 // #391: within a date, collapse consecutive plays of the same show (a binge
 // session) into one row - opt-in via Display Settings, off by default.
@@ -174,6 +185,9 @@ const baseUrl = historyUrl();
             <h2 class="group-label mb-4 sticky-top-safe py-2 z-10 bg-zinc-950 border-b border-zinc-800/50">
               <button type="button" class="history-day-select" aria-label={m.history_select_day()} title={m.history_select_day()}></button>
               <span>{date}</span>
+              {watchTimeByDate[date] && (
+                <span class="ml-auto normal-case tracking-normal font-semibold text-zinc-500" title={m.history_total_watch_time()}>{watchTimeByDate[date]}</span>
+              )}
             </h2>
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
               {entriesByDate[date].map((entry) => (

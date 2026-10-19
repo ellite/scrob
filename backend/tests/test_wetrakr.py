@@ -195,6 +195,11 @@ class WeTrakrRatingHelperTests(unittest.TestCase):
         self.assertEqual(rating, 8.0)
         self.assertEqual(rated_at, "2026-01-01T00:00:00.000Z")
 
+    def test_extracts_compact_rating_and_rated_at(self):
+        from routers.wetrakr import _wetrakr_user_rating
+        item = {"type": "movie", "ids": {"tmdb": 603}, "rating": 9, "rated_at": "2026-10-10T12:00:00.000Z"}
+        self.assertEqual(_wetrakr_user_rating(item), (9.0, "2026-10-10T12:00:00.000Z"))
+
     def test_missing_interactions_returns_none(self):
         from routers.wetrakr import _wetrakr_user_rating
         self.assertEqual(_wetrakr_user_rating({}), (None, None))
@@ -324,11 +329,24 @@ class ResolveWetrakrCommentTargetTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await _resolve_wetrakr_comment_target({"target": "list", "list": {"id": 1}}, {}))
         mock_get.assert_not_awaited()
 
-    async def test_lookup_failure_returns_none_instead_of_raising(self):
+    async def test_missing_title_returns_none(self):
         from routers.wetrakr import _resolve_wetrakr_comment_target
-        with patch("routers.wetrakr.wetrakr_client.get_movie", side_effect=Exception("boom")):
+        response = httpx.Response(404, request=httpx.Request("GET", "https://api.wetrakr.com/movies/126"))
+        error = httpx.HTTPStatusError("not found", request=response.request, response=response)
+        with patch("routers.wetrakr.wetrakr_client.get_movie", side_effect=error):
             result = await _resolve_wetrakr_comment_target({"target": "movie", "movie": {"id": 126}}, {})
         self.assertIsNone(result)
+
+    async def test_transient_failure_is_raised_so_the_comment_is_retried(self):
+        from routers.wetrakr import _resolve_wetrakr_comment_target
+        response = httpx.Response(503, request=httpx.Request("GET", "https://api.wetrakr.com/movies/126"))
+        error = httpx.HTTPStatusError("unavailable", request=response.request, response=response)
+        with patch("routers.wetrakr.wetrakr_client.get_movie", side_effect=error):
+            with self.assertRaises(httpx.HTTPStatusError):
+                await _resolve_wetrakr_comment_target({"target": "movie", "movie": {"id": 126}}, {})
+        with patch("routers.wetrakr.wetrakr_client.get_movie", side_effect=wetrakr.WeTrakrQuotaExceeded("quota")):
+            with self.assertRaises(wetrakr.WeTrakrQuotaExceeded):
+                await _resolve_wetrakr_comment_target({"target": "movie", "movie": {"id": 126}}, {})
 
     async def test_caches_repeated_lookups_within_one_run(self):
         from routers.wetrakr import _resolve_wetrakr_comment_target
@@ -341,3 +359,297 @@ class ResolveWetrakrCommentTargetTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WeTrakrRequestPolicyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_429_is_retried_after_retry_after(self):
+        import httpx
+        from unittest import mock
+        from core import wetrakr
+
+        calls = []
+
+        def handler(request):
+            calls.append(request)
+            if len(calls) == 1:
+                return httpx.Response(429, headers={"Retry-After": "2"})
+            return httpx.Response(200, json={"ok": True})
+
+        sleeps = []
+
+        async def fake_sleep(seconds):
+            sleeps.append(seconds)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with mock.patch.object(wetrakr.asyncio, "sleep", fake_sleep):
+                resp = await wetrakr._send(client, "POST", "/sync/tracking", "tok", json={})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(sleeps, [2.0])
+
+    async def test_watched_push_never_allows_rewatch(self):
+        import json
+        import httpx
+        from core import wetrakr
+
+        bodies = []
+
+        def handler(request):
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={})
+
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(handler)
+        from unittest import mock
+        with mock.patch.object(wetrakr.httpx, "AsyncClient", lambda **kw: real_client(transport=transport)):
+            await wetrakr.add_to_watched_batch("tok", [(1, None)], [])
+        self.assertIs(bodies[0]["allow_rewatch"], False)
+
+
+class WeTrakrIncrementalReadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_history_uses_from_date_and_compact_cursor_pages(self):
+        requests = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(
+                    200,
+                    json=[{"type": "movie", "ids": {"tmdb": 603}, "play_id": "p1"}],
+                    headers={"X-Pagination-Next": "cursor-2"},
+                )
+            return httpx.Response(200, json=[{"type": "movie", "ids": {"tmdb": 155}, "play_id": "p2"}])
+
+        with _patched(handler):
+            rows = await wetrakr.get_watched_history("tok", "movies", "2026-10-10T00:00:00.000Z")
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(requests[0].url.params["compact"], "true")
+        self.assertEqual(requests[0].url.params["limit"], "5000")
+        self.assertEqual(requests[0].url.params["from_date"], "2026-10-10T00:00:00.000Z")
+        self.assertNotIn("page", requests[0].url.params)
+        self.assertEqual(requests[1].url.params["after"], "cursor-2")
+
+    async def test_ratings_use_from_date_and_compact_mode(self):
+        captured = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            return httpx.Response(200, json=[])
+
+        with _patched(handler):
+            await wetrakr.get_ratings("tok", "movies", "2026-10-10T00:00:00.000Z")
+
+        params = captured[0].url.params
+        self.assertEqual(params["compact"], "true")
+        self.assertEqual(params["limit"], "5000")
+        self.assertEqual(params["from_date"], "2026-10-10T00:00:00.000Z")
+
+    async def test_lists_and_comments_use_from_date(self):
+        captured = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            return httpx.Response(200, json=[])
+
+        with _patched(handler):
+            await wetrakr.get_lists("tok", "2026-10-10T00:00:00.000Z")
+            await wetrakr.get_comments("tok", "movies", "2026-10-10T00:00:00.000Z")
+
+        self.assertEqual(captured[0].url.params["from_date"], "2026-10-10T00:00:00.000Z")
+        self.assertEqual(captured[1].url.params["from_date"], "2026-10-10T00:00:00.000Z")
+
+    def test_push_batch_uses_api_maximum(self):
+        from routers.wetrakr import WETRAKR_PUSH_BATCH_SIZE
+        self.assertEqual(WETRAKR_PUSH_BATCH_SIZE, 5000)
+
+
+def _reset_wetrakr_state():
+    wetrakr._app_quota_blocked_until = 0.0
+    wetrakr._user_quota_blocked_until.clear()
+    wetrakr._comments_blocked_until = 0.0
+
+
+class WeTrakrQuotaAndCommentsTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        _reset_wetrakr_state()
+        self.addCleanup(_reset_wetrakr_state)
+
+    async def _send(self, handler, path="/sync/tracking", token="tok"):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await wetrakr._send(client, "POST", path, token, json={})
+
+    async def test_app_quota_429_is_not_retried_and_blocks_everyone(self):
+        calls = []
+
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(429, json={"error": "APP_QUOTA_EXCEEDED"}, headers={"X-Quota-Reset": "5000"})
+
+        with self.assertRaises(wetrakr.WeTrakrQuotaExceeded):
+            await self._send(handler)
+        self.assertEqual(len(calls), 1)
+        # Another user's request now fails without touching the network.
+        with self.assertRaises(wetrakr.WeTrakrQuotaExceeded):
+            await self._send(handler, token="someone-else")
+        self.assertEqual(len(calls), 1)
+
+    async def test_user_quota_429_blocks_only_that_user(self):
+        calls = []
+
+        def handler(request):
+            calls.append(request)
+            if request.headers["Authorization"] == "Bearer tok":
+                return httpx.Response(429, json={"error": "QUOTA_EXCEEDED"})
+            return httpx.Response(200, json={})
+
+        with self.assertRaises(wetrakr.WeTrakrQuotaExceeded):
+            await self._send(handler)
+        with self.assertRaises(wetrakr.WeTrakrQuotaExceeded):
+            await self._send(handler)
+        self.assertEqual(len(calls), 1)
+        resp = await self._send(handler, token="other")
+        self.assertEqual(resp.status_code, 200)
+
+    async def test_concurrency_429_is_still_retried(self):
+        from unittest import mock
+        calls = []
+
+        def handler(request):
+            calls.append(request)
+            if len(calls) == 1:
+                return httpx.Response(429, json={"error": "CONCURRENCY_LIMIT"}, headers={"Retry-After": "1"})
+            return httpx.Response(200, json={})
+
+        async def no_sleep(_):
+            return None
+
+        with mock.patch.object(wetrakr.asyncio, "sleep", no_sleep):
+            resp = await self._send(handler)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(calls), 2)
+
+    async def test_comments_403_is_remembered_and_skips_further_requests(self):
+        calls = []
+
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(403, json={"error": "COMMENTS_NOT_ENABLED"})
+
+        with _patched(handler):
+            with self.assertRaises(wetrakr.WeTrakrCommentsDisabled):
+                await wetrakr.get_comments("tok", "movies")
+            self.assertTrue(wetrakr.comments_blocked())
+            with self.assertRaises(wetrakr.WeTrakrCommentsDisabled):
+                await wetrakr.get_comments("tok", "shows")
+            with self.assertRaises(wetrakr.WeTrakrCommentsDisabled):
+                await wetrakr.write_comment("tok", movie_tmdb_id=603, text="hi")
+        self.assertEqual(len(calls), 1)
+
+    async def test_public_lookup_retries_a_concurrency_429(self):
+        from unittest import mock
+        calls = []
+
+        def handler(request):
+            calls.append(request)
+            if len(calls) == 1:
+                return httpx.Response(429, json={"error": "CONCURRENCY_LIMIT"}, headers={"Retry-After": "1"})
+            return httpx.Response(200, json={"ids": {"tmdb": 603}})
+
+        async def no_sleep(_):
+            return None
+
+        with _patched(handler), mock.patch.object(wetrakr.asyncio, "sleep", no_sleep):
+            data = await wetrakr.get_movie(126)
+        self.assertEqual(data["ids"]["tmdb"], 603)
+        self.assertNotIn("Authorization", calls[0].headers)
+
+    async def test_user_locks_do_not_outlive_their_users(self):
+        import gc
+        lock = wetrakr._user_lock("a-token-that-will-rotate")
+        self.assertIs(lock, wetrakr._user_lock("a-token-that-will-rotate"))
+        del lock
+        gc.collect()
+        self.assertNotIn("a-token-that-will-rotate", wetrakr._user_locks)
+
+
+class WeTrakrPushChunkingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_chunks_start_at_the_api_maximum(self):
+        from routers.wetrakr import _send_in_chunks
+        sizes = []
+
+        async def send(chunk):
+            sizes.append(len(chunk))
+
+        await _send_in_chunks([("movie", (i, None)) for i in range(12000)], send)
+        self.assertEqual(sizes, [5000, 5000, 2000])
+
+    async def test_timeout_resends_the_chunk_in_smaller_batches(self):
+        from routers.wetrakr import _send_chunk
+        sizes = []
+
+        async def send(chunk):
+            sizes.append(len(chunk))
+            if len(chunk) > 1000:
+                raise httpx.ReadTimeout("slow")
+
+        await _send_chunk(send, [("movie", (i, None)) for i in range(2500)])
+        self.assertEqual(sizes, [2500, 1000, 1000, 500])
+
+    async def test_timeout_on_a_small_batch_is_raised(self):
+        from routers.wetrakr import _send_chunk
+
+        async def send(chunk):
+            raise httpx.ReadTimeout("slow")
+
+        with self.assertRaises(httpx.ReadTimeout):
+            await _send_chunk(send, [("movie", (1, None))])
+
+    async def test_non_timeout_errors_are_not_resent(self):
+        from routers.wetrakr import _send_chunk
+        calls = []
+
+        async def send(chunk):
+            calls.append(len(chunk))
+            raise wetrakr.WeTrakrQuotaExceeded("quota")
+
+        with self.assertRaises(wetrakr.WeTrakrQuotaExceeded):
+            await _send_chunk(send, [("movie", (i, None)) for i in range(3000)])
+        self.assertEqual(calls, [3000])
+
+    async def test_writes_use_the_long_timeout(self):
+        seen = []
+        real = httpx.AsyncClient
+
+        def factory(**kwargs):
+            seen.append(kwargs.get("timeout"))
+            return real(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})), **kwargs)
+
+        with patch.object(wetrakr.httpx, "AsyncClient", side_effect=factory):
+            await wetrakr.add_to_watched_batch("tok", [(1, None)], [])
+            await wetrakr.set_ratings_batch("tok", [(1, 8.0)], [])
+        self.assertEqual(seen, [wetrakr.WRITE_TIMEOUT, wetrakr.WRITE_TIMEOUT])
+        self.assertGreater(wetrakr.WRITE_TIMEOUT, wetrakr.TIMEOUT)
+
+
+class WeTrakrSectionChangeTests(unittest.TestCase):
+    ACTIVITIES = {
+        "movies": {"all": "2026-10-10T10:00:00.000Z", "last_tracking_watched_at": "2026-10-10T10:00:00.000Z"},
+        "episodes": {"all": "2026-10-01T00:00:00.000Z", "last_tracking_watched_at": "2026-10-01T00:00:00.000Z"},
+        "ratings": {"all": "2026-09-01T00:00:00.000Z"},
+    }
+
+    def test_only_sections_newer_than_the_stored_stamp_are_read(self):
+        from routers.wetrakr import _section_changed
+        since = "2026-10-05T00:00:00.000Z"
+        self.assertTrue(_section_changed(self.ACTIVITIES, "movies", "last_tracking_watched_at", since))
+        self.assertFalse(_section_changed(self.ACTIVITIES, "episodes", "last_tracking_watched_at", since))
+        self.assertFalse(_section_changed(self.ACTIVITIES, "ratings", "all", since))
+
+    def test_unknown_state_reads_as_changed(self):
+        from routers.wetrakr import _section_changed
+        since = "2026-10-05T00:00:00.000Z"
+        self.assertTrue(_section_changed(self.ACTIVITIES, "episodes", "last_tracking_watched_at", None))
+        self.assertTrue(_section_changed({}, "movies", "last_tracking_watched_at", since))
+        self.assertTrue(_section_changed(self.ACTIVITIES, "comments", "all", since))
+        self.assertTrue(_section_changed({"movies": {"all": "garbage"}}, "movies", "all", since))

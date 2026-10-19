@@ -3,7 +3,8 @@ import type { WatchEvent } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
 import { episodeHref } from "../lib/episodeHref";
-import { displaySeasonEpisode } from "../lib/media-format";
+import { displaySeasonEpisode, watchSourceLabel } from "../lib/media-format";
+import { watchSourceIconHtml } from "../lib/connectionIcons";
 import { formatNumber, formatTime } from "../lib/format";
 import { m } from "../paraglide/messages.js";
 import { getViewerTimeZone } from "../lib/viewerTimeZone";
@@ -16,6 +17,8 @@ interface Props {
 const { event, use24h = false } = Astro.props;
 const timeZone = getViewerTimeZone(Astro.cookies);
 const { media, watched_at } = event;
+const sourceLabel = watchSourceLabel(event.source);
+const sourceIcon = watchSourceIconHtml(event.source);
 
 const timeString = watched_at
   ? formatTime(watched_at + 'Z', { hour: '2-digit', minute: '2-digit', hour12: !use24h, timeZone })
@@ -70,6 +73,11 @@ const href = media.type === 'movie' ? `/media/movie/${media.tmdb_id}` : episodeH
         <span class="text-xs font-bold text-zinc-400 bg-zinc-950/50 border border-zinc-800 px-2 py-1 rounded-lg uppercase tracking-wider shrink-0">
           {timeString}
         </span>
+        {sourceLabel && (
+          <span class="flex items-center text-xs font-bold text-zinc-500 truncate" title={m.history_watched_via({ source: sourceLabel })}>
+            {sourceIcon ? <Fragment set:html={sourceIcon} /> : sourceLabel}
+          </span>
+        )}
         {media.user_rating != null && (
           <span class="flex items-center gap-0.5 text-xs font-bold text-amber-400">
             <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>

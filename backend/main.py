@@ -62,7 +62,7 @@ async def _auto_sync_scheduler():
             "connected_field": "simkl_access_token",
             "auto_sync_field": "simkl_auto_sync_interval",
             "auto_push_field": "simkl_auto_push_interval",
-            "push_flags": ("simkl_push_watched", "simkl_push_ratings"),
+            "push_flags": ("simkl_push_watched", "simkl_push_ratings", "simkl_push_dropped"),
             "pull_runner": run_simkl_sync,
             "push_runner": _run_simkl_push,
         },

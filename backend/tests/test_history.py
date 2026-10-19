@@ -791,6 +791,52 @@ class DropMovieResolveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.dropped_movies, [5])
 
 
+class DropShowByTmdbIdTests(unittest.IsolatedAsyncioTestCase):
+    """#480: dropping a show opened straight from TMDB (nothing watched or
+    collected, so no local Show row) must resolve/create one instead of
+    silently dropping show_id 0."""
+
+    def setUp(self):
+        p = patch("routers.history.flag_modified")
+        p.start()
+        self.addCleanup(p.stop)
+        p = patch("routers.history._push_show_dropped_to_providers", new_callable=AsyncMock)
+        self.push = p.start()
+        self.addCleanup(p.stop)
+
+    async def test_drop_by_show_id_uses_the_existing_row(self):
+        settings = SimpleNamespace(dropped_shows=[])
+        db = _FakeSession([settings, SimpleNamespace(id=7, tmdb_id=59941)])
+        await history.drop_show(
+            body=SimpleNamespace(show_id=7, tmdb_id=None),
+            db=db, current_user=SimpleNamespace(id=1),
+        )
+        self.assertEqual(settings.dropped_shows, [7])
+
+    async def test_drop_by_tmdb_id_creates_show_row_when_missing(self):
+        settings = SimpleNamespace(dropped_shows=[])
+        db = _FakeSession([settings, None])
+        created = SimpleNamespace(id=321, tmdb_id=59941)
+        with patch("routers.history.get_user_tmdb_key", new_callable=AsyncMock, return_value="k"), \
+             patch("routers.trakt._get_or_create_show", new_callable=AsyncMock, return_value=created):
+            await history.drop_show(
+                body=SimpleNamespace(show_id=None, tmdb_id=59941),
+                db=db, current_user=SimpleNamespace(id=1),
+            )
+        self.assertEqual(settings.dropped_shows, [321])
+        db.commit.assert_awaited()
+        self.push.assert_awaited_once()
+
+    async def test_drop_with_neither_id_is_400(self):
+        db = _FakeSession([SimpleNamespace(dropped_shows=[])])
+        with self.assertRaises(HTTPException) as ctx:
+            await history.drop_show(
+                body=SimpleNamespace(show_id=None, tmdb_id=None),
+                db=db, current_user=SimpleNamespace(id=1),
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+
 class ListDroppedTests(unittest.IsolatedAsyncioTestCase):
     """#330: GET /history/dropped feeds the dedicated Dropped page."""
 

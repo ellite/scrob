@@ -706,7 +706,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       <p class="text-xs text-zinc-500" set:html={m.conn_trakt_app_help({ site: '<span class="text-zinc-400">trakt.tv/oauth/applications</span>' })} />
                     </div>
                     <div id="trakt-auth-panel" class="hidden space-y-3 bg-zinc-900/50 border border-zinc-700 rounded-xl p-4">
-                      <p class="text-sm text-zinc-400" set:html={m.conn_go_to_enter_code({ url: '<strong id="trakt-verify-url" class="text-zinc-100"></strong>' })} />
+                      <p class="text-sm text-zinc-400" set:html={m.conn_go_to_enter_code({ url: '<a id="trakt-verify-url" href="https://trakt.tv/activate" target="_blank" rel="noopener noreferrer" class="font-semibold text-teal-400 hover:text-teal-300 underline break-all"></a>' })} />
                       <div class="font-mono text-2xl font-bold tracking-widest text-zinc-100 bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-3 text-center select-all" id="trakt-user-code"></div>
                       <p class="text-xs text-zinc-500" id="trakt-auth-status">{m.conn_waiting_for_authorization()}</p>
                     </div>
@@ -884,7 +884,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                   <!-- Left: Auth / Info -->
                   <div class="space-y-4">
                     <div id="simkl-auth-panel" class="hidden space-y-3 bg-zinc-900/50 border border-zinc-700 rounded-xl p-4">
-                      <p class="text-sm text-zinc-400" set:html={m.conn_go_to_enter_pin({ url: '<strong id="simkl-verify-url" class="text-zinc-100"></strong>' })} />
+                      <p class="text-sm text-zinc-400" set:html={m.conn_go_to_enter_pin({ url: '<a id="simkl-verify-url" href="https://simkl.com/pin" target="_blank" rel="noopener noreferrer" class="font-semibold text-teal-400 hover:text-teal-300 underline break-all"></a>' })} />
                       <div class="font-mono text-2xl font-bold tracking-widest text-zinc-100 bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-3 text-center select-all" id="simkl-user-code"></div>
                       <p class="text-xs text-zinc-500" id="simkl-auth-status">{m.conn_waiting_for_authorization()}</p>
                     </div>
@@ -909,6 +909,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           { key: "simkl_sync_watched", label: m.conn_watched_history() },
                           { key: "simkl_sync_ratings", label: m.conn_ratings() },
                           { key: "simkl_sync_lists",   label: m.conn_lists_watchlist() },
+                          { key: "simkl_sync_dropped", label: m.conn_dropped_shows() },
                         ].map(({ key, label }) => (
                           <label class="flex items-center gap-3 cursor-pointer group">
                             <input type="checkbox" name={key} id={key} checked={settings[key as keyof typeof settings] !== false} class="sync-pref-checkbox w-4 h-4 rounded accent-teal-500 cursor-pointer" />
@@ -928,6 +929,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         {[
                           { key: "simkl_push_watched", label: m.conn_watched_status() },
                           { key: "simkl_push_ratings", label: m.conn_ratings() },
+                          { key: "simkl_push_dropped", label: m.conn_dropped_shows() },
                         ].map(({ key, label }) => (
                           <label class="flex items-center gap-3 cursor-pointer group">
                             <input type="checkbox" name={key} id={key} checked={!!settings[key as keyof typeof settings]} class="sync-pref-checkbox w-4 h-4 rounded accent-teal-500 cursor-pointer" />
@@ -1021,7 +1023,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                   <!-- Left: Auth / Info -->
                   <div class="space-y-4">
                     <div id="wetrakr-auth-panel" class="hidden space-y-3 bg-zinc-900/50 border border-zinc-700 rounded-xl p-4">
-                      <p class="text-sm text-zinc-400" set:html={m.conn_go_to_enter_code({ url: '<strong id="wetrakr-verify-url" class="text-zinc-100"></strong>' })} />
+                      <p class="text-sm text-zinc-400" set:html={m.conn_go_to_enter_code({ url: '<a id="wetrakr-verify-url" target="_blank" rel="noopener noreferrer" class="font-semibold text-teal-400 hover:text-teal-300 underline break-all"></a>' })} />
                       <div class="font-mono text-2xl font-bold tracking-widest text-zinc-100 bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-3 text-center select-all" id="wetrakr-user-code"></div>
                       <p class="text-xs text-zinc-500" id="wetrakr-auth-status">{m.conn_waiting_for_authorization()}</p>
                     </div>
@@ -3485,8 +3487,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               })(),
             };
             const simklSyncKeys = [
-              'simkl_sync_watched', 'simkl_sync_ratings', 'simkl_sync_lists',
-              'simkl_push_watched', 'simkl_push_ratings', 'simkl_scrobble',
+              'simkl_sync_watched', 'simkl_sync_ratings', 'simkl_sync_lists', 'simkl_sync_dropped',
+              'simkl_push_watched', 'simkl_push_ratings', 'simkl_push_dropped', 'simkl_scrobble',
             ];
             for (const key of simklSyncKeys) {
               const el = document.getElementById(key) as HTMLInputElement | null;
@@ -3860,6 +3862,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               simkl_sync_watched: m.conn_item_watched_history(),
               simkl_sync_ratings: m.conn_item_ratings(),
               simkl_sync_lists: m.conn_item_lists(),
+              simkl_sync_dropped: m.conn_item_dropped_shows(),
             };
             const pulling: string[] = [];
             document.querySelectorAll('.sync-pref-checkbox').forEach((el: any) => {
@@ -3881,6 +3884,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const simklPushLabels: Record<string, string> = {
               simkl_push_watched: m.conn_item_watched_history(),
               simkl_push_ratings: m.conn_item_ratings(),
+              simkl_push_dropped: m.conn_item_dropped_shows(),
             };
             const pushing: string[] = [];
             document.querySelectorAll('.sync-pref-checkbox').forEach((el: any) => {
@@ -4088,7 +4092,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const codeEl = document.getElementById('trakt-user-code');
             const statusEl = document.getElementById('trakt-auth-status');
             if (panel) panel.classList.remove('hidden');
-            if (urlEl) urlEl.textContent = data.verification_url;
+            if (urlEl) {
+              urlEl.textContent = data.verification_url;
+              // Only link a real http(s) URL; the field is plain text otherwise
+              if (/^https?:\/\//i.test(data.verification_url)) urlEl.setAttribute('href', data.verification_url);
+              else urlEl.removeAttribute('href');
+            }
             if (codeEl) codeEl.textContent = data.user_code;
             connectBtn.textContent = m.conn_waiting();
 
@@ -4418,7 +4427,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const codeEl  = document.getElementById('simkl-user-code');
             const statusEl = document.getElementById('simkl-auth-status');
             if (panel)  panel.classList.remove('hidden');
-            if (urlEl)  urlEl.textContent = data.url;
+            if (urlEl) {
+              urlEl.textContent = data.url;
+              // Only link a real http(s) URL; the field is plain text otherwise
+              if (/^https?:\/\//i.test(data.url)) urlEl.setAttribute('href', data.url);
+              else urlEl.removeAttribute('href');
+            }
             if (codeEl) codeEl.textContent = data.user_code;
             connectBtn.textContent = m.conn_waiting();
 
@@ -4507,7 +4521,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const codeEl   = document.getElementById('wetrakr-user-code');
             const statusEl = document.getElementById('wetrakr-auth-status');
             if (panel)  panel.classList.remove('hidden');
-            if (urlEl)  urlEl.textContent = data.verification_url;
+            if (urlEl) {
+              urlEl.textContent = data.verification_url;
+              if (/^https?:\/\//i.test(data.verification_url)) urlEl.setAttribute('href', data.verification_url);
+              else urlEl.removeAttribute('href');
+            }
             if (codeEl) codeEl.textContent = data.user_code;
             connectBtn.textContent = m.conn_waiting();
 
@@ -4824,9 +4842,20 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     type PlexLoginConn = { uri: string; local: boolean; relay: boolean; reachable: boolean; label: string };
     let plexLoginServers: Array<{ name: string; machine_identifier: string; owned: boolean; url: string; token: string; connections: PlexLoginConn[] }> = [];
 
-    const setPlexStatus = (msg: string) => {
+    const setPlexStatus = (msg: string, linkUrl?: string) => {
       if (!plexLoginStatus) return;
       plexLoginStatus.textContent = msg;
+      // The login page is also opened automatically, but a popup blocker can
+      // swallow that, so give the user a link to click as a fallback.
+      if (msg && linkUrl && /^https?:\/\//i.test(linkUrl)) {
+        const link = document.createElement('a');
+        link.href = linkUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.className = 'font-semibold text-teal-400 hover:text-teal-300 underline';
+        link.textContent = m.conn_plex_open_login_page();
+        plexLoginStatus.append(' ', link);
+      }
       plexLoginStatus.classList.toggle('hidden', !msg);
     };
 
@@ -5141,7 +5170,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         const start = await startRes.json();
         if (!startRes.ok) throw new Error(start.detail || m.conn_could_not_start_the_plex_login());
         window.open(start.auth_url, '_blank', 'noopener,noreferrer');
-        setPlexStatus(m.conn_waiting_for_you_to_authorize_in());
+        setPlexStatus(m.conn_plex_waiting_authorize_fallback(), start.auth_url);
         plexLoginBtn.textContent = m.conn_waiting();
         const expiresAt = Date.now() + 14 * 60 * 1000;
         const intervalMs = Math.max(1, Number(start.interval) || 2) * 1000;

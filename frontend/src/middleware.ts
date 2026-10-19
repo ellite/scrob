@@ -125,6 +125,34 @@ export const onRequest = defineMiddleware(async (context, next) => {
       context.locals.user = user;
       context.locals.token = token;
 
+      // Sliding session: on a page load, swap the token for one with a fresh
+      // expiry and re-set the cookie, so an active user never gets logged out.
+      // Best effort - a failure here must never break the page.
+      const isPageLoad =
+        context.request.method === "GET" &&
+        !isStaticAsset &&
+        !pathname.startsWith("/api/") &&
+        (context.request.headers.get("accept") ?? "").includes("text/html");
+      if (isPageLoad) {
+        try {
+          const renewed = await api.auth.renewSession(token);
+          if (renewed.access_token && renewed.expires_in) {
+            context.cookies.set("token", renewed.access_token, {
+              path: "/",
+              httpOnly: true,
+              sameSite: "lax",
+              secure:
+                context.url.protocol === "https:" ||
+                context.request.headers.get("x-forwarded-proto") === "https",
+              maxAge: renewed.expires_in,
+            });
+            context.locals.token = renewed.access_token;
+          }
+        } catch {
+          // keep the current token; the next page load tries again
+        }
+      }
+
       // If logged in and trying to access login/register, redirect to home
       if (pathname === "/login" || pathname === "/register") {
         return context.redirect("/", 302);

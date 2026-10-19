@@ -11,6 +11,13 @@ pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
 
+def session_lifetime(remember: bool = False) -> timedelta:
+    """Lifetime of a user login token; longer when the user ticked "Stay logged in"."""
+    if remember:
+        return timedelta(days=max(1, settings.session_remember_days))
+    return timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+
+
 def create_access_token(
     subject: Union[str, Any],
     expires_delta: timedelta = None,

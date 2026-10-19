@@ -1,4 +1,5 @@
 import { m } from "../paraglide/messages.js";
+import { formatDate } from "./format";
 
 // Compact runtime ("1h 5m", "45m") in the UI language.
 export function formatShortDuration(totalMinutes: number): string {
@@ -16,6 +17,41 @@ export function formatEpisodesLeft(
   const label = m.episodes_left({ count: episodesLeft });
   if (!remainingRuntime || remainingRuntime <= 0) return label;
   return `${label} · ~${formatShortDuration(remainingRuntime)}`;
+}
+
+export const WATCH_SOURCE_LABELS: Record<string, string> = {
+  plex: "Plex",
+  jellyfin: "Jellyfin",
+  emby: "Emby",
+  kodi: "Kodi",
+  nuvio: "Nuvio",
+  arvio: "Arvio",
+  stremio: "Stremio",
+  trakt: "Trakt",
+  simkl: "Simkl",
+  mdblist: "MDBList",
+  wetrakr: "WeTrakr",
+  bingebase: "Bingebase",
+  yamtrack: "Yamtrack",
+  scrob: "Scrob",
+};
+
+// Where a watch was recorded from (#477), or null for rows from before this
+// was tracked. Service names are brands and stay as-is; "manual" and "import"
+// are words, so they go through the UI language.
+export function watchSourceLabel(source?: string | null): string | null {
+  if (!source) return null;
+  if (source === "manual") return m.watch_source_manual();
+  if (source === "import") return m.watch_source_import();
+  return WATCH_SOURCE_LABELS[source] ?? source.charAt(0).toUpperCase() + source.slice(1);
+}
+
+// Every known source, for client scripts that label rows they render themselves.
+export const WATCH_SOURCES = [...Object.keys(WATCH_SOURCE_LABELS), "manual", "import"];
+
+export function formatWatchTime(minutes?: number | null): string | null {
+  if (!minutes || minutes <= 0) return null;
+  return formatShortDuration(Math.round(minutes));
 }
 
 export function formatSeasonTitle(seasonNumber: number, name?: string | null): string {
@@ -59,4 +95,12 @@ export function episodeCode(item: Parameters<typeof displaySeasonEpisode>[0]): s
   const { season, episode } = displaySeasonEpisode(item);
   if (season == null || episode == null) return null;
   return `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+}
+
+// "Watched Oct 12, 2026" for the most recent play (#317), or null when there
+// isn't one with a known date.
+export function formatWatchedOn(iso?: string | null, timeZone?: string): string | null {
+  if (!iso) return null;
+  const date = formatDate(iso + "Z", { month: "short", day: "numeric", year: "numeric", timeZone });
+  return m.media_watched_on({ date });
 }

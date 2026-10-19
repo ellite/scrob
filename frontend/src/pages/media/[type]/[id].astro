@@ -1,4 +1,6 @@
 ---
+import { formatWatchedOn } from "../../../lib/media-format";
+import { getViewerTimeZone } from "../../../lib/viewerTimeZone";
 import Base from "../../../layouts/Base.astro";
 import MediaRow from "../../../components/MediaRow.astro";
 import ActionBar from "../../../components/ActionBar.astro";
@@ -66,6 +68,7 @@ const originalLanguage = item?.original_language
 const refreshUrl = isEpisode
   ? `/api/proxy/shows/${item?.show_tmdb_id}/refresh`
   : `/api/proxy/media/movie/${item?.tmdb_id}/refresh`;
+const lastWatchedLabel = formatWatchedOn(item?.last_watched_at, getViewerTimeZone(Astro.cookies));
 ---
 
 <Base title={item?.title || m.media_details_title()}>
@@ -158,6 +161,7 @@ const refreshUrl = isEpisode
                 {rating && (
                   <span class="flex items-center gap-1.5 text-yellow-400 font-black item-rating">
                     <span class="text-lg leading-none">★</span> {rating}
+                    <span class="text-[10px] font-black tracking-widest text-yellow-400/60 self-end pb-0.5">TMDB</span>
                   </span>
                 )}
                 {item.runtime && (
@@ -176,6 +180,11 @@ const refreshUrl = isEpisode
                 {item.imdb_id && (
                   <a href={`https://www.imdb.com/title/${item.imdb_id}/`} target="_blank" rel="noopener noreferrer" class="px-2 py-0.5 bg-[#f5c518] rounded text-[10px] font-black text-black tracking-widest hover:bg-[#e6b800] transition-colors">
                     IMDb
+                  </a>
+                )}
+                {item.tmdb_id && (
+                  <a href={`https://www.themoviedb.org/${isMovie ? "movie" : "tv"}/${item.tmdb_id}`} target="_blank" rel="noopener noreferrer" class="px-2 py-0.5 bg-[#01b4e4] rounded text-[10px] font-black text-black tracking-widest hover:bg-[#0aa0cb] transition-colors">
+                    TMDB
                   </a>
                 )}
                 {item.status && (
@@ -244,6 +253,7 @@ const refreshUrl = isEpisode
 
             {user && (
               <div class="mb-4">
+                {lastWatchedLabel && <p class="mb-2 text-xs font-bold text-zinc-500">{lastWatchedLabel}</p>}
                 <ActionBar
                   tmdbId={item.tmdb_id}
                   mediaType={item.type}

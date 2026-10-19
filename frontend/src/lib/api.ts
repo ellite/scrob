@@ -129,6 +129,7 @@ export interface SeasonState {
 }
 
 export interface EpisodeItem {
+  last_watched_at?: string | null;
   id: number | null;
   // null for a TVDB-only episode (no TMDB counterpart); use `id` then.
   tmdb_id: number | null;
@@ -205,6 +206,7 @@ export interface EpisodeDetail {
   collection_pct: number;
   user_rating?: number | null;
   play_count?: number;
+  last_watched_at?: string | null;
   cast: CastMember[];
   crew: CrewMember[];
   guest_stars: CastMember[];
@@ -260,6 +262,7 @@ export interface WatchEvent {
   watched_at: string | null;
   completed: boolean;
   progress_percent: number | null;
+  source?: string | null;
 }
 
 export interface SyncJob {
@@ -326,6 +329,7 @@ export interface UserProfile {
   is_admin: boolean;
   api_key: string;
   totp_enabled: boolean;
+  has_password: boolean;
   created_at: string;
 }
 
@@ -382,6 +386,7 @@ export interface LoginResponse {
   token_type: string;
   requires_2fa: boolean;
   temp_token: string | null;
+  expires_in?: number | null;
 }
 
 export interface TotpSetupData {
@@ -418,15 +423,29 @@ export interface OidcConfig {
   enabled: boolean;
   provider_name: string;
   disable_password_login: boolean;
+  sso_logout_available: boolean;
+  logout_url: string | null;
+  pkce_enabled: boolean;
+  id_token_validation: boolean;
 }
 
 export interface OidcAuthorizeResponse {
   auth_url: string;
   state: string;
+  code_verifier: string | null;
+  nonce: string | null;
+}
+
+export interface OidcIdentity {
+  issuer: string;
+  provider_name: string | null;
+  created_at: string;
+  last_login_at: string | null;
 }
 
 export interface OidcExchangeResponse {
   access_token: string;
+  expires_in?: number;
 }
 
 export type PrivacyLevel = "public" | "friends_only" | "private";
@@ -491,8 +510,10 @@ export interface UserSettings {
   simkl_sync_watched: boolean;
   simkl_sync_ratings: boolean;
   simkl_sync_lists: boolean;
+  simkl_sync_dropped: boolean;
   simkl_push_watched: boolean;
   simkl_push_ratings: boolean;
+  simkl_push_dropped: boolean;
   simkl_scrobble: boolean;
 
   // WeTrakr — no client_id field: Scrob ships a single app-owned key server-side
@@ -526,6 +547,7 @@ export interface UserSettings {
   // null = follow the browser.
   ui_language: string | null;
   use_hls_player: boolean;
+  show_play_button: boolean;
   shuffle_next_up: boolean;
   minimalist_next_up: boolean;
   rate_prompt_movies: boolean;
@@ -863,6 +885,7 @@ export interface StudioHeader {
 }
 
 export interface TvdbEpisode {
+  last_watched_at?: string | null;
   tvdb_id: number | null;
   tmdb_id: number | null;
   show_tmdb_id: number | null;
@@ -902,6 +925,7 @@ export interface TvdbEpisodeDetail {
   watched: boolean;
   user_rating: number | null;
   play_count: number;
+  last_watched_at?: string | null;
   in_lists: number[];
   library: {
     resolution: string | null;
@@ -1123,6 +1147,8 @@ export interface ProfileCommentItem {
   title: string | null;
   poster_path: string | null;
   created_at: string;
+  wetrakr_comment_id?: number | null;
+  wetrakr_source?: string | null;
 }
 
 export interface PublicProfile {
@@ -1183,6 +1209,8 @@ export interface Comment {
   is_spoiler: boolean;
   created_at: string;
   updated_at?: string | null;
+  wetrakr_comment_id?: number | null;
+  wetrakr_source?: string | null;
 }
 
 export interface TraktComment {
@@ -1253,6 +1281,8 @@ export const api = {
       post<{ message: string }>("/auth/forgot-password", { email }),
     resetPassword: (token: string, new_password: string) =>
       post<{ message: string }>(`/auth/reset-password/${token}`, { new_password }),
+    renewSession: (token: string) =>
+      post<{ access_token: string | null; expires_in: number | null }>("/auth/session/renew", undefined, token),
     me: (token: string) =>
       get<UserProfile>("/auth/me", undefined, token),
     devicePending: (userCode: string, token: string) =>
@@ -1325,8 +1355,12 @@ export const api = {
       get<OidcConfig>("/auth/oidc/config"),
     oidcAuthorize: () =>
       get<OidcAuthorizeResponse>("/auth/oidc/authorize"),
-    oidcExchange: (code: string) =>
-      post<OidcExchangeResponse>("/auth/oidc/exchange", { code }),
+    oidcExchange: (body: { code: string; code_verifier?: string; nonce?: string; remember?: boolean }) =>
+      post<OidcExchangeResponse>("/auth/oidc/exchange", body),
+    oidcIdentities: (token: string) =>
+      get<OidcIdentity[]>("/auth/oidc/identities", undefined, token),
+    oidcUnlink: (body: { issuer: string }, token: string) =>
+      post<{ status: string }>("/auth/oidc/unlink", body, token),
   },
 
   trakt: {
@@ -1651,8 +1685,8 @@ export const api = {
   },
 
   calendar: {
-    get: (token?: string, cachedOnly?: boolean) =>
-      get<CalendarResponse>("/calendar", cachedOnly ? { cached_only: true } : undefined, token),
+    get: (token?: string, cachedOnly?: boolean, days?: number) =>
+      get<CalendarResponse>("/calendar", { ...(cachedOnly ? { cached_only: true } : {}), ...(days ? { days } : {}) }, token),
     refresh: (token?: string) =>
       post<CalendarResponse>("/calendar/refresh", undefined, token),
   },

@@ -150,6 +150,7 @@ const posterPath = show
                 {rating && (
                   <span class="flex items-center gap-1.5 text-yellow-400 font-black">
                     <span class="text-lg leading-none">★</span> {rating}
+                    <span class="text-[10px] font-black tracking-widest text-yellow-400/60 self-end pb-0.5">TMDB</span>
                   </span>
                 )}
                 <span class="font-medium text-zinc-400">{m.show_season_count({ count: seasonCount })}</span>
@@ -161,6 +162,16 @@ const posterPath = show
                 {show.imdb_id && (
                   <a href={`https://www.imdb.com/title/${show.imdb_id}/`} target="_blank" rel="noopener noreferrer" class="px-2 py-0.5 bg-[#f5c518] rounded text-[10px] font-black text-black tracking-widest hover:bg-[#e6b800] transition-colors">
                     IMDb
+                  </a>
+                )}
+                {show.tmdb_id && (
+                  <a href={`https://www.themoviedb.org/tv/${show.tmdb_id}`} target="_blank" rel="noopener noreferrer" class="px-2 py-0.5 bg-[#01b4e4] rounded text-[10px] font-black text-black tracking-widest hover:bg-[#0aa0cb] transition-colors">
+                    TMDB
+                  </a>
+                )}
+                {show.tvdb_id && (
+                  <a href={`https://www.thetvdb.com/?tab=series&id=${show.tvdb_id}`} target="_blank" rel="noopener noreferrer" class="px-2 py-0.5 bg-[#6cd491] rounded text-[10px] font-black text-black tracking-widest hover:bg-[#59c07d] transition-colors">
+                    TVDB
                   </a>
                 )}
                 {show.status && (

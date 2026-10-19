@@ -34,6 +34,7 @@ def _jsonb_as_json_on_sqlite(type_, compiler, **kw):  # pragma: no cover - diale
 
 TVDB_EPISODE_ID = 4562021
 SOURCE_ID = "jf-ep-1"
+PLEX_SOURCE_ID = "plex-ep-1"
 
 
 def _item(tvdb_id="4562021"):
@@ -46,6 +47,21 @@ def _item(tvdb_id="4562021"):
         "IndexNumber": 21,
         "ProviderIds": {"Tvdb": tvdb_id},
         "UserData": {"Played": True, "PlayCount": 1, "LastPlayedDate": "2026-09-30T20:59:36Z"},
+    }
+
+
+def _plex_item(tvdb_id="4562021"):
+    """What a TVDB-numbered Plex library reports for the same raw S02E21."""
+    return {
+        "ratingKey": PLEX_SOURCE_ID,
+        "grandparentRatingKey": "plex-show",
+        "grandparentTitle": "Hunter x Hunter",
+        "title": "No x Good x NGL",
+        "parentIndex": 2,
+        "index": 21,
+        "Guid": [{"id": f"tvdb://{tvdb_id}"}],
+        "viewCount": 1,
+        "lastViewedAt": 1790801976,
     }
 
 
@@ -75,7 +91,10 @@ class SyncItemsTvdbEpisodePositionTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             self.user_id, self.show_id = user.id, show.id
 
-    async def _add_episode(self, db, *, season, episode, tmdb_id=None, tvdb_id=None, with_file=False, watched=False):
+    async def _add_episode(
+        self, db, *, season, episode, tmdb_id=None, tvdb_id=None,
+        with_file=False, watched=False, source=CollectionSource.jellyfin,
+    ):
         media = Media(
             media_type=MediaType.episode, title="ep", show_id=self.show_id,
             season_number=season, episode_number=episode, tmdb_id=tmdb_id, tvdb_id=tvdb_id,
@@ -86,19 +105,24 @@ class SyncItemsTvdbEpisodePositionTests(unittest.IsolatedAsyncioTestCase):
             coll = Collection(user_id=self.user_id, media_id=media.id)
             db.add(coll)
             await db.flush()
-            db.add(CollectionFile(collection_id=coll.id, source=CollectionSource.jellyfin, source_id=SOURCE_ID))
+            source_id = PLEX_SOURCE_ID if source is CollectionSource.plex else SOURCE_ID
+            db.add(CollectionFile(collection_id=coll.id, source=source, source_id=source_id))
         if watched:
             db.add(WatchEvent(user_id=self.user_id, media_id=media.id, completed=True, play_count=1))
         await db.flush()
         return media
 
-    async def _run_sync(self, item=None):
+    async def _run_sync(self, item=None, source=CollectionSource.jellyfin):
         async with self.Session() as db:
             with patch.object(sync, "batch_enrich_items", AsyncMock(return_value=[])) as enrich:
+                parent_key = "plex-show" if source is CollectionSource.plex else "jf-show"
                 await sync.sync_items(
-                    [item or _item()], MediaType.episode, CollectionSource.jellyfin, db,
+                    [item or (_plex_item() if source is CollectionSource.plex else _item())],
+                    MediaType.episode, source, db,
                     {"errors": 0, "skipped": 0, "episodes": 0}, self.user_id,
-                    show_map={"jf-show": self.show_id}, show_id_to_tmdb={self.show_id: 46298},
+                    show_map={parent_key: self.show_id},
+                    api_key="tmdb-key",
+                    show_id_to_tmdb={self.show_id: 46298},
                 )
         return enrich
 
@@ -177,6 +201,60 @@ class SyncItemsTvdbEpisodePositionTests(unittest.IsolatedAsyncioTestCase):
         rows, events, _, _ = await self._state()
         self.assertEqual([(r[0], r[1], r[2]) for r in rows], [(other_id, 2, 21)])
         self.assertEqual(events, 1)
+
+    async def test_plex_twin_is_merged_through_its_episode_tvdb_guid(self):
+        async with self.Session() as db:
+            canonical = await self._add_episode(db, season=2, episode=79, tmdb_id=908653)
+            twin = await self._add_episode(
+                db, season=2, episode=21, tvdb_id=TVDB_EPISODE_ID,
+                with_file=True, watched=True, source=CollectionSource.plex,
+            )
+            await db.commit()
+            canonical_id, twin_id = canonical.id, twin.id
+
+        await self._run_sync(source=CollectionSource.plex)
+
+        rows, events, files, colls = await self._state()
+        self.assertEqual([r[0] for r in rows], [canonical_id])
+        self.assertNotIn(twin_id, [r[0] for r in rows])
+        self.assertEqual((events, files, colls), (1, 1, 1))
+
+    async def test_plex_builds_missing_mapping_before_reconciling_twin(self):
+        async with self.Session() as db:
+            await db.execute(
+                EpisodeOrderMapping.__table__.delete().where(
+                    EpisodeOrderMapping.series_tmdb_id == 46298
+                )
+            )
+            canonical = await self._add_episode(db, season=2, episode=79, tmdb_id=908653)
+            await self._add_episode(
+                db, season=2, episode=21, tvdb_id=TVDB_EPISODE_ID,
+                with_file=True, watched=True, source=CollectionSource.plex,
+            )
+            await db.commit()
+            canonical_id = canonical.id
+
+        async def build_mapping(db, series_tmdb_id, tmdb_api_key, tvdb_api_key, *, force=False):
+            self.assertEqual((series_tmdb_id, tmdb_api_key, tvdb_api_key), (46298, "tmdb-key", "tvdb-key"))
+            self.assertFalse(force)
+            db.add(EpisodeOrderMapping(
+                series_tmdb_id=46298,
+                tmdb_season_number=2, tmdb_episode_number=79, tmdb_episode_id=908653,
+                tvdb_id=TVDB_EPISODE_ID, tvdb_season_number=2, tvdb_episode_number=21,
+            ))
+            await db.flush()
+            return {"matched": 1}
+
+        with (
+            patch("routers.shows.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")),
+            patch.object(sync, "ensure_episode_order_mapping", AsyncMock(side_effect=build_mapping)) as ensure,
+        ):
+            await self._run_sync(source=CollectionSource.plex)
+
+        ensure.assert_awaited_once()
+        rows, events, files, colls = await self._state()
+        self.assertEqual([r[0] for r in rows], [canonical_id])
+        self.assertEqual((events, files, colls), (1, 1, 1))
 
 
 if __name__ == "__main__":

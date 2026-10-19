@@ -95,6 +95,8 @@ async def list_comments(
             "is_spoiler": c.is_spoiler,
             "created_at": c.created_at.isoformat(),
             "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+            "wetrakr_comment_id": c.wetrakr_comment_id,
+            "wetrakr_source": (c.wetrakr_source or "wetrakr") if c.wetrakr_comment_id else None,
         }
         for c in comments
     ]

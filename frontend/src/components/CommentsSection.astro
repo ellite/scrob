@@ -2,6 +2,7 @@
 import { api, type Comment } from "../lib/api";
 import { formatDate, escapeHtml } from "../lib/format";
 import { m } from "../paraglide/messages.js";
+import { wetrakrCredit } from "../lib/wetrakrAttribution";
 
 interface Props {
   mediaType: string;
@@ -104,6 +105,7 @@ if (!commentsDisabled) {
           const canSeeProfile = comment.user_is_public || (user && (user.id === comment.user_id || user.role === 'admin'));
           const isOwner = user && user.id === comment.user_id;
           const isAdmin = user && user.role === 'admin';
+          const credit = wetrakrCredit(comment.wetrakr_source, comment.wetrakr_comment_id);
 
           return (
             <div class="flex gap-5 animate-in fade-in slide-in-from-bottom-4 duration-500" data-comment-id={comment.id}>
@@ -163,6 +165,12 @@ if (!commentsDisabled) {
                     </div>
                   )}
                 </div>
+                {credit && (
+                  <a href={credit.url} target="_blank" rel="noopener" class="wetrakr-credit mb-2 inline-flex items-center gap-1.5 text-[11px] leading-none font-medium text-zinc-400 hover:text-zinc-200 transition-colors">
+                    <img src="/wetrakr.png" alt="WeTrakr" class="block w-4 h-4 rounded shrink-0" loading="lazy" />
+                    {credit.label}
+                  </a>
+                )}
                 <!-- Spoiler wrapper: always present, overlay toggled via JS -->
                 <div class="comment-body relative">
                   <p class={`comment-text text-zinc-300 leading-relaxed font-medium whitespace-pre-wrap break-words${comment.is_spoiler ? ' blur-sm select-none pointer-events-none' : ''}`}>{comment.content}</p>
@@ -203,6 +211,7 @@ if (!commentsDisabled) {
 <script>
   import { m } from '../paraglide/messages.js';
   import { formatDate } from '../lib/format';
+  import { wetrakrCredit } from '../lib/wetrakrAttribution';
 
   const section = document.getElementById('comments-section');
   if (section) {
@@ -213,6 +222,12 @@ if (!commentsDisabled) {
   function esc(s) {
     if (s == null) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function wetrakrCreditHtml(comment) {
+    const credit = wetrakrCredit(comment.wetrakr_source, comment.wetrakr_comment_id);
+    if (!credit) return '';
+    return `<a href="${esc(credit.url)}" target="_blank" rel="noopener" class="wetrakr-credit mb-2 inline-flex items-center gap-1.5 text-[11px] leading-none font-medium text-zinc-400 hover:text-zinc-200 transition-colors"><img src="/wetrakr.png" alt="WeTrakr" class="block w-4 h-4 rounded shrink-0" />${esc(credit.label)}</a>`;
   }
 
   const SPOILER_OVERLAY_HTML = `<span class="text-amber-400 font-bold text-sm">${esc(m.comments_click_to_reveal())}</span>`;
@@ -259,6 +274,7 @@ if (!commentsDisabled) {
           </div>
           ${actionBtns}
         </div>
+        ${wetrakrCreditHtml(comment)}
         <div class="comment-body relative">
           <p class="comment-text text-zinc-300 leading-relaxed font-medium whitespace-pre-wrap break-words${textBlurCls}">${esc(comment.content)}</p>
           <div class="spoiler-overlay absolute inset-0 flex items-center justify-center rounded-lg cursor-pointer bg-zinc-950/70 backdrop-blur-sm${overlayCls}">${SPOILER_OVERLAY_HTML}</div>

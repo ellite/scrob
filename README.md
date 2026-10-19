@@ -295,11 +295,13 @@ Database migrations run automatically on startup - no manual steps required.
 | `DATABASE_URL` | - | **Required** (standard image). PostgreSQL connection string (`postgresql+asyncpg://...`). Optional on the omnibus image - if omitted, the embedded database is used. |
 | `ENABLE_REGISTRATIONS` | `false` | Allow new users to register. The first user can always register regardless of this setting. |
 | `REGISTRATION_MAX_ALLOWED_USERS` | `0` | Maximum number of registered users. `0` = unlimited. |
+| `SESSION_REMEMBER_DAYS` | `30` | How long a login lasts when **Stay logged in** is ticked on the login page, for password and SSO logins. Without it a login lasts 7 days. |
 | `TZ` | `UTC` | Container timezone (e.g. `Europe/Lisbon`). |
 | `PUID` | `1000` | User ID to run the process as. |
 | `PGID` | `1000` | Group ID to run the process as. |
 | `BACKEND_PORT` | `7331` | Internal port the backend binds to. Override only if `7331` conflicts on bare metal. |
 | `OIDC_ENABLED` | `false` | Enable OIDC login. |
+| `OIDC_DISCOVERY_URL` | - | OpenID discovery document URL. When set, Scrob validates `id_token` signatures (JWKS), issuer, audience, and nonce. |
 | `OIDC_DISABLE_PASSWORD_LOGIN` | `false` | Enforce OIDC-only login (disables username/password). |
 
 See `docker-compose.yaml` for the full list of OIDC variables and other variables.
@@ -503,8 +505,10 @@ Scrob signs in with Simkl's AUTH V2 device flow through its own Simkl app, and r
 | Simkl → Scrob | **Watched history** | Imports watched movies and episodes. |
 | Simkl → Scrob | **Ratings** | Imports ratings. |
 | Simkl → Scrob | **Lists / Watchlist** | Imports "plan to watch" items into a managed **Simkl - Watchlist** list. |
+| Simkl → Scrob | **Dropped shows** | Marks shows you dropped on Simkl as dropped in Scrob. Only shows Scrob already knows are marked, and a show un-dropped on Simkl is not un-dropped in Scrob. Off by default. |
 | Scrob → Simkl | **Watched status** | Pushes watched and unwatched changes made in Scrob or imported from another connected provider. |
 | Scrob → Simkl | **Ratings** | Pushes rating changes. |
+| Scrob → Simkl | **Dropped shows** | Moves shows you drop in Scrob to Simkl's Dropped list, and the manual **Push** or **Auto Push** adds any that are missing. Un-dropping in Scrob moves a show that is still in Simkl's Dropped list to **Completed** (ended and fully watched), **Watching** (some episodes watched) or **On Hold** (nothing watched). A show you have since moved to another list on Simkl is left alone. Off by default. |
 | Scrob → Simkl | **Live scrobbling** | Pushes playback start/stop events from webhooks and manual scrobble sessions in real time. |
 
 The manual **Push** action sends the complete enabled watched-history and ratings snapshot, in batches of 50 items per request. Collection membership and the Simkl watchlist are not pushed back to Simkl.
@@ -575,25 +579,52 @@ The `POST /api/proxy/webhooks/kodi` endpoint (and the `kodi/history`, `kodi/rati
 
 ## OIDC / Single Sign-On
 
-Scrob supports any OpenID Connect provider (Authelia, Authentik, Keycloak, Google, etc.).
+Scrob supports any standards-compliant OpenID Connect provider (Authelia, Authentik, Keycloak, Google, etc.). Login flow is authorization-code with PKCE; when discovery is configured the `id_token` is signature-verified (JWKS) and identity is bound on the IdP's stable `(issuer, sub)` pair so a changed email never breaks the account.
+
+### Prerequisites
+
+- Register Scrob as a client at your IdP with redirect URI `https://scrob.yourdomain.com/oidc-callback`.
+
+### Minimal config
+
+Add these to the `environment:` section of the `scrob` service in your `docker-compose.yaml` (or `docker-compose.yml` for the omnibus image), or to your `.env` file if you run from source — same place as `DATABASE_URL`, `SECRET_KEY`, and the SMTP vars.
 
 ```yaml
 OIDC_ENABLED: "true"
-OIDC_PROVIDER_NAME: "Authelia"
+OIDC_PROVIDER_NAME: "Authentik"
 OIDC_CLIENT_ID: "scrob"
 OIDC_CLIENT_SECRET: "your-secret"
-OIDC_AUTH_URL: "https://auth.yourdomain.com/api/oidc/authorization"
-OIDC_TOKEN_URL: "https://auth.yourdomain.com/api/oidc/token"
-OIDC_USERINFO_URL: "https://auth.yourdomain.com/api/oidc/userinfo"
+OIDC_AUTH_URL: "https://auth.yourdomain.com/application/o/authorize/"
+OIDC_TOKEN_URL: "https://auth.yourdomain.com/application/o/token/"
+OIDC_USERINFO_URL: "https://auth.yourdomain.com/application/o/userinfo/"
 OIDC_REDIRECT_URL: "https://scrob.yourdomain.com/oidc-callback"
-# OIDC_LOGOUT_URL: "https://auth.yourdomain.com/api/oidc/logout"  # your provider's logout endpoint
-# OIDC_SCOPES: "openid email profile"     # default shown - override only if your provider needs different scopes
-# OIDC_IDENTIFIER_FIELD: "email"          # userinfo field used to match/create the Scrob account - default shown
+# Recommended — enables id_token signature verification and (issuer, sub) binding:
+OIDC_DISCOVERY_URL: "https://auth.yourdomain.com/application/o/scrob/.well-known/openid-configuration"
+# Optional — enables RP-initiated SSO logout (populated from discovery when unset):
+# OIDC_LOGOUT_URL: "https://auth.yourdomain.com/application/o/scrob/end-session/"
+# OIDC_SCOPES: "openid email profile"     # default shown
+# OIDC_IDENTIFIER_FIELD: "email"          # userinfo field used only in compat mode
+# OIDC_ISSUER / OIDC_JWKS_URL             # explicit fallbacks when discovery isn't available
 OIDC_AUTO_CREATE_USERS: "true"
 # OIDC_DISABLE_PASSWORD_LOGIN: "true"  # uncomment to enforce SSO-only
 ```
 
-Register Scrob as a client in your provider with redirect URI: `https://scrob.yourdomain.com/oidc-callback`
+### What users see
+
+- The login page shows a **Login with {OIDC_PROVIDER_NAME}** button. If `OIDC_DISABLE_PASSWORD_LOGIN=true`, the password form is hidden and the registration link is removed.
+- First SSO login creates a Scrob account automatically unless `OIDC_AUTO_CREATE_USERS=false`. In that case only pre-existing accounts (matched by verified email) can sign in via SSO.
+- Settings → Security shows the linked SSO provider and offers an **Unlink** button. Unlink is refused when it would lock the user out (no password set, SSO-only mode on, and the identity is the only one).
+
+### MFA, logout, and account linking
+
+- SSO uses the IdP's MFA (number-matching push, passkey, TOTP, etc.). Scrob's own TOTP only runs on password logins.
+- If `OIDC_LOGOUT_URL` is set (or `end_session_endpoint` is present in your discovery document), logging out of Scrob also ends the IdP session. Otherwise Scrob just clears its own cookie — leave it unset for providers that don't offer RP-initiated logout (e.g. Google).
+- Existing local accounts with the same **verified** email as the SSO user are linked automatically on first SSO login - the account, library, and TOTP all stay. Scrob never links to an account whose IdP marks `email_verified: false`.
+
+### Notes
+
+- Setting `OIDC_DISCOVERY_URL` (or both `OIDC_ISSUER` and `OIDC_JWKS_URL`) enables `id_token` signature verification and `(issuer, sub)` identity binding. Without them, Scrob matches users by the `OIDC_IDENTIFIER_FIELD` userinfo claim and logs a warning on first login.
+- The first account created on an empty Scrob instance becomes admin, whether that happens via local registration or SSO. Group and role claims from the IdP are ignored.
 
 ## Email Validation & SMTP
 

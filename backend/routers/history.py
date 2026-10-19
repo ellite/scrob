@@ -201,6 +201,10 @@ async def _push_watch_state(
                     else:
                         tasks.append((f"trakt remove episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", trakt_client.remove_episode_from_history(settings.trakt_client_id, trakt_token, show.tmdb_id, media.season_number, media.episode_number)))
 
+    if watched and settings and getattr(settings, "wetrakr_push_watched", False) and getattr(settings, "wetrakr_access_token", None):
+        from routers.wetrakr import push_live_changes as wetrakr_push_live
+        tasks.append(("wetrakr watched", wetrakr_push_live(user_id, set(media_ids), resolved_watched_at, allow_rewatch=True)))
+
     if push_mdblist:
         from core import mdblist as mdblist_client
         from routers.mdblist import _empty_payload, _merge_show_entries, _payload_item
@@ -380,6 +384,7 @@ def format_event(event: WatchEvent | PlaybackProgress, media: Media) -> dict:
         "progress_percent": event.progress_percent,
         "completed": getattr(event, "completed", False),
         "play_count": getattr(event, "play_count", 1),
+        "source": getattr(event, "source", None),
     }
 
     if media.media_type == MediaType.episode and media.show:
@@ -468,6 +473,15 @@ async def get_history(
                     if t.get("title"): m["title"] = t["title"]
                     if t.get("overview"): m["overview"] = t["overview"]
                     if t.get("poster_path"): m["poster_path"] = t["poster_path"]
+
+            # The show name on an episode card translates via ShowTranslation on
+            # the Show row, not the episode's own MediaTranslation (#460).
+            show_ids = {m.show_id for _e, m in rows if m.show_id}
+            show_translations = await get_show_translations(db, list(show_ids), lang)
+            for (_e, m), event in zip(rows, events):
+                t = show_translations.get(m.show_id)
+                if t and t.get("title") and event["media"].get("show_title"):
+                    event["media"]["show_title"] = t["title"]
 
     return {
         "page": page,
@@ -1706,8 +1720,49 @@ async def refresh_next_up(
     )
 
 
+_ENDED_SHOW_STATUSES = {"ended", "canceled", "cancelled"}
+
+
+async def _simkl_status_for_undropped_show(db: AsyncSession, user_id: int, tmdb_id: int) -> str:
+    """The Simkl list an un-dropped show should land in (#474):
+
+    - completed: the show has ended and every aired episode is watched;
+    - watching: at least one episode watched;
+    - hold: nothing watched. Not plantowatch, which Scrob would pull into the
+      "Simkl - Watchlist"; not watching, which claims a show was started.
+    """
+    show = (await db.execute(select(Show).where(Show.tmdb_id == tmdb_id))).scalar_one_or_none()
+    if not show:
+        return "hold"
+
+    rows = (await db.execute(
+        select(Media.season_number, func.count(func.distinct(Media.episode_number)))
+        .join(WatchEvent, WatchEvent.media_id == Media.id)
+        .where(
+            WatchEvent.user_id == user_id,
+            WatchEvent.completed == True,
+            Media.show_id == show.id,
+            Media.media_type == MediaType.episode,
+            Media.season_number.isnot(None),
+            Media.season_number != 0,
+        )
+        .group_by(Media.season_number)
+    )).all()
+    watched_per_season = {season: count for season, count in rows}
+    if not watched_per_season:
+        return "hold"
+
+    season_ep_counts = capped_season_episode_counts(show)
+    total = sum(cnt for sn, cnt in season_ep_counts.items() if sn != 0)
+    watched = sum(min(watched_per_season.get(sn, 0), cnt) for sn, cnt in season_ep_counts.items() if sn != 0)
+    ended = (show.status or "").strip().lower() in _ENDED_SHOW_STATUSES
+    if ended and total > 0 and watched >= total:
+        return "completed"
+    return "watching"
+
+
 async def _push_show_dropped_to_providers(db: AsyncSession, settings: UserSettings, tmdb_id: int, *, remove: bool) -> None:
-    """Best-effort push of a show's dropped state to Trakt/MDBList - never
+    """Best-effort push of a show's dropped state to Trakt/MDBList/Simkl - never
     raises, mirrors _push_list_item_to_trakt's error-swallowing pattern
     (routers/lists.py) since a failed provider push shouldn't block the local
     drop/undrop action itself."""
@@ -1721,6 +1776,30 @@ async def _push_show_dropped_to_providers(db: AsyncSession, settings: UserSettin
                 await trakt_client.add_to_hidden(settings.trakt_client_id, token, "dropped", tmdb_id)
         except Exception as exc:
             logger.warning("Failed to push dropped show to Trakt (tmdb_id=%s, remove=%s): %s", tmdb_id, remove, exc)
+
+    if settings.simkl_push_dropped and settings.simkl_access_token and settings.simkl_client_id:
+        try:
+            from core import simkl as simkl_client
+            if not remove:
+                await simkl_client.add_shows_to_dropped(
+                    settings.simkl_client_id, settings.simkl_access_token, [tmdb_id]
+                )
+            else:
+                # Simkl has no undrop call: a show leaves Dropped by being moved
+                # to another list. Only touch it if it is actually dropped there,
+                # so an undrop never overwrites a status set on Simkl itself.
+                dropped_there = await simkl_client.get_dropped_show_tmdb_ids(
+                    settings.simkl_client_id, settings.simkl_access_token
+                )
+                if tmdb_id in dropped_there:
+                    status = await _simkl_status_for_undropped_show(db, settings.user_id, tmdb_id)
+                    await simkl_client.set_show_list_status(
+                        settings.simkl_client_id, settings.simkl_access_token, [(tmdb_id, status)]
+                    )
+        except Exception as exc:
+            logger.warning(
+                "Failed to push dropped show to Simkl (tmdb_id=%s, remove=%s): %s", tmdb_id, remove, exc
+            )
 
     if settings.mdblist_push_dropped and settings.mdblist_api_key:
         from core import mdblist as mdblist_client
@@ -1738,7 +1817,11 @@ def _iso_utc_now() -> str:
 
 
 class DropShowRequest(BaseModel):
-    show_id: int
+    # dropped_shows stores local Show.id. A show opened straight from TMDB
+    # (nothing watched or collected yet) has no local row, so it sends
+    # tmdb_id and we resolve/create one (#480).
+    show_id: int | None = None
+    tmdb_id: int | None = None
 
 
 @router.post("/drop/show")
@@ -1753,15 +1836,28 @@ async def drop_show(
     settings = settings_result.scalar_one_or_none()
     if not settings:
         raise HTTPException(status_code=404, detail="Settings not found")
+
+    show = None
+    if body.show_id and body.show_id > 0:
+        show = (await db.execute(select(Show).where(Show.id == body.show_id))).scalar_one_or_none()
+    elif body.tmdb_id:
+        show = (await db.execute(select(Show).where(Show.tmdb_id == body.tmdb_id))).scalars().first()
+        if not show:
+            from routers.trakt import _get_or_create_show
+            api_key = await get_user_tmdb_key(db, current_user.id)
+            show = await _get_or_create_show(db, body.tmdb_id, "", api_key)
+            if not show:
+                raise HTTPException(status_code=404, detail="Show not found on TMDB")
+    if not show:
+        raise HTTPException(status_code=400, detail="show_id or tmdb_id is required")
+
     dropped = list(settings.dropped_shows or [])
-    if body.show_id not in dropped:
-        dropped.append(body.show_id)
+    if show.id not in dropped:
+        dropped.append(show.id)
         settings.dropped_shows = dropped
         flag_modified(settings, "dropped_shows")
-        await db.commit()
+    await db.commit()
 
-    show_result = await db.execute(select(Show).where(Show.id == body.show_id))
-    show = show_result.scalar_one_or_none()
     if show and show.tmdb_id:
         await _push_show_dropped_to_providers(db, settings, show.tmdb_id, remove=False)
     return {"status": "ok"}
@@ -2367,6 +2463,7 @@ async def mark_as_watched(
 
     event = WatchEvent(
         user_id=current_user.id,
+        source="manual",
         media_id=media.id,
         watched_at=watched_at,
         completed=event_in.completed,
@@ -2465,7 +2562,11 @@ async def get_item_events(
     return {
         "watched": watched,
         "events": [
-            {"id": e.id, "watched_at": e.watched_at.isoformat() if e.watched_at else None}
+            {
+                "id": e.id,
+                "watched_at": e.watched_at.isoformat() if e.watched_at else None,
+                "source": e.source,
+            }
             for e in events
         ],
     }
@@ -2807,6 +2908,7 @@ async def mark_season_watched(
         if ep.id not in already_watched:
             event = WatchEvent(
                 user_id=current_user.id,
+                source="manual",
                 media_id=ep.id,
                 watched_at=resolved_watched_at,
                 completed=True,
@@ -3022,6 +3124,7 @@ async def mark_show_watched(
             if ep.id not in already_watched:
                 event = WatchEvent(
                     user_id=current_user.id,
+                    source="manual",
                     media_id=ep.id,
                     watched_at=resolved_watched_at,
                     completed=True,
@@ -3130,6 +3233,7 @@ async def mark_show_watched(
                         if ep.id not in already_watched:
                             event = WatchEvent(
                                 user_id=current_user.id,
+                                source="manual",
                                 media_id=ep.id,
                                 watched_at=resolved_watched_at,
                                 completed=True,
@@ -3539,6 +3643,7 @@ async def auto_complete_manual_sessions(db: AsyncSession) -> None:
             continue
         event = WatchEvent(
             user_id=session.user_id,
+            source="scrob",
             media_id=session.media_id,
             watched_at=now,
             completed=True,
@@ -3591,6 +3696,7 @@ async def complete_manual_session(
 
     event = WatchEvent(
         user_id=current_user.id,
+        source="scrob",
         media_id=media_id,
         watched_at=now,
         completed=True,

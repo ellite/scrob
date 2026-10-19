@@ -1,4 +1,6 @@
 ---
+import { formatWatchedOn } from "../../../../../../lib/media-format";
+import { getViewerTimeZone } from "../../../../../../lib/viewerTimeZone";
 import Base from "../../../../../../layouts/Base.astro";
 import { formatDate } from "../../../../../../lib/format";
 import { m } from "../../../../../../paraglide/messages.js";
@@ -39,6 +41,7 @@ if (!episode && !error) {
 const show = episode?.show;
 const season = episode?.season;
 const thumbnail = episode?.image_url || show?.poster_path || null;
+const lastWatchedLabel = formatWatchedOn(episode?.last_watched_at, getViewerTimeZone(Astro.cookies));
 ---
 
 <Base title={episode ? m.page_title_pair({ parent: show?.title ?? "", child: episode.name ?? m.media_episode_number({ number: episode_number! }) }) : m.episode_details_title()}>
@@ -176,6 +179,7 @@ const thumbnail = episode?.image_url || show?.poster_path || null;
               </div>
             ) : (
               <div class="mb-4">
+                {lastWatchedLabel && <p class="mb-2 text-xs font-bold text-zinc-500">{lastWatchedLabel}</p>}
                 <ActionBar
                   tmdbId={episode.tmdb_id}
                   mediaType="episode"

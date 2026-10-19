@@ -13,12 +13,15 @@ endpoint here only ever gates on whether the user is connected.
 """
 
 import asyncio
+import functools
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import wetrakr as wetrakr_client
@@ -42,12 +45,92 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 TMDB_CONCURRENCY = 10
-WETRAKR_PUSH_BATCH_SIZE = 50
+# WeTrakr accepts 5,000 items per write. A 50-item chunk turned a library of
+# roughly 2,200 plays into the observed burst of 44 POST /sync/tracking calls.
+WETRAKR_PUSH_BATCH_SIZE = 5000
+# A batch that times out may or may not have been applied. Resending it is
+# safe (allow_rewatch stays false, so applied items come back as "Already
+# watched" and a re-rated title just keeps its rating), so it is resent in
+# smaller pieces that are quicker for the server to answer.
+WETRAKR_PUSH_RETRY_BATCH_SIZE = 1000
+
+
+def _watched_sender(access_token: str, allow_rewatch: bool = False) -> Callable[[list[tuple[str, tuple]]], Awaitable[None]]:
+    async def send(chunk: list[tuple[str, tuple]]) -> None:
+        movies = [item for kind, item in chunk if kind == "movie"]
+        episodes = [item for kind, item in chunk if kind == "episode"]
+        await wetrakr_client.add_to_watched_batch(access_token, movies, episodes, allow_rewatch)
+    return send
+
+
+def _ratings_sender(access_token: str) -> Callable[[list[tuple[str, tuple]]], Awaitable[None]]:
+    async def send(chunk: list[tuple[str, tuple]]) -> None:
+        movies = [item for kind, item in chunk if kind == "movie"]
+        shows = [item for kind, item in chunk if kind == "show"]
+        await wetrakr_client.set_ratings_batch(access_token, movies, shows)
+    return send
+
+
+async def _send_chunk(send: Callable[[list], Awaitable[None]], chunk: list) -> None:
+    """Send one write batch; if it times out, resend it in smaller pieces."""
+    try:
+        await send(chunk)
+        return
+    except httpx.TimeoutException:
+        if len(chunk) <= WETRAKR_PUSH_RETRY_BATCH_SIZE:
+            raise
+        logger.warning(
+            "WeTrakr write of %d items timed out, resending in batches of %d",
+            len(chunk), WETRAKR_PUSH_RETRY_BATCH_SIZE,
+        )
+    for i in range(0, len(chunk), WETRAKR_PUSH_RETRY_BATCH_SIZE):
+        await send(chunk[i:i + WETRAKR_PUSH_RETRY_BATCH_SIZE])
+
+
+async def _send_in_chunks(items: list, send: Callable[[list], Awaitable[None]]) -> None:
+    for i in range(0, len(items), WETRAKR_PUSH_BATCH_SIZE):
+        await _send_chunk(send, items[i:i + WETRAKR_PUSH_BATCH_SIZE])
 
 # WeTrakr device-auth access tokens live 7 days. Refresh once we're within
 # this of expiry so a job that starts near the boundary doesn't race it —
 # same rationale as Trakt's _TRAKT_TOKEN_REFRESH_SKEW (see routers/trakt.py).
 _WETRAKR_TOKEN_REFRESH_SKEW = timedelta(days=1)
+
+
+def _reset_wetrakr_bookmarks(settings: UserSettings) -> None:
+    """Forget what the incremental pull/push last saw, so the next run is a
+    full one."""
+    settings.wetrakr_last_activity = None
+    settings.wetrakr_last_push_at = None
+    settings.wetrakr_last_lists_push_at = None
+
+
+_JOB_SLOT_LOCK_KEY = 0x57455452  # "WETR": first half of the advisory lock key
+
+
+async def _claim_job_slot(db: AsyncSession, user_id: int) -> None:
+    """Refuse (409) when this user already has a WeTrakr job pending or running.
+
+    The advisory lock is held until the caller's next commit, so two requests
+    arriving together cannot both pass the check before either has inserted its
+    job. No-op on the sqlite engine some unit tests substitute for Postgres.
+    """
+    get_bind = getattr(db, "get_bind", None)
+    bind = get_bind() if callable(get_bind) else None
+    if bind is not None and bind.dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(:key, :user_id)"),
+            {"key": _JOB_SLOT_LOCK_KEY, "user_id": user_id},
+        )
+    active = await db.execute(
+        select(SyncJob.id).where(
+            SyncJob.user_id == user_id,
+            SyncJob.source == CollectionSource.wetrakr,
+            SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]),
+        ).limit(1)
+    )
+    if active.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="A WeTrakr sync is already running")
 
 
 class WeTrakrTokenError(Exception):
@@ -146,6 +229,8 @@ async def wetrakr_device_poll(
     settings.wetrakr_refresh_token = token_data["refresh_token"]
     settings.wetrakr_token_expires_at = token_data.get("expires_in", 0) + int(datetime.now(timezone.utc).timestamp())
     settings.wetrakr_device_code = None
+    # The bookmarks belong to whichever account was connected before.
+    _reset_wetrakr_bookmarks(settings)
     await db.commit()
 
     return {"status": "connected"}
@@ -167,6 +252,7 @@ async def wetrakr_disconnect(
         settings.wetrakr_refresh_token = None
         settings.wetrakr_token_expires_at = None
         settings.wetrakr_device_code = None
+        _reset_wetrakr_bookmarks(settings)
         await db.commit()
 
     return {"status": "disconnected"}
@@ -322,6 +408,11 @@ def _wetrakr_user_rating(item: dict) -> tuple[float | None, str | None]:
     "rating" key alongside "rated_at" (confirmed against the live API; the
     docs' wording is ambiguous enough that the flat-number reading seemed
     equally plausible and turned out wrong)."""
+    # Compact sync rows expose these fields directly. Keep accepting the full
+    # media shape for compatibility with older API responses.
+    direct_rating = item.get("rating")
+    if isinstance(direct_rating, (int, float)):
+        return (float(direct_rating), item.get("rated_at"))
     user = ((item.get("interactions") or {}).get("user") or {})
     rating_obj = user.get("rating")
     if not isinstance(rating_obj, dict):
@@ -342,7 +433,9 @@ async def _resolve_wetrakr_comment_target(
 
     `caches` holds one dict per WeTrakr object type so repeated comments on
     the same title only fetch it once per sync run. Returns None for
-    person/list targets (no Scrob equivalent) or when resolution fails.
+    person/list targets (no Scrob equivalent) or when the title no longer
+    exists. A transient failure (rate limit, timeout, 5xx) is raised so the
+    caller can leave the comment for the next pull.
     """
     target = comment.get("target")
     try:
@@ -396,11 +489,37 @@ async def _resolve_wetrakr_comment_target(
             if not show_tmdb_id or season_number is None or episode_number is None:
                 return None
             return ("episode", int(show_tmdb_id), int(season_number), int(episode_number))
-    except Exception as exc:
+    except httpx.HTTPStatusError as exc:
+        # A 404/410 means the title is gone: nothing to resolve, ever. Anything
+        # else (429, 5xx) is transient and must not mark the comment as seen.
+        if exc.response.status_code in (404, 410):
+            logger.warning("WeTrakr comment target (%s) no longer exists: %s", target, exc)
+            return None
+        raise
+    except (ValueError, TypeError, AttributeError) as exc:
         logger.warning("Could not resolve WeTrakr comment target (%s, id=%s): %s", target, comment.get(target, {}).get("id") if isinstance(comment.get(target), dict) else None, exc)
         return None
 
     return None  # target is "person" or "list" — no Scrob equivalent
+
+
+def _section_changed(activities: dict, section: str, key: str, since: str | None) -> bool:
+    """True when `section` of GET /sync/last_activities moved after `since`
+    (the "all" stamp stored by the last pull). Anything unknown reads as
+    changed: no stored stamp, a failed last_activities call, or a stamp that
+    does not parse."""
+    if not since:
+        return True
+    block = activities.get(section)
+    if not isinstance(block, dict):
+        return True
+    stamp = block.get(key) or block.get("all")
+    if not isinstance(stamp, str):
+        return True
+    current, previous = _parse_wetrakr_datetime(stamp), _parse_wetrakr_datetime(since)
+    if current is None or previous is None:
+        return True
+    return current > previous
 
 
 # ── Background sync job ───────────────────────────────────────────────────────
@@ -438,6 +557,32 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                 await db.commit()
                 return
 
+            # Nothing changed on WeTrakr since the last pull: skip it entirely.
+            # Otherwise every supported feed receives the previous mark as
+            # from_date, so a change never causes the full account to be read.
+            from_date = settings.wetrakr_last_activity
+            activity_stamp: str | None = None
+            activities: dict = {}
+            try:
+                activities = await wetrakr_client.get_last_activities(access_token)
+                stamp = activities.get("all")
+                visible_until = activities.get("journal_visible_until")
+                if isinstance(stamp, str):
+                    activity_stamp = (
+                        min(stamp, visible_until)
+                        if isinstance(visible_until, str)
+                        else stamp
+                    )
+            except Exception as exc:
+                logger.warning("WeTrakr last_activities check failed, pulling incrementally anyway: %s", exc)
+            if activity_stamp is not None and activity_stamp == from_date:
+                print(f"WeTrakr sync job {job_id}: no changes since last pull, skipping")
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.completed, stats={"unchanged": 1}, processed_items=0,
+                ))
+                await db.commit()
+                return
+
             _gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
             _gs = _gs_result.scalar_one_or_none()
             api_key = settings.tmdb_api_key or (_gs.tmdb_api_key if _gs else None)
@@ -445,16 +590,27 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
             we_res = await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == user_id))
             existing_watched: set[int] = {row[0] for row in we_res}
 
+            # Only the sections WeTrakr says moved since the last pull are
+            # read; without a usable stamp every section is read.
+            pull_movies = _section_changed(activities, "movies", "last_tracking_watched_at", from_date)
+            pull_episodes = _section_changed(activities, "episodes", "last_tracking_watched_at", from_date)
+            pull_ratings = _section_changed(activities, "ratings", "all", from_date)
+            pull_lists = _section_changed(activities, "lists", "all", from_date)
+            pull_comments = (
+                _section_changed(activities, "comments", "all", from_date)
+                and not wetrakr_client.comments_blocked()
+            )
+
             # ── Watched movies ────────────────────────────────────────────────
-            if settings.wetrakr_sync_watched:
+            if settings.wetrakr_sync_watched and pull_movies:
                 print("  Fetching movie watch history from WeTrakr…")
-                history_movies = await wetrakr_client.get_watched_history(access_token, "movies")
+                history_movies = await wetrakr_client.get_watched_history(access_token, "movies", from_date)
                 print(f"  {len(history_movies)} movie plays fetched from WeTrakr")
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(history_movies), current_step="Pulling watched movies"))
                 await db.commit()
 
                 for i, item in enumerate(history_movies, start=1):
-                    movie_data = item.get("movie", {})
+                    movie_data = item.get("movie") or item
                     tmdb_id = _wetrakr_media_tmdb_id(movie_data)
                     try:
                         if not tmdb_id:
@@ -468,6 +624,8 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                             if media.id not in existing_watched:
                                 watched_at = None if item.get("watched_at_unknown") else _parse_wetrakr_datetime(item.get("watched_at"))
                                 db.add(WatchEvent(
+                                    origin="wetrakr",
+                                    source="wetrakr",
                                     user_id=user_id,
                                     media_id=media.id,
                                     watched_at=watched_at,
@@ -489,9 +647,9 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                 await db.commit()
 
             # ── Watched episodes ──────────────────────────────────────────────
-            if settings.wetrakr_sync_watched:
+            if settings.wetrakr_sync_watched and pull_episodes:
                 print("  Fetching episode watch history from WeTrakr…")
-                history_episodes = await wetrakr_client.get_watched_history(access_token, "episodes")
+                history_episodes = await wetrakr_client.get_watched_history(access_token, "episodes", from_date)
                 print(f"  {len(history_episodes)} episode plays fetched from WeTrakr")
 
                 movies_count = stats["movies"] + stats["skipped"]
@@ -504,8 +662,11 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
 
                 plays_by_show: dict[int, list[dict]] = {}
                 for entry in history_episodes:
-                    ep_data = entry.get("episode", {})
-                    show_data = ep_data.get("show", {})
+                    ep_data = entry.get("episode") or entry
+                    show_data = ep_data.get("show") or {
+                        "ids": ep_data.get("show_ids") or {},
+                        "title": ep_data.get("show_title", ""),
+                    }
                     show_tmdb_id = _wetrakr_media_tmdb_id(show_data)
                     if show_tmdb_id:
                         plays_by_show.setdefault(show_tmdb_id, []).append(entry)
@@ -514,7 +675,9 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
 
                 processed = movies_count
                 for show_tmdb_id, entries in plays_by_show.items():
-                    show_title = entries[0].get("episode", {}).get("show", {}).get("title", "")
+                    first_ep = entries[0].get("episode") or entries[0]
+                    first_show = first_ep.get("show") or {}
+                    show_title = first_show.get("title") or first_ep.get("show_title", "")
                     try:
                         async with db.begin_nested():
                             show = await _get_or_create_show(db, show_tmdb_id, show_title, api_key)
@@ -525,7 +688,7 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                             await db.flush()
 
                         for entry in entries:
-                            ep_data = entry.get("episode", {})
+                            ep_data = entry.get("episode") or entry
                             season_num = ep_data.get("season_number")
                             ep_num = ep_data.get("number")
                             if season_num is None or ep_num is None:
@@ -540,6 +703,8 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                                     if media.id not in existing_watched:
                                         watched_at = None if entry.get("watched_at_unknown") else _parse_wetrakr_datetime(entry.get("watched_at"))
                                         event = WatchEvent(
+                                            origin="wetrakr",
+                                            source="wetrakr",
                                             user_id=user_id,
                                             media_id=media.id,
                                             watched_at=watched_at,
@@ -566,7 +731,7 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                         await _raise_if_cancelled(db, job_id)
 
             # ── Ratings (movies + shows only, see set_ratings_batch) ──────────
-            if settings.wetrakr_sync_ratings:
+            if settings.wetrakr_sync_ratings and pull_ratings:
                 print("  Fetching ratings from WeTrakr…")
                 rat_res = await db.execute(
                     select(Rating.media_id).where(
@@ -582,9 +747,10 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                     ("shows", _get_or_create_series_media),
                 ):
                     try:
-                        items = await wetrakr_client.get_ratings(access_token, target)
+                        items = await wetrakr_client.get_ratings(access_token, target, from_date)
                     except Exception as exc:
                         logger.warning("Failed to fetch WeTrakr %s ratings: %s", target, exc)
+                        stats["errors"] += 1
                         continue
                     for item in items:
                         tmdb_id = _wetrakr_media_tmdb_id(item)
@@ -613,12 +779,13 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                 await _raise_if_cancelled(db, job_id)
 
             # ── Lists (movie/show items only, see add_items_to_list) ──────────
-            if settings.wetrakr_sync_lists:
+            if settings.wetrakr_sync_lists and pull_lists:
                 print("  Fetching lists from WeTrakr…")
                 try:
-                    remote_lists = await wetrakr_client.get_lists(access_token)
+                    remote_lists = await wetrakr_client.get_lists(access_token, from_date)
                 except Exception as exc:
                     logger.warning("Failed to fetch WeTrakr lists: %s", exc)
+                    stats["errors"] += 1
                     remote_lists = []
 
                 for wlist in remote_lists:
@@ -680,22 +847,41 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                 await _raise_if_cancelled(db, job_id)
 
             # ── Comments (movies/shows/seasons/episodes, see write_comment) ──
-            if settings.wetrakr_sync_comments:
+            if settings.wetrakr_sync_comments and pull_comments:
                 print("  Fetching comments from WeTrakr…")
                 existing_comments_result = await db.execute(select(Comment).where(Comment.user_id == user_id))
+                existing_comments = existing_comments_result.scalars().all()
                 existing_comment_keys = {
                     (c.media_type, c.tmdb_id, c.season_number, c.episode_number, c.content)
-                    for c in existing_comments_result.scalars().all()
+                    for c in existing_comments
+                }
+                # Comments pulled before the platform credit existed have no source yet.
+                unsourced_by_wetrakr_id = {
+                    c.wetrakr_comment_id: c for c in existing_comments
+                    if c.wetrakr_comment_id and not c.wetrakr_source
                 }
                 lookup_caches: dict[str, dict[int, dict]] = {}
                 for target in ("movies", "shows", "seasons", "episodes"):
                     try:
-                        entries = await wetrakr_client.get_comments(access_token, target)
+                        entries = await wetrakr_client.get_comments(access_token, target, from_date)
+                    except wetrakr_client.WeTrakrCommentsDisabled:
+                        logger.info("WeTrakr comments are not enabled for this app; skipping comment pull")
+                        break
                     except Exception as exc:
                         logger.warning("Failed to fetch WeTrakr %s comments: %s", target, exc)
+                        stats["errors"] += 1
                         continue
                     for entry in entries:
-                        resolved = await _resolve_wetrakr_comment_target(entry, lookup_caches)
+                        if (unsourced := unsourced_by_wetrakr_id.get(entry.get("id"))) is not None:
+                            unsourced.wetrakr_source = (entry.get("source") or "wetrakr")[:32]
+                        try:
+                            resolved = await _resolve_wetrakr_comment_target(entry, lookup_caches)
+                        except Exception as exc:
+                            # Transient: leave the stamp alone so the next
+                            # pull picks this comment up again.
+                            logger.warning("Could not resolve a WeTrakr %s comment: %s", target, exc)
+                            stats["errors"] += 1
+                            continue
                         if not resolved:
                             stats["skipped"] += 1
                             continue
@@ -717,6 +903,7 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                                     is_spoiler=bool(entry.get("spoiler")),
                                     created_at=_parse_wetrakr_datetime(entry.get("comment_added_at")) or datetime.utcnow(),
                                     wetrakr_comment_id=entry.get("id"),
+                                    wetrakr_source=(entry.get("source") or "wetrakr")[:32],
                                 ))
                             existing_comment_keys.add(key)
                             stats["comments"] += 1
@@ -732,6 +919,12 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                 f"Ratings: {stats['ratings']} new. Lists: {stats['lists']} new, {stats['list_items']} items. "
                 f"Comments: {stats['comments']} new. Skipped: {stats['skipped']}. Errors: {stats['errors']}."
             )
+            if (
+                activity_stamp is not None
+                and stats["errors"] == 0
+                and (from_date is None or activity_stamp >= from_date)
+            ):
+                settings.wetrakr_last_activity = activity_stamp
             # A pull only populates scrob's own data — never auto-pushed elsewhere.
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
@@ -762,6 +955,7 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
 @router.post("/sync")
 async def sync_wetrakr(
     background_tasks: BackgroundTasks,
+    full: bool = True,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -779,6 +973,13 @@ async def sync_wetrakr(
     if not _tmdb_key:
         raise HTTPException(status_code=400, detail="TMDB API key required for sync")
 
+    await _claim_job_slot(db, current_user.id)
+
+    if full:
+        # A button press reconciles everything (a compact full read is a
+        # handful of requests); only the scheduler pulls incrementally.
+        settings.wetrakr_last_activity = None
+
     job = SyncJob(user_id=current_user.id, source=CollectionSource.wetrakr, status=SyncStatus.pending)
     db.add(job)
     await db.commit()
@@ -790,12 +991,92 @@ async def sync_wetrakr(
 
 # ── Push (Scrob → WeTrakr) ─────────────────────────────────────────────────────
 
+async def push_live_changes(
+    user_id: int,
+    watched_ids: set[int] | list[int],
+    watched_at_by_media: dict[int, datetime | None],
+    ratings: dict[int, float] | None = None,
+    allow_rewatch: bool = False,
+) -> None:
+    """Push a handful of fresh changes (a play just finished, a title just
+    marked watched, a rating just set) to WeTrakr straight away.
+
+    allow_rewatch is true only when the caller knows this is a real new play
+    (a webhook finish or a manual mark); WeTrakr still collapses one within
+    the hour of an existing play, and an undated play is never a rewatch.
+    Best-effort: callers log failures, the scheduled push is the safety net.
+    """
+    ratings = ratings or {}
+    media_ids = set(watched_ids) | set(ratings)
+    if not media_ids:
+        return
+    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with async_session() as db:
+        settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
+        if not settings or not settings.wetrakr_access_token:
+            return
+        push_watched = bool(settings.wetrakr_push_watched and watched_ids)
+        push_ratings = bool(settings.wetrakr_push_ratings and ratings)
+        if not (push_watched or push_ratings):
+            return
+        access_token = await ensure_valid_wetrakr_token(db, settings)
+
+        media_by_id = {m.id: m for m in (await db.execute(select(Media).where(Media.id.in_(media_ids)))).scalars().all()}
+        show_ids = {m.show_id for m in media_by_id.values() if m.show_id}
+        shows_by_id: dict[int, Show] = {}
+        if show_ids:
+            shows_by_id = {s.id: s for s in (await db.execute(select(Show).where(Show.id.in_(show_ids)))).scalars().all()}
+
+        if push_watched:
+            dated_movies, undated_movies = [], []
+            dated_eps, undated_eps = [], []
+            for mid in watched_ids:
+                media = media_by_id.get(mid)
+                if not media or not media.tmdb_id or is_unmapped_tvdb_episode(media):
+                    continue
+                watched_at = watched_at_by_media.get(mid)
+                if media.media_type == MediaType.movie:
+                    (dated_movies if watched_at else undated_movies).append((media.tmdb_id, watched_at))
+                elif media.media_type == MediaType.episode and media.season_number is not None and media.episode_number is not None:
+                    show = shows_by_id.get(media.show_id)
+                    if show and show.tmdb_id:
+                        (dated_eps if watched_at else undated_eps).append((show.tmdb_id, media.season_number, media.episode_number, watched_at))
+            # A sync can surface far more than one write takes, so go through
+            # the same chunking as the scheduled push.
+            dated = [("movie", m) for m in dated_movies] + [("episode", e) for e in dated_eps]
+            undated = [("movie", m) for m in undated_movies] + [("episode", e) for e in undated_eps]
+            if dated:
+                await _send_in_chunks(dated, _watched_sender(access_token, allow_rewatch))
+            if undated:
+                await _send_in_chunks(undated, _watched_sender(access_token, False))
+
+        if push_ratings:
+            movie_ratings, show_ratings = [], []
+            for mid, rating in ratings.items():
+                media = media_by_id.get(mid)
+                if not media or not media.tmdb_id:
+                    continue
+                if media.media_type == MediaType.movie:
+                    movie_ratings.append((media.tmdb_id, rating))
+                elif media.media_type == MediaType.series:
+                    show_ratings.append((media.tmdb_id, rating))
+            rated = [("movie", r) for r in movie_ratings] + [("show", r) for r in show_ratings]
+            if rated:
+                await _send_in_chunks(rated, _ratings_sender(access_token))
+
+
 async def _run_wetrakr_push(user_id: int, job_id: int) -> None:
     from routers.sync import SyncCancelled, _raise_if_cancelled, _select_in_chunks, _short_error, _latest_watched_at
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         succeeded = 0
         failed = 0
+        # Failures of the watched/ratings batches decide whether the push
+        # bookmark moves. A list or comment failing must not make the next run
+        # resend the whole history, so those are tracked on their own.
+        core_failed = 0
+        lists_failed = 0
+        quota_hit = False
         try:
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.running))
             await db.commit()
@@ -814,27 +1095,39 @@ async def _run_wetrakr_push(user_id: int, job_id: int) -> None:
                 await db.commit()
                 return
 
+            # Incremental: after the first (full) push only what is newer than
+            # the bookmark is sent. The bookmark is taken before reading so
+            # an event written mid-push is picked up by the next run.
+            push_started_at = datetime.utcnow()
+            since = settings.wetrakr_last_push_at
+
             all_media_ids: set[int] = set()
             watched_ids: set[int] = set()
             ratings_map: dict[int, float] = {}
 
             if settings.wetrakr_push_watched:
-                watched_result = await db.execute(
-                    select(WatchEvent.media_id).where(WatchEvent.user_id == user_id).distinct()
+                watched_query = select(WatchEvent.media_id).where(
+                    WatchEvent.user_id == user_id,
+                    # Plays pulled from WeTrakr are never pushed back to it.
+                    WatchEvent.origin.is_distinct_from("wetrakr"),
                 )
+                if since is not None:
+                    watched_query = watched_query.where(WatchEvent.created_at > since)
+                watched_result = await db.execute(watched_query.distinct())
                 watched_ids = {row[0] for row in watched_result.all()}
                 all_media_ids |= watched_ids
                 watched_at_by_media = await _latest_watched_at(db, user_id, list(watched_ids))
 
             if settings.wetrakr_push_ratings:
-                ratings_result = await db.execute(
-                    select(Rating.media_id, Rating.rating).where(
-                        Rating.user_id == user_id,
-                        Rating.rating.isnot(None),
-                        Rating.season_number.is_(None),
-                        Rating.episode_order.is_(None),
-                    )
+                ratings_query = select(Rating.media_id, Rating.rating).where(
+                    Rating.user_id == user_id,
+                    Rating.rating.isnot(None),
+                    Rating.season_number.is_(None),
+                    Rating.episode_order.is_(None),
                 )
+                if since is not None:
+                    ratings_query = ratings_query.where(Rating.rated_at > since)
+                ratings_result = await db.execute(ratings_query)
                 ratings_map = {row[0]: row[1] for row in ratings_result.all()}
                 all_media_ids |= set(ratings_map.keys())
 
@@ -888,38 +1181,46 @@ async def _run_wetrakr_push(user_id: int, job_id: int) -> None:
                     # Episode/season ratings have no push path yet — see
                     # core/wetrakr.py: set_ratings_batch.
 
-            push_tasks: list[tuple[str, int, "asyncio.Future"]] = []
+            push_tasks: list[tuple[str, int, Callable[[], Awaitable[None]]]] = []
 
+            # allow_rewatch stays false here: this job re-reads local history,
+            # so a play it already sent (or one pushed live) must not become a
+            # second one. Genuine rewatches go out through push_live_changes.
             history_pending: list[tuple[str, tuple]] = [("movie", item) for item in movie_candidates]
             history_pending.extend(("episode", item) for item in episode_candidates)
+            watched_send = _watched_sender(access_token)
             for i in range(0, len(history_pending), WETRAKR_PUSH_BATCH_SIZE):
                 chunk = history_pending[i:i + WETRAKR_PUSH_BATCH_SIZE]
-                movies = [item for kind, item in chunk if kind == "movie"]
-                episodes = [item for kind, item in chunk if kind == "episode"]
-                push_tasks.append(("watched", len(chunk), wetrakr_client.add_to_watched_batch(access_token, movies, episodes)))
+                push_tasks.append(("watched", len(chunk), functools.partial(_send_chunk, watched_send, chunk)))
 
             rating_pending: list[tuple[str, tuple]] = [("movie", item) for item in movie_rating_candidates]
             rating_pending.extend(("show", item) for item in show_rating_candidates)
+            ratings_send = _ratings_sender(access_token)
             for i in range(0, len(rating_pending), WETRAKR_PUSH_BATCH_SIZE):
                 chunk = rating_pending[i:i + WETRAKR_PUSH_BATCH_SIZE]
-                movie_ratings = [item for kind, item in chunk if kind == "movie"]
-                show_ratings = [item for kind, item in chunk if kind == "show"]
-                push_tasks.append(("ratings", len(chunk), wetrakr_client.set_ratings_batch(access_token, movie_ratings, show_ratings)))
+                push_tasks.append(("ratings", len(chunk), functools.partial(_send_chunk, ratings_send, chunk)))
 
             total = sum(item_count for _, item_count, _ in push_tasks)
 
             if push_tasks:
                 print(f"WeTrakr full push: pushing {total} items in {len(push_tasks)} batch requests…")
-                REQUEST_CONCURRENCY = 50
-                for i in range(0, len(push_tasks), REQUEST_CONCURRENCY):
-                    batch = push_tasks[i:i + REQUEST_CONCURRENCY]
-                    results = await asyncio.gather(*[task for _, _, task in batch], return_exceptions=True)
-                    for (category, item_count, _), result in zip(batch, results):
-                        if isinstance(result, Exception):
-                            failed += item_count
-                            logger.warning("WeTrakr push batch failed (%s, %d items): %s", category, item_count, result)
-                        else:
-                            succeeded += item_count
+                # One request at a time (core/wetrakr.py also serialises per
+                # user and honours Retry-After on a 429).
+                for category, item_count, task in push_tasks:
+                    try:
+                        await task()
+                        succeeded += item_count
+                    except wetrakr_client.WeTrakrQuotaExceeded as exc:
+                        # Every further request would fail the same way.
+                        failed += item_count
+                        core_failed += item_count
+                        quota_hit = True
+                        logger.warning("WeTrakr push stopped (%s): %s", category, exc)
+                        break
+                    except Exception as exc:
+                        failed += item_count
+                        core_failed += item_count
+                        logger.warning("WeTrakr push batch failed (%s, %d items): %s", category, item_count, exc)
                     await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=succeeded + failed))
                     await db.commit()
                     await _raise_if_cancelled(db, job_id)
@@ -928,9 +1229,25 @@ async def _run_wetrakr_push(user_id: int, job_id: int) -> None:
             # ── Lists (movie/show items only — see add_items_to_list) ────────
             # Idempotent server-side, so safe to re-run: an already-linked
             # list's items are just re-added (a no-op for ones already there).
-            if settings.wetrakr_push_lists:
+            lists_since = settings.wetrakr_last_lists_push_at
+            lists_pushed = False
+            local_lists: list = []
+            if settings.wetrakr_push_lists and not quota_hit:
+                lists_pushed = True
                 lists_result = await db.execute(select(ListModel).where(ListModel.user_id == user_id))
                 local_lists = lists_result.scalars().all()
+                if lists_since is not None:
+                    # Only lists that are new or gained items since the last
+                    # list push (its own bookmark: a failing list must not
+                    # hold back the watched/ratings bookmark, nor the reverse).
+                    changed_q = await db.execute(
+                        select(ListItem.list_id).where(ListItem.added_at > lists_since).distinct()
+                    )
+                    changed_list_ids = {row[0] for row in changed_q.all()}
+                    local_lists = [
+                        lst for lst in local_lists
+                        if not lst.wetrakr_list_id or lst.id in changed_list_ids
+                    ]
                 if local_lists:
                     await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(all_media_ids) + len(local_lists)))
                     await db.commit()
@@ -962,8 +1279,15 @@ async def _run_wetrakr_push(user_id: int, job_id: int) -> None:
                         if movie_tmdb_ids or show_tmdb_ids:
                             await wetrakr_client.add_items_to_list(access_token, remote_id, movie_tmdb_ids, show_tmdb_ids)
                         succeeded += 1
+                    except wetrakr_client.WeTrakrQuotaExceeded as exc:
+                        failed += 1
+                        lists_failed += 1
+                        quota_hit = True
+                        logger.warning("WeTrakr list push stopped: %s", exc)
+                        break
                     except Exception as exc:
                         failed += 1
+                        lists_failed += 1
                         logger.warning("WeTrakr list push failed for list %s: %s", local_list.id, exc)
                     await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=succeeded + failed))
                     await db.commit()
@@ -973,7 +1297,7 @@ async def _run_wetrakr_push(user_id: int, job_id: int) -> None:
             # Only ever considers comments with no wetrakr_comment_id yet:
             # WeTrakr has no edit/upsert for comments, so anything already
             # linked (pulled in, or pushed by an earlier run) is left alone.
-            if settings.wetrakr_push_comments:
+            if settings.wetrakr_push_comments and not quota_hit and not wetrakr_client.comments_blocked():
                 comments_result = await db.execute(
                     select(Comment).where(
                         Comment.user_id == user_id,
@@ -989,6 +1313,7 @@ async def _run_wetrakr_push(user_id: int, job_id: int) -> None:
                         total_items=len(all_media_ids) + (len(local_lists) if settings.wetrakr_push_lists else 0) + len(pending_comments)
                     ))
                     await db.commit()
+                consecutive_failures = 0
                 for comment in pending_comments:
                     try:
                         created = await wetrakr_client.write_comment(
@@ -999,15 +1324,36 @@ async def _run_wetrakr_push(user_id: int, job_id: int) -> None:
                             spoiler=comment.is_spoiler,
                         )
                         comment.wetrakr_comment_id = created.get("id")
+                        comment.wetrakr_source = (created.get("source") or "wetrakr")[:32]
                         await db.commit()
                         succeeded += 1
+                        consecutive_failures = 0
+                    except wetrakr_client.WeTrakrCommentsDisabled:
+                        logger.info("WeTrakr comments are not enabled for this app; skipping comment push")
+                        break
+                    except wetrakr_client.WeTrakrQuotaExceeded as exc:
+                        failed += 1
+                        quota_hit = True
+                        logger.warning("WeTrakr comment push stopped: %s", exc)
+                        break
                     except Exception as exc:
                         failed += 1
+                        consecutive_failures += 1
                         logger.warning("WeTrakr comment push failed for comment %s: %s", comment.id, exc)
+                        if consecutive_failures >= 3:
+                            # Unlinked comments are retried every run, one
+                            # request each: don't keep hammering when the
+                            # failures are not about one odd comment.
+                            logger.warning("WeTrakr comment push stopped after %d failures in a row", consecutive_failures)
+                            break
                     await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=succeeded + failed))
                     await db.commit()
                     await _raise_if_cancelled(db, job_id)
 
+            if core_failed == 0:
+                settings.wetrakr_last_push_at = push_started_at
+            if lists_pushed and lists_failed == 0 and not quota_hit:
+                settings.wetrakr_last_lists_push_at = push_started_at
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed,
@@ -1046,6 +1392,7 @@ async def push_wetrakr(
         raise HTTPException(status_code=400, detail="WeTrakr is not connected")
     if not any([settings.wetrakr_push_watched, settings.wetrakr_push_ratings, settings.wetrakr_push_lists, settings.wetrakr_push_comments]):
         raise HTTPException(status_code=400, detail="Enable 'Scrob → WeTrakr' push flags first")
+    await _claim_job_slot(db, current_user.id)
     job = SyncJob(user_id=current_user.id, source=CollectionSource.wetrakr, status=SyncStatus.pending, job_type="push")
     db.add(job)
     await db.commit()

@@ -428,6 +428,59 @@ async def add_history_batch(
         return _count_history_items(rejected)
 
 
+async def get_dropped_show_tmdb_ids(client_id: str, access_token: str) -> set[int]:
+    """TMDB ids of the shows currently in the user's Simkl Dropped list."""
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.get(
+            f"{SIMKL_BASE}/sync/all-items/shows/dropped",
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
+    payload = _safe_json(resp)
+    shows = payload.get("shows") if isinstance(payload, dict) else None
+    out: set[int] = set()
+    for item in shows or []:
+        # Simkl returns ids.tmdb as a string
+        try:
+            out.add(int(((item.get("show") or {}).get("ids") or {}).get("tmdb")))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+async def add_shows_to_dropped(client_id: str, access_token: str, tmdb_ids: list[int]) -> int:
+    """Move shows into the user's Dropped list (POST /sync/add-to-list, #474)."""
+    return await set_show_list_status(client_id, access_token, [(tid, "dropped") for tid in tmdb_ids])
+
+
+async def set_show_list_status(client_id: str, access_token: str, items: list[tuple[int, str]]) -> int:
+    """Move shows between Simkl lists (POST /sync/add-to-list). `items` is
+    (tmdb_id, status) with status one of watching / plantowatch / hold /
+    completed / dropped. Simkl has no separate "undrop" call: a show leaves
+    Dropped by being moved to another status.
+
+    Returns how many shows Simkl accepted the request for but could not
+    resolve (reported in `not_found`), so callers can count them as failures.
+    """
+    if not items:
+        return 0
+    body = {"shows": [{"to": status, "ids": {"tmdb": tid}} for tid, status in items]}
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(
+            f"{SIMKL_BASE}/sync/add-to-list",
+            json=body,
+            headers=_headers(client_id, access_token),
+        )
+        resp.raise_for_status()
+        rejected = _history_not_found(_safe_json(resp))
+        if rejected:
+            logger.warning(
+                "Simkl /sync/add-to-list accepted the batch but could not resolve %d show(s): %s",
+                len(rejected), rejected,
+            )
+        return len(rejected)
+
+
 async def remove_movie_from_history(client_id: str, access_token: str, tmdb_id: int) -> None:
     """Mark a movie as unwatched on Simkl."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:

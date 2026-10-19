@@ -390,6 +390,9 @@ async def apply_media_change_safely(db: AsyncSession, media: Media, mutate) -> M
     original_tmdb_id = media.tmdb_id
     original_media_id = media.id
     original_media_type = media.media_type
+    original_show_id = media.show_id
+    original_season = media.season_number
+    original_episode = media.episode_number
     resolved_tmdb_id: int | None = None
     try:
         async with db.begin_nested():
@@ -416,6 +419,27 @@ async def apply_media_change_safely(db: AsyncSession, media: Media, mutate) -> M
             "has it - discarding the change and using the existing row instead",
             resolved_tmdb_id, original_media_id, existing.id,
         )
+        # Two rows for the very same episode (same show, season and number):
+        # the one that lost is a leftover stub. Merge it into the winner so it
+        # stops being re-enriched, and failing, on every sync (#463).
+        if (
+            original_media_type == MediaType.episode
+            and original_show_id is not None
+            and (existing.show_id, existing.season_number, existing.episode_number)
+            == (original_show_id, original_season, original_episode)
+        ):
+            from core.episode_order import _merge_episode_media
+
+            loser = await db.get(Media, original_media_id)
+            if loser is not None:
+                try:
+                    async with db.begin_nested():
+                        await _merge_episode_media(db, existing, loser, rekey_comments=False)
+                except Exception:
+                    logger.exception(
+                        "Could not merge duplicate episode media.id=%s into media.id=%s",
+                        original_media_id, existing.id,
+                    )
         return existing
     return media
 

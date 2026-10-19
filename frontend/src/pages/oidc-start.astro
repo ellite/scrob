@@ -3,34 +3,40 @@ import { api } from "../lib/api";
 import { getLocale } from "../paraglide/runtime.js";
 import { m } from "../paraglide/messages.js";
 
-// Initiate the OIDC flow: get the provider's auth URL + a fresh state token from
-// the backend, set the state as an httpOnly cookie on the browser, then redirect
-// the browser to the provider. The backend is never contacted by the browser directly.
+// Builds the IdP auth URL on the backend, then stashes state/PKCE verifier/
+// nonce as HttpOnly cookies for the callback to send back on /exchange.
 
 let errorMsg = "";
 
-// Same validation as login.astro's `next` handling - only a same-site path
-// is a safe redirect target once the provider sends the browser back.
+// Only a same-site path is a safe redirect target - anything else (an
+// absolute URL, or a protocol-relative "//evil.com") could send the
+// successful login to an attacker-controlled site.
 const rawNext = Astro.url.searchParams.get("next") || "";
 const nextPath = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
 
-try {
-  const { auth_url, state } = await api.auth.oidcAuthorize();
+const remember = Astro.url.searchParams.get("remember") === "1";
 
-  Astro.cookies.set("oidc_state", state, {
+try {
+  const { auth_url, state, code_verifier, nonce } = await api.auth.oidcAuthorize();
+
+  const cookieOpts = {
     path: "/",
     httpOnly: true,
     secure: import.meta.env.PROD,
-    sameSite: "lax",
+    sameSite: "lax" as const,
     maxAge: 600, // 10 minutes
-  });
-  Astro.cookies.set("oidc_next", nextPath, {
-    path: "/",
-    httpOnly: true,
-    secure: import.meta.env.PROD,
-    sameSite: "lax",
-    maxAge: 600, // 10 minutes
-  });
+  };
+  Astro.cookies.set("oidc_state", state, cookieOpts);
+  Astro.cookies.set("oidc_next", nextPath, cookieOpts);
+  if (code_verifier) {
+    Astro.cookies.set("oidc_code_verifier", code_verifier, cookieOpts);
+  }
+  if (nonce) {
+    Astro.cookies.set("oidc_nonce", nonce, cookieOpts);
+  }
+  if (remember) {
+    Astro.cookies.set("oidc_remember", "1", cookieOpts);
+  }
 
   return Astro.redirect(auth_url);
 } catch (e: unknown) {

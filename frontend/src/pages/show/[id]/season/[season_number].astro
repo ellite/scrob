@@ -1,4 +1,6 @@
 ---
+import { formatWatchedOn } from "../../../../lib/media-format";
+import { getViewerTimeZone } from "../../../../lib/viewerTimeZone";
 import Base from "../../../../layouts/Base.astro";
 import { formatDate, formatRating } from "../../../../lib/format";
 import { m } from "../../../../paraglide/messages.js";
@@ -39,6 +41,7 @@ const heatmapSeasons = season ? [{
 const hasHeatmapRatings = heatmapSeasons[0]?.episodes.some((e) => e.rating && e.rating > 0) ?? false;
 // Active ordering (#174) - stored per-show preference, resolved server-side.
 const activeOrder = season?.episode_order ?? "tmdb:aired";
+const viewerTz = getViewerTimeZone(Astro.cookies);
 ---
 
 <Base title={season ? m.page_title_pair({ parent: show?.title ?? "", child: season.name }) : m.season_details_title()}>
@@ -260,6 +263,9 @@ const activeOrder = season?.episode_order ?? "tmdb:aired";
                           <p class="text-xs font-bold text-zinc-500 uppercase tracking-widest">
                             {formatDate(ep.air_date, { year: 'numeric', month: 'short', day: 'numeric' })}
                           </p>
+                        )}
+                        {ep.last_watched_at && (
+                          <p class="text-xs font-bold text-green-500/80 uppercase tracking-widest">{formatWatchedOn(ep.last_watched_at, viewerTz)}</p>
                         )}
                       </div>
 

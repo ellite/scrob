@@ -118,6 +118,14 @@ class WriteWatchEventDedupTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(db.added), 1)
         self.assertTrue(result)
 
+    async def test_completed_event_records_where_it_came_from(self):
+        # #477: the history view shows which service a watch was recorded from.
+        db = _FakeDB(queued_scalars=[None])
+        await _write_watch_event(
+            db, user_id=1, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True, source="plex",
+        )
+        self.assertEqual(db.added[0].source, "plex")
+
     async def test_second_completed_event_for_same_media_within_window_is_skipped(self):
         # Simulates media.scrobble having already written a WatchEvent moments
         # ago, then media.stop firing for the same viewing. Not an echo, so

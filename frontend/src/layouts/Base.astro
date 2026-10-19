@@ -5,10 +5,16 @@ import WatchedAtPicker from "../components/WatchedAtPicker.astro";
 import { api } from "../lib/api";
 import { getLocale } from "../paraglide/runtime.js";
 import { m } from "../paraglide/messages.js";
+import { watchSourceIconHtml } from "../lib/connectionIcons";
+import { WATCH_SOURCES, watchSourceLabel } from "../lib/media-format";
 
 interface Props { title: string; hideNav?: boolean }
 const { title, hideNav } = Astro.props;
 const { user, token } = Astro.locals;
+// Brand marks for the per-play "watched via" indicator in the watch history modal (#477).
+const watchSourceMarks = Object.fromEntries(
+  WATCH_SOURCES.map((k) => [k, { label: watchSourceLabel(k), icon: watchSourceIconHtml(k) }]),
+);
 
 let pendingRequestCount = 0;
 let radarrCustomizeOnAdd = false;
@@ -514,7 +520,7 @@ const bottomNavItem = (active: boolean) =>
   </div>
 
   <!-- Watch history modal -->
-  <div id="watch-history-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+  <div id="watch-history-modal" data-source-marks={JSON.stringify(watchSourceMarks)} class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
       <div class="px-5 pt-5 pb-4 border-b border-zinc-800 flex items-center justify-between gap-3">
         <h3 id="watch-history-modal-title" class="text-base font-bold text-zinc-100">{m.watch_history_title()}</h3>
@@ -1540,7 +1546,10 @@ const bottomNavItem = (active: boolean) =>
       // "Hide from Next Up" only makes sense for shows - movies have no
       // Next Up concept to hide from.
       const hideBtn = document.getElementById('drop-modal-hide')!;
-      hideBtn.classList.toggle('hidden', !isSeries);
+      // A show with no local row yet (nothing watched or collected, #480) can't
+      // be in Next Up either.
+      const hasLocalShow = !!showId && Number(showId) > 0;
+      hideBtn.classList.toggle('hidden', !isSeries || !hasLocalShow);
 
       hideBtn.onclick = async () => {
         closeDropModal();
@@ -1556,7 +1565,12 @@ const bottomNavItem = (active: boolean) =>
         closeDropModal();
         try {
           if (isSeries) {
-            await apiFetch('/history/drop/show', 'POST', { show_id: Number(showId) });
+            // A show opened straight from TMDB has no local id yet - send the
+            // tmdb id so the backend can resolve/create one (#480).
+            const body = hasLocalShow
+              ? { show_id: Number(showId) }
+              : { tmdb_id: Number(tmdbId) };
+            await apiFetch('/history/drop/show', 'POST', body);
           } else {
             // A movie opened straight from TMDB has no local id yet - send the
             // tmdb id so the backend can resolve/create one (#330).
@@ -2034,6 +2048,9 @@ const bottomNavItem = (active: boolean) =>
       }
     }
 
+    const watchSourceMarks: Record<string, { label: string; icon: string | null }> =
+      JSON.parse(document.getElementById('watch-history-modal')!.dataset.sourceMarks || '{}');
+
     async function loadWatchHistoryEvents() {
       const eventsEl = document.getElementById('watch-history-modal-events')!;
       eventsEl.innerHTML = `<div class="px-4 py-3 text-xs text-zinc-500">${esc(m.common_loading())}</div>`;
@@ -2047,7 +2064,7 @@ const bottomNavItem = (active: boolean) =>
             + (_watchHistoryShowTvdbId ? `&series_tvdb_id=${_watchHistoryShowTvdbId}` : '')
           : '';
         const itemIdQuery = _watchHistoryTmdbId ? `tmdb_id=${_watchHistoryTmdbId}` : `media_id=${_watchHistoryMediaId}`;
-        const { watched, events }: { watched: boolean; events: Array<{ id: number; watched_at: string | null }> } = await apiFetch(
+        const { watched, events }: { watched: boolean; events: Array<{ id: number; watched_at: string | null; source?: string | null }> } = await apiFetch(
           `/history/item-events?${itemIdQuery}&media_type=${_watchHistoryMediaType}${seriesQuery}`
         );
         if (events.length === 0) {
@@ -2057,8 +2074,12 @@ const bottomNavItem = (active: boolean) =>
             const fmt = ev.watched_at
               ? formatDateTime(ev.watched_at + 'Z', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: !(window as any).__USE_24H__ })
               : m.watch_unknown_date();
+            const mark = ev.source ? watchSourceMarks[ev.source] : null;
+            const via = mark
+              ? `<span class="flex items-center text-xs font-bold text-zinc-500" title="${esc(m.history_watched_via({ source: mark.label }))}">${mark.icon ?? esc(mark.label)}</span>`
+              : '';
             return `<div class="flex items-center justify-between px-4 py-2.5 hover:bg-zinc-800/50 group">
-              <span class="text-sm text-zinc-200">${esc(fmt)}</span>
+              <span class="flex items-center gap-2.5 text-sm text-zinc-200">${esc(fmt)}${via}</span>
               <button class="text-zinc-600 group-hover:text-zinc-400 hover:!text-red-400 transition-colors cursor-pointer" data-delete-event="${ev.id}" aria-label="${esc(m.common_remove())}">
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>

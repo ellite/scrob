@@ -41,6 +41,7 @@ class User(Base):
     ratings           : Mapped[list["Rating"]]           = relationship(back_populates="user", cascade="all, delete-orphan")
     lists             : Mapped[list["List"]]             = relationship(back_populates="user", cascade="all, delete-orphan")
     totp_backup_codes : Mapped[list["TotpBackupCode"]]   = relationship(back_populates="user", cascade="all, delete-orphan")
+    oidc_identities   : Mapped[list["OidcIdentity"]]     = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class UserSettings(Base):
@@ -125,10 +126,12 @@ class UserSettings(Base):
     simkl_sync_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
     simkl_sync_ratings       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
     simkl_sync_lists         : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
+    simkl_sync_dropped       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # Simkl outbound push flags (Scrob → Simkl)
     simkl_push_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     simkl_push_ratings       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    simkl_push_dropped       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     simkl_scrobble           : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # Simkl auto sync/push interval, in hours (null = disabled)
@@ -160,11 +163,20 @@ class UserSettings(Base):
     # WeTrakr auto sync/push interval, in hours (null = disabled)
     wetrakr_auto_sync_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     wetrakr_auto_push_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Incremental-sync bookmarks: the push only sends what is newer than
+    # wetrakr_last_push_at, and the pull is skipped while WeTrakr's
+    # /sync/last_activities "all" stamp still equals wetrakr_last_activity.
+    wetrakr_last_push_at       : Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Own bookmark for list pushes, so a failing list never holds back (or
+    # forces a resend of) the watched/ratings push.
+    wetrakr_last_lists_push_at : Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    wetrakr_last_activity      : Mapped[Optional[str]]      = mapped_column(String(64), nullable=True)
 
     preferences    : Mapped[Optional[dict]] = mapped_column(JSONB)
     blur_explicit   : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     time_format_24h : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     use_hls_player  : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    show_play_button : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     shuffle_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     minimalist_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     next_up_hidden_shows : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="'[]'")

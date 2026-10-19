@@ -8,7 +8,8 @@ import type { WatchEvent } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
 import { episodeHref } from "../lib/episodeHref";
-import { episodeCode } from "../lib/media-format";
+import { episodeCode, watchSourceLabel } from "../lib/media-format";
+import { watchSourceIconHtml } from "../lib/connectionIcons";
 import { formatTime } from "../lib/format";
 import { m } from "../paraglide/messages.js";
 import { getViewerTimeZone } from "../lib/viewerTimeZone";
@@ -88,6 +89,8 @@ const codes = chronological.map((e) => episodeCode(e.media)).filter((c): c is st
       const href = episodeHref(media);
       const time = fmtTime(event.watched_at) ?? m.history_time_unknown();
       const code = episodeCode(media);
+      const sourceLabel = watchSourceLabel(event.source);
+      const sourceIcon = watchSourceIconHtml(event.source);
       return (
         <div class="flex items-center gap-3 px-4 py-3 hover:bg-zinc-800/40 transition-colors" data-event-id={event.id} data-href={href}>
           <span class="text-xs font-bold text-zinc-400 bg-zinc-950/50 border border-zinc-800 px-2 py-1 rounded-lg uppercase tracking-wider shrink-0">
@@ -101,6 +104,11 @@ const codes = chronological.map((e) => episodeCode(e.media)).filter((c): c is st
             )}
             {media.title}
           </p>
+          {sourceLabel && (
+            <span class="flex items-center text-xs font-bold text-zinc-500 shrink-0" title={m.history_watched_via({ source: sourceLabel })}>
+              {sourceIcon ? <Fragment set:html={sourceIcon} /> : sourceLabel}
+            </span>
+          )}
           <button
             class="delete-history-event w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-zinc-950/50 border border-zinc-800 text-zinc-500 hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/10 transition-all duration-200 cursor-pointer"
             title={m.history_delete_entry_title()}

@@ -1081,6 +1081,7 @@ async def _merge_episode_media(
     divergent: Media,
     *,
     keep_divergent_files: bool = False,
+    rekey_comments: bool = True,
 ) -> None:
     """Moves every reference to `divergent` onto `canonical`, deduplicating
     against rows canonical already has where a table's uniqueness would
@@ -1169,18 +1170,21 @@ async def _merge_episode_media(
 
     # Comment: not Media-FK'd at all (keyed by media_type/tmdb_id/season/episode
     # directly) - re-key rows matching the divergent identity to the canonical one.
-    await db.execute(
-        update(Comment).where(
-            Comment.media_type == "episode",
-            Comment.tmdb_id == divergent.tmdb_id,
-            Comment.season_number == divergent.season_number,
-            Comment.episode_number == divergent.episode_number,
-        ).values(
-            tmdb_id=canonical.tmdb_id,
-            season_number=canonical.season_number,
-            episode_number=canonical.episode_number,
+    # Skipped for a row with no identity of its own (a bare stub): matching on its
+    # NULL tmdb_id would sweep up other shows' comments.
+    if rekey_comments:
+        await db.execute(
+            update(Comment).where(
+                Comment.media_type == "episode",
+                Comment.tmdb_id == divergent.tmdb_id,
+                Comment.season_number == divergent.season_number,
+                Comment.episode_number == divergent.episode_number,
+            ).values(
+                tmdb_id=canonical.tmdb_id,
+                season_number=canonical.season_number,
+                episode_number=canonical.episode_number,
+            )
         )
-    )
 
     await db.flush()
     await db.delete(divergent)

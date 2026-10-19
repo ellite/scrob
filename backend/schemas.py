@@ -53,6 +53,8 @@ class Token(BaseModel):
     token_type: str = "bearer"
     requires_2fa: bool = False
     temp_token: Optional[str] = None
+    # Seconds the access token is valid for, so the frontend can size the cookie.
+    expires_in: Optional[int] = None
 
 class TokenPayload(BaseModel):
     sub: Optional[int] = None
@@ -179,8 +181,10 @@ class UserSettings(BaseModel):
     simkl_sync_watched: Optional[bool] = None
     simkl_sync_ratings: Optional[bool] = None
     simkl_sync_lists: Optional[bool] = None
+    simkl_sync_dropped: Optional[bool] = None
     simkl_push_watched: Optional[bool] = None
     simkl_push_ratings: Optional[bool] = None
+    simkl_push_dropped: Optional[bool] = None
     simkl_scrobble: Optional[bool] = None
     simkl_auto_sync_interval: Optional[float] = None
     simkl_auto_push_interval: Optional[float] = None
@@ -228,6 +232,7 @@ class UserSettings(BaseModel):
     blur_explicit: Optional[bool] = None
     time_format_24h: Optional[bool] = None
     use_hls_player: Optional[bool] = None
+    show_play_button: Optional[bool] = None
     shuffle_next_up: Optional[bool] = None
     minimalist_next_up: Optional[bool] = None
     hide_watched_from_recently_added: Optional[bool] = None
@@ -409,6 +414,10 @@ class ScrobbleConnectionResponse(ScrobbleConnectionCreate):
 class PasswordUpdate(BaseModel):
     current_password: Optional[str] = None
     new_password: str
+
+class EmailChange(BaseModel):
+    new_email: EmailStr
+    current_password: Optional[str] = None
 
 class WatchEventCreate(BaseModel):
     # Any one of media_id / tmdb_id / tvdb_id identifies the item (see

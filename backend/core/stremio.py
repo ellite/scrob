@@ -162,7 +162,8 @@ async def logout(auth_key: str) -> None:
 
 
 async def get_cinemeta_series(imdb_id: str) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False) as client:
+    # Fixed public host that 307s to cinemeta-live.strem.io, so redirects are safe to follow
+    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
         response = await client.get(f"{CINEMETA_URL}/meta/series/{imdb_id}.json")
     payload = await _json(response, "Cinemeta lookup")
     meta = payload.get("meta") if isinstance(payload, dict) else None

@@ -13,7 +13,13 @@ from typing import Optional
 from db import get_db, AsyncSessionLocal
 from core import tmdb as tmdb_client
 from core.credits import credits_stats, maybe_backfill_credits
-from core.translations import upsert_media_translation, upsert_show_translation
+from core.translations import (
+    get_media_translations,
+    get_show_translations,
+    get_user_metadata_language,
+    upsert_media_translation,
+    upsert_show_translation,
+)
 
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
 from models.users import User
@@ -120,6 +126,33 @@ def _latest_episode_per_show_subquery(user_id: int):
         )
         .order_by(Media.show_id, WatchEvent.watched_at.desc())
     ).subquery()
+
+
+async def _apply_viewer_language(db: AsyncSession, viewer, rows: list[tuple[dict, "Media", "ShowModel | None"]]) -> None:
+    """Translate titles in profile listings into the viewer's Metadata Language
+    (#460). Movies and episodes translate via MediaTranslation on their own
+    media id; a show (or the show name beside an episode) via ShowTranslation.
+    Anonymous viewers have no language, so they see the stored titles."""
+    if not viewer or not rows:
+        return
+    lang = await get_user_metadata_language(db, viewer.id)
+    if not lang:
+        return
+    media_ids = [m.id for item, m, _s in rows if item["media_type"] != "series"]
+    show_ids = {s.id for _i, _m, s in rows if s}
+    media_t = await get_media_translations(db, media_ids, lang)
+    show_t = await get_show_translations(db, list(show_ids), lang)
+    for item, media, show in rows:
+        st = show_t.get(show.id) if show else None
+        if item["media_type"] == "series":
+            if st and st.get("title"):
+                item["title"] = st["title"]
+            continue
+        mt = media_t.get(media.id)
+        if mt and mt.get("title"):
+            item["title"] = mt["title"]
+        if st and st.get("title") and item.get("show_title"):
+            item["show_title"] = st["title"]
 
 
 @router.get("/me", response_model=schemas.UserProfileResponse)
@@ -660,6 +693,7 @@ async def get_public_profile(
         .order_by(WatchEvent.watched_at.desc())
         .limit(12)
     )
+    rw_movies_rows = rw_movies_q.all()
     recently_watched_movies = [
         {
             "tmdb_id": media.tmdb_id,
@@ -668,8 +702,9 @@ async def get_public_profile(
             "poster_path": media.poster_path,
             "watched_at": we.watched_at.isoformat(),
         }
-        for we, media in rw_movies_q.all()
+        for we, media in rw_movies_rows
     ]
+    await _apply_viewer_language(db, current_user, [(i, m, None) for i, (_w, m) in zip(recently_watched_movies, rw_movies_rows)])
 
     # --- Recently Watched Shows (episodes) ---
     # One card per show, not per episode - a binge session shouldn't fill the
@@ -684,6 +719,7 @@ async def get_public_profile(
         .order_by(WatchEvent.watched_at.desc())
         .limit(12)
     )
+    rw_shows_rows = rw_shows_q.all()
     recently_watched_shows = [
         {
             "tmdb_id": media.tmdb_id,
@@ -698,8 +734,9 @@ async def get_public_profile(
             "season_number": media.season_number,
             "episode_number": media.episode_number,
         }
-        for we, media, show in rw_shows_q.all()
+        for we, media, show in rw_shows_rows
     ]
+    await _apply_viewer_language(db, current_user, [(i, m, sh) for i, (_w, m, sh) in zip(recently_watched_shows, rw_shows_rows)])
 
     # --- Top Rated Movies ---
     tr_movies_q = await db.execute(
@@ -714,6 +751,7 @@ async def get_public_profile(
         .order_by(Rating.rating.desc())
         .limit(16)
     )
+    tr_movies_rows = tr_movies_q.all()
     top_rated_movies = [
         {
             "tmdb_id": media.tmdb_id,
@@ -722,8 +760,9 @@ async def get_public_profile(
             "poster_path": media.poster_path,
             "user_rating": rating.rating,
         }
-        for rating, media in tr_movies_q.all()
+        for rating, media in tr_movies_rows
     ]
+    await _apply_viewer_language(db, current_user, [(i, m, None) for i, (_r, m) in zip(top_rated_movies, tr_movies_rows)])
 
     # --- Top Rated Shows ---
     tr_shows_q = await db.execute(
@@ -739,6 +778,7 @@ async def get_public_profile(
         .order_by(Rating.rating.desc())
         .limit(16)
     )
+    tr_shows_rows = tr_shows_q.all()
     top_rated_shows = [
         {
             "tmdb_id": media.tmdb_id,
@@ -747,8 +787,9 @@ async def get_public_profile(
             "poster_path": show.poster_path if show else media.poster_path,
             "user_rating": rating.rating,
         }
-        for rating, media, show in tr_shows_q.all()
+        for rating, media, show in tr_shows_rows
     ]
+    await _apply_viewer_language(db, current_user, [(i, m, sh) for i, (_r, m, sh) in zip(top_rated_shows, tr_shows_rows)])
 
     # --- Recent Comments ---
     recent_comments_q = await db.execute(
@@ -810,6 +851,8 @@ async def get_public_profile(
             "title": info[0] if info else None,
             "poster_path": info[1] if info else None,
             "created_at": c.created_at.isoformat(),
+            "wetrakr_comment_id": c.wetrakr_comment_id,
+            "wetrakr_source": (c.wetrakr_source or "wetrakr") if c.wetrakr_comment_id else None,
         })
 
     # --- Followers / Following ---
@@ -1008,6 +1051,7 @@ async def get_top_rated_movies(
         }
         for rating, media in rows
     ]
+    await _apply_viewer_language(db, current_user, [(i, m, None) for i, (_r, m) in zip(results, rows)])
     return {
         "page": page,
         "total_pages": max(1, (total + _TOP_RATED_PAGE_SIZE - 1) // _TOP_RATED_PAGE_SIZE),
@@ -1054,6 +1098,7 @@ async def get_top_rated_shows(
         }
         for rating, media, show in rows
     ]
+    await _apply_viewer_language(db, current_user, [(i, m, sh) for i, (_r, m, sh) in zip(results, rows)])
     return {
         "page": page,
         "total_pages": max(1, (total + _TOP_RATED_PAGE_SIZE - 1) // _TOP_RATED_PAGE_SIZE),
@@ -1102,6 +1147,7 @@ async def get_recently_watched_movies(
         }
         for we, media in rows
     ]
+    await _apply_viewer_language(db, current_user, [(i, m, None) for i, (_w, m) in zip(results, rows)])
     return {
         "page": page,
         "total_pages": max(1, (total + _RECENTLY_WATCHED_PAGE_SIZE - 1) // _RECENTLY_WATCHED_PAGE_SIZE),
@@ -1149,6 +1195,7 @@ async def get_recently_watched_shows(
         }
         for we, media, show in rows
     ]
+    await _apply_viewer_language(db, current_user, [(i, m, sh) for i, (_w, m, sh) in zip(results, rows)])
     return {
         "page": page,
         "total_pages": max(1, (total + _RECENTLY_WATCHED_PAGE_SIZE - 1) // _RECENTLY_WATCHED_PAGE_SIZE),

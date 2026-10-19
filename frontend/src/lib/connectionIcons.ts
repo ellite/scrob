@@ -48,3 +48,14 @@ export function connectionIconHtml(type: string): string {
   }
   return `<span class="w-2 h-2 bg-zinc-500 rounded-full shrink-0"></span>`;
 }
+
+// Small brand mark for the "watched via" indicator in history (#477), or null
+// when the source has no mark (manual, import, ...) and the text label is used.
+export function watchSourceIconHtml(source?: string | null): string | null {
+  if (!source) return null;
+  if (source === "scrob") return `<img src="/scrob.svg" alt="" width="16" height="16" class="shrink-0" />`;
+  if (!RAW_ICON_SVGS[source] && !BRAND_ICON_PATHS[source]) return null;
+  return connectionIconHtml(source)
+    .replace('width="36" height="36"', 'width="16" height="16"')
+    .replace(/<title>[^<]*<\/title>/, "");
+}

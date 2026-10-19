@@ -39,8 +39,11 @@ from models.users import User, UserSettings
 router = APIRouter()
 
 CALENDAR_TTL = timedelta(hours=24)
-CALENDAR_SCHEMA = 7
-CALENDAR_WINDOW_DAYS = 14
+CALENDAR_SCHEMA = 8
+# The cached payload always covers the longest horizon a user can pick (#467);
+# GET /calendar trims it down to the requested number of days.
+CALENDAR_WINDOW_DAYS = 90
+CALENDAR_DEFAULT_DAYS = 14
 CALENDAR_LOOKBACK_DAYS = 7
 FETCH_CONCURRENCY = 8
 
@@ -380,9 +383,22 @@ async def _background_compute(user_id: int) -> None:
         _computing.discard(user_id)
 
 
+def _trim_window(result: dict, days: int) -> dict:
+    """The cached payload spans CALENDAR_WINDOW_DAYS ahead; hand back only the
+    first `days` of it (today counts as day one)."""
+    calendar = result.get("calendar") or {}
+    entries = calendar.get("entries")
+    if not entries or days >= CALENDAR_WINDOW_DAYS:
+        return result
+    today = calendar.get("today") or _server_today().isoformat()
+    last = (date.fromisoformat(today) + timedelta(days=days - 1)).isoformat()
+    return {**result, "calendar": {**calendar, "entries": [e for e in entries if e["air_date"] <= last]}}
+
+
 @router.get("")
 async def get_calendar(
     cached_only: bool = Query(False),
+    days: int = Query(CALENDAR_DEFAULT_DAYS, ge=1, le=CALENDAR_WINDOW_DAYS),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
@@ -402,15 +418,18 @@ async def get_calendar(
             await _resolve_watch_status(db, current_user.id, row.payload.get("entries", []))
             if not fresh:
                 asyncio.create_task(_background_compute(current_user.id))
-            return {"computed_at": row.computed_at.isoformat(), "cached": True, "calendar": row.payload}
+            return _trim_window(
+                {"computed_at": row.computed_at.isoformat(), "cached": True, "calendar": row.payload}, days
+            )
         asyncio.create_task(_background_compute(current_user.id))
         return {"computed_at": None, "cached": False, "calendar": {"entries": []}}
-    return await _load_or_compute(db, current_user.id, force=False)
+    return _trim_window(await _load_or_compute(db, current_user.id, force=False), days)
 
 
 @router.post("/refresh")
 async def refresh_calendar(
+    days: int = Query(CALENDAR_DEFAULT_DAYS, ge=1, le=CALENDAR_WINDOW_DAYS),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
-    return await _load_or_compute(db, current_user.id, force=True)
+    return _trim_window(await _load_or_compute(db, current_user.id, force=True), days)

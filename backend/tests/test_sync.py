@@ -2,7 +2,7 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -1585,20 +1585,119 @@ class CanonicalEpisodePositionTests(unittest.TestCase):
         return item
 
     def test_translates_on_an_exact_episode_id_match(self):
-        self.assertEqual(sync._canonical_episode_position(self._item(), 100, self.POSITIONS), (2, 79))
+        self.assertEqual(sync._canonical_episode_position(
+            self._item(), sync.CollectionSource.jellyfin, 100, self.POSITIONS
+        ), (2, 79))
 
     def test_keeps_raw_numbers_without_a_tvdb_episode_id(self):
-        self.assertIsNone(sync._canonical_episode_position(self._item(ProviderIds={"Tmdb": "5"}), 100, self.POSITIONS))
-        self.assertIsNone(sync._canonical_episode_position(self._item(ProviderIds=None), 100, self.POSITIONS))
+        self.assertIsNone(sync._canonical_episode_position(
+            self._item(ProviderIds={"Tmdb": "5"}), sync.CollectionSource.jellyfin, 100, self.POSITIONS
+        ))
+        self.assertIsNone(sync._canonical_episode_position(
+            self._item(ProviderIds=None), sync.CollectionSource.jellyfin, 100, self.POSITIONS
+        ))
 
     def test_never_matches_by_numbers_or_across_series(self):
         # same raw numbers, different episode id: not the mapped episode
-        self.assertIsNone(sync._canonical_episode_position(self._item(ProviderIds={"Tvdb": "1"}), 100, self.POSITIONS))
-        self.assertIsNone(sync._canonical_episode_position(self._item(), 200, self.POSITIONS))
-        self.assertIsNone(sync._canonical_episode_position(self._item(), None, self.POSITIONS))
+        self.assertIsNone(sync._canonical_episode_position(
+            self._item(ProviderIds={"Tvdb": "1"}), sync.CollectionSource.jellyfin, 100, self.POSITIONS
+        ))
+        self.assertIsNone(sync._canonical_episode_position(
+            self._item(), sync.CollectionSource.jellyfin, 200, self.POSITIONS
+        ))
+        self.assertIsNone(sync._canonical_episode_position(
+            self._item(), sync.CollectionSource.jellyfin, None, self.POSITIONS
+        ))
 
     def test_skips_multi_episode_files(self):
-        self.assertIsNone(sync._canonical_episode_position(self._item(IndexNumberEnd=22), 100, self.POSITIONS))
+        self.assertIsNone(sync._canonical_episode_position(
+            self._item(IndexNumberEnd=22), sync.CollectionSource.jellyfin, 100, self.POSITIONS
+        ))
+
+    def test_translates_plex_direct_episode_guid(self):
+        item = {"Guid": [{"id": "tvdb://4562021"}]}
+        self.assertEqual(sync._canonical_episode_position(
+            item, sync.CollectionSource.plex, 100, self.POSITIONS
+        ), (2, 79))
+
+    def test_rejects_legacy_plex_series_guid_as_episode_identity(self):
+        item = {"Guid": [{"id": "com.plexapp.agents.thetvdb://4562021/2/21"}]}
+        self.assertIsNone(sync._canonical_episode_position(
+            item, sync.CollectionSource.plex, 100, self.POSITIONS
+        ))
+
+
+class LoadPlexEpisodePositionsTests(unittest.IsolatedAsyncioTestCase):
+    class _Scalars:
+        def __init__(self, values):
+            self.values = values
+
+        def all(self):
+            return self.values
+
+    class _Rows:
+        def __init__(self, values):
+            self.values = values
+
+        def scalars(self):
+            return LoadPlexEpisodePositionsTests._Scalars(self.values)
+
+    class _Savepoint:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def test_plex_builds_missing_mapping_without_changing_display_order(self):
+        db = MagicMock()
+        db.execute = AsyncMock(return_value=self._Rows([]))
+        db.begin_nested = MagicMock(return_value=self._Savepoint())
+        item = {
+            "grandparentRatingKey": "plex-show",
+            "Guid": [{"id": "tvdb://4562021"}],
+        }
+        mapped = {(46298, 4562021): (2, 79)}
+
+        with (
+            patch.object(sync, "load_tvdb_episode_id_positions", AsyncMock(side_effect=[{}, mapped])) as load,
+            patch("routers.shows.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")),
+            patch.object(sync, "ensure_episode_order_mapping", AsyncMock(return_value={"matched": 1})) as ensure,
+        ):
+            result = await sync._load_episode_tvdb_positions(
+                db,
+                [item],
+                sync.CollectionSource.plex,
+                {"plex-show": 9},
+                {9: 46298},
+                1,
+                "tmdb-key",
+            )
+
+        self.assertEqual(result, mapped)
+        self.assertEqual(load.await_count, 2)
+        ensure.assert_awaited_once_with(
+            db, 46298, "tmdb-key", "tvdb-key", force=False
+        )
+
+    async def test_plex_episode_with_tmdb_id_needs_no_tvdb_mapping(self):
+        db = MagicMock()
+        item = {
+            "grandparentRatingKey": "plex-show",
+            "Guid": [{"id": "tmdb://908653"}, {"id": "tvdb://4562021"}],
+        }
+        with patch.object(sync, "load_tvdb_episode_id_positions", AsyncMock()) as load:
+            result = await sync._load_episode_tvdb_positions(
+                db,
+                [item],
+                sync.CollectionSource.plex,
+                {"plex-show": 9},
+                {9: 46298},
+                1,
+                "tmdb-key",
+            )
+        self.assertEqual(result, {})
+        load.assert_not_awaited()
 
 
 class FoldDivergentEpisodesTests(unittest.IsolatedAsyncioTestCase):
@@ -1643,7 +1742,8 @@ class FoldDivergentEpisodesTests(unittest.IsolatedAsyncioTestCase):
             show, rows = await self._seed(db, canonical=False)
             show_map, tmdb_map, by_ep = self._maps(show, rows)
             changed, moved = await sync._fold_divergent_episodes(
-                db, [self._item()], show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
+                db, [self._item()], sync.CollectionSource.jellyfin,
+                show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
             )
             div = rows["divergent"]
             self.assertTrue(changed)
@@ -1657,7 +1757,8 @@ class FoldDivergentEpisodesTests(unittest.IsolatedAsyncioTestCase):
             show, rows = await self._seed(db, canonical=False, divergent_tvdb=999)
             show_map, tmdb_map, by_ep = self._maps(show, rows)
             changed, moved = await sync._fold_divergent_episodes(
-                db, [self._item()], show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
+                db, [self._item()], sync.CollectionSource.jellyfin,
+                show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
             )
             self.assertFalse(changed)
             self.assertEqual(moved, [])
@@ -1669,7 +1770,8 @@ class FoldDivergentEpisodesTests(unittest.IsolatedAsyncioTestCase):
             show_map, tmdb_map, by_ep = self._maps(show, rows)
             with patch.object(sync, "reconcile_divergent_episode_media", AsyncMock(return_value={"merged": 1})) as rec:
                 changed, moved = await sync._fold_divergent_episodes(
-                    db, [self._item()], show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
+                    db, [self._item()], sync.CollectionSource.jellyfin,
+                    show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
                 )
             self.assertTrue(changed)
             self.assertEqual(moved, [])  # the canonical row is already enriched
@@ -1680,7 +1782,8 @@ class FoldDivergentEpisodesTests(unittest.IsolatedAsyncioTestCase):
             show, rows = await self._seed(db, canonical=False)
             show_map, tmdb_map, by_ep = self._maps(show, rows)
             changed, moved = await sync._fold_divergent_episodes(
-                db, [self._item(tvdb="1")], show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
+                db, [self._item(tvdb="1")], sync.CollectionSource.jellyfin,
+                show_map, tmdb_map, {(100, 4562021): (2, 79)}, by_ep,
             )
             self.assertFalse(changed)
 
