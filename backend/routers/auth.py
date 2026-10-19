@@ -164,6 +164,19 @@ async def reset_password(
     return {"message": "Password updated successfully."}
 
 
+async def _find_user_for_login(db: AsyncSession, typed: str) -> User | None:
+    """Resolve the username typed on the login form (#427). Surrounding spaces
+    (mobile keyboard autocomplete) are ignored and case doesn't matter, unless
+    two accounts differ only by case - an exact match always wins, and an
+    ambiguous case-insensitive match finds nobody rather than guessing."""
+    typed = typed.strip()
+    exact = (await db.execute(select(User).where(User.username == typed))).scalar_one_or_none()
+    if exact:
+        return exact
+    loose = (await db.execute(select(User).where(func.lower(User.username) == typed.lower()).limit(2))).scalars().all()
+    return loose[0] if len(loose) == 1 else None
+
+
 @router.post("/register", response_model=schemas.User)
 @limiter.limit("10/minute")
 async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSession = Depends(get_db)):
@@ -173,7 +186,9 @@ async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSessi
             detail="Registrations are disabled.",
         )
 
-    query = select(User).where((User.email == user_in.email) | (User.username == user_in.username))
+    query = select(User).where(
+        (User.email == user_in.email) | (func.lower(User.username) == user_in.username.strip().lower())
+    )
     result = await db.execute(query)
     if result.scalar_one_or_none():
         raise HTTPException(
@@ -187,7 +202,7 @@ async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSessi
     email_confirmed = not app_settings.require_email_validation
     new_user = User(
         email=user_in.email,
-        username=user_in.username,
+        username=user_in.username.strip(),
         password_hash=get_password_hash(user_in.password),
         api_key=_generate_api_key(),
         # Never take the role from the request body: role == "admin" grants
@@ -238,9 +253,7 @@ async def login(
             detail="Password login is disabled. Please use SSO.",
         )
 
-    query = select(User).where(User.username == form_data.username)
-    result = await db.execute(query)
-    user = result.scalar_one_or_none()
+    user = await _find_user_for_login(db, form_data.username)
 
     if not user or not user.password_hash or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(

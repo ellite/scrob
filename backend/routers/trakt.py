@@ -607,6 +607,19 @@ class ExportTraktSource:
         return self.data.comments
 
 
+_UNIMPORTED_CAP = 200
+
+
+def _note_unimported(stats: dict, label: str, reason: str) -> None:
+    """Remember an item the import couldn't bring in (as opposed to one it
+    skipped because it was already there), so the job summary can list them (#454)."""
+    items = stats.setdefault("unimported", [])
+    if len(items) < _UNIMPORTED_CAP:
+        items.append(f"{label} ({reason})")
+    else:
+        stats["unimported_more"] = stats.get("unimported_more", 0) + 1
+
+
 async def _apply_trakt_import(
     db: AsyncSession,
     job_id: int,
@@ -680,12 +693,14 @@ async def _apply_trakt_import(
             try:
                 if not tmdb_id:
                     stats["skipped"] += 1
+                    _note_unimported(stats, f'movie "{movie_data.get("title", "?")}"', "no TMDB id")
                     continue
                 try:
                     async with db.begin_nested():
                         media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
                         if not media:
                             stats["errors"] += 1
+                            _note_unimported(stats, f'movie "{movie_data.get("title", "?")}"', f"tmdb:{tmdb_id} not found")
                             continue
                         # A dateless play (submitted with watched_at="unknown", which Trakt
                         # silently stores/returns as the Unix epoch — see
@@ -751,6 +766,7 @@ async def _apply_trakt_import(
                 plays_by_show.setdefault(show_tmdb_id, []).append(entry)
             else:
                 stats["skipped"] += 1
+                _note_unimported(stats, f'show "{entry.get("show", {}).get("title", "?")}"', "no TMDB id")
 
         async def process_show(show_tmdb_id: int, entries: list[dict]):
             show_title = entries[0].get("show", {}).get("title", "")
@@ -759,6 +775,7 @@ async def _apply_trakt_import(
                     show = await _get_or_create_show(db, show_tmdb_id, show_title, api_key)
                     if not show:
                         stats["errors"] += 1
+                        _note_unimported(stats, f'show "{show_title}"', f"tmdb:{show_tmdb_id} not found")
                         return
                     await db.flush()
 
@@ -768,6 +785,7 @@ async def _apply_trakt_import(
                     ep_num = ep_data.get("number")
                     if season_num is None or ep_num is None:
                         stats["skipped"] += 1
+                        _note_unimported(stats, f'show "{show_title}" episode', "no season/episode number")
                         continue
                     try:
                         async with db.begin_nested():
@@ -776,6 +794,7 @@ async def _apply_trakt_import(
                             )
                             if not media:
                                 stats["errors"] += 1
+                                _note_unimported(stats, f'show "{show_title}" S{season_num}E{ep_num}', "episode not found on TMDB")
                                 continue
                             # See the movie-import branch above: preserve an unknown
                             # date as unknown rather than fabricating "now".
@@ -1178,6 +1197,14 @@ async def _apply_trakt_import(
 
 
 def _trakt_import_summary(job_id: int, label: str, stats: dict) -> str:
+    unimported = stats.get("unimported") or []
+    if unimported:
+        more = stats.get("unimported_more", 0)
+        logger.warning(
+            "Trakt %s job %s could not import %d item(s): %s%s",
+            label, job_id, len(unimported) + more, "; ".join(unimported),
+            f" (+{more} more)" if more else "",
+        )
     return (
         f"Trakt {label} job {job_id} completed. "
         f"Movies: {stats['movies']} new, {stats.get('skipped', 0)} skipped. "

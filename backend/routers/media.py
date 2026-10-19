@@ -716,6 +716,26 @@ async def enrich_with_state(
             )
             play_count_map[tid0] = pc_q.scalar() or 0
 
+    # --- Most recent play date (#317) ---
+    # Movies and episodes only; plays with an unknown date don't count.
+    last_watched_map: dict = {}
+    play_tmdb_ids = movie_tmdb_ids + ep_tmdb_ids
+    if play_tmdb_ids:
+        lw_q = await db.execute(
+            select(Media.tmdb_id, Media.media_type, func.max(WatchEvent.watched_at))
+            .join(WatchEvent, WatchEvent.media_id == Media.id)
+            .where(
+                WatchEvent.user_id == user_id,
+                WatchEvent.completed == True,
+                WatchEvent.watched_at.isnot(None),
+                Media.tmdb_id.in_(play_tmdb_ids),
+                Media.media_type.in_([MediaType.movie, MediaType.episode]),
+            )
+            .group_by(Media.tmdb_id, Media.media_type)
+        )
+        for lw_tmdb_id, lw_type, lw_at in lw_q.all():
+            last_watched_map[(lw_tmdb_id, lw_type.value)] = lw_at
+
     # --- Apply to items ---
     for item in items:
         tid = item.get("tmdb_id")
@@ -771,6 +791,9 @@ async def enrich_with_state(
         item["request_status"] = request_status_map.get(tid)
         item["user_rating"] = user_ratings.get((tid, t))
         item["play_count"] = play_count_map.get(tid, 0)
+        if t in ("movie", "episode"):
+            lw = last_watched_map.get((tid, t)) if item["watched"] else None
+            item["last_watched_at"] = lw.isoformat() if lw else None
         _attach_episode_order_fields(item, order_keys, order_positions)
 
     return items
@@ -5454,6 +5477,7 @@ async def get_media_details(
                 "in_lists": ep_state.get("in_lists", []),
                 "user_rating": ep_state.get("user_rating"),
                 "play_count": ep_state.get("play_count", 0),
+                "last_watched_at": ep_state.get("last_watched_at"),
                 "library": library_info,
             }
         else:
@@ -5578,6 +5602,7 @@ async def get_media_details(
             "in_lists": state_item.get("in_lists", []),
             "user_rating": state_item.get("user_rating"),
             "play_count": state_item.get("play_count", 0),
+            "last_watched_at": state_item.get("last_watched_at"),
             "in_library": state_item.get("in_library", local_info["in_library"]),
             "collection_pct": state_item.get("collection_pct", 100 if local_info["in_library"] else 0),
             "is_monitored": state_item.get("is_monitored", False),

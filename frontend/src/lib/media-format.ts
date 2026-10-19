@@ -83,3 +83,11 @@ export function episodeCode(item: Parameters<typeof displaySeasonEpisode>[0]): s
   if (season == null || episode == null) return null;
   return `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
 }
+
+// "Watched Oct 12, 2026" for the most recent play (#317), or null when there
+// isn't one with a known date.
+export function formatWatchedOn(iso?: string | null, timeZone?: string): string | null {
+  if (!iso) return null;
+  const date = new Date(iso + "Z").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone });
+  return `Watched ${date}`;
+}

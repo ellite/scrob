@@ -7,7 +7,15 @@ import SortButton from "../../components/SortButton.astro";
 import { api } from "../../lib/api";
 export const prerender = false;
 
-const sort = Astro.url.searchParams.get("sort") ?? "title";
+// The last sort picked here is remembered per list in a cookie (#459).
+const SORT_VALUES = ["title", "rating", "release_date", "created_at", "last_watched"];
+const SORT_COOKIE = "collection_sort_shows";
+const savedSort = Astro.cookies.get(SORT_COOKIE)?.value;
+const requestedSort = Astro.url.searchParams.get("sort");
+const sort = requestedSort ?? (savedSort && SORT_VALUES.includes(savedSort) ? savedSort : "title");
+if (requestedSort && SORT_VALUES.includes(requestedSort) && requestedSort !== savedSort) {
+  Astro.cookies.set(SORT_COOKIE, requestedSort, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
+}
 const genres = Astro.url.searchParams.getAll("genre");
 const years = Astro.url.searchParams.getAll("year").map(Number).filter((n) => !Number.isNaN(n));
 const statuses = Astro.url.searchParams.getAll("status");

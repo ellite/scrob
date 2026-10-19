@@ -418,6 +418,7 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
                     _ExistingResult([mapped_episode, unmapped_episode]),  # ep_result
                     _ScalarOneResult(None),                             # get_active_rewatch — none active
                     _ExistingResult([(201,), (202,)]),                  # watched_q — both watched
+                    _ExistingResult([]),                                # last-watched dates
                     _ExistingResult([(201,)]),                          # collected_q — only 201 collected
                     _ExistingResult([]),                                # episode_ratings_q
                     # find_media (core/identity.py) tries tmdb_id, then falls back to tvdb_id

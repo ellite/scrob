@@ -134,6 +134,16 @@ const posterPath = show
                     IMDb
                   </a>
                 )}
+                {show.tmdb_id && (
+                  <a href={`https://www.themoviedb.org/tv/${show.tmdb_id}`} target="_blank" rel="noopener noreferrer" class="px-2 py-0.5 bg-[#01b4e4] rounded text-[10px] font-black text-black tracking-widest hover:bg-[#0aa0cb] transition-colors">
+                    TMDB
+                  </a>
+                )}
+                {show.tvdb_id && (
+                  <a href={`https://www.thetvdb.com/?tab=series&id=${show.tvdb_id}`} target="_blank" rel="noopener noreferrer" class="px-2 py-0.5 bg-[#6cd491] rounded text-[10px] font-black text-black tracking-widest hover:bg-[#59c07d] transition-colors">
+                    TVDB
+                  </a>
+                )}
                 {show.status && (
                   <span class="capitalize px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-black text-zinc-400 tracking-widest">
                     {show.status}

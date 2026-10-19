@@ -14,10 +14,16 @@ Astro.response.headers.set("Cache-Control", "no-store");
 // a client script fills in after the fact. `cached: false` only happens for
 // a genuinely cold cache (first-ever visit, or >48h since the last load) -
 // that's the one case actually worth a client-side wait.
+// How far ahead to look (#467), remembered in a cookie so it survives reloads
+// and the server render can use it.
+const CALENDAR_DAY_CHOICES = [14, 30, 60, 90];
+const savedDays = Number(Astro.cookies.get("calendar_days")?.value);
+const lookaheadDays = CALENDAR_DAY_CHOICES.includes(savedDays) ? savedDays : 14;
+
 let calendarData: Awaited<ReturnType<typeof api.calendar.get>> | null = null;
 let loadError = "";
 try {
-  calendarData = await api.calendar.get(token, true);
+  calendarData = await api.calendar.get(token, true, lookaheadDays);
 } catch (e: any) {
   loadError = e.message;
 }
@@ -57,6 +63,16 @@ const days = Object.keys(byDay);
 <Base title="Calendar">
   <div class="mb-8 flex items-center justify-between gap-4">
     <h1 class="page-title">Calendar</h1>
+    <div class="flex items-center gap-2 shrink-0">
+    <select
+      id="cal-days-select"
+      aria-label="How far ahead to show"
+      class="px-3 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 transition-all cursor-pointer"
+    >
+      {CALENDAR_DAY_CHOICES.map((d) => (
+        <option value={d} selected={d === lookaheadDays}>Next {d} days</option>
+      ))}
+    </select>
     <button
       id="cal-refresh-btn"
       class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer shrink-0"
@@ -67,6 +83,7 @@ const days = Object.keys(byDay);
       </svg>
       <span>Refresh</span>
     </button>
+    </div>
   </div>
 
   {loadError ? (
@@ -74,7 +91,7 @@ const days = Object.keys(byDay);
   ) : needsCompute ? (
     <div id="cal-pending" class="py-20 text-center text-zinc-500">Checking air dates for your shows… (first time can take a minute)</div>
   ) : days.length === 0 ? (
-    <p class="text-zinc-500 text-center py-10">No episodes found for your shows in the last 7 or next 14 days.</p>
+    <p class="text-zinc-500 text-center py-10">No episodes found for your shows in the last 7 or next {lookaheadDays} days.</p>
   ) : (
     <div class="space-y-8">
       {days.map((day) => (
@@ -116,12 +133,17 @@ const days = Object.keys(byDay);
     </div>
   )}
 
-  <p class="text-zinc-500 mt-8">The last 7 days and next 14 days for shows you're collecting or watching</p>
+  <p class="text-zinc-500 mt-8">The last 7 days and next {lookaheadDays} days for shows you're collecting or watching</p>
 </Base>
 
 <script define:vars={{ token, needsCompute }}>
   const refreshBtn = document.getElementById('cal-refresh-btn');
   const refreshIcon = document.getElementById('cal-refresh-icon');
+
+  document.getElementById('cal-days-select')?.addEventListener('change', (e) => {
+    document.cookie = `calendar_days=${e.target.value}; path=/; max-age=31536000; samesite=lax`;
+    window.location.reload();
+  });
 
   refreshBtn?.addEventListener('click', async () => {
     refreshIcon?.classList.add('animate-spin');

@@ -475,6 +475,15 @@ async def get_history(
                     if t.get("overview"): m["overview"] = t["overview"]
                     if t.get("poster_path"): m["poster_path"] = t["poster_path"]
 
+            # The show name on an episode card translates via ShowTranslation on
+            # the Show row, not the episode's own MediaTranslation (#460).
+            show_ids = {m.show_id for _e, m in rows if m.show_id}
+            show_translations = await get_show_translations(db, list(show_ids), lang)
+            for (_e, m), event in zip(rows, events):
+                t = show_translations.get(m.show_id)
+                if t and t.get("title") and event["media"].get("show_title"):
+                    event["media"]["show_title"] = t["title"]
+
     return {
         "page": page,
         "page_size": page_size,

@@ -129,6 +129,7 @@ export interface SeasonState {
 }
 
 export interface EpisodeItem {
+  last_watched_at?: string | null;
   id: number | null;
   // null for a TVDB-only episode (no TMDB counterpart); use `id` then.
   tmdb_id: number | null;
@@ -205,6 +206,7 @@ export interface EpisodeDetail {
   collection_pct: number;
   user_rating?: number | null;
   play_count?: number;
+  last_watched_at?: string | null;
   cast: CastMember[];
   crew: CrewMember[];
   guest_stars: CastMember[];
@@ -880,6 +882,7 @@ export interface StudioHeader {
 }
 
 export interface TvdbEpisode {
+  last_watched_at?: string | null;
   tvdb_id: number | null;
   tmdb_id: number | null;
   show_tmdb_id: number | null;
@@ -919,6 +922,7 @@ export interface TvdbEpisodeDetail {
   watched: boolean;
   user_rating: number | null;
   play_count: number;
+  last_watched_at?: string | null;
   in_lists: number[];
   library: {
     resolution: string | null;
@@ -1678,8 +1682,8 @@ export const api = {
   },
 
   calendar: {
-    get: (token?: string, cachedOnly?: boolean) =>
-      get<CalendarResponse>("/calendar", cachedOnly ? { cached_only: true } : undefined, token),
+    get: (token?: string, cachedOnly?: boolean, days?: number) =>
+      get<CalendarResponse>("/calendar", { ...(cachedOnly ? { cached_only: true } : {}), ...(days ? { days } : {}) }, token),
     refresh: (token?: string) =>
       post<CalendarResponse>("/calendar/refresh", undefined, token),
   },
