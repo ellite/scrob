@@ -29,6 +29,7 @@ from dateutil import parser
 from models.base import MediaType, CollectionSource
 from models.global_settings import GlobalSettings
 from core import arvio, jellyfin, emby, plex, nuvio, stremio, tmdb
+from core.scrobble_threshold import reached_threshold, scrobble_threshold_for
 from core.jellyfin import get_jellyfin_tmdb_id
 import core.trakt as trakt_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely, enrich_media_safely, apply_media_change_safely, enrich_episode_from_tvdb
@@ -4709,7 +4710,7 @@ async def _apply_nuvio_progress(
             continue
         progress_percent = min(1.0, position_ms / duration_ms)
         progress = existing.get(media.id)
-        if 0.05 <= progress_percent < 0.90:
+        if progress_percent >= 0.05:
             updated_at = _nuvio_datetime(row.get("last_watched")) or datetime.utcnow()
             if progress:
                 progress.progress_percent = progress_percent
@@ -4802,7 +4803,18 @@ async def _run_nuvio_sync(
 
             library_records = data["library"] if conn.sync_collection else []
             watched_records = data["watched"] if conn.sync_watched else []
-            progress_records = data["progress"] if conn.sync_playback else []
+            scrobble_threshold = scrobble_threshold_for(conn)
+            progress_records = []
+            finished_progress = []
+            for row in data["progress"] if conn.sync_playback else []:
+                position = int(row.get("position") or 0)
+                duration = int(row.get("duration") or 0)
+                if reached_threshold(position, duration, scrobble_threshold):
+                    finished_progress.append(row)
+                else:
+                    progress_records.append(row)
+            if conn.sync_watched:
+                watched_records = [*watched_records, *finished_progress]
             logger.info(
                 "Nuvio profile %s (index #%s): pulled %s library, %s watched, "
                 "and %s progress records; enabled for this sync: %s library, "
@@ -5079,6 +5091,7 @@ def _stremio_series_imdb_id(item: dict) -> str | None:
 
 async def _stremio_records(
     items: list[dict],
+    scrobble_threshold: float = 0.75,
 ) -> tuple[list[dict], list[dict], list[dict], set[str]]:
     records = [
         item
@@ -5129,14 +5142,15 @@ async def _stremio_records(
                 times_watched = int(state.get("timesWatched") or 0)
             except (TypeError, ValueError):
                 times_watched = 0
-            if times_watched > 0:
-                watched_records.append({**base, "watched_at": last_watched})
             try:
                 position = int(state.get("timeOffset") or 0)
                 duration = int(state.get("duration") or 0)
             except (TypeError, ValueError):
                 position = duration = 0
-            if position > 0 and duration > 0:
+            scrobbled = duration > 0 and position / duration >= scrobble_threshold
+            if times_watched > 0 or scrobbled:
+                watched_records.append({**base, "watched_at": last_watched})
+            if position > 0 and duration > 0 and not scrobbled:
                 progress_records.append(
                     {
                         **base,
@@ -5181,17 +5195,29 @@ async def _stremio_records(
             position = duration = 0
         if current_parts and position > 0 and duration > 0:
             season, episode = current_parts
-            progress_records.append(
-                {
-                    **base,
-                    "title": str(current_video.get("name") or title),
-                    "season": season,
-                    "episode": episode,
-                    "position": position,
-                    "duration": duration,
-                    "last_watched": last_watched,
-                }
-            )
+            if position / duration >= scrobble_threshold:
+                if current_video_id not in watched_ids:
+                    watched_records.append(
+                        {
+                            **base,
+                            "title": str(current_video.get("name") or title),
+                            "season": season,
+                            "episode": episode,
+                            "watched_at": last_watched,
+                        }
+                    )
+            else:
+                progress_records.append(
+                    {
+                        **base,
+                        "title": str(current_video.get("name") or title),
+                        "season": season,
+                        "episode": episode,
+                        "position": position,
+                        "duration": duration,
+                        "last_watched": last_watched,
+                    }
+                )
     return library_records, watched_records, progress_records, removed_ids
 
 
@@ -5319,7 +5345,10 @@ async def _run_stremio_sync(
                 conn,
                 full_resync=full_resync,
             )
-            library_records, watched_records, progress_records, removed_ids = await _stremio_records(items)
+            library_records, watched_records, progress_records, removed_ids = await _stremio_records(
+                items,
+                scrobble_threshold=scrobble_threshold_for(conn),
+            )
             if not conn.sync_collection:
                 library_records = []
                 removed_ids = set()

@@ -23,6 +23,7 @@ from models.rewatch import ShowRewatch, RewatchProgress
 from models.ratings import Rating
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, _attach_episode_order_fields
 from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, resolve_display_to_canonical, normalize_order_key, is_aired_order
+from core.scrobble_threshold import DEFAULT_SCROBBLE_PERCENT
 from core.translations import get_user_metadata_language, get_media_translations, upsert_media_translation, apply_media_translations, get_show_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
 from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event
@@ -3556,7 +3557,7 @@ async def update_manual_session(
         session.state = body.state
     session.updated_at = datetime.utcnow()
 
-    if 0.05 <= progress_pct < 0.90:
+    if 0.05 <= progress_pct < DEFAULT_SCROBBLE_PERCENT / 100:
         prog_q = await db.execute(
             select(PlaybackProgress).where(
                 PlaybackProgress.user_id == current_user.id,

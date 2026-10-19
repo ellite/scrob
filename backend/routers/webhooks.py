@@ -20,6 +20,7 @@ from models.ratings import Rating
 from models.users import User, UserSettings
 from models.global_settings import GlobalSettings
 from models.connections import MediaServerConnection
+from core.scrobble_threshold import scrobble_threshold_for
 from models.scrobble_connection import ScrobbleConnection
 from models.base import MediaType, CollectionSource
 from models.playback_session import PlaybackSession
@@ -673,8 +674,8 @@ async def _update_playback_progress(
     progress_seconds: int,
 ) -> None:
     """Updates persistent in-progress state (Continue Watching)."""
-    # Don't track progress below 5% or above 90% (those are handled by scrobble)
-    if progress_percent < 0.05 or progress_percent >= 0.90:
+    # Below 5% isn't worth tracking; at the threshold the caller records a watch.
+    if progress_percent < 0.05:
         # If we already have progress and it's now outside the range, delete it
         await db.execute(
             delete(PlaybackProgress).where(
@@ -1508,7 +1509,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             progress_percent = 1.0
         if (not conn or conn.sync_watched) and progress_percent > 0.05:
             for m in media_list:
-                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes, source="jellyfin")
+                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= scrobble_threshold_for(conn), window_minutes, source="jellyfin")
         await db.commit()
         for m in media_list:
             await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
@@ -1764,7 +1765,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             progress_percent = 1.0
         if (not conn or conn.sync_watched) and progress_percent > 0.05:
             for m in media_list:
-                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes, source="emby")
+                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= scrobble_threshold_for(conn), window_minutes, source="emby")
         await db.commit()
         for m in media_list:
             await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
@@ -1942,7 +1943,7 @@ async def _handle_jellyfin_scrobble_webhook(
             progress_percent = 1.0
         if conn.sync_watched and progress_percent > 0.05:
             for m in media_list:
-                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes, source=source)
+                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= scrobble_threshold_for(conn), window_minutes, source=source)
         await db.commit()
         if not is_duplicate:
             for m in media_list:
@@ -2878,7 +2879,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
                 await _write_watch_event(
                     db, user.id, media_id,
                     progress_percent, progress_seconds,
-                    progress_percent >= 0.90,
+                    progress_percent >= scrobble_threshold_for(conn),
                     window_minutes,
                     source="plex",
                 )
@@ -3193,7 +3194,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
         if conn.sync_playback:
             progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
             if conn.sync_watched and progress_percent > 0.05:
-                await _write_watch_event(db, user.id, media.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes, source="plex")
+                await _write_watch_event(db, user.id, media.id, progress_percent, progress_seconds, progress_percent >= scrobble_threshold_for(conn), window_minutes, source="plex")
         await _backfill_plex_runtime(db, media, data, None, tmdb_key)
         await _backfill_credits_stingers(db, media, tmdb_key)
         if conn.sync_collection:
@@ -3613,7 +3614,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
         session = await _close_session(db, session_key)
         progress_percent = data["progress_percent"] or (session.progress_percent if session else 0.0)
         progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
-        completed = data.get("ended") or progress_percent >= 0.90
+        completed = data.get("ended") or progress_percent >= scrobble_threshold_for(None)
         if completed or progress_percent > 0.05:
             await _write_watch_event(db, user.id, media.id, progress_percent, progress_seconds, completed, window_minutes, source="kodi")
         await db.commit()
