@@ -208,6 +208,96 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(progress, [])
         self.assertEqual(removed, {"tt0133093"})
 
+    async def test_movie_past_scrobble_threshold_emits_watched_not_progress(self) -> None:
+        # Arrange
+        item = {
+            "_id": "tt0133093",
+            "type": "movie",
+            "name": "The Matrix",
+            "state": {
+                "timeOffset": 80_000,
+                "duration": 100_000,
+                "lastWatched": "2026-07-31T20:00:00Z",
+            },
+        }
+
+        # Act
+        library, watched_records, progress, removed = await _stremio_records(
+            [item],
+            scrobble_threshold=0.75,
+        )
+
+        # Assert
+        self.assertEqual(
+            watched_records,
+            [
+                {
+                    "content_id": "tt0133093",
+                    "content_type": "movie",
+                    "title": "The Matrix",
+                    "watched_at": 1785528000000,
+                }
+            ],
+        )
+        self.assertEqual(progress, [])
+
+    async def test_movie_below_scrobble_threshold_stays_in_progress(self) -> None:
+        # Arrange
+        item = {
+            "_id": "tt0133093",
+            "type": "movie",
+            "name": "The Matrix",
+            "state": {
+                "timeOffset": 60_000,
+                "duration": 100_000,
+                "lastWatched": "2026-07-31T20:00:00Z",
+            },
+        }
+
+        # Act
+        library, watched_records, progress, removed = await _stremio_records(
+            [item],
+            scrobble_threshold=0.75,
+        )
+
+        # Assert
+        self.assertEqual(watched_records, [])
+        self.assertEqual(progress[0]["position"], 60_000)
+
+    async def test_series_episode_past_scrobble_threshold_emits_watched_episode(self) -> None:
+        # Arrange
+        videos = [
+            {"id": "tt0944947:1:1", "season": 1, "episode": 1, "name": "S1E1"},
+            {"id": "tt0944947:1:2", "season": 1, "episode": 2, "name": "S1E2"},
+        ]
+        item = {
+            "_id": "tt0944947",
+            "type": "series",
+            "name": "Game of Thrones",
+            "state": {
+                "watched": stremio.encode_watched_bitfield(set(), [v["id"] for v in videos]),
+                "video_id": "tt0944947:1:2",
+                "timeOffset": 80_000,
+                "duration": 100_000,
+                "lastWatched": "2026-07-26T12:00:00Z",
+            },
+        }
+
+        # Act
+        with patch.object(
+            stremio,
+            "get_cinemeta_series",
+            AsyncMock(return_value={"videos": videos}),
+        ):
+            library, watched_records, progress, removed = await _stremio_records(
+                [item],
+                scrobble_threshold=0.75,
+            )
+
+        # Assert
+        self.assertEqual([(r["season"], r["episode"]) for r in watched_records], [(1, 2)])
+        self.assertEqual(progress, [])
+
     async def test_temporary_removed_series_still_emits_episode_state(self) -> None:
         videos = [
             {"id": "tt0944947:1:1", "season": 1, "episode": 1, "name": "S1E1"},
@@ -770,6 +860,7 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
             connection.watchlist_monitored_users = None
             connection.plex_sync_watchlist = False
             connection.plex_push_watchlist = False
+            connection.scrobble_percent = 75
 
         db = SimpleNamespace(
             execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),

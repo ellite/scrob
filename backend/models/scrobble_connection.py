@@ -19,4 +19,5 @@ class ScrobbleConnection(Base):
     sync_collection : Mapped[bool]          = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
     sync_watched    : Mapped[bool]          = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
     sync_playback   : Mapped[bool]          = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
+    scrobble_percent: Mapped[int]           = mapped_column(Integer, nullable=False, default=75, server_default="75")
     created_at      : Mapped[datetime]      = mapped_column(DateTime, server_default=func.now(), nullable=False)
