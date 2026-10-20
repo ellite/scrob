@@ -27,6 +27,7 @@ from models.media import Media, MediaType
 from models.ratings import Rating
 from models.sync import SyncJob, SyncStatus
 from routers import sync
+from core.timeutil import utcnow
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
 
@@ -204,7 +205,7 @@ class PlanPushTests(_DB):
             job = SyncJob(
                 user_id=1, source=CollectionSource.jellyfin, status=status, connection_id=1,
                 job_type="push", stats={"mode": mode} if mode else None,
-                created_at=created or datetime.utcnow(), updated_at=updated or datetime.utcnow(),
+                created_at=created or utcnow(), updated_at=updated or utcnow(),
             )
             db.add(job)
             await db.commit()
@@ -232,13 +233,13 @@ class PlanPushTests(_DB):
         self.assertEqual((await self._plan()).mode, "full")
 
     async def test_full_again_once_the_last_reconcile_is_a_week_old(self):
-        old = datetime.utcnow() - ps.FULL_RECONCILE_INTERVAL - timedelta(hours=1)
+        old = utcnow() - ps.FULL_RECONCILE_INTERVAL - timedelta(hours=1)
         await self._job_row(status=SyncStatus.completed, mode="full", created=old, updated=old)
         self.assertEqual((await self._plan()).mode, "full")
 
     async def test_resumes_from_the_first_interrupted_attempt(self):
-        first = datetime.utcnow() - timedelta(hours=3)
-        second = datetime.utcnow() - timedelta(hours=1)
+        first = utcnow() - timedelta(hours=3)
+        second = utcnow() - timedelta(hours=1)
         await self._job_row(status=SyncStatus.failed, created=first)
         await self._job_row(status=SyncStatus.cancelled, created=second)
         plan = await self._plan()
@@ -246,8 +247,8 @@ class PlanPushTests(_DB):
         self.assertEqual(plan.resume_since, first)
 
     async def test_an_interruption_before_the_last_full_is_not_resumed(self):
-        await self._job_row(status=SyncStatus.failed, created=datetime.utcnow() - timedelta(days=9))
-        old = datetime.utcnow() - ps.FULL_RECONCILE_INTERVAL - timedelta(hours=1)
+        await self._job_row(status=SyncStatus.failed, created=utcnow() - timedelta(days=9))
+        old = utcnow() - ps.FULL_RECONCILE_INTERVAL - timedelta(hours=1)
         await self._job_row(status=SyncStatus.completed, mode="full", created=old, updated=old)
         self.assertIsNone((await self._plan()).resume_since)
 
@@ -329,7 +330,7 @@ class ServerPushFlowTests(_DB):
         set_rating = AsyncMock(return_value=True)
         with patch.object(sync.jellyfin, "set_rating", set_rating):
             first = await self._push(cid, incremental=True)
-            old = datetime.utcnow() - timedelta(days=8)
+            old = utcnow() - timedelta(days=8)
             async with self.Session() as db:
                 await db.execute(update(SyncJob).where(SyncJob.id == first.id).values(updated_at=old))
                 await db.commit()
@@ -375,7 +376,7 @@ class ServerPushFlowTests(_DB):
                 await db.execute(
                     update(ConnectionPushState)
                     .where(ConnectionPushState.item_key == MISS)
-                    .values(updated_at=datetime.utcnow() - timedelta(days=2))
+                    .values(updated_at=utcnow() - timedelta(days=2))
                 )
                 await db.commit()
             await self._push(cid, incremental=True, source=CollectionSource.plex)
@@ -427,11 +428,11 @@ class ServerPushFlowTests(_DB):
         async with self.Session() as db:
             db.add(SyncJob(
                 user_id=1, source=CollectionSource.jellyfin, status=SyncStatus.failed,
-                connection_id=cid, job_type="push", created_at=datetime.utcnow() - timedelta(hours=1),
+                connection_id=cid, job_type="push", created_at=utcnow() - timedelta(hours=1),
             ))
             db.add(ConnectionPushState(
                 connection_id=cid, media_id=self.media_id, item_key=RATING, value=8.0,
-                updated_at=datetime.utcnow() - timedelta(minutes=30),
+                updated_at=utcnow() - timedelta(minutes=30),
             ))
             await db.commit()
         set_rating = AsyncMock(return_value=True)

@@ -9,6 +9,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from core import credits
 from core.credits import CREDITS_TTL, _networks, _people, credits_stats, maybe_backfill_credits
 from models.base import MediaType
+from core.timeutil import utcnow
 
 
 class PeopleHelperTests(unittest.TestCase):
@@ -223,14 +224,14 @@ class MaybeBackfillCreditsTests(unittest.IsolatedAsyncioTestCase):
         return AsyncMock()
 
     async def test_fresh_cache_skips_without_checking_the_key(self):
-        db = _QueuedSession([_ScalarOneResult(datetime.utcnow())])
+        db = _QueuedSession([_ScalarOneResult(utcnow())])
         with patch("routers.media.get_user_tmdb_key", new_callable=AsyncMock) as get_key:
             await maybe_backfill_credits(db, user_id=1)
         get_key.assert_not_called()
         self.assertFalse(credits._importing)
 
     async def test_stale_cache_without_a_usable_key_does_not_import(self):
-        db = _QueuedSession([_ScalarOneResult(datetime.utcnow() - CREDITS_TTL - timedelta(days=1))])
+        db = _QueuedSession([_ScalarOneResult(utcnow() - CREDITS_TTL - timedelta(days=1))])
         with patch("routers.media.get_user_tmdb_key", new_callable=AsyncMock, return_value=None), \
              patch("routers.media.check_tmdb_key", return_value=False), \
              patch("core.credits.asyncio.create_task") as create_task:

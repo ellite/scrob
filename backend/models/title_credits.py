@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+from core.timeutil import utcnow
 
 
 class TitleCredits(Base):
@@ -28,4 +29,4 @@ class TitleCredits(Base):
     writers    : Mapped[list]     = mapped_column(JSONB, nullable=False, default=list)
     studios    : Mapped[list]     = mapped_column(JSONB, nullable=False, default=list)
     networks   : Mapped[list]     = mapped_column(JSONB, nullable=False, default=list)  # series only; empty for movies
-    fetched_at : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    fetched_at : Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

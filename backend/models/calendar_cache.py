@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+from core.timeutil import utcnow
 
 
 class UserCalendarCache(Base):
@@ -21,5 +22,5 @@ class UserCalendarCache(Base):
 
     id          : Mapped[int]      = mapped_column(Integer, primary_key=True)
     user_id     : Mapped[int]      = mapped_column(Integer, nullable=False, unique=True)
-    computed_at : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    computed_at : Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     payload     : Mapped[dict]     = mapped_column(JSONB, nullable=False, default=dict)

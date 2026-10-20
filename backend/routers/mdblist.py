@@ -34,6 +34,7 @@ from routers.trakt import (
     _get_or_create_show,
     _local_dropped_show_tmdb_ids,
 )
+from core.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -56,16 +57,16 @@ def _utc_naive(value: Any) -> datetime:
         try:
             parsed = dt_parser.isoparse(value)
         except (TypeError, ValueError):
-            return datetime.utcnow()
+            return utcnow()
     else:
-        return datetime.utcnow()
+        return utcnow()
     if parsed.tzinfo:
         return parsed.astimezone(timezone.utc).replace(tzinfo=None)
     return parsed
 
 
 def _iso_utc(value: datetime | None) -> str:
-    value = value or datetime.utcnow()
+    value = value or utcnow()
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     else:

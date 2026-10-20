@@ -21,6 +21,7 @@ from core.limiter import limiter
 
 from sqlalchemy import or_, select, update, delete
 from models.sync import SyncJob, SyncStatus
+from core.job_retention import prune_old_sync_jobs
 from models.base import CollectionSource
 from models.playback_session import PlaybackSession
 
@@ -108,11 +109,23 @@ async def _auto_sync_scheduler():
         "stremio": run_stremio_sync,
     }
 
+    import logging
+    log = logging.getLogger("uvicorn.error")
+    last_prune = datetime.min
     while True:
         await asyncio.sleep(check_interval)
         try:
             async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
             async with async_session() as db:
+                if datetime.now(timezone.utc).replace(tzinfo=None) - last_prune >= timedelta(hours=1):
+                    last_prune = datetime.now(timezone.utc).replace(tzinfo=None)
+                    try:
+                        pruned = await prune_old_sync_jobs(db)
+                        if pruned:
+                            log.info(f"Pruned {pruned} sync jobs older than 7 days")
+                    except Exception as e:
+                        log.error(f"Sync job pruning failed: {e}")
+                        await db.rollback()
                 result = await db.execute(
                     select(MediaServerConnection).where(
                         or_(
@@ -369,7 +382,7 @@ async def _emby_progress_poller():
                         row.progress_percent = round(position / runtime, 4)
                         row.progress_seconds = int(position / 10_000_000)
                         row.state = "paused" if play_state.get("IsPaused") else "playing"
-                        row.updated_at = datetime.utcnow()
+                        row.updated_at = utcnow()
                         # Commit per-row via the shared helper (routers/webhooks.py):
                         # a PlaybackStop webhook can delete this same session between
                         # the select above and this write, which SQLAlchemy surfaces
@@ -772,6 +785,10 @@ async def lifespan(app: FastAPI):
         )
         await db.execute(delete(PlaybackSession))
         await db.commit()
+        try:
+            await prune_old_sync_jobs(db)
+        except Exception:
+            await db.rollback()
 
     scheduler_task = asyncio.create_task(_auto_sync_scheduler())
     watchlist_task = asyncio.create_task(_watchlist_poller())
@@ -815,6 +832,7 @@ async def lifespan(app: FastAPI):
         pass
 
 from core.config import settings
+from core.timeutil import utcnow
 
 # Rate limiter — keyed by client IP, in-memory storage (suitable for single-instance deploy).
 # API docs (docs_url/redoc_url/openapi_url) are disabled here and re-added below behind

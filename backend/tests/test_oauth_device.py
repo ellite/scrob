@@ -24,6 +24,7 @@ from dependencies import DEVICE_TOKEN_TYPE, get_current_user
 from models.oauth_device import OAuthDeviceGrant
 from models.users import User
 from routers import auth
+from core.timeutil import utcnow
 
 DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 
@@ -147,7 +148,7 @@ class DevicePollingStateTests(_DeviceFlowAppMixin):
 
     async def test_expired_grant_returns_expired_token(self):
         body = await self._start()
-        await self._grant(expires_at=datetime.utcnow() - timedelta(minutes=1), last_polled_at=None)
+        await self._grant(expires_at=utcnow() - timedelta(minutes=1), last_polled_at=None)
         r = await self._poll(body["device_code"])
         self.assertEqual(r.json()["error"], "expired_token")
 

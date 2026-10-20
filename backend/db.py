@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 from core.config import settings
+from core.timeutil import utcnow
 
 engine = create_async_engine(
     settings.db_url,
@@ -12,7 +13,7 @@ engine = create_async_engine(
     pool_pre_ping=True,
     # Every timestamp column in this app is naive (DateTime, no timezone) and
     # either defaults via Postgres's own func.now() or Python's
-    # datetime.utcnow() - both are only consistent with each other, and with
+    # utcnow() - both are only consistent with each other, and with
     # the frontend's "treat naive timestamps as UTC" assumption, if the
     # database session's own timezone is UTC. Without pinning it here,
     # Postgres falls back to whatever timezone the container's TZ env var

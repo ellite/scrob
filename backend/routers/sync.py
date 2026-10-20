@@ -5,9 +5,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy import select, update, delete, func, cast, bindparam, DateTime, literal_column
+from sqlalchemy import text, select, update, delete, func, cast, bindparam, DateTime, literal_column
 from sqlalchemy.orm import selectinload
-from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.dialects.postgresql import insert, JSONB
 
 from db import get_db, engine
@@ -47,6 +46,7 @@ from core.watchlist_reconcile import compute_new_baseline, media_key, plan_watch
 from models.rewatch import ShowRewatch, RewatchProgress
 
 from dependencies import get_current_user, get_current_user_or_api_key
+from core.timeutil import utcnow
 logger = logging.getLogger("uvicorn.error")
 
 
@@ -1499,7 +1499,7 @@ async def _fan_out_changes_to_other_connections(
                     _payload_item(
                         media,
                         show=shows_by_id.get(media.show_id),
-                        watched_at=watched_at_by_media.get(media_id, datetime.utcnow()),
+                        watched_at=watched_at_by_media.get(media_id, utcnow()),
                     )
                     if media
                     else None
@@ -1525,7 +1525,7 @@ async def _fan_out_changes_to_other_connections(
                     _payload_item(
                         media,
                         show=shows_by_id.get(media.show_id),
-                        collected_at=collected_at_by_media.get(media_id, datetime.utcnow()),
+                        collected_at=collected_at_by_media.get(media_id, utcnow()),
                     )
                     if media
                     else None
@@ -3304,7 +3304,7 @@ async def _record_plex_pending_push(user_id: int, media_id: int) -> None:
         stmt = insert(PlexPendingPush).values(
             user_id=user_id,
             media_id=media_id,
-            pushed_at=datetime.utcnow(),
+            pushed_at=utcnow(),
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=["user_id", "media_id"],
@@ -3521,7 +3521,7 @@ async def _backfill_plex_watch_history(
             select(PlexPendingPush.id, PlexPendingPush.media_id, PlexPendingPush.pushed_at)
             .where(
                 PlexPendingPush.user_id == user_id,
-                PlexPendingPush.pushed_at >= datetime.utcnow() - PLEX_PENDING_PUSH_MAX_AGE,
+                PlexPendingPush.pushed_at >= utcnow() - PLEX_PENDING_PUSH_MAX_AGE,
             )
         )
         # media_id -> list of (pending_push_id, pushed_at) still awaiting their echo
@@ -3536,7 +3536,7 @@ async def _backfill_plex_watch_history(
         await db.execute(
             delete(PlexPendingPush).where(
                 PlexPendingPush.user_id == user_id,
-                PlexPendingPush.pushed_at < datetime.utcnow() - PLEX_PENDING_PUSH_MAX_AGE,
+                PlexPendingPush.pushed_at < utcnow() - PLEX_PENDING_PUSH_MAX_AGE,
             )
         )
 
@@ -4194,7 +4194,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                                         continue
                                     if current:
                                         current.rating = rating_value
-                                        current.rated_at = datetime.utcnow()
+                                        current.rated_at = utcnow()
                                     else:
                                         current = Rating(
                                             user_id=user_id,
@@ -4244,7 +4244,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                                         continue
                                     if current:
                                         current.rating = rating_value
-                                        current.rated_at = datetime.utcnow()
+                                        current.rated_at = utcnow()
                                     else:
                                         current = Rating(
                                             user_id=user_id,
@@ -4710,7 +4710,7 @@ async def _apply_nuvio_progress(
         progress_percent = min(1.0, position_ms / duration_ms)
         progress = existing.get(media.id)
         if 0.05 <= progress_percent < 0.90:
-            updated_at = _nuvio_datetime(row.get("last_watched")) or datetime.utcnow()
+            updated_at = _nuvio_datetime(row.get("last_watched")) or utcnow()
             if progress:
                 progress.progress_percent = progress_percent
                 progress.progress_seconds = position_ms // 1000
@@ -8262,39 +8262,23 @@ async def match_unmatched_show(
             target_show = already_matched_ep.show
             # Stamp warnings for shows that were matched before stamping was introduced
             title_lower = body.show_title.lower()
-            jobs_res = await db.execute(
-                select(SyncJob).where(
-                    SyncJob.user_id == current_user.id,
-                    SyncJob.status == SyncStatus.completed,
-                    SyncJob.warnings.isnot(None),
-                )
-            )
-            for job in jobs_res.scalars().all():
-                if not job.warnings:
-                    continue
-                new_warnings = []
-                changed = False
-                for w in job.warnings:
-                    if w.get("matched"):
-                        new_warnings.append(w)
-                        continue
-                    if (
-                        (w.get("series_name") or "").lower() == title_lower
-                        or (w.get("title") or "").lower() == title_lower
-                    ):
-                        new_warnings.append({
-                            **w,
-                            "matched": True,
-                            "matched_tvdb_id": target_show.tvdb_id,
-                            "matched_show_id": target_show.tmdb_id,
-                            "matched_show_title": target_show.title,
-                        })
-                        changed = True
-                    else:
-                        new_warnings.append(w)
-                if changed:
-                    job.warnings = new_warnings
-                    flag_modified(job, "warnings")
+            def _stamp_known_match(w: dict) -> dict | None:
+                if w.get("matched"):
+                    return None
+                if (
+                    (w.get("series_name") or "").lower() == title_lower
+                    or (w.get("title") or "").lower() == title_lower
+                ):
+                    return {
+                        **w,
+                        "matched": True,
+                        "matched_tvdb_id": target_show.tvdb_id,
+                        "matched_show_id": target_show.tmdb_id,
+                        "matched_show_title": target_show.title,
+                    }
+                return None
+
+            await _rewrite_job_warnings(db, current_user.id, title_lower, _WARNING_SHOW_TITLE_SQL, _stamp_known_match)
             await db.commit()
             return {
                 "status": "ok",
@@ -8308,21 +8292,10 @@ async def match_unmatched_show(
         # Scan all warnings (stamped or not) — once all episode warnings are stamped,
         # the unmatched-only filter would find nothing and we'd never reach the TVDB/TMDB path.
         title_lower = body.show_title.lower()
-        stub_source_ids: list[str] = []
-        stub_warn_res = await db.execute(
-            select(SyncJob.warnings).where(
-                SyncJob.user_id == current_user.id,
-                SyncJob.status == SyncStatus.completed,
-                SyncJob.warnings.isnot(None),
-            ).order_by(SyncJob.created_at.desc())
+        stub_source_ids = await _warning_source_ids(
+            db, current_user.id, title_lower, "coalesce(w->>'series_name', '')",
+            lambda w: w.get("series_name") or "", completed_only=True
         )
-        for (warnings,) in stub_warn_res.all():
-            if not warnings:
-                continue
-            for w in warnings:
-                warn_title = (w.get("series_name") or "").lower()
-                if warn_title == title_lower and w.get("source_id"):
-                    stub_source_ids.append(str(w["source_id"]))
         if stub_source_ids:
             stub_ep_res = await db.execute(
                 select(Media)
@@ -8606,36 +8579,21 @@ async def match_unmatched_show(
     # Stamp the matched state into all relevant SyncJob warnings so the panel
     # reflects the match immediately without a re-sync.
     title_lower = body.show_title.lower()
-    jobs_res = await db.execute(
-        select(SyncJob).where(
-            SyncJob.user_id == current_user.id,
-            SyncJob.status == SyncStatus.completed,
-            SyncJob.warnings.isnot(None),
-        )
-    )
-    for job in jobs_res.scalars().all():
-        if not job.warnings:
-            continue
-        new_warnings = []
-        changed = False
-        for w in job.warnings:
-            if (
-                (w.get("series_name") or "").lower() == title_lower
-                or (w.get("title") or "").lower() == title_lower
-            ):
-                new_warnings.append({
-                    **w,
-                    "matched": True,
-                    "matched_tvdb_id": body.tvdb_id,
-                    "matched_show_id": target_show.tmdb_id if target_show else None,
-                    "matched_show_title": target_show.title if target_show else None,
-                })
-                changed = True
-            else:
-                new_warnings.append(w)
-        if changed:
-            job.warnings = new_warnings
-            flag_modified(job, "warnings")
+    def _stamp_match(w: dict) -> dict | None:
+        if (
+            (w.get("series_name") or "").lower() == title_lower
+            or (w.get("title") or "").lower() == title_lower
+        ):
+            return {
+                **w,
+                "matched": True,
+                "matched_tvdb_id": body.tvdb_id,
+                "matched_show_id": target_show.tmdb_id if target_show else None,
+                "matched_show_title": target_show.title if target_show else None,
+            }
+        return None
+
+    await _rewrite_job_warnings(db, current_user.id, title_lower, _WARNING_SHOW_TITLE_SQL, _stamp_match)
     await db.commit()
 
     return {
@@ -8647,6 +8605,109 @@ async def match_unmatched_show(
     }
 
 
+_WARNINGS_ELEMENTS_SQL = (
+    "jsonb_array_elements(CASE WHEN jsonb_typeof(sync_jobs.warnings) = 'array' "
+    "THEN sync_jobs.warnings ELSE '[]'::jsonb END)"
+)
+# SQL twins of the title tests the warning-rewrite callers apply in Python.
+_WARNING_SHOW_TITLE_SQL = "(lower(coalesce(w->>'series_name', '')) = :t OR lower(coalesce(w->>'title', '')) = :t)"
+_WARNING_MOVIE_TITLE_SQL = "(w->>'media_type' = 'movie' AND lower(coalesce(w->>'title', '')) = :t)"
+
+
+def _is_postgres(db: AsyncSession) -> bool:
+    return db.get_bind().dialect.name == "postgresql"
+
+
+async def _job_ids_with_warning(db: AsyncSession, user_id: int, title_lower: str, match_sql: str, completed_only: bool = True) -> list[int]:
+    """Ids of the user's sync jobs that may hold a warning matching match_sql.
+
+    Postgres narrows this with a query over the JSONB; other dialects (the unit
+    tests run on SQLite) return every job and leave the filtering to the caller.
+    """
+    status_sql = "AND status = 'completed' " if completed_only else ""
+    if _is_postgres(db):
+        res = await db.execute(
+            text(
+                f"SELECT id FROM sync_jobs WHERE user_id = :uid {status_sql}AND EXISTS "
+                f"(SELECT 1 FROM {_WARNINGS_ELEMENTS_SQL} AS w WHERE {match_sql})"
+            ),
+            {"uid": user_id, "t": title_lower},
+        )
+        return list(res.scalars().all())
+    query = select(SyncJob.id).where(SyncJob.user_id == user_id)
+    if completed_only:
+        query = query.where(SyncJob.status == SyncStatus.completed)
+    return list((await db.execute(query)).scalars().all())
+
+
+async def _rewrite_job_warnings(db: AsyncSession, user_id: int, title_lower: str, match_sql: str, rewrite) -> None:
+    """Apply rewrite(warning) -> new warning | None across a user's completed sync jobs.
+
+    Every sync run keeps its own job row with thousands of repeated warnings, so
+    loading them all as ORM objects exhausted the container's memory (#489).
+    Only the jobs that hold a candidate warning are touched, one at a time.
+    """
+    for job_id in await _job_ids_with_warning(db, user_id, title_lower, match_sql):
+        warnings = (await db.execute(select(SyncJob.warnings).where(SyncJob.id == job_id))).scalar_one_or_none()
+        new_warnings = []
+        changed = False
+        for w in warnings or []:
+            replaced = rewrite(w)
+            if replaced is not None:
+                new_warnings.append(replaced)
+                changed = True
+            else:
+                new_warnings.append(w)
+        if changed:
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(warnings=new_warnings))
+
+
+async def _warning_source_ids(db: AsyncSession, user_id: int, title_lower: str, title_expr: str, title_of, completed_only: bool) -> list[str]:
+    """source_ids of a user's sync warnings whose title equals title_lower.
+
+    title_expr (SQL) and title_of (Python) must compute the same title; the
+    Postgres path deduplicates in the database, the fallback walks one job at a time.
+    """
+    if _is_postgres(db):
+        status_filter = "status = 'completed' AND " if completed_only else ""
+        res = await db.execute(
+            text(
+                f"SELECT DISTINCT w->>'source_id' FROM sync_jobs, {_WARNINGS_ELEMENTS_SQL} AS w "
+                f"WHERE user_id = :uid AND {status_filter}lower({title_expr}) = :t "
+                f"AND coalesce(w->>'source_id', '') <> ''"
+            ),
+            {"uid": user_id, "t": title_lower},
+        )
+        return [str(r[0]) for r in res.all()]
+    found: dict[str, None] = {}
+    for job_id in await _job_ids_with_warning(db, user_id, title_lower, "", completed_only):
+        warnings = (await db.execute(select(SyncJob.warnings).where(SyncJob.id == job_id))).scalar_one_or_none()
+        for w in warnings or []:
+            if w.get("source_id") and title_of(w).lower() == title_lower:
+                found[str(w["source_id"])] = None
+    return list(found)
+
+
+async def _series_name_by_source_id(db: AsyncSession, user_id: int) -> dict[str, str]:
+    """source_id -> series_name over all of a user's sync warnings that carry both."""
+    if _is_postgres(db):
+        res = await db.execute(
+            text(
+                f"SELECT DISTINCT w->>'source_id', w->>'series_name' FROM sync_jobs, {_WARNINGS_ELEMENTS_SQL} AS w "
+                "WHERE user_id = :uid AND coalesce(w->>'source_id', '') <> '' AND coalesce(w->>'series_name', '') <> ''"
+            ),
+            {"uid": user_id},
+        )
+        return {sid: sn for sid, sn in res.all()}
+    mapping: dict[str, str] = {}
+    for job_id in await _job_ids_with_warning(db, user_id, "", "", completed_only=False):
+        warnings = (await db.execute(select(SyncJob.warnings).where(SyncJob.id == job_id))).scalar_one_or_none()
+        for w in warnings or []:
+            if w.get("source_id") and w.get("series_name"):
+                mapping[str(w["source_id"])] = w["series_name"]
+    return mapping
+
+
 @router.post("/heal-stub-show-titles")
 async def heal_stub_show_titles(
     db: AsyncSession = Depends(get_db),
@@ -8654,43 +8715,36 @@ async def heal_stub_show_titles(
 ):
     """Backfill tmdb_data['show_title'] for stub episodes that have it NULL,
     using series_name from SyncJob warnings matched via CollectionFile source_id."""
-    warn_res = await db.execute(
-        select(SyncJob.warnings).where(
-            SyncJob.user_id == current_user.id,
-            SyncJob.warnings.isnot(None),
-        )
-    )
-    # Build source_id → series_name map from all warnings
-    source_to_title: dict[str, str] = {}
-    for (warnings,) in warn_res.all():
-        for w in (warnings or []):
-            sn = w.get("series_name")
-            sid = w.get("source_id")
-            if sn and sid:
-                source_to_title[str(sid)] = sn
+    # Aggregated in the database where possible: every sync run keeps its own job
+    # row with thousands of repeated warnings, and decoding all of them into
+    # Python used to exhaust the container's memory (#489).
+    source_to_title = await _series_name_by_source_id(db, current_user.id)
 
     if not source_to_title:
         return {"status": "ok", "healed": 0}
 
-    # Find stub episodes with NULL tmdb_data via those source_ids
-    ep_res = await db.execute(
-        select(Media, CollectionFile.source_id)
-        .join(Collection, Collection.media_id == Media.id)
-        .join(CollectionFile, CollectionFile.collection_id == Collection.id)
-        .where(
-            Collection.user_id == current_user.id,
-            Media.media_type == MediaType.episode,
-            Media.tmdb_data.is_(None),
-            CollectionFile.source_id.in_(list(source_to_title.keys())),
-        )
-        .distinct()
-    )
+    # Find stub episodes with NULL tmdb_data via those source_ids, in chunks so
+    # the IN list stays under the driver's bind-parameter limit.
     healed = 0
-    for media, source_id in ep_res.all():
-        title = source_to_title.get(source_id)
-        if title:
-            media.tmdb_data = {"show_title": title}
-            healed += 1
+    source_ids = list(source_to_title.keys())
+    for i in range(0, len(source_ids), 5000):
+        ep_res = await db.execute(
+            select(Media, CollectionFile.source_id)
+            .join(Collection, Collection.media_id == Media.id)
+            .join(CollectionFile, CollectionFile.collection_id == Collection.id)
+            .where(
+                Collection.user_id == current_user.id,
+                Media.media_type == MediaType.episode,
+                Media.tmdb_data.is_(None),
+                CollectionFile.source_id.in_(source_ids[i:i + 5000]),
+            )
+            .distinct()
+        )
+        for media, source_id in ep_res.all():
+            title = source_to_title.get(source_id)
+            if title:
+                media.tmdb_data = {"show_title": title}
+                healed += 1
 
     await db.commit()
     return {"status": "ok", "healed": healed}
@@ -8913,17 +8967,10 @@ async def unmatch_show(
     if not episodes:
         # Fallback: find via source_ids from SyncJob warnings (tmdb_data may be NULL)
         title_lower_u = body.show_title.lower()
-        src_warn_res = await db.execute(
-            select(SyncJob.warnings).where(
-                SyncJob.user_id == current_user.id,
-                SyncJob.warnings.isnot(None),
-            )
+        fallback_source_ids = await _warning_source_ids(
+            db, current_user.id, title_lower_u, "coalesce(nullif(w->>'series_name', ''), w->>'title', '')",
+            lambda w: w.get("series_name") or w.get("title") or "", completed_only=False
         )
-        fallback_source_ids: list[str] = []
-        for (warnings,) in src_warn_res.all():
-            for w in (warnings or []):
-                if (w.get("series_name") or w.get("title") or "").lower() == title_lower_u and w.get("source_id"):
-                    fallback_source_ids.append(str(w["source_id"]))
         if fallback_source_ids:
             fb_res = await db.execute(
                 select(Media)
@@ -8971,32 +9018,15 @@ async def unmatch_show(
 
     # Clear matched stamps from SyncJob warnings
     title_lower = body.show_title.lower()
-    jobs_res = await db.execute(
-        select(SyncJob).where(
-            SyncJob.user_id == current_user.id,
-            SyncJob.status == SyncStatus.completed,
-            SyncJob.warnings.isnot(None),
-        )
-    )
-    for job in jobs_res.scalars().all():
-        if not job.warnings:
-            continue
-        new_warnings = []
-        changed = False
-        for w in job.warnings:
-            if w.get("matched") and (
-                (w.get("series_name") or "").lower() == title_lower
-                or (w.get("title") or "").lower() == title_lower
-            ):
-                cleared = {k: v for k, v in w.items() if not k.startswith("matched")}
-                new_warnings.append(cleared)
-                changed = True
-            else:
-                new_warnings.append(w)
-        if changed:
-            await db.execute(
-                update(SyncJob).where(SyncJob.id == job.id).values(warnings=new_warnings)
-            )
+    def _clear_show_match(w: dict) -> dict | None:
+        if w.get("matched") and (
+            (w.get("series_name") or "").lower() == title_lower
+            or (w.get("title") or "").lower() == title_lower
+        ):
+            return {k: v for k, v in w.items() if not k.startswith("matched")}
+        return None
+
+    await _rewrite_job_warnings(db, current_user.id, title_lower, _WARNING_SHOW_TITLE_SQL, _clear_show_match)
     await db.commit()
 
     return {"status": "ok", "unmatched": len(episodes)}
@@ -9058,36 +9088,21 @@ async def match_unmatched_movie(
 
     # Stamp the matched state into all relevant SyncJob warnings
     title_lower = body.movie_title.lower()
-    jobs_res = await db.execute(
-        select(SyncJob).where(
-            SyncJob.user_id == current_user.id,
-            SyncJob.status == SyncStatus.completed,
-            SyncJob.warnings.isnot(None),
-        )
-    )
-    for job in jobs_res.scalars().all():
-        if not job.warnings:
-            continue
-        new_warnings = []
-        changed = False
-        for w in job.warnings:
-            if (
-                w.get("media_type") == "movie"
-                and not w.get("matched")
-                and (w.get("title") or "").lower() == title_lower
-            ):
-                new_warnings.append({
-                    **w,
-                    "matched": True,
-                    "matched_tmdb_id": body.tmdb_id,
-                    "matched_movie_title": matched_title,
-                })
-                changed = True
-            else:
-                new_warnings.append(w)
-        if changed:
-            job.warnings = new_warnings
-            flag_modified(job, "warnings")
+    def _stamp_movie_match(w: dict) -> dict | None:
+        if (
+            w.get("media_type") == "movie"
+            and not w.get("matched")
+            and (w.get("title") or "").lower() == title_lower
+        ):
+            return {
+                **w,
+                "matched": True,
+                "matched_tmdb_id": body.tmdb_id,
+                "matched_movie_title": matched_title,
+            }
+        return None
+
+    await _rewrite_job_warnings(db, current_user.id, title_lower, _WARNING_MOVIE_TITLE_SQL, _stamp_movie_match)
 
     await db.commit()
     return {"status": "ok", "matched": len(movies), "tmdb_id": body.tmdb_id}
@@ -9132,32 +9147,16 @@ async def unmatch_movie(
 
     # Clear matched stamps from SyncJob warnings
     title_lower = body.movie_title.lower()
-    jobs_res = await db.execute(
-        select(SyncJob).where(
-            SyncJob.user_id == current_user.id,
-            SyncJob.status == SyncStatus.completed,
-            SyncJob.warnings.isnot(None),
-        )
-    )
-    for job in jobs_res.scalars().all():
-        if not job.warnings:
-            continue
-        new_warnings = []
-        changed = False
-        for w in job.warnings:
-            if (
-                w.get("matched")
-                and w.get("media_type") == "movie"
-                and (w.get("title") or "").lower() == title_lower
-            ):
-                cleared = {k: v for k, v in w.items() if not k.startswith("matched")}
-                new_warnings.append(cleared)
-                changed = True
-            else:
-                new_warnings.append(w)
-        if changed:
-            job.warnings = new_warnings
-            flag_modified(job, "warnings")
+    def _clear_movie_match(w: dict) -> dict | None:
+        if (
+            w.get("matched")
+            and w.get("media_type") == "movie"
+            and (w.get("title") or "").lower() == title_lower
+        ):
+            return {k: v for k, v in w.items() if not k.startswith("matched")}
+        return None
+
+    await _rewrite_job_warnings(db, current_user.id, title_lower, _WARNING_MOVIE_TITLE_SQL, _clear_movie_match)
 
     await db.commit()
     return {"status": "ok", "unmatched": len(movies)}

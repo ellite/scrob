@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import httpx
 import xmltodict
 from datetime import datetime, timezone
@@ -165,19 +166,46 @@ async def get_item(url: str, token: str, rating_key: str) -> Optional[Dict]:
         return None
 
 
+# Plex has no working "find by external id" filter: /library/all?guid=tmdb://...
+# matches nothing on the modern agents (their own guid is plex://...), and
+# grandparentGuid / parentIndex are not queryable fields at all - parentIndex
+# makes the server answer HTTP 500 ("Invalid field for column"). Resolve items
+# through a tmdb_id -> ratingKey index of the libraries instead, built once and
+# reused for a few minutes so a full push is not one library scan per item.
+_INDEX_TTL = 300.0
+_index_cache: Dict[str, tuple] = {}
+_index_locks: Dict[str, asyncio.Lock] = {}
+
+
+async def _get_tmdb_index(url: str, token: str) -> Dict[str, Dict[int, str]]:
+    """Return {"movie": {tmdb_id: ratingKey}, "show": {tmdb_id: ratingKey}} for every library."""
+    key = url.rstrip("/")
+    cached = _index_cache.get(key)
+    if cached and time.monotonic() - cached[0] < _INDEX_TTL:
+        return cached[1]
+    async with _index_locks.setdefault(key, asyncio.Lock()):
+        cached = _index_cache.get(key)
+        if cached and time.monotonic() - cached[0] < _INDEX_TTL:
+            return cached[1]
+        index: Dict[str, Dict[int, str]] = {"movie": {}, "show": {}}
+        for lib in await get_libraries(url, token):
+            kind = lib.get("type")
+            if kind not in index:
+                continue
+            fetch = get_movies if kind == "movie" else get_shows
+            for item in await fetch(url, token, str(lib.get("key"))):
+                tmdb_id = extract_tmdb_id(get_guids(item))
+                if tmdb_id and item.get("ratingKey"):
+                    index[kind].setdefault(tmdb_id, str(item["ratingKey"]))
+        _index_cache[key] = (time.monotonic(), index)
+        return index
+
+
 async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int) -> Optional[Dict]:
     """Search all Plex libraries for a movie by TMDB ID. Returns the item (with Media/Part detail) or None."""
     try:
-        data = await _get(
-            f"{url.rstrip('/')}/library/all",
-            token,
-            params={"type": 1, "guid": f"tmdb://{tmdb_id}", "includeGuids": 1},
-        )
-        items = data.get("MediaContainer", {}).get("Metadata", [])
-        if not items:
-            return None
-        # Fetch the full item with Media/Part/Stream detail
-        return await get_item(url, token, str(items[0]["ratingKey"]))
+        rating_key = (await _get_tmdb_index(url, token))["movie"].get(int(tmdb_id))
+        return await get_item(url, token, rating_key) if rating_key else None
     except Exception:
         return None
 
@@ -185,21 +213,17 @@ async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int) -> Optional[
 async def find_episode_by_ids(url: str, token: str, series_tmdb_id: int, season: int, episode: int) -> Optional[Dict]:
     """Search all Plex libraries for an episode by series TMDB ID + season + episode number."""
     try:
-        # Try filtering by grandparent GUID and indexes (supported on modern Plex)
+        show_key = (await _get_tmdb_index(url, token))["show"].get(int(series_tmdb_id))
+        if not show_key:
+            return None
         data = await _get(
-            f"{url.rstrip('/')}/library/all",
+            f"{url.rstrip('/')}/library/metadata/{show_key}/allLeaves",
             token,
-            params={
-                "type": 4,
-                "grandparentGuid": f"tmdb://{series_tmdb_id}",
-                "parentIndex": season,
-                "index": episode,
-                "includeGuids": 1,
-            },
+            params={"includeGuids": 1},
         )
-        items = data.get("MediaContainer", {}).get("Metadata", [])
-        if items:
-            return await get_item(url, token, str(items[0]["ratingKey"]))
+        for item in data.get("MediaContainer", {}).get("Metadata", []):
+            if item.get("parentIndex") == season and item.get("index") == episode and item.get("ratingKey"):
+                return await get_item(url, token, str(item["ratingKey"]))
         return None
     except Exception:
         return None
@@ -727,24 +751,11 @@ async def resolve_season_rating_key(
 ) -> str | None:
     """Resolve a local Plex season ratingKey from a TMDB show ID and season number."""
     try:
-        data = await _get(
-            f"{url.rstrip('/')}/library/sections/all",
-            token,
-            params={"type": 2, "guid": f"tmdb://{show_tmdb_id}", "includeGuids": 1},
-        )
-        shows = data.get("MediaContainer", {}).get("Metadata", [])
-        show = next(
-            (
-                item
-                for item in shows
-                if extract_tmdb_id(get_guids(item)) == show_tmdb_id
-            ),
-            None,
-        )
-        if not show or not show.get("ratingKey"):
+        show_key = (await _get_tmdb_index(url, token))["show"].get(int(show_tmdb_id))
+        if not show_key:
             return None
         children = await _get(
-            f"{url.rstrip('/')}/library/metadata/{show['ratingKey']}/children",
+            f"{url.rstrip('/')}/library/metadata/{show_key}/children",
             token,
         )
         seasons = children.get("MediaContainer", {}).get("Metadata", [])

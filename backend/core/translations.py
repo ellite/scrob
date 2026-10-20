@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from models.media_translation import MediaTranslation
 from models.show_translation import ShowTranslation
 from models.profile import UserProfileData
+from core.timeutil import utcnow
 
 
 async def get_user_metadata_language(db: AsyncSession, user_id: int) -> str | None:
@@ -84,7 +85,7 @@ async def upsert_media_translation(
             overview=overview,
             tagline=tagline,
             poster_path=poster_path,
-            fetched_at=datetime.utcnow(),
+            fetched_at=utcnow(),
         )
         .on_conflict_do_update(
             index_elements=["media_id", "language"],
@@ -93,7 +94,7 @@ async def upsert_media_translation(
                 "overview": overview,
                 "tagline": tagline,
                 "poster_path": poster_path,
-                "fetched_at": datetime.utcnow(),
+                "fetched_at": utcnow(),
             },
         )
     )
@@ -118,7 +119,7 @@ async def upsert_show_translation(
             overview=overview,
             tagline=tagline,
             poster_path=poster_path,
-            fetched_at=datetime.utcnow(),
+            fetched_at=utcnow(),
         )
         .on_conflict_do_update(
             index_elements=["show_id", "language"],
@@ -127,7 +128,7 @@ async def upsert_show_translation(
                 "overview": overview,
                 "tagline": tagline,
                 "poster_path": poster_path,
-                "fetched_at": datetime.utcnow(),
+                "fetched_at": utcnow(),
             },
         )
     )

@@ -23,6 +23,7 @@ from dependencies import DEVICE_TOKEN_TYPE
 from models.oauth_device import OAuthDeviceGrant
 from models.users import User
 from routers import webhooks
+from core.timeutil import utcnow
 
 
 class KodiWebhookAuthTests(unittest.IsolatedAsyncioTestCase):
@@ -48,7 +49,7 @@ class KodiWebhookAuthTests(unittest.IsolatedAsyncioTestCase):
                 status="approved",
                 interval=5,
                 user_id=1,
-                expires_at=datetime.utcnow() + timedelta(hours=1),
+                expires_at=utcnow() + timedelta(hours=1),
             ))
             await s.commit()
 
@@ -98,7 +99,7 @@ class KodiWebhookAuthTests(unittest.IsolatedAsyncioTestCase):
     async def test_revoked_grant_is_401(self):
         async with self.Session() as s:
             grant = await s.get(OAuthDeviceGrant, 7)
-            grant.revoked_at = datetime.utcnow()
+            grant.revoked_at = utcnow()
             await s.commit()
         r = await self.client.post("/webhooks/kodi", content=b"", headers=self._bearer())
         self.assertEqual(r.status_code, 401)

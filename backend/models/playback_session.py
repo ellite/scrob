@@ -5,6 +5,7 @@ from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+from core.timeutil import utcnow
 
 
 class PlaybackSession(Base):
@@ -21,5 +22,5 @@ class PlaybackSession(Base):
     state            : Mapped[str]            = mapped_column(String(16), default="playing", nullable=False)  # "playing" | "paused"
     progress_percent : Mapped[float]          = mapped_column(Float, default=0.0, nullable=False)
     progress_seconds : Mapped[int]            = mapped_column(Integer, default=0, nullable=False)
-    started_at       : Mapped[datetime]       = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at       : Mapped[datetime]       = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    started_at       : Mapped[datetime]       = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at       : Mapped[datetime]       = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)

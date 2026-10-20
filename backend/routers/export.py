@@ -13,6 +13,7 @@ from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
 from core.data_export import build_export_zip
 from core.scrob_import import MAX_TOTAL_SIZE, apply_scrob_import, parse_scrob_export
+from core.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ async def export_data(
         include_scrobble_connections=scrobble_connections,
         include_connections=connections,
     )
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = utcnow().strftime("%Y%m%d_%H%M%S")
     filename = f"scrob-export-{current_user.username}-{timestamp}.zip"
     return Response(
         content=payload,

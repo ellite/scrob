@@ -33,6 +33,7 @@ from core.rewatch import record_rewatch_progress
 from core.watch_dedup import get_dedup_window_minutes, is_duplicate_watch_time, load_existing_watch_times
 from models.sync import SyncJob
 from models.users import UserSettings
+from core.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +319,7 @@ async def apply_scrob_import(
                         watched_at = _parse_iso(entry.get("watched_at"))
                         if not _is_duplicate_play(media.id, watched_at):
                             db.add(WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1, source="import"))
-                            existing_times.setdefault(media.id, []).append(watched_at or datetime.utcnow())
+                            existing_times.setdefault(media.id, []).append(watched_at or utcnow())
                             stats["movies"] += 1
                         else:
                             stats["skipped"] += 1
@@ -360,7 +361,7 @@ async def apply_scrob_import(
                             db.add(event)
                             await db.flush()
                             await record_rewatch_progress(db, user_id, media.id, event.id)
-                            existing_times.setdefault(media.id, []).append(watched_at or datetime.utcnow())
+                            existing_times.setdefault(media.id, []).append(watched_at or utcnow())
                             stats["episodes"] += 1
                         else:
                             stats["skipped"] += 1
@@ -621,7 +622,7 @@ async def apply_scrob_import(
                 # a malformed created_at here (plausible from a hand-edited or
                 # third-party CSV, unlike Trakt's own well-formed dates) must
                 # only drop this one comment, not abort the whole import.
-                created_at = _parse_iso(entry.get("created_at")) or datetime.utcnow()
+                created_at = _parse_iso(entry.get("created_at")) or utcnow()
             except ValueError:
                 logger.exception("Error importing comment (media_type=%s tmdb_id=%s)", media_type, tmdb_id)
                 stats["errors"] += 1

@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.connection_push_state import ConnectionPushState
 from models.sync import SyncJob, SyncStatus
+from core.timeutil import utcnow
 
 # How long a scheduled push trusts its state before reconciling everything.
 FULL_RECONCILE_INTERVAL = timedelta(days=7)
@@ -74,7 +75,7 @@ async def plan_push(
     completed within FULL_RECONCILE_INTERVAL."""
     if not incremental:
         return PushPlan(MODE_FULL, use_state=False)
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     last_full = await db.scalar(
         select(func.max(SyncJob.updated_at)).where(
             SyncJob.connection_id == connection_id,
@@ -119,7 +120,7 @@ class PushState:
         self._rows = rows or {}
         self.use_state = use_state
         self.resume_since = resume_since
-        self._now = now or datetime.utcnow()
+        self._now = now or utcnow()
         self._updates: dict[tuple[int, str], float | None] = {}
         self._forgotten: set[tuple[int, str]] = set()
         self._failed: set[tuple[int, str]] = set()

@@ -4,6 +4,7 @@ from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConst
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+from core.timeutil import utcnow
 
 
 class ConnectionPushState(Base):
@@ -33,4 +34,4 @@ class ConnectionPushState(Base):
     media_id      : Mapped[int]            = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
     item_key      : Mapped[str]            = mapped_column(String(40), nullable=False)
     value         : Mapped[float | None]   = mapped_column(Float(precision=53), nullable=True)
-    updated_at    : Mapped[datetime]       = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at    : Mapped[datetime]       = mapped_column(DateTime, default=utcnow, nullable=False)

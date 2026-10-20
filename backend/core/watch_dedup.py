@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.events import WatchEvent
 from models.users import UserSettings
+from core.timeutil import utcnow
 
 # Floor under which the per-user setting can't lower duplicate protection -
 # this is the minimum needed to stop a single viewing session from producing
@@ -92,7 +93,7 @@ async def find_duplicate_watch_event(
     if not window_minutes:
         return None
     await _acquire_dedup_lock(db, user_id, media_id)
-    at = candidate_time or datetime.utcnow()
+    at = candidate_time or utcnow()
     delta = timedelta(minutes=window_minutes)
     effective_time = func.coalesce(WatchEvent.watched_at, WatchEvent.created_at)
     query = select(WatchEvent).where(
@@ -132,7 +133,7 @@ def is_duplicate_watch_time(
     preloaded existing times with load_existing_watch_times."""
     if not window_minutes:
         return False
-    at = candidate_time or datetime.utcnow()
+    at = candidate_time or utcnow()
     tolerance = timedelta(minutes=window_minutes).total_seconds()
     return any(
         abs((existing_at - at).total_seconds()) <= tolerance

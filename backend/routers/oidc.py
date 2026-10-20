@@ -17,7 +17,7 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +39,7 @@ from db import get_db
 from dependencies import get_current_user
 from models.oidc_identity import OidcIdentity
 from models.users import User
+from core.timeutil import utcnow
 
 
 logger = logging.getLogger(__name__)
@@ -75,8 +76,7 @@ class OidcIdentityItem(BaseModel):
     created_at: datetime
     last_login_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OidcUnlinkRequest(BaseModel):
@@ -138,7 +138,7 @@ async def _resolve_user(
                     logger.warning("OIDC: email %s for user_id=%s collides; keeping stored email", email, user.id)
                 else:
                     user.email = email
-            identity.last_login_at = datetime.utcnow()
+            identity.last_login_at = utcnow()
             return user
 
     # Link to a local user by email. When OIDC_IDENTIFIER_FIELD is not "email",
@@ -171,7 +171,7 @@ async def _resolve_user(
             db.add(OidcIdentity(
                 user_id=user.id, issuer=issuer, subject=subject,
                 email_at_link=email, provider_name=app_settings.oidc_provider_name,
-                last_login_at=datetime.utcnow(),
+                last_login_at=utcnow(),
             ))
             logger.info("OIDC: linked user_id=%s to issuer=%s via %s", user.id, issuer, kind)
         return user
@@ -214,7 +214,7 @@ async def _resolve_user(
         db.add(OidcIdentity(
             user_id=user.id, issuer=issuer, subject=subject,
             email_at_link=email, provider_name=app_settings.oidc_provider_name,
-            last_login_at=datetime.utcnow(),
+            last_login_at=utcnow(),
         ))
 
     logger.info("OIDC: created user_id=%s username=%s admin=%s", user.id, username, is_first_user)

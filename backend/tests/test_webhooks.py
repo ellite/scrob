@@ -41,6 +41,7 @@ from routers.webhooks import (
     parse_kodi_payload,
     parse_plex_payload,
 )
+from core.timeutil import utcnow
 
 
 class _Scalars:
@@ -606,7 +607,7 @@ class ConsumeRecentlyPushedWatchedTests(unittest.TestCase):
     def test_expired_marker_is_not_consumed(self):
         import datetime
         mark_pushed_watched(user_id=1, media_id=2)
-        webhooks._recently_pushed_watched[(1, 2)][0] = datetime.datetime.utcnow() - webhooks._PUSHED_WATCHED_TTL - datetime.timedelta(seconds=1)
+        webhooks._recently_pushed_watched[(1, 2)][0] = utcnow() - webhooks._PUSHED_WATCHED_TTL - datetime.timedelta(seconds=1)
         self.assertFalse(_consume_recently_pushed_watched(user_id=1, media_id=2))
 
     def test_two_pending_pushes_each_consume_their_own_echo(self):

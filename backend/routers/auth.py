@@ -40,6 +40,7 @@ import schemas
 from dependencies import get_current_user, oauth2_scheme, DEVICE_TOKEN_TYPE
 from sqlalchemy.orm import selectinload
 from fastapi import File, UploadFile
+from core.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -1729,7 +1730,7 @@ async def verify_2fa_login(
 # Connected Apps. The resulting token is scope-limited - dependencies.py
 # rejects it on every account/security endpoint (see DEVICE_TOKEN_TYPE).
 #
-# All timestamps here are naive UTC (datetime.utcnow), matching the
+# All timestamps here are naive UTC (utcnow), matching the
 # oauth_device_grants columns, so comparisons never mix aware/naive.
 
 DEVICE_CODE_TTL = timedelta(minutes=15)
@@ -1802,7 +1803,7 @@ async def device_code(
         raise HTTPException(status_code=400, detail="Unsupported scope")
     client_name = (body.client_name or "").strip()[:120] or "Unknown app"
 
-    now = datetime.utcnow()
+    now = utcnow()
     # Opportunistic housekeeping so the table doesn't accumulate dead rows.
     await db.execute(
         delete(OAuthDeviceGrant).where(
@@ -1876,7 +1877,7 @@ async def _device_token_exchange(db: AsyncSession, device_code_raw: str) -> JSON
     if grant is None:
         return _oauth_error("invalid_grant")
 
-    now = datetime.utcnow()
+    now = utcnow()
 
     # The device_code is single-use: once tokens have been minted the client
     # must use its refresh token.
@@ -1937,14 +1938,14 @@ async def _device_token_refresh(db: AsyncSession, refresh_raw: str) -> JSONRespo
         )
         stolen = replay.scalar_one_or_none()
         if stolen is not None and stolen.revoked_at is None:
-            stolen.revoked_at = datetime.utcnow()
+            stolen.revoked_at = utcnow()
             await db.commit()
         return _oauth_error("invalid_grant")
 
     if grant.revoked_at is not None or grant.status != "approved":
         return _oauth_error("invalid_grant")
 
-    now = datetime.utcnow()
+    now = utcnow()
     new_refresh = generate_opaque_token()
     grant.prev_refresh_token_hash = grant.refresh_token_hash
     grant.refresh_token_hash = hash_opaque_token(new_refresh)
@@ -1962,7 +1963,7 @@ async def _load_pending_grant(db: AsyncSession, user_code: str) -> OAuthDeviceGr
         raise HTTPException(status_code=404, detail="Unknown or expired code")
     result = await db.execute(select(OAuthDeviceGrant).where(OAuthDeviceGrant.user_code == code))
     grant = result.scalar_one_or_none()
-    if grant is None or grant.status != "pending" or datetime.utcnow() >= grant.expires_at:
+    if grant is None or grant.status != "pending" or utcnow() >= grant.expires_at:
         raise HTTPException(status_code=404, detail="Unknown or expired code")
     return grant
 
@@ -2002,7 +2003,7 @@ async def device_approve(
     grant.user_id = current_user.id
     if action == "approve":
         grant.status = "approved"
-        grant.approved_at = datetime.utcnow()
+        grant.approved_at = utcnow()
         chosen_name = (body.name or "").strip()[:120]
         if chosen_name:
             grant.client_name = chosen_name
@@ -2045,6 +2046,6 @@ async def revoke_device_grant(
     if grant is None:
         raise HTTPException(status_code=404, detail="Not found")
     if grant.revoked_at is None:
-        grant.revoked_at = datetime.utcnow()
+        grant.revoked_at = utcnow()
         await db.commit()
     return {"status": "revoked"}

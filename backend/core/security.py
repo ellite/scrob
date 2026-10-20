@@ -2,11 +2,19 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Union
+import bcrypt
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError
 from jose import jwt
-from passlib.context import CryptContext
 from core.config import settings
 
-pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
+# New hashes are argon2id with argon2-cffi's default cost. Hashes written
+# before argon2 became the default are bcrypt and are still verified.
+_argon2 = PasswordHasher()
+# bcrypt only reads the first 72 bytes of a password; bcrypt >= 5 refuses longer
+# input instead of truncating, so cut it the way earlier versions did.
+_BCRYPT_MAX_BYTES = 72
+_BCRYPT_PREFIXES = ("$2a$", "$2b$", "$2y$")
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
@@ -34,10 +42,20 @@ def create_access_token(
     return encoded_jwt
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    if hashed_password.startswith("$argon2"):
+        try:
+            return _argon2.verify(hashed_password, plain_password)
+        except (VerificationError, InvalidHashError):
+            return False
+    if hashed_password.startswith(_BCRYPT_PREFIXES):
+        try:
+            return bcrypt.checkpw(plain_password.encode("utf-8")[:_BCRYPT_MAX_BYTES], hashed_password.encode("utf-8"))
+        except ValueError:
+            return False
+    return False
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    return _argon2.hash(password)
 
 
 def hash_opaque_token(token: str) -> str:

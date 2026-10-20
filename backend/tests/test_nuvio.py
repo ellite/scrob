@@ -17,6 +17,7 @@ from models.playback_progress import PlaybackProgress
 from models.show import Show
 from routers.sync import (
     _fan_out_changes_to_other_connections,
+    _apply_nuvio_progress,
     _apply_nuvio_watch_history,
     _ensure_nuvio_imdb_ids,
     _normalize_nuvio_item,
@@ -758,6 +759,161 @@ class NuvioWatchHistoryTests(unittest.IsolatedAsyncioTestCase):
                 datetime(2024, 3, 29, 8, 13, 20),
             },
         )
+
+    async def test_rows_without_a_watched_at_are_not_imported(self) -> None:
+        # Progress rows carry last_watched, not watched_at - handing one to the
+        # watch-history importer (e.g. to count a nearly-finished play as
+        # watched) is silently skipped unless the key is mapped first.
+        movie = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club")
+        db = SimpleNamespace(
+            execute=AsyncMock(side_effect=[_Result(scalars=[movie])]),
+            add=MagicMock(),
+            commit=AsyncMock(),
+        )
+        progress_shaped_row = {
+            "content_id": "tmdb:550",
+            "content_type": "movie",
+            "position": 80_000,
+            "duration": 100_000,
+            "last_watched": 1711600000000,
+        }
+
+        added = await _apply_nuvio_watch_history(
+            db,
+            user_id=7,
+            rows=[progress_shaped_row],
+            show_map={},
+            tmdb_ids={"tmdb:550": 550},
+        )
+
+        self.assertEqual(added, set())
+        db.add.assert_not_called()
+
+    async def test_show_level_rows_are_not_recorded_as_watches(self) -> None:
+        db = SimpleNamespace(
+            execute=AsyncMock(side_effect=[_Result(scalars=[])]),
+            add=MagicMock(),
+            commit=AsyncMock(),
+        )
+        row = {"content_id": "tmdb:1399", "content_type": "series", "watched_at": 1711600000000}
+
+        added = await _apply_nuvio_watch_history(
+            db, user_id=7, rows=[row], show_map={"tmdb:1399": 3}, tmdb_ids={"tmdb:1399": 1399},
+        )
+
+        self.assertEqual(added, set())
+        db.add.assert_not_called()
+
+
+class NuvioProgressTests(unittest.IsolatedAsyncioTestCase):
+    MOVIE = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club")
+    EPISODE = Media(id=20, show_id=3, season_number=2, episode_number=4, media_type=MediaType.episode, title="Ep")
+
+    def _db(self, *results):
+        return SimpleNamespace(
+            execute=AsyncMock(side_effect=list(results)),
+            add=MagicMock(),
+            delete=AsyncMock(),
+            commit=AsyncMock(),
+        )
+
+    def _movie_row(self, position, duration=100_000, **extra):
+        return {
+            "content_id": "tmdb:550",
+            "content_type": "movie",
+            "position": position,
+            "duration": duration,
+            "last_watched": 1711600000000,
+            **extra,
+        }
+
+    async def _apply_movie(self, db, row):
+        await _apply_nuvio_progress(db, 7, [row], {}, {"tmdb:550": 550})
+
+    async def test_partial_movie_creates_a_progress_row(self) -> None:
+        db = self._db(_Result(scalars=[self.MOVIE]), _Result())
+
+        await self._apply_movie(db, self._movie_row(position=50_000))
+
+        saved = db.add.call_args.args[0]
+        self.assertIsInstance(saved, PlaybackProgress)
+        self.assertEqual((saved.user_id, saved.media_id), (7, 10))
+        self.assertEqual(saved.progress_percent, 0.5)
+        self.assertEqual(saved.progress_seconds, 50)
+        self.assertEqual(saved.updated_at, datetime(2024, 3, 28, 4, 26, 40))
+        db.commit.assert_awaited_once()
+
+    async def test_existing_progress_row_is_updated_not_duplicated(self) -> None:
+        existing = PlaybackProgress(user_id=7, media_id=10, progress_percent=0.2, progress_seconds=20)
+        db = self._db(_Result(scalars=[self.MOVIE]), _Result(scalars=[existing]))
+
+        await self._apply_movie(db, self._movie_row(position=60_000))
+
+        db.add.assert_not_called()
+        self.assertEqual(existing.progress_percent, 0.6)
+        self.assertEqual(existing.progress_seconds, 60)
+
+    async def test_progress_below_five_percent_is_not_tracked(self) -> None:
+        db = self._db(_Result(scalars=[self.MOVIE]), _Result())
+
+        await self._apply_movie(db, self._movie_row(position=4_000))
+
+        db.add.assert_not_called()
+
+    async def test_finished_progress_is_not_tracked_and_clears_an_existing_row(self) -> None:
+        existing = PlaybackProgress(user_id=7, media_id=10, progress_percent=0.5, progress_seconds=50)
+        db = self._db(_Result(scalars=[self.MOVIE]), _Result(scalars=[existing]))
+
+        await self._apply_movie(db, self._movie_row(position=95_000))
+
+        db.add.assert_not_called()
+        db.delete.assert_awaited_once_with(existing)
+
+    async def test_position_beyond_duration_is_treated_as_finished(self) -> None:
+        db = self._db(_Result(scalars=[self.MOVIE]), _Result())
+
+        await self._apply_movie(db, self._movie_row(position=150_000))
+
+        db.add.assert_not_called()
+
+    async def test_zero_duration_and_garbage_values_are_skipped(self) -> None:
+        db = self._db(_Result(scalars=[self.MOVIE]), _Result())
+        rows = [
+            self._movie_row(position=10_000, duration=0),
+            self._movie_row(position="soon"),
+        ]
+
+        await _apply_nuvio_progress(db, 7, rows, {}, {"tmdb:550": 550})
+
+        db.add.assert_not_called()
+
+    async def test_episode_progress_is_matched_by_show_season_and_episode(self) -> None:
+        db = self._db(_Result(scalars=[self.EPISODE]), _Result())
+        row = {
+            "content_id": "tmdb:1399",
+            "content_type": "series",
+            "season": 2,
+            "episode": 4,
+            "position": 30_000,
+            "duration": 60_000,
+            "last_watched": 1711600000000,
+        }
+
+        await _apply_nuvio_progress(db, 7, [row], {"tmdb:1399": 3}, {"tmdb:1399": 1399})
+
+        saved = db.add.call_args.args[0]
+        self.assertEqual((saved.media_id, saved.progress_percent), (20, 0.5))
+
+    async def test_rows_that_match_no_local_media_are_ignored(self) -> None:
+        unknown_id = _Result(scalars=[self.MOVIE])
+        db = self._db(unknown_id)
+        row = self._movie_row(position=50_000, content_id="tmdb:999")
+
+        await _apply_nuvio_progress(db, 7, [row], {}, {"tmdb:999": 999})
+
+        db.add.assert_not_called()
+        db.commit.assert_not_awaited()
+
 
 class NuvioNormalizationTests(unittest.TestCase):
     def test_episode_history_maps_to_tmdb_series_and_watch_state(self) -> None:

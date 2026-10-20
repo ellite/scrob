@@ -36,6 +36,7 @@ from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
 from models.global_settings import GlobalSettings
 from sqlalchemy.orm.attributes import flag_modified
+from core.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -443,7 +444,7 @@ async def _get_or_create_person_media(db: AsyncSession, tmdb_id: int, name: str,
 
 def _trakt_rated_at(value: str | None) -> datetime:
     if not value:
-        return datetime.utcnow()
+        return utcnow()
     from dateutil import parser as dt_parser
 
     parsed = dt_parser.isoparse(value)
@@ -716,7 +717,7 @@ async def _apply_trakt_import(
                                 completed=True,
                                 play_count=1,
                             ))
-                            existing_times.setdefault(media.id, []).append(watched_at or datetime.utcnow())
+                            existing_times.setdefault(media.id, []).append(watched_at or utcnow())
                             _new_watched.add(media.id)
                             stats["movies"] += 1
                         else:
@@ -811,7 +812,7 @@ async def _apply_trakt_import(
                                 db.add(event)
                                 await db.flush()
                                 await record_rewatch_progress(db, user_id, media.id, event.id)
-                                existing_times.setdefault(media.id, []).append(watched_at or datetime.utcnow())
+                                existing_times.setdefault(media.id, []).append(watched_at or utcnow())
                                 _new_watched.add(media.id)
                                 stats["episodes"] += 1
                             else:
@@ -1441,7 +1442,7 @@ async def _apply_trakt_comments_import(
                 episode_number=episode_number,
                 content=content,
                 is_spoiler=bool(comment.get("spoiler")),
-                created_at=_parse_trakt_datetime(comment.get("created_at")) or datetime.utcnow(),
+                created_at=_parse_trakt_datetime(comment.get("created_at")) or utcnow(),
             ))
             existing_keys.add(key)
             stats["comments"] = stats.get("comments", 0) + 1

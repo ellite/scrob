@@ -222,7 +222,7 @@ async def _push_watch_state(
                 continue
             show = mdblist_shows_by_id.get(media.show_id)
             item = (
-                _payload_item(media, show=show, watched_at=resolved_watched_at.get(media.id, datetime.utcnow()))
+                _payload_item(media, show=show, watched_at=resolved_watched_at.get(media.id, utcnow()))
                 if watched
                 else _payload_item(media, show=show)
             )
@@ -266,7 +266,7 @@ async def _push_watch_state(
                 continue
             payload = _nuvio_watched_item(
                 media,
-                resolved_watched_at.get(media.id) if watched else datetime.utcnow(),
+                resolved_watched_at.get(media.id) if watched else utcnow(),
                 shows_by_id.get(media.show_id),
             )
             if not payload:
@@ -654,7 +654,7 @@ async def rate_prompt(
             WatchEvent.user_id == current_user.id,
             WatchEvent.media_id == media_id,
             WatchEvent.completed == True,
-            WatchEvent.watched_at >= datetime.utcnow() - RATE_PROMPT_WINDOW,
+            WatchEvent.watched_at >= utcnow() - RATE_PROMPT_WINDOW,
         ).limit(1)
     )).scalar_one_or_none()
     if recent_completion is None:
@@ -1570,6 +1570,7 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm.attributes import flag_modified
+from core.timeutil import utcnow
 
 
 class NextUpHideRequest(BaseModel):
@@ -2445,7 +2446,7 @@ async def mark_as_watched(
     watched_at = (
         event_in.watched_at.replace(tzinfo=None) if event_in.watched_at is not None
         else None if "watched_at" in event_in.model_fields_set
-        else datetime.utcnow()
+        else utcnow()
     )
     if event_in.completed and not event_in.force:
         window_minutes = await get_dedup_window_minutes(db, current_user.id)
@@ -2773,7 +2774,7 @@ async def mark_season_watched(
         else:
             canonical_seasons = sorted({season for season, _ in target_positions})
 
-    now = datetime.utcnow()
+    now = utcnow()
     today = now.date()
     # "Has this episode aired yet" stays tied to the real current date, independent
     # of what date the user says they watched it. Omitted watched_at retains the
@@ -3061,7 +3062,7 @@ async def mark_show_watched(
     all_newly_watched_ids = []
     all_new_events = []
 
-    now = datetime.utcnow()
+    now = utcnow()
     today = now.date()
     # See mark_season_watched: aired-cutoff stays tied to the real current date;
     # omitted watched_at retains "now", explicit null means unknown watch date.
@@ -3282,7 +3283,7 @@ async def _run_show_watch_job(job_id: str, body: "ShowWatchRequest", user_id: in
         logger.exception("Background mark-show-watched failed for user %s", user_id)
         job.update(state="error", detail="Something went wrong marking the show as watched")
     finally:
-        job["finished_at"] = datetime.utcnow()
+        job["finished_at"] = utcnow()
 
 
 @router.post("/show-all/async", status_code=202)
@@ -3292,7 +3293,7 @@ async def mark_show_watched_async(
 ):
     """Start "mark every episode watched" as a background job; poll
     GET /history/show-all/jobs/{job_id} for the outcome."""
-    now = datetime.utcnow()
+    now = utcnow()
     for jid in [j for j, v in _show_watch_jobs.items() if v.get("finished_at") and now - v["finished_at"] > _JOB_TTL]:
         _show_watch_jobs.pop(jid, None)
 
@@ -3554,7 +3555,7 @@ async def update_manual_session(
     session.progress_percent = progress_pct
     if body.state in ("playing", "paused"):
         session.state = body.state
-    session.updated_at = datetime.utcnow()
+    session.updated_at = utcnow()
 
     if 0.05 <= progress_pct < 0.90:
         prog_q = await db.execute(
@@ -3616,7 +3617,7 @@ async def dismiss_session(
 
 async def auto_complete_manual_sessions(db: AsyncSession) -> None:
     """Complete any manual sessions where enough time has elapsed since the last heartbeat."""
-    now = datetime.utcnow()
+    now = utcnow()
     result = await db.execute(
         select(PlaybackSession, Media)
         .join(Media, Media.id == PlaybackSession.media_id)
@@ -3688,7 +3689,7 @@ async def complete_manual_session(
         )
     )
 
-    now = datetime.utcnow()
+    now = utcnow()
     window_minutes = await get_dedup_window_minutes(db, current_user.id)
     if await find_duplicate_watch_event(db, current_user.id, media_id, now, window_minutes) is not None:
         await db.commit()

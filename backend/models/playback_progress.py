@@ -5,6 +5,7 @@ from sqlalchemy import DateTime, Float, ForeignKey, Integer, Index, UniqueConstr
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+from core.timeutil import utcnow
 
 
 class PlaybackProgress(Base):
@@ -19,7 +20,7 @@ class PlaybackProgress(Base):
     media_id         : Mapped[int]            = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
     progress_percent : Mapped[float]          = mapped_column(Float, default=0.0, nullable=False)
     progress_seconds : Mapped[int]            = mapped_column(Integer, default=0, nullable=False)
-    updated_at       : Mapped[datetime]       = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at       : Mapped[datetime]       = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
     user  : Mapped["User"]  = relationship()
     media : Mapped["Media"] = relationship()

@@ -35,6 +35,7 @@ from models.events import WatchEvent
 from models.media import Media
 from models.show import Show
 from models.users import User, UserSettings
+from core.timeutil import utcnow
 
 router = APIRouter()
 
@@ -179,7 +180,7 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
     ]
     if not candidates:
         return {
-            "schema": CALENDAR_SCHEMA, "generated_at": datetime.utcnow().isoformat(),
+            "schema": CALENDAR_SCHEMA, "generated_at": utcnow().isoformat(),
             "today": today.isoformat(), "shows_checked": 0, "entries": [],
         }
 
@@ -308,7 +309,7 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
     ))
     return {
         "schema": CALENDAR_SCHEMA,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": utcnow().isoformat(),
         "today": today.isoformat(),
         "shows_checked": len(candidates),
         "entries": entries,
@@ -316,7 +317,7 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
 
 
 def _is_cache_fresh(row: UserCalendarCache | None) -> bool:
-    if not row or (datetime.utcnow() - row.computed_at) >= CALENDAR_TTL:
+    if not row or (utcnow() - row.computed_at) >= CALENDAR_TTL:
         return False
     payload = row.payload or {}
     if payload.get("schema") != CALENDAR_SCHEMA:
@@ -342,7 +343,7 @@ def _is_cache_usable(
     after local midnight on a full TMDB fan-out (#194). Deliberately ignores
     the day-match and the 24h TTL - staleness within max_age is the point.
     """
-    if not row or (datetime.utcnow() - row.computed_at) >= max_age:
+    if not row or (utcnow() - row.computed_at) >= max_age:
         return False
     return (row.payload or {}).get("schema") == CALENDAR_SCHEMA
 
@@ -357,9 +358,9 @@ async def _load_or_compute(db: AsyncSession, user_id: int, force: bool) -> dict:
     payload = await compute_calendar(db, user_id)
     if row:
         row.payload = payload
-        row.computed_at = datetime.utcnow()
+        row.computed_at = utcnow()
     else:
-        row = UserCalendarCache(user_id=user_id, payload=payload, computed_at=datetime.utcnow())
+        row = UserCalendarCache(user_id=user_id, payload=payload, computed_at=utcnow())
         db.add(row)
     await db.commit()
     await _resolve_watch_status(db, user_id, payload.get("entries", []))

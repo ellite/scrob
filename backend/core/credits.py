@@ -20,6 +20,7 @@ from models.events import WatchEvent
 from models.media import Media
 from models.show import Show
 from models.title_credits import TitleCredits
+from core.timeutil import utcnow
 
 CREDITS_TTL = timedelta(days=7)
 FETCH_CONCURRENCY = 8
@@ -89,7 +90,7 @@ async def _import_credits(api_key: str) -> None:
                 select(TitleCredits.tmdb_id, TitleCredits.media_type, TitleCredits.fetched_at)
             )).all()
         }
-        cutoff = datetime.utcnow() - CREDITS_TTL
+        cutoff = utcnow() - CREDITS_TTL
         todo = [(mt, tid) for (mt, tid) in wanted
                 if (mt, tid) not in existing or existing[(mt, tid)] < cutoff]
         if not todo:
@@ -128,7 +129,7 @@ async def _import_credits(api_key: str) -> None:
                 row.cast, row.directors, row.writers, row.studios, row.networks = (
                     cast, directors, writers, studios, networks,
                 )
-                row.fetched_at = datetime.utcnow()
+                row.fetched_at = utcnow()
             else:
                 db.add(TitleCredits(tmdb_id=tid, media_type=mt, cast=cast,
                                     directors=directors, writers=writers, studios=studios,
@@ -156,7 +157,7 @@ async def maybe_backfill_credits(db: AsyncSession, user_id: int) -> None:
     if _importing:
         return
     newest = (await db.execute(select(func.max(TitleCredits.fetched_at)))).scalar_one_or_none()
-    if newest and (datetime.utcnow() - newest) < CREDITS_TTL:
+    if newest and (utcnow() - newest) < CREDITS_TTL:
         return
     from routers.media import check_tmdb_key, get_user_tmdb_key
 

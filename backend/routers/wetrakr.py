@@ -39,6 +39,7 @@ from models.show import Show
 from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
 from models.global_settings import GlobalSettings
+from core.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -768,7 +769,7 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                                         user_id=user_id,
                                         media_id=media.id,
                                         rating=rating_val,
-                                        rated_at=_parse_wetrakr_datetime(rated_at_raw) or datetime.utcnow(),
+                                        rated_at=_parse_wetrakr_datetime(rated_at_raw) or utcnow(),
                                     ))
                                     existing_rated.add(media.id)
                                     stats["ratings"] += 1
@@ -901,7 +902,7 @@ async def run_wetrakr_sync(user_id: int, job_id: int) -> None:
                                     episode_number=episode_number,
                                     content=content,
                                     is_spoiler=bool(entry.get("spoiler")),
-                                    created_at=_parse_wetrakr_datetime(entry.get("comment_added_at")) or datetime.utcnow(),
+                                    created_at=_parse_wetrakr_datetime(entry.get("comment_added_at")) or utcnow(),
                                     wetrakr_comment_id=entry.get("id"),
                                     wetrakr_source=(entry.get("source") or "wetrakr")[:32],
                                 ))
@@ -1098,7 +1099,7 @@ async def _run_wetrakr_push(user_id: int, job_id: int) -> None:
             # Incremental: after the first (full) push only what is newer than
             # the bookmark is sent. The bookmark is taken before reading so
             # an event written mid-push is picked up by the next run.
-            push_started_at = datetime.utcnow()
+            push_started_at = utcnow()
             since = settings.wetrakr_last_push_at
 
             all_media_ids: set[int] = set()

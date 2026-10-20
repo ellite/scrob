@@ -4,6 +4,7 @@ from sqlalchemy import DateTime, ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+from core.timeutil import utcnow
 
 
 class PlexPendingPush(Base):
@@ -29,4 +30,4 @@ class PlexPendingPush(Base):
     id        : Mapped[int]      = mapped_column(Integer, primary_key=True)
     user_id   : Mapped[int]      = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     media_id  : Mapped[int]      = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
-    pushed_at : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    pushed_at : Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

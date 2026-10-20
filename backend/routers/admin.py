@@ -24,6 +24,7 @@ from dependencies import require_admin
 from core.url_validator import validate_service_url
 from core.backup import asyncpg_conn, restore_backup
 import schemas
+from core.timeutil import utcnow
 
 router = APIRouter()
 
@@ -321,7 +322,7 @@ async def backup_database(_: User = Depends(require_admin)):
                 gz.write(data)
 
         payload = buf.getvalue()
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = utcnow().strftime("%Y%m%d_%H%M%S")
         filename = f"scrob_backup_{timestamp}.bak"
         return Response(
             content=payload,

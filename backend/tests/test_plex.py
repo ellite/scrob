@@ -83,28 +83,82 @@ class GetHistoryDecodingResilienceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([i["ratingKey"] for i in items], ["1", "2"])
 
 
+_SECTIONS = {"MediaContainer": {"Directory": [
+    {"key": "1", "type": "movie"},
+    {"key": "2", "type": "show"},
+]}}
+_SHOWS = {"MediaContainer": {"Metadata": [{"ratingKey": "100", "Guid": [{"id": "tmdb://1396"}]}]}}
+
+
+class PlexLookupTests(unittest.IsolatedAsyncioTestCase):
+    """Plex 500s on parentIndex and ignores guid/grandparentGuid, so lookups
+    must go through the library index and never send those filters."""
+
+    async def _run(self, coro_fn, handler):
+        plex._index_cache.clear()
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            plex.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            return await coro_fn()
+
+    async def test_find_episode_by_ids_filters_all_leaves_locally(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            for bad in ("parentIndex", "grandparentGuid", "guid"):
+                self.assertNotIn(bad, request.url.params)
+            path = request.url.path
+            if path == "/library/sections":
+                return httpx.Response(200, json=_SECTIONS)
+            if path == "/library/sections/1/all":
+                return httpx.Response(200, json={"MediaContainer": {"Metadata": []}})
+            if path == "/library/sections/2/all":
+                return httpx.Response(200, json=_SHOWS)
+            if path == "/library/metadata/100/allLeaves":
+                return httpx.Response(200, json={"MediaContainer": {"Metadata": [
+                    {"ratingKey": "201", "parentIndex": 1, "index": 2},
+                    {"ratingKey": "202", "parentIndex": 2, "index": 2},
+                ]}})
+            if path == "/library/metadata/202":
+                return httpx.Response(200, json={"MediaContainer": {"Metadata": [{"ratingKey": "202"}]}})
+            self.fail(f"Unexpected Plex path: {path}")
+
+        item = await self._run(lambda: plex.find_episode_by_ids("http://plex.local", "t", 1396, 2, 2), handler)
+        self.assertEqual(item["ratingKey"], "202")
+
+    async def test_find_movie_by_tmdb_id_uses_library_index(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertNotIn("guid", request.url.params)
+            path = request.url.path
+            if path == "/library/sections":
+                return httpx.Response(200, json=_SECTIONS)
+            if path == "/library/sections/1/all":
+                return httpx.Response(200, json={"MediaContainer": {"Metadata": [
+                    {"ratingKey": "7", "Guid": [{"id": "tmdb://550"}]}]}})
+            if path == "/library/sections/2/all":
+                return httpx.Response(200, json=_SHOWS)
+            if path == "/library/metadata/7":
+                return httpx.Response(200, json={"MediaContainer": {"Metadata": [{"ratingKey": "7"}]}})
+            self.fail(f"Unexpected Plex path: {path}")
+
+        item = await self._run(lambda: plex.find_movie_by_tmdb_id("http://plex.local", "t", 550), handler)
+        self.assertEqual(item["ratingKey"], "7")
+
+
 class PlexSeasonRatingTests(unittest.IsolatedAsyncioTestCase):
     async def test_resolve_season_rating_key_uses_parent_show_tmdb_id(self) -> None:
+        plex._index_cache.clear()
         requested_paths: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             requested_paths.append(request.url.path)
-            if request.url.path == "/library/sections/all":
-                self.assertEqual(request.url.params["type"], "2")
-                self.assertEqual(request.url.params["guid"], "tmdb://1396")
-                return httpx.Response(
-                    200,
-                    json={
-                        "MediaContainer": {
-                            "Metadata": [
-                                {
-                                    "ratingKey": "100",
-                                    "Guid": [{"id": "tmdb://1396"}],
-                                }
-                            ]
-                        }
-                    },
-                )
+            if request.url.path == "/library/sections":
+                return httpx.Response(200, json=_SECTIONS)
+            if request.url.path == "/library/sections/1/all":
+                return httpx.Response(200, json={"MediaContainer": {"Metadata": []}})
+            if request.url.path == "/library/sections/2/all":
+                return httpx.Response(200, json=_SHOWS)
             if request.url.path == "/library/metadata/100/children":
                 return httpx.Response(
                     200,
@@ -136,7 +190,12 @@ class PlexSeasonRatingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rating_key, "103")
         self.assertEqual(
             requested_paths,
-            ["/library/sections/all", "/library/metadata/100/children"],
+            [
+                "/library/sections",
+                "/library/sections/1/all",
+                "/library/sections/2/all",
+                "/library/metadata/100/children",
+            ],
         )
 
     async def test_zero_rating_clears_plex_season_rating(self) -> None:
