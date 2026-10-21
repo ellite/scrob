@@ -1167,6 +1167,42 @@ class SyncItemsPushBackTests(_PartialWatchDB):
         self.assertEqual(push_back, {})
 
 
+class SyncItemsSkippedItemProgressTests(_PartialWatchDB):
+    """An unmatched item that can't be stored as a stub is skipped. If it was the
+    last one of a batch, the skip jumped over the batch bookkeeping and that
+    whole batch never reached processed_items - the job ended below 100%."""
+
+    async def test_skipped_item_at_a_batch_boundary_still_counts_the_batch(self):
+        from models.collection import CollectionSource
+        from models.media import MediaType
+        from models.sync import SyncJob
+
+        # No TMDB id and no name: unmatched, and too little to store a stub.
+        items = [{"Id": f"jf-{n}", "ProviderIds": {}} for n in range(3)]
+        async with self.Session() as db:
+            job = SyncJob(user_id=1, source=CollectionSource.jellyfin, total_items=len(items), processed_items=0)
+            db.add(job)
+            await db.commit()
+
+            stats = {"movies": 0, "episodes": 0, "skipped": 0, "errors": 0}
+            with patch.object(sync, "BATCH_SIZE", 2):
+                await sync.sync_items(
+                    items=items,
+                    media_type=MediaType.movie,
+                    source=CollectionSource.jellyfin,
+                    db=db,
+                    stats=stats,
+                    user_id=1,
+                    job_id=job.id,
+                    connection_id=7,
+                )
+
+            await db.refresh(job)
+            self.assertEqual(stats["skipped"], 3)
+            self.assertEqual(stats["errors"], 0)
+            self.assertEqual((job.processed_items, job.total_items), (3, 3))
+
+
 class PushWatchedBackToSourceTests(_PartialWatchDB):
     def _conn(self, type_="jellyfin", push_watched=True):
         return SimpleNamespace(

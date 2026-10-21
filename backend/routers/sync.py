@@ -2721,13 +2721,13 @@ async def sync_items(
                     media_by_tmdb[(new_media.tmdb_id, new_media.media_type)] = new_media
 
         except Exception as e:
-            if str(e) == "Skip this item (unmatched)":
-                continue
-            # Savepoint already rolled back — remove the enrichment entry we may have queued
-            if new_media and new_media_for_enrichment and new_media_for_enrichment[-1][0] is new_media:
-                new_media_for_enrichment.pop()
-            stats["errors"] += 1
-            print(f"    Error syncing item {i}: {e}")
+            # Skips fall through too, so the batch bookkeeping below still counts them.
+            if str(e) != "Skip this item (unmatched)":
+                # Savepoint already rolled back — remove the enrichment entry we may have queued
+                if new_media and new_media_for_enrichment and new_media_for_enrichment[-1][0] is new_media:
+                    new_media_for_enrichment.pop()
+                stats["errors"] += 1
+                print(f"    Error syncing item {i}: {e}")
 
         if (i + 1) % BATCH_SIZE == 0:
             await flush_collection_heals()
