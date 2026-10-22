@@ -1,5 +1,7 @@
 ---
 import { api, type TraktComment } from "../lib/api";
+import { formatDate } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 
 interface Props {
   mediaType: "movie" | "show";
@@ -41,14 +43,14 @@ if (token && Astro.locals.settings?.trakt_show_comments && (tmdbId || tvdbId)) {
       <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-red-500">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
       </svg>
-      Community Comments
+      {m.trakt_comments_title()}
       <span class="text-sm font-bold text-zinc-500 bg-zinc-900 px-3 py-1 rounded-full border border-zinc-800 ml-2">
         {comments.length}
       </span>
     </h2>
     {traktUrl && (
       <a href={traktUrl} target="_blank" rel="noopener noreferrer" class="text-sm font-semibold text-red-400 hover:text-red-300 transition-colors">
-        View on Trakt →
+        {m.trakt_comments_view_on_trakt()}
       </a>
     )}
   </div>
@@ -63,19 +65,19 @@ if (token && Astro.locals.settings?.trakt_show_comments && (tmdbId || tvdbId)) {
           <div class="flex items-center gap-3 mb-1.5 flex-wrap">
             <span class="font-black text-zinc-100 truncate">{comment.user.name || comment.user.username}</span>
             <span class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest px-2 py-0.5 bg-zinc-900 border border-zinc-800 rounded shrink-0">
-              {new Date(comment.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+              {formatDate(comment.created_at, { month: 'short', day: 'numeric', year: 'numeric' })}
             </span>
             {comment.review && (
               <span class="text-[10px] font-bold text-red-400 uppercase tracking-widest px-2 py-0.5 bg-red-500/10 border border-red-500/30 rounded shrink-0">
-                Review
+                {m.trakt_comments_review()}
               </span>
             )}
             <span class:list={["trakt-spoiler-badge text-[10px] font-bold text-amber-400 uppercase tracking-widest px-2 py-0.5 bg-amber-500/10 border border-amber-500/30 rounded shrink-0", !comment.spoiler && "hidden"]}>
-              Spoiler
+              {m.comments_spoiler()}
             </span>
             {comment.likes > 0 && (
               <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                {comment.likes} like{comment.likes !== 1 ? "s" : ""}
+                {m.trakt_comments_likes({ count: comment.likes })}
               </span>
             )}
           </div>
@@ -84,7 +86,7 @@ if (token && Astro.locals.settings?.trakt_show_comments && (tmdbId || tvdbId)) {
               {comment.comment}
             </p>
             <div class:list={["trakt-spoiler-overlay absolute inset-0 flex items-center justify-center rounded-lg cursor-pointer bg-zinc-950/70 backdrop-blur-sm", !comment.spoiler && "hidden"]}>
-              <span class="text-amber-400 font-bold text-sm">Click to reveal</span>
+              <span class="text-amber-400 font-bold text-sm">{m.comments_click_to_reveal()}</span>
             </div>
           </div>
         </div>

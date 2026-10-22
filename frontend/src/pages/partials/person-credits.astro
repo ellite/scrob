@@ -1,6 +1,7 @@
 ---
 import MediaCard from "../../components/MediaCard.astro";
 import { api, type MediaItem } from "../../lib/api";
+import { m } from "../../paraglide/messages.js";
 
 export const partial = true;
 
@@ -32,7 +33,7 @@ const credits = person.credits || [];
     <div class="flex flex-col gap-1">
       <MediaCard item={item as unknown as MediaItem} />
       {item.character && (
-        <p class="text-xs text-zinc-500 truncate px-1">as {item.character}</p>
+        <p class="text-xs text-zinc-500 truncate px-1">{m.person_as_character({ character: item.character })}</p>
       )}
     </div>
   ))}

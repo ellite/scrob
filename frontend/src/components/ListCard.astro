@@ -1,6 +1,7 @@
 ---
 import type { PrivacyLevel } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
+import { m } from "../paraglide/messages.js";
 
 interface Props {
   id: number;
@@ -61,14 +62,14 @@ const p = preview_posters;
       <>
         <p class="text-xs text-zinc-500 truncate">{description}</p>
         <p class="text-xs text-zinc-400 mt-0.5">
-          {item_count} {item_count === 1 ? "item" : "items"}
-          {username && <> · by {username}</>}
+          {m.list_item_count({ count: item_count })}
+          {username && <> · {m.list_by_user({ username })}</>}
         </p>
       </>
     ) : (
       <p class="text-xs text-zinc-400">
-        {item_count} {item_count === 1 ? "item" : "items"}
-        {username && <> · by {username}</>}
+        {m.list_item_count({ count: item_count })}
+        {username && <> · {m.list_by_user({ username })}</>}
       </p>
     )}
   </div>

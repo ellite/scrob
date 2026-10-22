@@ -1,6 +1,7 @@
 ---
 import MediaRow from "../../components/MediaRow.astro";
 import { api } from "../../lib/api";
+import { m } from "../../paraglide/messages.js";
 
 export const partial = true;
 
@@ -30,4 +31,4 @@ if (recommendations.length === 0) {
 }
 ---
 
-<MediaRow title="More like this" items={recommendations} />
+<MediaRow title={m.recommendations_more_like_this()} items={recommendations} />

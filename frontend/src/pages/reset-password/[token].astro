@@ -1,11 +1,16 @@
 ---
 import Base from "../../layouts/Base.astro";
 import { api } from "../../lib/api";
+import LanguagePicker from "../../components/LanguagePicker.astro";
+import { m } from "../../paraglide/messages.js";
 
 const { token } = Astro.params as { token: string };
 
 let success = false;
 let error = "";
+// Expired/invalid link: offer a new one (decided here, not by matching the
+// now-translated error text).
+let linkProblem = false;
 
 if (Astro.request.method === "POST") {
   try {
@@ -14,9 +19,9 @@ if (Astro.request.method === "POST") {
     const confirm = data.get("confirm_password")?.toString() ?? "";
 
     if (newPassword !== confirm) {
-      error = "Passwords do not match.";
+      error = m.reset_passwords_mismatch();
     } else if (newPassword.length < 8) {
-      error = "Password must be at least 8 characters.";
+      error = m.reset_password_too_short();
     } else {
       await api.auth.resetPassword(token, newPassword);
       return Astro.redirect("/login?password_reset=true");
@@ -24,22 +29,24 @@ if (Astro.request.method === "POST") {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "";
     if (msg.includes("expired")) {
-      error = "This reset link has expired. Please request a new one.";
+      error = m.reset_link_expired();
+      linkProblem = true;
     } else if (msg.includes("invalid") || msg.includes("404")) {
-      error = "This reset link is invalid or has already been used.";
+      error = m.reset_link_invalid();
+      linkProblem = true;
     } else {
-      error = "Something went wrong. Please try again.";
+      error = m.common_something_went_wrong_retry();
     }
   }
 }
 ---
 
-<Base title="Reset Password" hideNav>
+<Base title={m.reset_page_title()} hideNav>
   <div class="max-w-md mx-auto mt-16 p-8 bg-zinc-900 rounded-xl border border-zinc-800 shadow-2xl relative">
     <button
       id="theme-toggle"
       class="absolute top-4 right-4 p-2 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-100 transition-all hover:scale-110 active:scale-95"
-      aria-label="Toggle Theme"
+      aria-label={m.nav_toggle_theme()}
     >
       <span id="sun-icon" class="hidden">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
@@ -50,18 +57,18 @@ if (Astro.request.method === "POST") {
     </button>
 
     <div class="flex flex-col items-center mb-6">
-      <img src="/scrob.png" alt="Scrob Logo" class="w-36 object-contain mb-2" />
+      <img src="/scrob.png" alt={m.nav_logo_alt()} class="w-36 object-contain mb-2" />
       <span class="text-zinc-100 font-bold text-xl tracking-tight">Scrob</span>
     </div>
 
-    <h1 class="text-3xl font-bold mb-6 text-zinc-100">Reset password</h1>
+    <h1 class="text-3xl font-bold mb-6 text-zinc-100">{m.reset_heading()}</h1>
 
     {error && (
       <div class="bg-red-500/10 border border-red-500 text-red-500 p-3 rounded-lg mb-6 text-sm">
         {error}
-        {error.includes("expired") || error.includes("invalid") ? (
+        {linkProblem ? (
           <div class="mt-2">
-            <a href="/forgot-password" class="underline hover:no-underline">Request a new link</a>
+            <a href="/forgot-password" class="underline hover:no-underline">{m.reset_request_new_link()}</a>
           </div>
         ) : null}
       </div>
@@ -69,7 +76,7 @@ if (Astro.request.method === "POST") {
 
     <form method="POST" class="space-y-4">
       <div>
-        <label for="new_password" class="block text-sm font-medium text-zinc-400 mb-1">New password</label>
+        <label for="new_password" class="block text-sm font-medium text-zinc-400 mb-1">{m.reset_new_password()}</label>
         <div class="relative group/field">
           <input
             type="password"
@@ -83,7 +90,7 @@ if (Astro.request.method === "POST") {
           <button
             type="button"
             class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
-            aria-label="Toggle password visibility"
+            aria-label={m.auth_toggle_password()}
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon">
               <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" />
@@ -96,7 +103,7 @@ if (Astro.request.method === "POST") {
         </div>
       </div>
       <div>
-        <label for="confirm_password" class="block text-sm font-medium text-zinc-400 mb-1">Confirm new password</label>
+        <label for="confirm_password" class="block text-sm font-medium text-zinc-400 mb-1">{m.reset_confirm_new_password()}</label>
         <div class="relative group/field">
           <input
             type="password"
@@ -109,7 +116,7 @@ if (Astro.request.method === "POST") {
           <button
             type="button"
             class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
-            aria-label="Toggle password visibility"
+            aria-label={m.auth_toggle_password()}
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon">
               <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" />
@@ -125,12 +132,16 @@ if (Astro.request.method === "POST") {
         type="submit"
         class="w-full bg-zinc-100 text-zinc-950 font-bold py-2 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer mt-4"
       >
-        Reset password
+        {m.reset_heading()}
       </button>
     </form>
 
+    <div class="mt-6 flex justify-center">
+      <LanguagePicker />
+    </div>
+
     <div class="mt-6 text-center text-sm text-zinc-500">
-      <a href="/login" class="text-zinc-400 hover:text-zinc-100 transition-colors">Back to login</a>
+      <a href="/login" class="text-zinc-400 hover:text-zinc-100 transition-colors">{m.auth_back_to_login()}</a>
     </div>
   </div>
 </Base>

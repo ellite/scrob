@@ -2,6 +2,8 @@
 import Base from "../layouts/Base.astro";
 import { api, tmdbImageUrl, type DroppedShow, type DroppedMovie } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
+import { showStatusLabel } from "../lib/labels";
+import { m } from "../paraglide/messages.js";
 import PosterFallback from "../components/PosterFallback.astro";
 export const prerender = false;
 
@@ -24,32 +26,32 @@ const showHref = (s: DroppedShow) =>
 const total = shows.length + movies.length;
 ---
 
-<Base title="Dropped">
+<Base title={m.dropped_page_title()}>
   <div class="mb-8">
-    <h1 class="page-title mb-2">Dropped</h1>
+    <h1 class="page-title mb-2">{m.dropped_page_title()}</h1>
     <p class="text-zinc-500">
       {total > 0
-        ? `${total} title${total === 1 ? "" : "s"} you've dropped — excluded from Next Up, Continue Watching, Calendar and recommendations.`
-        : "Shows and movies you drop are collected here."}
+        ? m.dropped_summary({ count: total })
+        : m.dropped_intro()}
     </p>
   </div>
 
   {failed && (
     <div class="text-center py-20 text-zinc-500">
-      <p class="text-lg">Couldn't load your dropped titles.</p>
+      <p class="text-lg">{m.dropped_load_failed()}</p>
     </div>
   )}
 
   {!failed && total === 0 && (
     <div class="text-center py-20 text-zinc-500">
-      <p class="text-lg">Nothing dropped.</p>
-      <p class="text-sm mt-2">Drop a show or movie from its page and it'll show up here.</p>
+      <p class="text-lg">{m.dropped_empty()}</p>
+      <p class="text-sm mt-2">{m.dropped_empty_hint()}</p>
     </div>
   )}
 
   {shows.length > 0 && (
     <section class="mb-12">
-      <h2 class="section-headline mb-4">Shows</h2>
+      <h2 class="section-headline mb-4">{m.common_shows()}</h2>
       <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
         {shows.map((s) => {
           const posterPath = ratingPosterUrl(tmdbImageUrl(s.poster_path, "w500"), { type: "series", tmdb_id: s.tmdb_id, tvdb_id: s.tvdb_id }, Astro.locals.hasRpdbKey);
@@ -74,8 +76,8 @@ const total = shows.length + movies.length;
               class="undrop-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 cursor-pointer bg-rose-900/60 border border-rose-600 text-rose-300 hover:bg-rose-700 hover:border-rose-500 hover:text-white"
               data-kind="show"
               data-id={String(s.id)}
-              title="Undrop this show"
-              aria-label={`Undrop ${s.title}`}
+              title={m.dropped_undrop_show()}
+              aria-label={m.dropped_undrop_title({ title: s.title })}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
             </button>
@@ -83,7 +85,7 @@ const total = shows.length + movies.length;
               <h3 class="text-sm font-bold text-zinc-100 group-hover:text-blue-400 truncate transition-colors leading-tight">{s.title}</h3>
               <div class="flex items-center gap-2 mt-1">
                 {s.year && <span class="text-[11px] font-medium text-zinc-500">{s.year}</span>}
-                {s.status && <span class="text-[11px] font-medium text-zinc-600 truncate">{s.status}</span>}
+                {s.status && <span class="text-[11px] font-medium text-zinc-600 truncate">{showStatusLabel(s.status)}</span>}
               </div>
             </a>
           </div>
@@ -95,39 +97,39 @@ const total = shows.length + movies.length;
 
   {movies.length > 0 && (
     <section class="mb-12">
-      <h2 class="section-headline mb-4">Movies</h2>
+      <h2 class="section-headline mb-4">{m.common_movies()}</h2>
       <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-        {movies.map((m) => {
-          const posterPath = ratingPosterUrl(tmdbImageUrl(m.poster_path, "w500"), { type: "movie", tmdb_id: m.tmdb_id }, Astro.locals.hasRpdbKey);
+        {movies.map((movie) => {
+          const posterPath = ratingPosterUrl(tmdbImageUrl(movie.poster_path, "w500"), { type: "movie", tmdb_id: movie.tmdb_id }, Astro.locals.hasRpdbKey);
           return (
           <div class="group relative flex flex-col rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-blue-500/50 hover:shadow-2xl hover:shadow-blue-900/20 transition-all duration-300 transform hover:-translate-y-1">
-            <a href={m.tmdb_id ? `/media/movie/${m.tmdb_id}` : "#"} class="block active:scale-95 active:opacity-70 transition-all duration-100">
+            <a href={movie.tmdb_id ? `/media/movie/${movie.tmdb_id}` : "#"} class="block active:scale-95 active:opacity-70 transition-all duration-100">
               <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
                 {posterPath ? (
                   <img
                     src={posterPath}
-                    alt={m.title}
+                    alt={movie.title}
                     class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                     loading="lazy"
                     decoding="async"
                   />
                 ) : (
-                  <PosterFallback kind="movie" title={m.title} class="flex" />
+                  <PosterFallback kind="movie" title={movie.title} class="flex" />
                 )}
               </div>
             </a>
             <button
               class="undrop-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 cursor-pointer bg-rose-900/60 border border-rose-600 text-rose-300 hover:bg-rose-700 hover:border-rose-500 hover:text-white"
               data-kind="movie"
-              data-id={String(m.id)}
-              title="Undrop this movie"
-              aria-label={`Undrop ${m.title}`}
+              data-id={String(movie.id)}
+              title={m.dropped_undrop_movie()}
+              aria-label={m.dropped_undrop_title({ title: movie.title })}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
             </button>
-            <a href={m.tmdb_id ? `/media/movie/${m.tmdb_id}` : "#"} class="block p-3 bg-gradient-to-b from-zinc-900 to-zinc-950 flex-1">
-              <h3 class="text-sm font-bold text-zinc-100 group-hover:text-blue-400 truncate transition-colors leading-tight">{m.title}</h3>
-              {m.year && <span class="text-[11px] font-medium text-zinc-500 mt-1 block">{m.year}</span>}
+            <a href={movie.tmdb_id ? `/media/movie/${movie.tmdb_id}` : "#"} class="block p-3 bg-gradient-to-b from-zinc-900 to-zinc-950 flex-1">
+              <h3 class="text-sm font-bold text-zinc-100 group-hover:text-blue-400 truncate transition-colors leading-tight">{movie.title}</h3>
+              {movie.year && <span class="text-[11px] font-medium text-zinc-500 mt-1 block">{movie.year}</span>}
             </a>
           </div>
           );

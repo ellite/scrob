@@ -52,6 +52,8 @@ dist/
 **/dist/
 .astro/
 **/.astro/
+# Paraglide output, regenerated from frontend/messages on every dev/build
+frontend/src/paraglide/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

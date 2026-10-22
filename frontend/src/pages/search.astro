@@ -3,6 +3,8 @@ import Base from "../layouts/Base.astro";
 import MediaCard from "../components/MediaCard.astro";
 import Pagination from "../components/Pagination.astro";
 import { api, type MediaItem, type UserSearchResult } from "../lib/api";
+import { escapeHtml } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 
 const { token, user: currentUser } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -48,7 +50,7 @@ if (q.length >= 2) {
       // Searching for other users has no anonymous use case - keep it
       // strictly behind a real session regardless of logged-out navigation.
       if (!currentUser) {
-        error = "Log in to search for users.";
+        error = m.search_login_required();
       } else {
         const data = await api.profile.searchUsers(q, token);
         userResults = data.results;
@@ -70,44 +72,32 @@ const currentYear = new Date().getFullYear();
 const years = Array.from({ length: currentYear - 1899 }, (_, i) => currentYear - i);
 
 const tabs: [string | undefined, string][] = [
-  [undefined,      "Movies & Shows"],
-  ["movie",        "Movies"],
-  ["series",       "Shows"],
-  ["episode",      "Episodes"],
-  ["person",       "People"],
-  ["collection",   "Collections"],
-  ["network",      "Networks"],
-  ["studio",       "Studios"],
+  [undefined,      m.search_tab_all()],
+  ["movie",        m.common_movies()],
+  ["series",       m.common_shows()],
+  ["episode",      m.search_tab_episodes()],
+  ["person",       m.search_tab_people()],
+  ["collection",   m.search_tab_collections()],
+  ["network",      m.search_tab_networks()],
+  ["studio",       m.search_tab_studios()],
   // Searching for other users has no anonymous use case.
-  ...(currentUser ? ([["user", "Users"]] as [string, string][]) : []),
+  ...(currentUser ? ([["user", m.search_tab_users()]] as [string, string][]) : []),
 ];
 
 // Empty-state prompt: narrowed to whatever tab is active instead of always
 // listing every searchable kind.
-const searchPromptNouns: Record<string, string> = {
-  movie: "movies",
-  series: "shows",
-  episode: "episodes",
-  person: "people",
-  collection: "collections",
-  network: "networks",
-  studio: "studios",
-  user: "users",
-};
-const searchPrompt = `Type something in the search bar to find ${
-  (type && searchPromptNouns[type]) || "movies, shows, episodes, people, collections, or users"
-}.`;
+const searchPrompt = m.search_prompt({ type: type ?? "" });
 ---
 
-<Base title={q ? `Search: ${q}` : "Search"}>
+<Base title={q ? m.search_page_title_query({ query: q }) : m.common_search()}>
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
 
   <div id="search-page-content">
   <div class="mb-8">
     <h1 class="page-title mb-2">
-      {q ? `Search results for "${q}"` : "Search"}
+      {q ? m.search_results_for({ query: q }) : m.common_search()}
     </h1>
-    <p class="text-zinc-500">{totalResults} results found</p>
+    <p class="text-zinc-500">{m.search_results_count({ count: totalResults })}</p>
   </div>
 
   <!-- Tab bar -->
@@ -132,13 +122,11 @@ const searchPrompt = `Type something in the search bar to find ${
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
           </svg>
-          In My Collection
+          {m.filter_in_my_collection()}
         </a>
       )}
       {!hasTmdbKey && q.length >= 2 && !isUserSearch && (
-        <div class="text-xs text-zinc-500 bg-zinc-900/50 px-3 py-1.5 rounded-lg border border-zinc-800">
-          Showing local results only. <a href="/settings" class="text-blue-500 hover:underline">Add TMDB Key</a> for more.
-        </div>
+        <div class="text-xs text-zinc-500 bg-zinc-900/50 px-3 py-1.5 rounded-lg border border-zinc-800" set:html={m.search_local_only({ link: `<a href="/settings" class="text-blue-500 hover:underline">${escapeHtml(m.search_add_tmdb_key())}</a>` })} />
       )}
     </div>
   </div>
@@ -147,13 +135,13 @@ const searchPrompt = `Type something in the search bar to find ${
   {showYearFilter && (
     <div class="flex items-center gap-3 mb-6">
       <select id="filter-year" data-q={q} data-type={type ?? ""} class="bg-zinc-900 border border-zinc-700 text-zinc-300 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
-        <option value="">All Years</option>
+        <option value="">{m.search_all_years()}</option>
         {years.map(y => (
           <option value={y} selected={year === y}>{y}</option>
         ))}
       </select>
       {year && (
-        <a href={`/search?q=${encodeURIComponent(q)}&type=${type}`} class="text-sm text-zinc-500 hover:text-zinc-300 transition">Clear</a>
+        <a href={`/search?q=${encodeURIComponent(q)}&type=${type}`} class="text-sm text-zinc-500 hover:text-zinc-300 transition">{m.common_clear()}</a>
       )}
     </div>
   )}
@@ -171,7 +159,7 @@ const searchPrompt = `Type something in the search bar to find ${
   <!-- User results -->
   {isUserSearch && q && userResults.length === 0 && !error && (
     <div class="text-center py-20">
-      <p class="text-zinc-500">No users found for "{q}".</p>
+      <p class="text-zinc-500">{m.search_no_users({ query: q })}</p>
     </div>
   )}
 
@@ -204,7 +192,7 @@ const searchPrompt = `Type something in the search bar to find ${
                 data-user-id={user.id}
                 data-following={user.is_following ? "true" : "false"}
               >
-                {user.is_following ? "Following" : "Follow"}
+                {user.is_following ? m.follow_following() : m.follow_follow()}
               </button>
             )}
           </div>
@@ -213,19 +201,19 @@ const searchPrompt = `Type something in the search bar to find ${
           <div class="grid grid-cols-4 gap-2 pt-1 border-t border-zinc-800">
             <div class="text-center">
               <p class="text-base font-black text-zinc-100 leading-none">{user.movies_watched}</p>
-              <p class="text-[10px] text-zinc-400 font-bold uppercase tracking-wide mt-1">Movies</p>
+              <p class="text-[10px] text-zinc-400 font-bold uppercase tracking-wide mt-1">{m.stat_movies()}</p>
             </div>
             <div class="text-center">
               <p class="text-base font-black text-zinc-100 leading-none">{user.shows_watched}</p>
-              <p class="text-[10px] text-zinc-400 font-bold uppercase tracking-wide mt-1">Shows</p>
+              <p class="text-[10px] text-zinc-400 font-bold uppercase tracking-wide mt-1">{m.stat_shows()}</p>
             </div>
             <div class="text-center">
               <p class="text-base font-black text-zinc-100 leading-none">{user.total_rated}</p>
-              <p class="text-[10px] text-zinc-400 font-bold uppercase tracking-wide mt-1">Rated</p>
+              <p class="text-[10px] text-zinc-400 font-bold uppercase tracking-wide mt-1">{m.stat_rated()}</p>
             </div>
             <div class="text-center">
               <p class="text-base font-black text-zinc-100 leading-none">{user.follower_count}</p>
-              <p class="text-[10px] text-zinc-400 font-bold uppercase tracking-wide mt-1">Followers</p>
+              <p class="text-[10px] text-zinc-400 font-bold uppercase tracking-wide mt-1">{m.stat_followers()}</p>
             </div>
           </div>
         </div>
@@ -236,7 +224,7 @@ const searchPrompt = `Type something in the search bar to find ${
   <!-- Media results -->
   {!isUserSearch && q && results.length === 0 && !error && (
     <div class="text-center py-20">
-      <p class="text-zinc-500">No results found for "{q}".</p>
+      <p class="text-zinc-500">{m.search_no_results({ query: q })}</p>
     </div>
   )}
 
@@ -290,7 +278,7 @@ const searchPrompt = `Type something in the search bar to find ${
         data-q={q}
         class="px-4 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer"
       >
-        Can't find what you're looking for? Try searching TheTVDB
+        {m.search_tvdb_fallback()}
       </button>
       <div id="tvdb-fallback-results" class="hidden mt-6 text-left"></div>
     </div>
@@ -299,6 +287,8 @@ const searchPrompt = `Type something in the search bar to find ${
 </Base>
 
 <script>
+  import { m } from '../paraglide/messages.js';
+
   function esc(s: string): string {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
@@ -313,26 +303,26 @@ const searchPrompt = `Type something in the search bar to find ${
       tvdbBtn.addEventListener('click', async () => {
         const q = tvdbBtn.dataset.q ?? '';
         tvdbBtn.disabled = true;
-        tvdbBtn.textContent = 'Searching TheTVDB…';
+        tvdbBtn.textContent = m.search_tvdb_searching();
         tvdbResults.classList.remove('hidden');
-        tvdbResults.innerHTML = '<p class="text-sm text-zinc-500 text-center">Searching…</p>';
+        tvdbResults.innerHTML = `<p class="text-sm text-zinc-500 text-center">${esc(m.common_searching())}</p>`;
         try {
           const res = await fetch(`/api/proxy/media/search-tvdb?q=${encodeURIComponent(q)}`, {
             headers: { 'Authorization': `Bearer ${token}` },
           });
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            tvdbResults.innerHTML = `<p class="text-sm text-red-400 text-center">${esc(err.detail ?? 'TVDB search failed.')}</p>`;
+            tvdbResults.innerHTML = `<p class="text-sm text-red-400 text-center">${esc(err.detail ?? m.search_tvdb_failed())}</p>`;
             return;
           }
           const items: any[] = await res.json();
           if (!items.length) {
-            tvdbResults.innerHTML = '<p class="text-sm text-zinc-500 text-center">No results found on TheTVDB.</p>';
+            tvdbResults.innerHTML = `<p class="text-sm text-zinc-500 text-center">${esc(m.search_tvdb_no_results())}</p>`;
             return;
           }
           tvdbBtn.classList.add('hidden');
           tvdbResults.innerHTML = `
-            <p class="group-label mb-4">TheTVDB results</p>
+            <p class="group-label mb-4">${esc(m.search_tvdb_results())}</p>
             <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
               ${items.map((it) => `
                 <a href="/show/tvdb/${it.tvdb_id}" class="group">
@@ -346,13 +336,10 @@ const searchPrompt = `Type something in the search bar to find ${
                 </a>
               `).join('')}
             </div>
-            <p class="text-xs text-zinc-500 mt-6">
-              Metadata provided by
-              <a href="https://thetvdb.com" target="_blank" rel="noopener noreferrer" class="text-zinc-400 hover:text-zinc-200 underline underline-offset-2 transition-colors">TheTVDB</a>. Please add missing information or corrections there.
-            </p>
+            <p class="text-xs text-zinc-500 mt-6">${m.tvdb_attribution({ link: '<a href="https://thetvdb.com" target="_blank" rel="noopener noreferrer" class="text-zinc-400 hover:text-zinc-200 underline underline-offset-2 transition-colors">TheTVDB</a>' })}</p>
           `;
         } catch {
-          tvdbResults.innerHTML = '<p class="text-sm text-red-400 text-center">TVDB search failed.</p>';
+          tvdbResults.innerHTML = `<p class="text-sm text-red-400 text-center">${esc(m.search_tvdb_failed())}</p>`;
         } finally {
           tvdbBtn.disabled = false;
           tvdbBtn.textContent = defaultLabel;
@@ -388,7 +375,7 @@ const searchPrompt = `Type something in the search bar to find ${
 
           const nowFollowing = !isFollowing;
           btn.dataset.following = nowFollowing ? 'true' : 'false';
-          btn.textContent = nowFollowing ? 'Following' : 'Follow';
+          btn.textContent = nowFollowing ? m.follow_following() : m.follow_follow();
           btn.className = btn.className.replace(
             nowFollowing
               ? 'bg-blue-600/80 hover:bg-blue-500 text-white border-blue-500/40'

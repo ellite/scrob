@@ -1,19 +1,21 @@
 ---
 import Base from "../layouts/Base.astro";
 import { connectionIconHtml } from "../lib/connectionIcons";
+import { escapeHtml } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 
 Astro.response.headers.set("Cache-Control", "no-store");
 
 const creditGroups: { label: string; services: { name: string; type: string; url: string }[] }[] = [
   {
-    label: "Metadata",
+    label: m.about_credits_metadata(),
     services: [
       { name: "TMDB", type: "themoviedatabase", url: "https://www.themoviedb.org" },
       { name: "TheTVDB", type: "tvdb", url: "https://thetvdb.com" },
     ],
   },
   {
-    label: "Media servers & catalogs",
+    label: m.about_credits_media_servers(),
     services: [
       { name: "Plex", type: "plex", url: "https://www.plex.tv" },
       { name: "Jellyfin", type: "jellyfin", url: "https://jellyfin.org" },
@@ -25,7 +27,7 @@ const creditGroups: { label: string; services: { name: string; type: string; url
     ],
   },
   {
-    label: "Trackers",
+    label: m.about_credits_trackers(),
     services: [
       { name: "Trakt", type: "trakt", url: "https://trakt.tv" },
       { name: "Simkl", type: "simkl", url: "https://simkl.com" },
@@ -35,7 +37,7 @@ const creditGroups: { label: string; services: { name: string; type: string; url
     ],
   },
   {
-    label: "Library automation",
+    label: m.about_credits_automation(),
     services: [
       { name: "Radarr", type: "radarr", url: "https://radarr.video" },
       { name: "Sonarr", type: "sonarr", url: "https://sonarr.tv" },
@@ -78,13 +80,13 @@ if (currentVersion !== 'dev') {
 }
 ---
 
-<Base title="About">
+<Base title={m.about_page_title()}>
   <div class="max-w-2xl mx-auto py-8">
     <div class="flex items-center gap-4 mb-8">
-      <img src="/scrob.png" alt="Scrob Logo" class="w-16 h-16 object-contain" />
+      <img src="/scrob.png" alt={m.nav_logo_alt()} class="w-16 h-16 object-contain" />
       <div>
         <h1 class="page-title">Scrob</h1>
-        <p class="text-zinc-500 text-sm mt-0.5">Version {currentVersion}</p>
+        <p class="text-zinc-500 text-sm mt-0.5">{m.about_version({ version: currentVersion })}</p>
       </div>
     </div>
 
@@ -102,8 +104,8 @@ if (currentVersion !== 'dev') {
             <line x1="12" y1="3" x2="12" y2="15"/>
           </svg>
           <span>
-            Version <strong class="text-blue-200">{latestVersion}</strong> is available
-            <span class="text-blue-500 ml-1">- view changelog</span>
+            <Fragment set:html={m.about_update_available({ version: escapeHtml(latestVersion) })} />
+            <span class="text-blue-500 ml-1">{m.about_view_changelog()}</span>
           </span>
         </div>
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-50 group-hover:opacity-100 transition-opacity shrink-0"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
@@ -111,13 +113,10 @@ if (currentVersion !== 'dev') {
     )}
 
     <div class="space-y-6 text-zinc-400 leading-relaxed">
-      <p>
-        Scrob - Open Source, Self-hosted media tracking app. It syncs your libraries from Jellyfin, Plex, and Emby,
-        tracks your watch history, ratings, and personal lists - Your own private Letterboxd + Trakt.
-      </p>
+      <p>{m.about_description()}</p>
 
       <div>
-        <h2 class="section-headline mb-6">Links</h2>
+        <h2 class="section-headline mb-6">{m.about_links()}</h2>
         <div class="space-y-2">
           <a
             href="https://github.com/ellite/scrob"
@@ -142,7 +141,7 @@ if (currentVersion !== 'dev') {
               <line x1="12" y1="8" x2="12" y2="12"/>
               <line x1="12" y1="16" x2="12.01" y2="16"/>
             </svg>
-            <span>Issues &amp; Requests</span>
+            <span>{m.about_issues()}</span>
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-0 group-hover:opacity-50 transition-opacity"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
           </a>
           <a
@@ -158,7 +157,7 @@ if (currentVersion !== 'dev') {
               <line x1="16" y1="17" x2="8" y2="17"/>
               <polyline points="10 9 9 9 8 9"/>
             </svg>
-            <span>License - GNU GPL v3</span>
+            <span>{m.about_license()}</span>
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-0 group-hover:opacity-50 transition-opacity"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
           </a>
           <a
@@ -171,19 +170,15 @@ if (currentVersion !== 'dev') {
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
               <circle cx="12" cy="7" r="4"/>
             </svg>
-            <span>Author - Henrique.pt</span>
+            <span>{m.about_author()}</span>
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-0 group-hover:opacity-50 transition-opacity"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
           </a>
         </div>
       </div>
 
       <div>
-        <h2 class="section-headline mb-2">Credits</h2>
-        <p class="text-sm text-zinc-500 mb-6">
-          Scrob connects to the following third-party services through their
-          publicly documented APIs. It is an independent project and is not
-          affiliated with, endorsed by, or certified by any of them.
-        </p>
+        <h2 class="section-headline mb-2">{m.about_credits()}</h2>
+        <p class="text-sm text-zinc-500 mb-6">{m.about_credits_intro()}</p>
         <div class="space-y-5">
           {creditGroups.map((group) => (
             <div>
@@ -209,19 +204,12 @@ if (currentVersion !== 'dev') {
       </div>
 
       <div class="pt-4 border-t border-zinc-800 text-xs text-zinc-600 space-y-2">
-        <p>Built with Astro, FastAPI, and PostgreSQL.</p>
-        <p>
-          This product uses the TMDB API but is not endorsed or certified by
-          <a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer" class="text-zinc-500 hover:text-zinc-300 underline underline-offset-2 transition-colors">TMDB</a>.
-          Metadata is also provided by
-          <a href="https://thetvdb.com" target="_blank" rel="noopener noreferrer" class="text-zinc-500 hover:text-zinc-300 underline underline-offset-2 transition-colors">TheTVDB</a>.
-        </p>
-        <p>
-          All product names, logos, brands, and trademarks shown in Scrob are
-          the property of their respective owners and are used only to identify
-          the services Scrob interoperates with. Their use does not imply any
-          affiliation with or endorsement by them.
-        </p>
+        <p>{m.about_built_with()}</p>
+        <p set:html={m.about_tmdb_notice({
+          tmdb: '<a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer" class="text-zinc-500 hover:text-zinc-300 underline underline-offset-2 transition-colors">TMDB</a>',
+          tvdb: '<a href="https://thetvdb.com" target="_blank" rel="noopener noreferrer" class="text-zinc-500 hover:text-zinc-300 underline underline-offset-2 transition-colors">TheTVDB</a>',
+        })} />
+        <p>{m.about_trademarks()}</p>
       </div>
     </div>
   </div>

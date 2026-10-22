@@ -8,6 +8,8 @@ interface Props {
   isSeries: boolean;
 }
 
+import { m } from "../paraglide/messages.js";
+
 const { watched, inLists, inLibrary, collectionPct, watchPct, isSeries } = Astro.props;
 
 const watchActive = isSeries ? watchPct > 0 : watched;
@@ -21,14 +23,14 @@ const collectActive = isSeries ? collectionPct > 0 : inLibrary;
     data-watched={String(watched)}
     data-watch-pct={String(watchPct)}
     data-state={watchActive ? 'active' : 'inactive'}
-    title={isSeries ? `${watchPct}% watched` : (watched ? 'Mark as unwatched' : 'Mark as watched')}
+    title={isSeries ? m.watch_pct_watched({ pct: watchPct }) : (watched ? m.watch_mark_unwatched() : m.watch_mark_watched())}
     class={`flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer border-r border-zinc-800/60 hover:brightness-125 ${watchActive ? 'bg-green-500/20 text-green-400' : 'bg-zinc-900 text-zinc-400 hover:bg-green-500/10 hover:text-green-500'}`}
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
       <circle cx="12" cy="12" r="3" fill={watchActive ? "currentColor" : "none"}/>
     </svg>
-    <span class="text-[8px] font-bold uppercase tracking-wider leading-none">{isSeries ? `${watchPct}%` : 'Watched'}</span>
+    <span class="text-[8px] font-bold uppercase tracking-wider leading-none">{isSeries ? `${watchPct}%` : m.card_watched()}</span>
   </button>
 
   <!-- Lists (sky) -->
@@ -36,7 +38,7 @@ const collectActive = isSeries ? collectionPct > 0 : inLibrary;
     data-action="list"
     data-in-lists={JSON.stringify(inLists)}
     data-state={inLists.length > 0 ? 'active' : 'inactive'}
-    title="Add to list"
+    title={m.list_popover_title()}
     class={`flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer border-r border-zinc-800/60 hover:brightness-125 ${inLists.length > 0 ? 'bg-sky-500/20 text-sky-400' : 'bg-zinc-900 text-zinc-400 hover:bg-sky-500/10 hover:text-sky-400'}`}
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -47,7 +49,7 @@ const collectActive = isSeries ? collectionPct > 0 : inLibrary;
       <line x1="3" y1="12" x2="3.01" y2="12"/>
       <line x1="3" y1="18" x2="3.01" y2="18"/>
     </svg>
-    <span class="text-[8px] font-bold uppercase tracking-wider leading-none">Lists</span>
+    <span class="text-[8px] font-bold uppercase tracking-wider leading-none">{m.card_lists()}</span>
   </button>
 
   <!-- Collected (purple) -->
@@ -56,7 +58,7 @@ const collectActive = isSeries ? collectionPct > 0 : inLibrary;
     data-in-library={String(inLibrary)}
     data-collection-pct={String(collectionPct)}
     data-state={collectActive ? 'active' : 'inactive'}
-    title={isSeries ? `${collectionPct}% in library` : (inLibrary ? 'Remove from collection' : 'Add to collection')}
+    title={isSeries ? m.collection_pct_in_library({ pct: collectionPct }) : (inLibrary ? m.collection_remove() : m.collection_add())}
     class={`flex flex-col items-center justify-center gap-1 py-2.5 transition-all cursor-pointer hover:brightness-125 ${collectActive ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-900 text-zinc-400 hover:bg-purple-500/10 hover:text-purple-400'}`}
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -65,6 +67,6 @@ const collectActive = isSeries ? collectionPct > 0 : inLibrary;
       <path d="M15 22v-4a3 3 0 0 0-6 0v4"/>
       <path d="M2 7h20"/>
     </svg>
-    <span class="text-[8px] font-bold uppercase tracking-wider leading-none">{isSeries ? `${collectionPct}%` : 'Collected'}</span>
+    <span class="text-[8px] font-bold uppercase tracking-wider leading-none">{isSeries ? `${collectionPct}%` : m.card_collected()}</span>
   </button>
 </div>
