@@ -2464,7 +2464,7 @@ async def mark_as_watched(
 
     event = WatchEvent(
         user_id=current_user.id,
-        source="manual",
+        source=event_in.source,
         media_id=media.id,
         watched_at=watched_at,
         completed=event_in.completed,

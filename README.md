@@ -223,7 +223,7 @@ That's it - no database container, no `DATABASE_URL` to configure. PostgreSQL is
 
 **Switching to an external database later:** set `DATABASE_URL` in the environment and the embedded PostgreSQL will be skipped entirely. The omnibus image behaves identically to the standard image when `DATABASE_URL` is provided.
 
-> **Note:** The embedded PostgreSQL version is tied to the image's base OS (Debian Bookworm ships PostgreSQL 15). Major version upgrades of the bundled database require a manual data migration. If you anticipate needing to control the database version independently, use the standard two-container setup instead.
+> **Note:** The embedded PostgreSQL major version is pinned by the image (currently PostgreSQL 17, from Alpine's `postgresql17` package). Major version upgrades of the bundled database require a manual data migration. If you anticipate needing to control the database version independently, use the standard two-container setup instead.
 
 ### Docker Run
 

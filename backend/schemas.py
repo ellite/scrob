@@ -1,5 +1,6 @@
 import re
 from pydantic import BaseModel, EmailStr, Field, SecretStr, field_validator, model_validator, ConfigDict
+import re
 from typing import Optional
 from datetime import datetime
 from models.base import UserRole, MediaType, PrivacyLevel
@@ -431,6 +432,16 @@ class WatchEventCreate(BaseModel):
     # prompt (see the 409 duplicate_watch response from POST /history), to
     # record it despite an existing watch within the dedup window (#390).
     force: bool = False
+    # Where the watch came from, for API clients (#492). Omitted = "manual", the
+    # web UI's own button. Any slug is allowed, so a backfill script can say "plex".
+    source: str = "manual"
+
+    @field_validator("source")
+    @classmethod
+    def _validate_source(cls, v: str) -> str:
+        if not re.fullmatch(r"[a-z0-9_-]{1,16}", v):
+            raise ValueError("source must be 1-16 lowercase letters, digits, '_' or '-'")
+        return v
 
 
 class ManualSessionStart(BaseModel):

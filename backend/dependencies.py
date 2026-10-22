@@ -1,7 +1,8 @@
 from typing import Generator, Optional
 from fastapi import Depends, Header, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
+import jwt
+from jwt import PyJWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -89,7 +90,7 @@ async def get_current_user(
         if user_id is None:
             raise credentials_exception
         token_data = schemas.TokenPayload(sub=user_id)
-    except (JWTError, ValueError):
+    except (PyJWTError, ValueError):
         raise credentials_exception
 
     query = select(User).where(User.id == token_data.sub).options(selectinload(User.profile))
@@ -122,7 +123,7 @@ async def get_optional_user(
         if user_id_val is None:
             return None
         user_id = int(user_id_val)
-    except (JWTError, ValueError, TypeError):
+    except (PyJWTError, ValueError, TypeError):
         return None
 
     query = select(User).where(User.id == user_id).options(selectinload(User.profile))

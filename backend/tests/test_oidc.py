@@ -1,4 +1,5 @@
 import os
+import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -598,6 +599,7 @@ class CoreOidcHelperTests(unittest.IsolatedAsyncioTestCase):
              patch("core.oidc.effective_jwks_url", AsyncMock(return_value="https://x/jwks")), \
              patch("core.oidc.effective_issuer", AsyncMock(return_value="https://x")), \
              patch("core.oidc.get_jwk_for_kid", AsyncMock(return_value={"kid": "k"})), \
+             patch("core.oidc.PyJWK"), \
              patch("core.oidc.jwt.decode", return_value={"sub": "s", "aud": "aud", "azp": "someone-else"}):
             with self.assertRaises(core_oidc.IdTokenError):
                 await core_oidc.verify_id_token("x.y.z", expected_nonce=None, expected_audience="aud")
@@ -607,6 +609,7 @@ class CoreOidcHelperTests(unittest.IsolatedAsyncioTestCase):
              patch("core.oidc.effective_jwks_url", AsyncMock(return_value="https://x/jwks")), \
              patch("core.oidc.effective_issuer", AsyncMock(return_value="https://x")), \
              patch("core.oidc.get_jwk_for_kid", AsyncMock(return_value={"kid": "k"})), \
+             patch("core.oidc.PyJWK"), \
              patch("core.oidc.jwt.decode", return_value={"sub": "s", "aud": "aud", "nonce": "wrong"}):
             with self.assertRaises(core_oidc.IdTokenError):
                 await core_oidc.verify_id_token("x.y.z", expected_nonce="expected", expected_audience="aud")
@@ -617,9 +620,101 @@ class CoreOidcHelperTests(unittest.IsolatedAsyncioTestCase):
              patch("core.oidc.effective_jwks_url", AsyncMock(return_value="https://x/jwks")), \
              patch("core.oidc.effective_issuer", AsyncMock(return_value="https://x")), \
              patch("core.oidc.get_jwk_for_kid", AsyncMock(return_value={"kid": "k"})), \
+             patch("core.oidc.PyJWK"), \
              patch("core.oidc.jwt.decode", return_value=claims):
             out = await core_oidc.verify_id_token("x.y.z", expected_nonce="n", expected_audience="aud")
         self.assertEqual(out, claims)
+
+
+class VerifyIdTokenSignatureTests(unittest.IsolatedAsyncioTestCase):
+    """verify_id_token against tokens really signed with generated keys."""
+
+    ISSUER = "https://idp.example"
+    AUD = "scrob-client"
+
+    @classmethod
+    def setUpClass(cls):
+        import jwt
+        from cryptography.hazmat.primitives.asymmetric import ec, rsa
+
+        cls.jwt = jwt
+        cls.rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.other_rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.ec_key = ec.generate_private_key(ec.SECP256R1())
+        cls.rsa_jwk = {**jwt.algorithms.RSAAlgorithm.to_jwk(cls.rsa_key.public_key(), as_dict=True), "kid": "rsa", "use": "sig"}
+        cls.ec_jwk = {**jwt.algorithms.ECAlgorithm.to_jwk(cls.ec_key.public_key(), as_dict=True), "kid": "ec", "use": "sig"}
+
+    def _claims(self, **overrides):
+        now = int(time.time())
+        claims = {"iss": self.ISSUER, "aud": self.AUD, "sub": "user-1", "iat": now, "exp": now + 300, "nonce": "n1"}
+        claims.update(overrides)
+        return {k: v for k, v in claims.items() if v is not None}
+
+    def _sign(self, claims, key=None, alg="RS256", kid="rsa"):
+        return self.jwt.encode(claims, key or self.rsa_key, algorithm=alg, headers={"kid": kid})
+
+    async def _verify(self, token, jwk=None, nonce="n1", audience=None):
+        jwk = jwk or self.rsa_jwk
+        with patch("core.oidc.effective_jwks_url", AsyncMock(return_value="https://idp.example/jwks")), \
+             patch("core.oidc.effective_issuer", AsyncMock(return_value=self.ISSUER)), \
+             patch("core.oidc.get_jwk_for_kid", AsyncMock(return_value=jwk)):
+            return await core_oidc.verify_id_token(token, expected_nonce=nonce, expected_audience=audience or self.AUD)
+
+    async def test_valid_rs256_token_returns_its_claims(self):
+        claims = await self._verify(self._sign(self._claims()))
+        self.assertEqual((claims["sub"], claims["nonce"]), ("user-1", "n1"))
+
+    async def test_valid_es256_token_is_accepted(self):
+        token = self._sign(self._claims(), key=self.ec_key, alg="ES256", kid="ec")
+        claims = await self._verify(token, jwk=self.ec_jwk)
+        self.assertEqual(claims["sub"], "user-1")
+
+    async def test_token_signed_by_another_key_is_rejected(self):
+        with self.assertRaises(core_oidc.IdTokenError):
+            await self._verify(self._sign(self._claims(), key=self.other_rsa_key))
+
+    async def test_wrong_audience_is_rejected(self):
+        with self.assertRaises(core_oidc.IdTokenError):
+            await self._verify(self._sign(self._claims(aud="someone-else")))
+
+    async def test_wrong_issuer_is_rejected(self):
+        with self.assertRaises(core_oidc.IdTokenError):
+            await self._verify(self._sign(self._claims(iss="https://evil.example")))
+
+    async def test_missing_audience_or_issuer_is_rejected(self):
+        for missing in ("aud", "iss"):
+            with self.subTest(missing=missing), self.assertRaises(core_oidc.IdTokenError):
+                await self._verify(self._sign(self._claims(**{missing: None})))
+
+    async def test_expired_token_is_rejected_beyond_the_clock_skew_leeway(self):
+        now = int(time.time())
+        with self.assertRaises(core_oidc.IdTokenError):
+            await self._verify(self._sign(self._claims(exp=now - core_oidc.CLOCK_SKEW_LEEWAY_SECONDS - 60)))
+
+    async def test_recently_expired_token_is_accepted_within_the_leeway(self):
+        claims = await self._verify(self._sign(self._claims(exp=int(time.time()) - 30)))
+        self.assertEqual(claims["sub"], "user-1")
+
+    async def test_token_without_expiry_is_rejected(self):
+        with self.assertRaises(core_oidc.IdTokenError):
+            await self._verify(self._sign(self._claims(exp=None)))
+
+    async def test_nonce_mismatch_is_rejected(self):
+        with self.assertRaises(core_oidc.IdTokenError):
+            await self._verify(self._sign(self._claims(nonce="other")), nonce="n1")
+
+    async def test_azp_must_match_the_client_id(self):
+        with self.assertRaises(core_oidc.IdTokenError):
+            await self._verify(self._sign(self._claims(azp="someone-else")))
+
+    async def test_hmac_signed_token_is_rejected_on_algorithm_alone(self):
+        forged = self.jwt.encode(self._claims(), "x" * 40, algorithm="HS256", headers={"kid": "rsa"})
+        with self.assertRaises(core_oidc.IdTokenError):
+            await self._verify(forged)
+
+    async def test_garbage_token_is_rejected(self):
+        with self.assertRaises(core_oidc.IdTokenError):
+            await self._verify("not-a-jwt")
 
 
 if __name__ == "__main__":

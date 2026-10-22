@@ -8,13 +8,10 @@ export BACKEND_PORT
 
 # Timezone
 if [ -n "$TZ" ]; then
-    ln -snf /usr/share/zoneinfo/"$TZ" /etc/localtime
-    echo "$TZ" > /etc/timezone
+    # Not fatal: /etc/localtime may be a mounted file (k8tz, -v /etc/localtime:...) that busybox ln cannot replace
+    ln -snf /usr/share/zoneinfo/"$TZ" /etc/localtime 2>/dev/null || echo "Could not set /etc/localtime, keeping the existing one"
+    echo "$TZ" > /etc/timezone 2>/dev/null || true
 fi
-
-# Create group/user for the requested PGID/PUID (ignore errors if already exist)
-groupadd -g "$PGID" scrob 2>/dev/null || true
-useradd -u "$PUID" -g "$PGID" -M -s /bin/false scrob 2>/dev/null || true
 
 # Fix ownership so the scrob user can write to the data directory
 chown -R "$PUID:$PGID" /app/backend/data
@@ -24,7 +21,7 @@ chmod o+w /dev/stdout /dev/stderr
 
 echo "Running database migrations..."
 cd /app/backend
-gosu scrob .venv/bin/python -m alembic upgrade head
+su-exec "$PUID:$PGID" .venv/bin/python -m alembic upgrade head
 
 echo "Starting Scrob (frontend :7330, backend 127.0.0.1:${BACKEND_PORT})..."
-exec gosu scrob /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf
+exec su-exec "$PUID:$PGID" /usr/local/bin/supervisord -n -c /etc/supervisor/supervisord.conf

@@ -6669,6 +6669,7 @@ async def _push_stremio_connection(
 # Shown on Connections when a full push cannot resolve a WatchEvent to a
 # server item (#304). Must not look like an unmatched-TMDB pull warning:
 # those have `title` + `reason` + `media_type` and a Match button.
+WATCHED_STATE_UNREADABLE_REASON = "Could not read the item's watched state from the server, so nothing was pushed"
 WATCHED_LOOKUP_FAILED_REASON = (
     "Not found on this server - no matching library item for this watch"
 )
@@ -6690,6 +6691,27 @@ def watched_lookup_failed_warning(media_id: int, media: Media | None, series_nam
         "media_type": media.media_type.value if media and media.media_type else None,
         "series_name": series_name if is_episode else None,
         "reason": WATCHED_LOOKUP_FAILED_REASON,
+    }
+
+
+PUSH_FAILED_WARNING_CAP = 5000
+UNKNOWN_PUSH_FAILURE_REASON = "The server rejected the request or it failed - see the server log"
+
+
+def push_failed_warning(media_id: int, media: Media | None, action: str, reason: str, series_name: str | None = None) -> dict:
+    """Warning dict for a full-push item that was looked up or sent but did not
+    land. action is the push key (watched, rating, season rating) so the panel
+    can say what was being pushed; reason says why it failed.
+    """
+    is_episode = bool(media and media.media_type == MediaType.episode)
+    return {
+        "type": "push_failed",
+        "media_id": media_id,
+        "title": media.title if media else None,
+        "media_type": media.media_type.value if media and media.media_type else None,
+        "series_name": series_name if is_episode else None,
+        "action": action,
+        "reason": reason,
     }
 
 
@@ -7181,6 +7203,13 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
             # item again.
             found_items: dict[str, dict] = {}
 
+            # Why an item failed, by media id, filled in where the failure is
+            # known and turned into warnings when the item's push resolves.
+            fail_reasons: dict[int, str] = {}
+
+            def _why(mid: int, reason: str) -> None:
+                fail_reasons[mid] = reason
+
             def _finish_lookup(mid: int, found: dict | None) -> str | None:
                 sid = _extract_source_id(found)
                 if sid:
@@ -7195,39 +7224,57 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
             async def _find_source_id(mid: int) -> str | None:
                 m = media_info.get(mid)
                 if not m or not m.tmdb_id:
+                    _why(mid, "No TMDB ID on this item, so it cannot be looked up on the server")
                     return None
                 if m.media_type == MediaType.movie:
                     if conn.type == "plex":
                         if push_state.recent_miss(mid):
+                            _why(mid, "Not found in the Plex library on a recent run (retried later)")
                             return None
-                        return _finish_lookup(mid, await plex.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id))
+                        sid = _finish_lookup(mid, await plex.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id))
+                        if not sid:
+                            _why(mid, "Movie not found in the Plex library by TMDB ID")
+                        return sid
                     else:
                         # Resolved from the job's pre-built index (#300) -
                         # already the item id itself, no request needed.
-                        return jellyfin_movie_index.get(m.tmdb_id)
+                        sid = jellyfin_movie_index.get(m.tmdb_id)
+                        if not sid:
+                            _why(mid, "Movie not found in the server library by TMDB ID")
+                        return sid
                 elif m.media_type == MediaType.episode:
                     show_tmdb = show_tmdb_map.get(m.show_id) if m.show_id else None
                     show_tvdb = show_tvdb_map.get(m.show_id) if m.show_id else None
                     if (not show_tmdb and not show_tvdb) or m.season_number is None or m.episode_number is None:
+                        _why(mid, "The show has no TMDB or TVDB ID, or the episode has no season or episode number")
                         return None
                     if push_state.recent_miss(mid):
+                        _why(mid, "Not found on the server on a recent run (retried later)")
                         return None
                     if conn.type == "plex":
                         if not show_tmdb:
+                            _why(mid, "Plex lookup needs a TMDB ID and this show only has a TVDB ID")
                             return None
                         found = await plex.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number)
+                        why_missing = "Show or episode not found in the Plex library by TMDB ID, season and episode number"
                     else:
                         series_id = jellyfin_series_index.get(show_tmdb) if show_tmdb else None
                         if not series_id and show_tvdb:
                             series_id = jellyfin_series_tvdb_index.get(show_tvdb)
                         if not series_id:
+                            _why(mid, "Show not found in the server library")
                             return None
                         client_mod = jellyfin if conn.type == "jellyfin" else emby
                         found = await client_mod.find_episode_in_series(
                             conn.url, conn.token, series_id, m.season_number, m.episode_number, user_id=conn.server_user_id
                         )
-                    return _finish_lookup(mid, found)
+                        why_missing = "Episode not found in the show on the server by season and episode number"
+                    sid = _finish_lookup(mid, found)
+                    if not sid:
+                        _why(mid, why_missing)
+                    return sid
                 else:
+                    _why(mid, "Show-level items are not pushed (only movies, episodes and seasons)")
                     return None
 
             async def _plex_rating_matches(sid: str, rating: float) -> bool:
@@ -7304,6 +7351,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
                             sid = item[1]
                             already = await _already_watched_on_server(sid)
                             if already is None:
+                                _why(item[2], WATCHED_STATE_UNREADABLE_REASON)
                                 return False
                             if already:
                                 return True
@@ -7318,7 +7366,8 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
                                 return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=watched_at_by_media.get(item[2]))
                         else:
                             return await _set_rating(client, item[1], item[2])
-                    except Exception:
+                    except Exception as exc:
+                        _why(item[2] if item[0] == "watched" else item[3], f"Unexpected error: {exc}")
                         return False
 
             async def _push_lookup(client: _httpx.AsyncClient, item: tuple) -> bool:
@@ -7328,9 +7377,11 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
                         if item[0] == "season_rating":
                             media = media_info.get(mid)
                             if not media or not media.tmdb_id:
+                                _why(mid, "No TMDB ID on this show, so its season cannot be looked up")
                                 return False
                             miss_key = season_miss_key(item[2])
                             if push_state.recent_miss(mid, miss_key):
+                                _why(mid, "Season not found in the Plex library on a recent run (retried later)")
                                 return False
                             sid = await plex.resolve_season_rating_key(
                                 conn.url,
@@ -7340,6 +7391,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
                             )
                             if not sid:
                                 push_state.record_miss(mid, miss_key)
+                                _why(mid, "Show or season not found in the Plex library by TMDB ID and season number")
                                 return False
                             push_state.forget(mid, miss_key)
                             return await _set_rating(client, sid, item[3])
@@ -7349,6 +7401,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
                         if item[0] == "watched":
                             already = await _already_watched_on_server(sid)
                             if already is None:
+                                _why(mid, WATCHED_STATE_UNREADABLE_REASON)
                                 return False
                             if already:
                                 return True
@@ -7365,7 +7418,8 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
                                 return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=watched_at_by_media.get(mid))
                         else:
                             return await _set_rating(client, sid, item[2])
-                    except Exception:
+                    except Exception as exc:
+                        _why(item[1], f"Unexpected error: {exc}")
                         return False
 
             async def _resolve_watched_lookup(mid: int) -> tuple[int, str | None]:
@@ -7384,6 +7438,8 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
                     try:
                         already = await _already_watched_on_server(sid)
                         if already is None:
+                            for mid in mids:
+                                _why(mid, WATCHED_STATE_UNREADABLE_REASON)
                             return False
                         if already:
                             return True
@@ -7396,7 +7452,9 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
                             return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=group_played_at)
                         else:
                             return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=group_played_at)
-                    except Exception:
+                    except Exception as exc:
+                        for mid in mids:
+                            _why(mid, f"Unexpected error: {exc}")
                         return False
 
             done = 0
@@ -7448,6 +7506,14 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
                     ok = await coro
                     for note_mid, note_key, note_value in notes:
                         _note_push(note_mid, note_key, note_value, ok is True)
+                        if ok is not True and len(lookup_warnings) < PUSH_FAILED_WARNING_CAP:
+                            m = media_info.get(note_mid)
+                            series_name = show_title_map.get(m.show_id) if m and m.show_id else None
+                            lookup_warnings.append(push_failed_warning(
+                                note_mid, m, note_key,
+                                fail_reasons.get(note_mid, UNKNOWN_PUSH_FAILURE_REASON),
+                                series_name=series_name,
+                            ))
                     return ok
 
                 def _item_notes(item: tuple) -> list[tuple[int, str, float]]:
@@ -7497,7 +7563,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
             ))
             await db.commit()
             print(f"Full push ({push_mode}) for connection {connection_id}: {succeeded}/{total} succeeded, {failed_count} failed, {push_state.skipped} unchanged and skipped"
-                  f"{f', {len(lookup_warnings)} unresolved lookups' if lookup_warnings else ''}")
+                  f"{f', {len(lookup_warnings)} warnings' if lookup_warnings else ''}")
 
         except SyncCancelled:
             print(f"Full push for connection {connection_id} cancelled")

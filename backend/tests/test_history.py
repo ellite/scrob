@@ -1021,5 +1021,24 @@ class EffectiveRuntimeTests(unittest.TestCase):
         self.assertIsNone(history._effective_runtime(SimpleNamespace(runtime=None, tmdb_data=None)))
 
 
+class WatchEventSourceTests(unittest.TestCase):
+    def _make(self, **extra):
+        return WatchEventCreate(tmdb_id=1, media_type=MediaType.movie, **extra)
+
+    def test_source_defaults_to_manual(self):
+        self.assertEqual(self._make().source, "manual")
+
+    def test_custom_source_accepted(self):
+        self.assertEqual(self._make(source="silo").source, "silo")
+
+    def test_builtin_source_name_accepted(self):
+        self.assertEqual(self._make(source="plex").source, "plex")
+
+    def test_malformed_source_rejected(self):
+        for bad in ("Silo", "", "has space", "x" * 17):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self._make(source=bad)
+
+
 if __name__ == "__main__":
     unittest.main()

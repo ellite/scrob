@@ -329,11 +329,14 @@ async def build_comments(db: AsyncSession, user_id: int) -> dict[str, list[dict]
         elif c.media_type == "series" and c.season_number is None:
             show = shows_by_tmdb.get(c.tmdb_id)
             out["shows"].append({**base, "show": _show_dict(c.tmdb_id, show.title if show else "", show.first_air_date if show else None, show.tvdb_id if show else None)})
-        elif c.media_type == "series" and c.season_number is not None:
+        elif c.media_type == "series" and c.episode_number is None:
             show = shows_by_tmdb.get(c.tmdb_id)
             out["seasons"].append({**base, "season": {"number": c.season_number}, "show": _show_dict(c.tmdb_id, show.title if show else "", show.first_air_date if show else None, show.tvdb_id if show else None)})
-        elif c.media_type == "episode":
-            out["episodes"].append({**base, "episode": {"season": c.season_number, "number": c.episode_number}, "ids": {"tmdb": c.tmdb_id}})
+        elif c.media_type in ("series", "episode"):
+            # The UI stores episode comments as media_type "series" with both
+            # season and episode numbers set; "episode" is the importer's old form.
+            show = shows_by_tmdb.get(c.tmdb_id)
+            out["episodes"].append({**base, "episode": {"season": c.season_number, "number": c.episode_number}, "show": _show_dict(c.tmdb_id, show.title if show else "", show.first_air_date if show else None, show.tvdb_id if show else None), "ids": {"tmdb": c.tmdb_id}})
     return out
 
 

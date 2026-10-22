@@ -9,7 +9,8 @@ import time
 from typing import Any, Optional
 
 import httpx
-from jose import jwt, JWTError
+import jwt
+from jwt import PyJWK, PyJWTError
 
 from core.config import settings as app_settings
 
@@ -125,7 +126,7 @@ async def verify_id_token(
     """Validates signature + iss/aud/exp/nonce; returns the parsed claims."""
     try:
         header = jwt.get_unverified_header(id_token)
-    except JWTError as exc:
+    except PyJWTError as exc:
         raise IdTokenError(f"malformed id_token header: {exc}") from exc
 
     alg = header.get("alg")
@@ -144,13 +145,14 @@ async def verify_id_token(
     try:
         claims = jwt.decode(
             id_token,
-            jwk,
-            algorithms=list(ALLOWED_ID_TOKEN_ALGS),
+            PyJWK(jwk, algorithm=alg).key,
+            algorithms=[alg],
             audience=expected_audience,
             issuer=issuer,
-            options={"verify_at_hash": False, "leeway": CLOCK_SKEW_LEEWAY_SECONDS},
+            leeway=CLOCK_SKEW_LEEWAY_SECONDS,
+            options={"require": ["exp", "iss", "aud"]},
         )
-    except JWTError as exc:
+    except PyJWTError as exc:
         raise IdTokenError(f"signature/claims rejected: {exc}") from exc
 
     # OIDC Core §3.1.3.7: when ``azp`` is present it must equal our client_id,

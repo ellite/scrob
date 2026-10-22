@@ -647,7 +647,9 @@ async def apply_scrob_import(
             await _tick()
         for entry in data.comments.get("episodes", []):
             ep = entry.get("episode", {})
-            _add_comment("episode", entry.get("ids", {}).get("tmdb"), ep.get("season"), ep.get("number"), entry)
+            tmdb_id = entry.get("ids", {}).get("tmdb") or entry.get("show", {}).get("ids", {}).get("tmdb")
+            # "series", not "episode": that's how the episode page stores and reads them.
+            _add_comment("series", tmdb_id, ep.get("season"), ep.get("number"), entry)
             await _tick()
         await db.commit()
 

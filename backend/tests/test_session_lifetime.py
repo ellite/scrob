@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from jose import jwt
+import jwt
 
 from core import security
 from core.limiter import limiter

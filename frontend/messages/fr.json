@@ -2164,7 +2164,7 @@
       }
     }
   ],
-  "conn_warn_lookup_intro": "Historique de visionnage sans élément correspondant dans cette bibliothèque. Rien n’a été marqué comme vu ici - il ne s’agit pas d’un titre TMDB non associé.",
+  "conn_warn_lookup_intro": "Éléments qu’un push complet n’a pas pu envoyer à ce serveur, avec la raison pour chacun. Rien n’a été modifié sur le serveur pour ceux-ci - il ne s’agit pas d’un titre TMDB non associé.",
   "conn_warn_lookup_banner": [
     {
       "declarations": [
@@ -2175,9 +2175,9 @@
         "countPlural"
       ],
       "match": {
-        "countPlural=one": "{count} élément vu introuvable sur ce serveur",
-        "countPlural=other": "{count} éléments vus introuvables sur ce serveur",
-        "countPlural=*": "{count} éléments vus introuvables sur ce serveur"
+        "countPlural=one": "{count} élément n’a pas pu être envoyé à ce serveur",
+        "countPlural=other": "{count} éléments n’ont pas pu être envoyés à ce serveur",
+        "countPlural=*": "{count} éléments n’ont pas pu être envoyés à ce serveur"
       }
     }
   ],
@@ -2262,5 +2262,8 @@
   "settings_update_email": "Mettre à jour l’adresse e-mail",
   "settings_update_email_failed": "Échec de la mise à jour de l’adresse e-mail",
   "settings_email_confirmation_sent": "Nous avons envoyé un lien de confirmation à {email}. Votre adresse sera modifiée une fois le lien ouvert.",
-  "settings_email_updated": "Adresse e-mail mise à jour !"
+  "settings_email_updated": "Adresse e-mail mise à jour !",
+  "conn_push_action_watched": "vu",
+  "conn_push_action_rating": "note",
+  "conn_push_action_season_rating": "note de saison"
 }

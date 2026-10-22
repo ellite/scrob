@@ -10,7 +10,8 @@ from sqlalchemy.future import select
 from sqlalchemy import delete, func, or_, and_
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from jose import jwt, JWTError
+import jwt
+from jwt import PyJWTError
 
 from db import get_db
 from models.base import UserRole
@@ -404,7 +405,7 @@ async def renew_session(
 ):
     try:
         payload = jwt.decode(token, app_settings.secret_key, algorithms=[ALGORITHM])
-    except JWTError:
+    except PyJWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials")
     # Only plain login tokens slide; typed ones (device grants, 2FA) never do.
     if payload.get("type"):
@@ -1679,7 +1680,7 @@ async def verify_2fa_login(
             raise credentials_exception
         user_id = int(payload["sub"])
         remember = bool(payload.get("remember"))
-    except (JWTError, ValueError, KeyError):
+    except (PyJWTError, ValueError, KeyError):
         raise credentials_exception
     lifetime = session_lifetime(remember)
 

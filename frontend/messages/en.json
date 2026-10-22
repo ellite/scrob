@@ -2164,7 +2164,7 @@
       }
     }
   ],
-  "conn_warn_lookup_intro": "Watch history that has no matching item in this library. Nothing was marked watched here - this is not an unmatched TMDB title.",
+  "conn_warn_lookup_intro": "Items a full push could not send to this server, with the reason for each. Nothing was changed on the server for these - this is not an unmatched TMDB title.",
   "conn_warn_lookup_banner": [
     {
       "declarations": [
@@ -2175,9 +2175,9 @@
         "countPlural"
       ],
       "match": {
-        "countPlural=one": "{count} watched item not found on this server",
-        "countPlural=other": "{count} watched items not found on this server",
-        "countPlural=*": "{count} watched items not found on this server"
+        "countPlural=one": "{count} item could not be pushed to this server",
+        "countPlural=other": "{count} items could not be pushed to this server",
+        "countPlural=*": "{count} items could not be pushed to this server"
       }
     }
   ],
@@ -2262,5 +2262,8 @@
   "settings_update_email": "Update Email",
   "settings_update_email_failed": "Failed to update email",
   "settings_email_confirmation_sent": "We sent a confirmation link to {email}. Your email changes once you click it.",
-  "settings_email_updated": "Email updated successfully!"
+  "settings_email_updated": "Email updated successfully!",
+  "conn_push_action_watched": "watched",
+  "conn_push_action_rating": "rating",
+  "conn_push_action_season_rating": "season rating"
 }

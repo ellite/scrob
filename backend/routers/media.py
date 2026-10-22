@@ -6015,7 +6015,8 @@ async def pick_for_me(
 
 
 from fastapi.responses import FileResponse, RedirectResponse
-from jose import jwt, JWTError
+import jwt
+from jwt import PyJWTError
 from core.security import ALGORITHM
 from core.config import settings
 
@@ -6052,7 +6053,7 @@ async def verify_image_token(request: Request, db: AsyncSession = Depends(get_db
             raise credentials_exception
         user_id: int = int(payload.get("sub"))
         return user_id
-    except (JWTError, ValueError):
+    except (PyJWTError, ValueError):
         raise credentials_exception
 
 

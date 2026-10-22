@@ -1,10 +1,18 @@
+import base64
+import hashlib
+import hmac
+import json
 import os
+import time
 import unittest
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from core.security import get_password_hash, verify_password
+import jwt
+
+from core.config import settings
+from core.security import ALGORITHM, create_access_token, get_password_hash, verify_password
 
 # Hashes written by earlier versions, kept verbatim so existing accounts keep
 # signing in: argon2id as produced by passlib, bcrypt as produced by the bcrypt
@@ -48,6 +56,44 @@ class PasswordHashTests(unittest.TestCase):
     def test_unrecognised_or_damaged_hashes_never_verify(self) -> None:
         for hashed in ("", "plaintext", "$argon2id$not-a-real-hash", "$2b$04$short"):
             self.assertFalse(verify_password("redpill", hashed))
+
+
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+class SessionTokenCompatibilityTests(unittest.TestCase):
+    def test_token_in_the_format_python_jose_issued_still_verifies(self) -> None:
+        # Sessions issued before the move to PyJWT must survive the upgrade:
+        # compact JSON header/payload, HS256, signed with the app secret.
+        header = _b64(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+        payload = _b64(json.dumps({"exp": int(time.time()) + 600, "sub": "41"}, separators=(",", ":")).encode())
+        signature = _b64(hmac.new(settings.secret_key.encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest())
+
+        claims = jwt.decode(f"{header}.{payload}.{signature}", settings.secret_key, algorithms=[ALGORITHM])
+
+        self.assertEqual(claims["sub"], "41")
+
+    def test_tokens_we_issue_round_trip_with_extra_claims(self) -> None:
+        token = create_access_token(7, extra_claims={"rem": True, "type": "2fa_pending"})
+
+        claims = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+
+        self.assertEqual((claims["sub"], claims["rem"], claims["type"]), ("7", True, "2fa_pending"))
+
+    def test_expired_and_tampered_tokens_are_rejected(self) -> None:
+        expired = jwt.encode({"sub": "1", "exp": int(time.time()) - 5}, settings.secret_key, algorithm=ALGORITHM)
+        tampered = create_access_token(7)[:-3] + "AAA"
+
+        for token in (expired, tampered):
+            with self.subTest(token=token[-6:]), self.assertRaises(jwt.PyJWTError):
+                jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+
+    def test_token_with_a_different_algorithm_than_expected_is_rejected(self) -> None:
+        other = jwt.encode({"sub": "1"}, "k" * 64, algorithm="HS512")
+
+        with self.assertRaises(jwt.PyJWTError):
+            jwt.decode(other, settings.secret_key, algorithms=[ALGORITHM])
 
 
 if __name__ == "__main__":

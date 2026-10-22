@@ -5,7 +5,7 @@ from typing import Any, Union
 import bcrypt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from jose import jwt
+import jwt
 from core.config import settings
 
 # New hashes are argon2id with argon2-cffi's default cost. Hashes written

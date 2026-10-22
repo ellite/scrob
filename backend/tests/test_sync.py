@@ -1392,6 +1392,33 @@ class WatchedLookupFailedWarningTests(unittest.TestCase):
         )
 
 
+class PushFailedWarningTests(unittest.TestCase):
+    """A full push names every item it could not send and why, instead of
+    only counting them in stats.failed."""
+
+    def test_carries_action_reason_and_series_for_episodes(self):
+        episode = SimpleNamespace(title="Pilot", media_type=sync.MediaType.episode)
+        self.assertEqual(
+            sync.push_failed_warning(7, episode, "rating", "Not in Plex", series_name="Some Show"),
+            {
+                "type": "push_failed",
+                "media_id": 7,
+                "title": "Pilot",
+                "media_type": "episode",
+                "series_name": "Some Show",
+                "action": "rating",
+                "reason": "Not in Plex",
+            },
+        )
+
+    def test_series_name_dropped_for_movies_and_missing_media(self):
+        movie = SimpleNamespace(title="A Movie", media_type=sync.MediaType.movie)
+        self.assertIsNone(sync.push_failed_warning(1, movie, "watched", "x", series_name="Show")["series_name"])
+        warning = sync.push_failed_warning(1, None, "watched", "x")
+        self.assertIsNone(warning["title"])
+        self.assertIsNone(warning["media_type"])
+
+
 class MatchUnmatchedShowDisplacedTmdbIdTests(_PartialWatchDB):
     """match-unmatched-show 500: when the TMDB pick cross-references an
     existing TVDB-matched show, the endpoint hands that show the TMDB id and

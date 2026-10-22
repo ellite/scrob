@@ -5683,11 +5683,13 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       // Pull unmatched-TMDB / enrichment vs push lookup-failed must not share a
       // job: the latest completed job with warnings used to be the Push, which
       // hid real Pull unmatched rows and painted lookup misses as Match-to-TMDB (#304).
+      // The latest completed job is authoritative even when it has no warnings:
+      // skipping clean jobs kept showing the warnings of an older run after a
+      // later run had fixed them.
       const latestJobFor = (connId: string, push: boolean) =>
         jobs.find((j: any) =>
           String(j.connection_id) === connId
           && j.status === 'completed'
-          && j.warnings?.length > 0
           && (push ? j.job_type === 'push' : j.job_type === 'pull')
         );
 
@@ -5698,7 +5700,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         const pullJob = latestJobFor(connId, false);
         const pushJob = latestJobFor(connId, true);
         const pullWarnings: any[] = pullJob?.warnings ?? [];
-        const lookupWarnings: any[] = (pushJob?.warnings ?? []).filter((w: any) => w.type === 'watched_lookup_failed');
+        const lookupWarnings: any[] = (pushJob?.warnings ?? []).filter((w: any) => w.type === 'watched_lookup_failed' || w.type === 'push_failed');
         if (!pullJob && lookupWarnings.length === 0) { container.classList.add('hidden'); container.innerHTML = ''; return; }
 
         const date = pullJob ? formatJobDate(pullJob) : '';
@@ -5707,7 +5709,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         const lookupDetailsId = `conn-warnings-lookup-${connId}`;
 
         const enrichmentWarnings = pullWarnings.filter((w: any) => w.tmdb_id !== undefined && w.season !== undefined);
-        const unmatchedWarnings = pullWarnings.filter((w: any) => w.title !== undefined && w.type !== 'watched_lookup_failed');
+        const unmatchedWarnings = pullWarnings.filter((w: any) => w.title !== undefined && w.type !== 'watched_lookup_failed' && w.type !== 'push_failed');
 
         const renderEnrichment = enrichmentWarnings.length > 0 ? `
           <div class="space-y-1">
@@ -5889,13 +5891,26 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         // against a partial library can produce thousands of these for a
         // handful of shows, and one row per episode makes the panel
         // unusable (#400).
-        const groupedLookupWarnings: Map<string, {count: number, reason: string}> = new Map();
+        // push_failed warnings carry a per-item reason and action, so they
+        // group by series + action + reason instead of by series alone.
+        // The action is the push key from core/push_state.py: watched, rating
+        // or season_rating:<n>. Anything newer falls back to the raw key.
+        const pushActionLabel = (a?: string) => {
+          if (!a) return '';
+          if (a.startsWith('season')) return m.conn_push_action_season_rating();
+          if (a === 'watched') return m.conn_push_action_watched();
+          if (a === 'rating') return m.conn_push_action_rating();
+          return a;
+        };
+        const groupedLookupWarnings: Map<string, {series: string, count: number, reason: string, action: string}> = new Map();
         const standaloneLookupWarnings: any[] = [];
         for (const w of lookupWarnings) {
           if (w.media_type === 'episode' && w.series_name) {
-            const existing = groupedLookupWarnings.get(w.series_name);
+            const action = pushActionLabel(w.action);
+            const groupKey = `${w.series_name}\u0000${action}\u0000${w.reason ?? ''}`;
+            const existing = groupedLookupWarnings.get(groupKey);
             if (existing) existing.count++;
-            else groupedLookupWarnings.set(w.series_name, {count: 1, reason: w.reason ?? m.conn_not_found_on_this_server()});
+            else groupedLookupWarnings.set(groupKey, {series: w.series_name, count: 1, reason: w.reason ?? m.conn_not_found_on_this_server(), action});
           } else {
             standaloneLookupWarnings.push(w);
           }
@@ -5905,19 +5920,19 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         const renderLookup = hasLookupPanel ? `
           <div class="space-y-1">
             <p class="text-xs text-zinc-500 mb-2">${escapeHtml(m.conn_warn_lookup_intro())}</p>
-            ${[...groupedLookupWarnings.entries()].map(([seriesName, {count, reason}]) => `
+            ${[...groupedLookupWarnings.values()].map(({series: seriesName, count, reason, action}) => `
               <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
                 <div class="flex-1 min-w-0">
                   <span class="text-sm text-zinc-200 font-medium">${escapeHtml(seriesName)}</span>
-                  <span class="ml-2 text-xs text-zinc-600">${escapeHtml(m.conn_warn_episode_count({ count }))}</span>
+                  <span class="ml-2 text-xs text-zinc-600">${escapeHtml(m.conn_warn_episode_count({ count }))}${action ? ` · ${escapeHtml(action)}` : ''}</span>
                   <p class="text-xs text-zinc-500 mt-0.5">${escapeHtml(reason)}</p>
                 </div>
               </div>`).join('')}
             ${standaloneLookupWarnings.map((w: any) => `
               <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
                 <div class="flex-1 min-w-0">
-                  <span class="text-sm text-zinc-200 font-medium">${escapeHtml(w.title ?? m.conn_untitled())}</span>
-                  ${w.media_type ? `<span class="ml-2 text-xs text-zinc-600">${escapeHtml(w.media_type)}</span>` : ''}
+                  <span class="text-sm text-zinc-200 font-medium">${escapeHtml(w.title || m.conn_untitled())}</span>
+                  ${w.media_type ? `<span class="ml-2 text-xs text-zinc-600">${escapeHtml(w.media_type)}${w.action ? ` · ${escapeHtml(pushActionLabel(w.action))}` : ''}</span>` : ''}
                   <p class="text-xs text-zinc-500 mt-0.5">${escapeHtml(w.reason ?? m.conn_not_found_on_this_server())}</p>
                 </div>
               </div>`).join('')}

@@ -18,3 +18,16 @@ backend/.env.test.local
 # Test files
 test.http
 docker-compose-test-db.yaml
+
+# Local build artifacts and runtime data - recreated inside the image, and a
+# local build would otherwise bake dev data and a host-specific venv into it
+backend/.venv/
+backend/data/
+backend/node_modules/
+backend/.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+frontend/.astro/
+**/__pycache__/
+*.log
+*.pid
