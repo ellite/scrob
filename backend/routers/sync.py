@@ -1885,6 +1885,14 @@ def _expand_multi_episode_items(items: list, media_type: MediaType, source: Coll
     return expanded
 
 
+def _sync_row_count(items: list, media_type: MediaType, source: CollectionSource) -> int:
+    """Number of rows sync_items will process - and count into the job's
+    processed_items - for these items. Can be larger than len(items) when combined
+    Jellyfin/Emby files get expanded, so pull jobs must size their total_items
+    with this, or a library with combined files finishes above 100%."""
+    return len(_expand_multi_episode_items(items, media_type, source))
+
+
 def _episode_tvdb_id(item: dict, source: CollectionSource) -> int | None:
     """Return an episode-level TVDB id that is safe for canonicalisation.
 
@@ -2946,7 +2954,11 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                     unmatched_series_ids = {str(s.get("Id")) for s in shows if str(s.get("Id")) not in show_map}
                     unmatched_series_episodes = [e for e in items if str(e.get("SeriesId")) in unmatched_series_ids]
 
-                    total_discovered = total_discovered - len(series_tmdb_map) + len(filtered_episodes) + len(unmatched_series_episodes)
+                    total_discovered = (
+                        total_discovered - len(series_tmdb_map)
+                        + _sync_row_count(filtered_episodes, MediaType.episode, CollectionSource.jellyfin)
+                        + _sync_row_count(unmatched_series_episodes, MediaType.episode, CollectionSource.jellyfin)
+                    )
                     await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling episodes"))
                     await db.commit()
 
@@ -3161,7 +3173,11 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                     unmatched_series_ids = {str(s.get("Id")) for s in shows if str(s.get("Id")) not in show_map}
                     unmatched_series_episodes = [e for e in items if str(e.get("SeriesId")) in unmatched_series_ids]
 
-                    total_discovered = total_discovered - len(series_tmdb_map) + len(filtered_episodes) + len(unmatched_series_episodes)
+                    total_discovered = (
+                        total_discovered - len(series_tmdb_map)
+                        + _sync_row_count(filtered_episodes, MediaType.episode, CollectionSource.emby)
+                        + _sync_row_count(unmatched_series_episodes, MediaType.episode, CollectionSource.emby)
+                    )
                     await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling episodes"))
                     await db.commit()
 

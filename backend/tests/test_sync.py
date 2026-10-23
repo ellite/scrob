@@ -540,6 +540,12 @@ class ExpandMultiEpisodeItemsTests(unittest.TestCase):
 
         self.assertEqual(expanded, [item])
 
+    def test_row_count_counts_one_row_per_expanded_episode(self):
+        items = [{"Id": "file-1", "IndexNumber": 1, "IndexNumberEnd": 3}, {"Id": "file-2", "IndexNumber": 4}]
+
+        self.assertEqual(sync._sync_row_count(items, sync.MediaType.episode, sync.CollectionSource.emby), 4)
+        self.assertEqual(sync._sync_row_count(items, sync.MediaType.episode, sync.CollectionSource.plex), 2)
+
     def test_plex_source_is_never_expanded(self):
         # Scoped to Jellyfin/Emby only - Plex doesn't expose this field at all.
         item = {"ratingKey": "1", "index": 1, "IndexNumberEnd": 2}
@@ -1165,6 +1171,42 @@ class SyncItemsPushBackTests(_PartialWatchDB):
             watched_in_scrob=True, user_data={"Played": False}, file_known=True,
         )
         self.assertEqual(push_back, {})
+
+
+class SyncRowCountMatchesProcessedTests(_PartialWatchDB):
+    """Jellyfin/Emby pulls size the job's total_items with _sync_row_count while
+    sync_items counts processed_items per expanded row (#138). Sized by
+    len(items) instead, a library with combined files finished above 100%
+    (e.g. 49052 / 48532)."""
+
+    async def test_job_sized_by_row_count_ends_at_its_total(self):
+        from models.collection import CollectionSource
+        from models.media import MediaType
+        from models.sync import SyncJob
+
+        items = [
+            {"Id": "file-1", "SeriesId": "s-1", "ParentIndexNumber": 1, "IndexNumber": 1, "IndexNumberEnd": 3},
+            {"Id": "file-2", "SeriesId": "s-1", "ParentIndexNumber": 1, "IndexNumber": 4},
+        ]
+        total = sync._sync_row_count(items, MediaType.episode, CollectionSource.jellyfin)
+        async with self.Session() as db:
+            job = SyncJob(user_id=1, source=CollectionSource.jellyfin, total_items=total, processed_items=0)
+            db.add(job)
+            await db.commit()
+
+            await sync.sync_items(
+                items=items,
+                media_type=MediaType.episode,
+                source=CollectionSource.jellyfin,
+                db=db,
+                stats={"movies": 0, "episodes": 0, "skipped": 0, "errors": 0},
+                user_id=1,
+                job_id=job.id,
+                connection_id=7,
+            )
+
+            await db.refresh(job)
+            self.assertEqual((job.processed_items, job.total_items), (4, 4))
 
 
 class PushWatchedBackToSourceTests(_PartialWatchDB):
