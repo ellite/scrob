@@ -1357,6 +1357,19 @@ def _jellyfin_event_for_other_user(data: dict, conn) -> bool:
     return bool(event_user and conn_user and event_user != conn_user)
 
 
+_WEBHOOK_SOURCE_RE = re.compile(r"[a-z0-9_-]{1,16}")
+_INVALID_SOURCE = {"status": "error", "reason": "source must be 1-16 lowercase letters, digits, '_' or '-'"}
+
+
+def _webhook_source(payload, default: str) -> str | None:
+    """The optional top-level "source" an API client names itself with (#504),
+    validated like POST /history's (#492). None means the value is invalid."""
+    source = payload.get("source", default) if isinstance(payload, dict) else default
+    if not isinstance(source, str) or not _WEBHOOK_SOURCE_RE.fullmatch(source):
+        return None
+    return source
+
+
 async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: str, connection_id: int | None = None):
     user_result = await db.execute(select(User).where(User.api_key == api_key))
     user = user_result.scalar_one_or_none()
@@ -1371,6 +1384,13 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
         payload = await request.json()
     except Exception:
         return {"status": "ignored", "reason": "invalid JSON"}
+
+    # Same optional "source" as the Kodi webhook (#504): a client posting the
+    # Jellyfin shape, such as the Silo plugin, can name itself. Session keys
+    # stay "jellyfin:..." so the client's own sessions are found as before.
+    source = _webhook_source(payload, "jellyfin")
+    if source is None:
+        return _INVALID_SOURCE
 
     data = parse_jellyfin_payload(payload)
     if not data:
@@ -1467,7 +1487,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             # Multi-episode file: show whichever episode the file-wide progress
             # currently falls into (see #138 follow-up), not always the first.
             current_episode, _, _ = _episode_for_progress(media_list, data["progress_percent"], data["progress_seconds"])
-            session = await _get_or_open_session(db, session_key, "jellyfin", user.id, current_episode.id)
+            session = await _get_or_open_session(db, session_key, source, user.id, current_episode.id)
             session.media_id = current_episode.id
             session.state = "playing"
             await _commit_playback_session_update(db, settings, *media_list)
@@ -1481,7 +1501,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             current_episode, segment_pct, segment_seconds = _episode_for_progress(
                 media_list, data["progress_percent"], data["progress_seconds"]
             )
-            session = await _get_or_open_session(db, session_key, "jellyfin", user.id, current_episode.id)
+            session = await _get_or_open_session(db, session_key, source, user.id, current_episode.id)
             session.media_id = current_episode.id
             session.state = "paused" if data["is_paused"] else "playing"
             session.progress_percent = segment_pct
@@ -1509,7 +1529,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             progress_percent = 1.0
         if (not conn or conn.sync_watched) and progress_percent > 0.05:
             for m in media_list:
-                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes, source="jellyfin")
+                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes, source=source)
         await db.commit()
         for m in media_list:
             await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
@@ -1529,7 +1549,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
         non_echo_media = media_list
         if not conn or conn.sync_watched:
             non_echo_media = await _write_completed_events_and_filter_echoes(
-                db, user.id, media_list, data["progress_seconds"], window_minutes, source="jellyfin"
+                db, user.id, media_list, data["progress_seconds"], window_minutes, source=source
             )
         await db.commit()
         for m in non_echo_media:
@@ -1551,7 +1571,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                 await _close_session(db, session_key)
                 # See the matching comment in the MarkPlayed branch above (#369).
                 non_echo_media = await _write_completed_events_and_filter_echoes(
-                    db, user.id, media_list, data["progress_seconds"], window_minutes, source="jellyfin"
+                    db, user.id, media_list, data["progress_seconds"], window_minutes, source=source
                 )
                 await db.commit()
                 for m in non_echo_media:
@@ -3538,10 +3558,9 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
     # #504: Accept optional source field for API clients (Silo plugin uses
     # this webhook but wants to identify as "silo"). Session key format stays
     # "kodi:{user_id}:{session_id}" so Silo can still find its own sessions.
-    import re
-    source = payload.get("source", "kodi")
-    if not isinstance(source, str) or not re.fullmatch(r"[a-z0-9_-]{1,16}", source):
-        return {"status": "error", "reason": "source must be 1-16 lowercase letters, digits, '_' or '-'"}
+    source = _webhook_source(payload, "kodi")
+    if source is None:
+        return _INVALID_SOURCE
 
     data = parse_kodi_payload(payload)
     if not data:
