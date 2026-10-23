@@ -1392,7 +1392,7 @@ export const api = {
   },
 
   media: {
-    list: (params?: { type?: string; sort?: string; page?: number; genre?: string[]; year?: number[]; watched?: string[]; in_list?: string }, token?: string) =>
+    list: (params?: { type?: string; sort?: string; page?: number; genre?: string[]; year?: number[]; watched?: string[]; in_list?: string; my_rating?: number[] }, token?: string) =>
       get<{ page: number; page_size: number; total_pages: number; total_results: number; results: MediaItem[] }>("/media", params, token),
 
     years: (type: string, token?: string) =>
@@ -1427,7 +1427,7 @@ export const api = {
     getCompany: (companyId: number, token?: string) =>
       get<StudioHeader>(`/media/company/${companyId}`, undefined, token),
 
-    tmdbList: (params: { type: string; category?: string; page?: number; genre?: string[]; year?: number[]; min_rating?: number; status?: string; collection?: string[]; watch?: string[]; arr?: string[]; original_language?: string; in_list?: string[]; network?: number; company?: number }, token?: string) =>
+    tmdbList: (params: { type: string; category?: string; page?: number; genre?: string[]; year?: number[]; min_rating?: number; status?: string; collection?: string[]; watch?: string[]; arr?: string[]; original_language?: string; in_list?: string[]; my_rating?: number[]; network?: number; company?: number }, token?: string) =>
       get<{ results: MediaItem[]; page: number; total_pages: number; total_results: number }>("/media/tmdb/list", params, token),
 
     search: (q: string, type?: string, page: number = 1, year?: number, token?: string, inLibrary?: boolean) =>
@@ -1489,7 +1489,7 @@ export const api = {
   },
 
   shows: {
-    list: (params?: { sort?: string; page?: number; page_size?: number; genre?: string[]; year?: number[]; status?: string[]; watched?: string[]; in_list?: string }, token?: string) =>
+    list: (params?: { sort?: string; page?: number; page_size?: number; genre?: string[]; year?: number[]; status?: string[]; watched?: string[]; in_list?: string; my_rating?: number[] }, token?: string) =>
       get<{ page: number; page_size: number; total_results: number; total_pages: number; results: any[] }>("/shows", params, token),
 
     years: (token?: string) =>

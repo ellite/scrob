@@ -1,13 +1,14 @@
 import asyncio
 import httpx
 import logging
+import math
 import re
 import urllib.parse
 import uuid
-from typing import Optional
+from typing import Annotated, Optional
 
 logger = logging.getLogger(__name__)
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 from starlette.background import BackgroundTask
@@ -55,6 +56,23 @@ from models.global_settings import GlobalSettings
 from models.calendar_cache import UserCalendarCache
 
 router = APIRouter()
+
+# One "my rating" filter value. The bounds must sit on the item type: Query(ge=, le=)
+# on a list[int] parameter is applied to the list itself, not to each value.
+MyRatingValue = Annotated[int, Field(ge=1, le=10)]
+
+
+# Which my_rating value a stored rating counts as. Ratings are floats and media
+# servers can send halves, so round half up (7.5 -> 8) instead of matching exactly.
+# The SQL and Python forms must stay the same rule.
+def my_rating_value_sql(rating):
+    return func.floor(rating + 0.5)
+
+
+def my_rating_value(rating: float) -> int:
+    return math.floor(rating + 0.5)
+
+
 _PLAYABLE_COLLECTION_SOURCES = {
     CollectionSource.jellyfin,
     CollectionSource.emby,
@@ -945,6 +963,7 @@ async def list_media(
     genre: list[str] = Query(default=[]),
     year: list[int] = Query(default=[]),
     watched: list[str] = Query(default=[]),
+    my_rating: list[MyRatingValue] = Query(default=[]),
     # in_list = in|out: membership of any of the user's lists (#255).
     in_list: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -969,6 +988,15 @@ async def list_media(
         ]))
     if year:
         filters.append(or_(*[Media.release_date.like(f'{y}%') for y in year]))
+    if my_rating:
+        # Personal title ratings are user-scoped. Season ratings use the same
+        # table, so exclude them explicitly from collection-level filters.
+        rated_media_ids = select(Rating.media_id).where(
+            Rating.user_id == current_user.id,
+            Rating.season_number.is_(None),
+            my_rating_value_sql(Rating.rating).in_(my_rating),
+        )
+        filters.append(Media.id.in_(rated_media_ids))
     watched_states = set(watched)
     if watched_states and watched_states != {"watched", "unwatched"}:
         watched_exists = (
@@ -1010,6 +1038,20 @@ async def list_media(
             base_query
             .outerjoin(last_watched_sq, last_watched_sq.c.media_id == Media.id)
             .order_by(last_watched_sq.c.last_watched_at.desc().nulls_last(), Media.id.desc())
+            .offset(offset).limit(page_size)
+        )
+    elif sort == "user_rating":
+        query = (
+            base_query
+            .outerjoin(
+                Rating,
+                and_(
+                    Rating.media_id == Media.id,
+                    Rating.user_id == current_user.id,
+                    Rating.season_number.is_(None),
+                ),
+            )
+            .order_by(Rating.rating.desc().nulls_last(), Media.tmdb_rating.desc().nulls_last(), Media.id.desc())
             .offset(offset).limit(page_size)
         )
     else:
@@ -2260,11 +2302,11 @@ _IN_LIST_CHECKS = {
 
 def _apply_local_filters(
     items: list[dict], collection: list[str], watch: list[str], arr: list[str], year: list[int] | None = None,
-    in_list: list[str] | None = None,
+    in_list: list[str] | None = None, my_rating: list[int] | None = None,
 ) -> list[dict]:
     """Local-only filters get_tmdb_list applies after TMDB enrichment.
 
-    collection/watch/arr can't be expressed by TMDB's discover API at all.
+    collection/watch/arr/my_rating can't be expressed by TMDB's discover API at all.
     year could (primary_release_year/first_air_date_year), but only as a
     single value - TMDB has no "year A OR year B" for discover, so a
     multi-year selection is applied locally here instead, same as the others.
@@ -2284,6 +2326,12 @@ def _apply_local_filters(
     if year:
         wanted = {str(y) for y in year}
         items = [i for i in items if (i.get("release_date") or "")[:4] in wanted]
+    if my_rating:
+        wanted_ratings = set(my_rating)
+        items = [
+            i for i in items
+            if i.get("user_rating") is not None and my_rating_value(i["user_rating"]) in wanted_ratings
+        ]
     return items
 
 
@@ -2326,6 +2374,7 @@ async def get_tmdb_list(
     arr: list[str] = Query(default=[]),
     # in_list = in|out: membership of any of the user's lists (#255).
     in_list: list[str] = Query(default=[]),
+    my_rating: list[MyRatingValue] = Query(default=[]),
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
@@ -2340,7 +2389,7 @@ async def get_tmdb_list(
             raise HTTPException(status_code=401, detail="Not authenticated")
         tmdb_key = gs.tmdb_api_key
         # No personal library/watch history to filter on without a user.
-        collection, watch, arr = [], [], []
+        collection, watch, arr, my_rating = [], [], [], []
     else:
         tmdb_key = await get_user_tmdb_key(db, current_user.id)
 
@@ -2463,7 +2512,7 @@ async def get_tmdb_list(
                 await enrich_with_state(db, current_user.id, enriched)
             return enriched
 
-        if not (collection or watch or arr or year or in_list):
+        if not (collection or watch or arr or year or in_list or my_rating):
             data = await _fetch_tmdb_page(page)
             enriched = await _build_enriched(data.get("results", []))
             return {
@@ -2502,7 +2551,7 @@ async def get_tmdb_list(
                         batch_results.append(res)
             if batch_results:
                 enriched = await _build_enriched(batch_results)
-                matched.extend(_apply_local_filters(enriched, collection, watch, arr, year, in_list))
+                matched.extend(_apply_local_filters(enriched, collection, watch, arr, year, in_list, my_rating))
             scan_page = batch_end + 1
             if total_tmdb_pages is not None and scan_page > total_tmdb_pages:
                 break

@@ -5,6 +5,7 @@ import Pagination from "../components/Pagination.astro";
 import FilterPanel from "../components/FilterPanel.astro";
 import SortButton from "../components/SortButton.astro";
 import { api, type MediaItem } from "../lib/api";
+import { MY_RATING_OPTIONS, parseMyRating } from "../lib/my-rating";
 export const prerender = false;
 
 const category = Astro.url.searchParams.get("category") ?? "popular";
@@ -16,6 +17,7 @@ const watch = Astro.url.searchParams.getAll("watch");
 const arr = Astro.url.searchParams.getAll("arr");
 const langs = Astro.url.searchParams.getAll("lang");
 const inList = Astro.url.searchParams.getAll("in_list");
+const myRating = parseMyRating(Astro.url);
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -48,6 +50,7 @@ if (hasTmdbKey) {
       ...(hasRadarr && arr.length ? { arr } : {}),
       ...(langs.length ? { original_language: langs.join("|") } : {}),
       ...(inList.length ? { in_list: inList } : {}),
+      ...(myRating.length ? { my_rating: myRating } : {}),
     }, token);
   } catch (e) {
     console.error("Failed to fetch TMDB movie list:", e);
@@ -85,6 +88,7 @@ watch.forEach((v) => baseParams.append("watch", v));
 if (hasRadarr) arr.forEach((v) => baseParams.append("arr", v));
 langs.forEach((l) => baseParams.append("lang", l));
 inList.forEach((v) => baseParams.append("in_list", v));
+myRating.forEach((rating) => baseParams.append("my_rating", String(rating)));
 const baseUrl = `/movies?${baseParams.toString()}`;
 ---
 
@@ -126,6 +130,7 @@ const baseUrl = `/movies?${baseParams.toString()}`;
             ...(user ? [
               { key: "collection", label: "Collection", options: [{ value: "in", label: "In My Collection" }, { value: "out", label: "Not In My Collection" }], selected: collection },
               { key: "watch", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }], selected: watch },
+              { key: "my_rating", label: "My Rating", options: MY_RATING_OPTIONS, selected: myRating.map(String) },
             ] : []),
             ...(hasRadarr ? [{ key: "arr", label: "Radarr", options: [{ value: "added", label: "In Radarr" }, { value: "notadded", label: "Not In Radarr" }], selected: arr }] : []),
             { key: "lang", label: "Language", options: LANGUAGES, selected: langs },

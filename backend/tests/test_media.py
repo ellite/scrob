@@ -129,7 +129,7 @@ class TmdbListStudioParamsTests(unittest.IsolatedAsyncioTestCase):
         base = dict(
             type=MediaType.movie, category="popular", page=1, genre=[], year=[],
             min_rating=None, status=None, original_language=None, network=None,
-            company=None, collection=[], watch=[], arr=[], in_list=[],
+            company=None, collection=[], watch=[], arr=[], in_list=[], my_rating=[],
             db=SimpleNamespace(execute=AsyncMock(return_value=_FakeExecResult())),
             current_user=SimpleNamespace(id=7),
         )
