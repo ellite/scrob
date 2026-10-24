@@ -42,7 +42,8 @@ from core.translations import get_user_metadata_language
 from core.rewatch import record_rewatch_progress, get_active_rewatches_for_shows
 from core.push_state import MISS, RATING, WATCHED, PushState, plan_push, season_miss_key, season_rating_key
 from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event, is_duplicate_watch_time
-from core.watchlist_reconcile import compute_new_baseline, media_key, plan_watchlist_reconcile
+from core.native_watchlist import get_or_create_watchlist, get_watchlist, load_watchlist_keys, watchlist_lock
+from core.watchlist_reconcile import compute_new_baseline, compute_pull_only_baseline, media_key, plan_watchlist_reconcile
 from models.rewatch import ShowRewatch, RewatchProgress
 
 from dependencies import get_current_user, get_current_user_or_api_key
@@ -112,7 +113,6 @@ _stremio_push_locks: dict[int, asyncio.Lock] = {}
 # push and manual pushes all run independently and share no other lock.
 _plex_watchlist_locks: dict[int, asyncio.Lock] = {}
 
-_PLEX_WATCHLIST_SLUG = "__plex_watchlist__"
 
 BATCH_SIZE = 500
 TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
@@ -3675,34 +3675,10 @@ def _plex_watchlist_remote_map(remote_items: list[dict]) -> dict[str, dict]:
 
 
 async def _load_local_watchlist_state(db: AsyncSession, user_id: int):
-    """The managed list row (or None) plus typed key -> (media_id, title)
+    """The native watchlist row (or None) plus typed key -> (media_id, title)
     for its TMDB-mapped movies and shows."""
-    from models.lists import List as ListModel, ListItem
-
-    wl_result = await db.execute(
-        select(ListModel).where(
-            ListModel.user_id == user_id,
-            ListModel.trakt_slug == _PLEX_WATCHLIST_SLUG,
-        )
-    )
-    watchlist = wl_result.scalar_one_or_none()
-    local_by_key: dict[str, tuple[int, str]] = {}
-    if watchlist:
-        rows = await db.execute(
-            select(Media.id, Media.media_type, Media.tmdb_id, Media.title)
-            .join(ListItem, ListItem.media_id == Media.id)
-            .where(ListItem.list_id == watchlist.id)
-        )
-        for media_id, media_type, tmdb_id, title in rows:
-            if tmdb_id is None:
-                continue
-            if media_type == MediaType.movie:
-                kind = "movie"
-            elif media_type == MediaType.series:
-                kind = "show"
-            else:
-                continue
-            local_by_key[media_key(kind, tmdb_id)] = (media_id, title)
+    watchlist = await get_watchlist(db, user_id)
+    local_by_key = await load_watchlist_keys(db, watchlist.id) if watchlist else {}
     return watchlist, local_by_key
 
 
@@ -3718,7 +3694,7 @@ async def _apply_local_watchlist_changes(
     """Apply the plan's local side. Returns the keys actually present
     afterwards: an import that failed stays out, so the baseline never
     records state that doesn't exist."""
-    from models.lists import List as ListModel, ListItem
+    from models.lists import ListItem
 
     applied = set(local_by_key)
 
@@ -3726,9 +3702,7 @@ async def _apply_local_watchlist_changes(
         print("  Warning: skipping Plex watchlist imports - no TMDB API key configured")
     elif plan.add_local:
         if not watchlist:
-            watchlist = ListModel(user_id=user_id, name="Plex - Watchlist", trakt_slug=_PLEX_WATCHLIST_SLUG)
-            db.add(watchlist)
-            await db.flush()
+            watchlist = await get_or_create_watchlist(db, user_id)
         for key in sorted(plan.add_local):
             item = remote_by_key.get(key, {})
             kind, _, raw_id = key.partition(":")
@@ -3811,6 +3785,7 @@ async def _apply_local_watchlist_changes(
                 ListItem.__table__.delete().where(
                     ListItem.list_id == watchlist.id,
                     ListItem.media_id.in_(remove_ids),
+                    ListItem.season_number.is_(None),
                 )
             )
         applied -= set(plan.remove_local)
@@ -3868,7 +3843,7 @@ async def _apply_remote_watchlist_changes(
 
 
 async def _reconcile_plex_watchlist(user_id: int, connection_id: int, tmdb_api_key: str | None) -> None:
-    """Reconcile the Plex account watchlist with the managed Scrob list in
+    """Reconcile the Plex account watchlist with the native Scrob watchlist in
     both directions, against this connection's last-synced baseline (see
     core/watchlist_reconcile.py for the semantics).
 
@@ -3895,7 +3870,7 @@ async def _reconcile_plex_watchlist(user_id: int, connection_id: int, tmdb_api_k
         if not (pull_enabled or push_enabled):
             return
 
-        async with _plex_watchlist_lock(conn.id):
+        async with _plex_watchlist_lock(conn.id), watchlist_lock(user_id):
             try:
                 # A concurrent job may have reconciled while we waited on the
                 # lock, and conn was loaded well before it. Re-read the baseline.
@@ -3913,7 +3888,8 @@ async def _reconcile_plex_watchlist(user_id: int, connection_id: int, tmdb_api_k
 
                 watchlist, local_by_key = await _load_local_watchlist_state(db, user_id)
                 if watchlist is None and baseline is not None:
-                    # The managed list was deleted in the UI. Without this reset,
+                    # The native watchlist is missing (it can't be deleted in the UI,
+                    # but "clear all lists" removes it). Without this reset,
                     # every baseline key would read as a local deletion and wipe
                     # the user's real Plex watchlist. Start over instead.
                     baseline = None
@@ -3941,9 +3917,13 @@ async def _reconcile_plex_watchlist(user_id: int, connection_id: int, tmdb_api_k
                     conn, plan, local_by_key, remote_by_key
                 )
 
-                new_baseline = compute_new_baseline(
-                    applied_local, failed_push_add=failed_add, failed_push_remove=failed_remove
-                )
+                if push_enabled:
+                    new_baseline = compute_new_baseline(
+                        applied_local, failed_push_add=failed_add, failed_push_remove=failed_remove
+                    )
+                else:
+                    failed_local = set(plan.add_local) - applied_local
+                    new_baseline = compute_pull_only_baseline(remote_by_key.keys(), failed_add_local=failed_local)
                 await db.execute(
                     update(MediaServerConnection)
                     .where(MediaServerConnection.id == conn.id)

@@ -3,6 +3,7 @@ import unittest
 from core.watchlist_reconcile import (
     SUPPRESS_MIN_BASELINE,
     compute_new_baseline,
+    compute_pull_only_baseline,
     media_key,
     plan_watchlist_reconcile,
 )
@@ -58,24 +59,42 @@ class TruthTableBothDirectionsTests(unittest.TestCase):
 
 
 class PullOnlyModeTests(unittest.TestCase):
-    """Pull-only stays a plain mirror of the remote, as it always was."""
+    """Pull-only applies the remote's own changes to the shared watchlist.
+    The baseline is the remote as last seen, not the agreed state."""
 
-    def test_local_extra_is_removed_even_without_baseline_entry(self):
+    def test_local_extra_from_another_source_is_kept(self):
+        # Added by Plex or the lists UI: never on this remote, so not its
+        # to remove. A plain mirror used to delete it.
         plan = _plan({"movie:1"}, set(), [], push=False)
-        self.assertEqual(plan.remove_local, {"movie:1"})
-        self.assertEqual(plan.push_add, frozenset())
+        self.assertFalse(plan.has_changes)
 
-    def test_locally_deleted_key_is_readded_immediately(self):
-        # No push direction to propagate the local deletion, so the mirror
-        # re-adds in the same run rather than flapping over two runs.
-        plan = _plan(set(), {"movie:1"}, ["movie:1"], push=False)
+    def test_remote_removal_is_applied_locally(self):
+        plan = _plan({"movie:1"}, set(), ["movie:1"], push=False)
+        self.assertEqual(plan.remove_local, {"movie:1"})
+
+    def test_remote_add_is_imported(self):
+        plan = _plan(set(), {"movie:1"}, [], push=False)
         self.assertEqual(plan.add_local, {"movie:1"})
-        self.assertEqual(plan.push_remove, frozenset())
+
+    def test_local_removal_of_a_key_still_on_the_remote_sticks(self):
+        plan = _plan(set(), {"movie:1"}, ["movie:1"], push=False)
+        self.assertFalse(plan.has_changes)
 
     def test_never_pushes(self):
         plan = _plan({"movie:1", "movie:2"}, {"movie:3"}, ["movie:2"], push=False)
         self.assertEqual(plan.push_add, frozenset())
         self.assertEqual(plan.push_remove, frozenset())
+
+    def test_baseline_is_the_remote_minus_failed_imports(self):
+        self.assertEqual(
+            compute_pull_only_baseline({"movie:1", "show:2"}, failed_add_local={"show:2"}),
+            ["movie:1"],
+        )
+
+    def test_failed_import_is_retried_next_run(self):
+        baseline = compute_pull_only_baseline({"movie:1"}, failed_add_local={"movie:1"})
+        plan = _plan(set(), {"movie:1"}, baseline, push=False)
+        self.assertEqual(plan.add_local, {"movie:1"})
 
 
 class PushOnlyModeTests(unittest.TestCase):
@@ -108,14 +127,13 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(plan.remove_local, frozenset())
         self.assertEqual(plan.push_remove, frozenset())
 
-    def test_none_baseline_is_not_the_same_as_empty_baseline(self):
-        # An empty baseline means a reconcile happened and everything was
-        # cleared, so deletions may be inferred. None means no reconcile has
-        # ever happened, so they may not.
-        with_none = _plan({"movie:1"}, set(), None, push=False)
-        with_empty = _plan({"movie:1"}, set(), [], push=False)
-        self.assertEqual(with_none.remove_local, frozenset())
-        self.assertEqual(with_empty.remove_local, {"movie:1"})
+    def test_only_a_baseline_entry_licenses_a_deletion(self):
+        # None means no reconcile has ever happened, so nothing may be
+        # inferred as deleted - not even keys a later baseline would list.
+        self.assertEqual(_plan(set(), {"movie:1"}, None).push_remove, frozenset())
+        self.assertEqual(_plan(set(), {"movie:1"}, ["movie:1"]).push_remove, {"movie:1"})
+        self.assertEqual(_plan({"movie:1"}, set(), None, push=False).remove_local, frozenset())
+        self.assertEqual(_plan({"movie:1"}, set(), ["movie:1"], push=False).remove_local, {"movie:1"})
 
     def test_none_baseline_respects_direction_flags(self):
         pull_only = _plan({"movie:1"}, {"show:2"}, None, push=False)

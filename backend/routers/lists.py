@@ -21,6 +21,7 @@ from models.global_settings import GlobalSettings
 from routers.media import enrich_with_state, require_anon_nav_allowed
 from core.enrichment import is_unmapped_tvdb_episode, create_media_safely, get_or_create_tvdb_series_media
 from core.identity import find_media, find_show
+from core.native_watchlist import get_or_create_watchlist, reset_watchlist_baselines
 from core.translations import (
     apply_media_translations,
     get_media_translations,
@@ -108,6 +109,7 @@ def _format_list(lst: ListModel) -> dict:
         "name": lst.name,
         "description": lst.description,
         "privacy_level": lst.privacy_level,
+        "is_watchlist": lst.is_watchlist,
         "item_count": len(lst.items),
         "created_at": lst.created_at.isoformat(),
         "updated_at": lst.updated_at.isoformat(),
@@ -232,14 +234,35 @@ async def get_lists(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
+    # The watchlist always shows, even before any service has synced into it.
+    await get_or_create_watchlist(db, current_user.id)
+    await db.commit()
     result = await db.execute(
         select(ListModel)
         .options(selectinload(ListModel.items).selectinload(ListItem.media).selectinload(Media.show))
         .where(ListModel.user_id == current_user.id)
-        .order_by(ListModel.updated_at.desc())
+        .order_by(ListModel.is_watchlist.desc(), ListModel.updated_at.desc())
     )
     lists = result.scalars().all()
     return {"lists": [_format_list(lst) for lst in lists]}
+
+
+@router.get("/watchlist")
+async def get_watchlist(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    """The user's native watchlist, created on first use. Its id works with
+    every /lists/{list_id} endpoint; adds and removals there are pushed to
+    each service with watchlist push enabled."""
+    watchlist = await get_or_create_watchlist(db, current_user.id)
+    await db.commit()
+    result = await db.execute(
+        select(ListModel)
+        .options(selectinload(ListModel.items).selectinload(ListItem.media).selectinload(Media.show))
+        .where(ListModel.id == watchlist.id)
+    )
+    return _format_list(result.scalar_one())
 
 
 @router.post("", status_code=201)
@@ -262,6 +285,7 @@ async def create_list(
         "name": lst.name,
         "description": lst.description,
         "privacy_level": lst.privacy_level,
+        "is_watchlist": False,
         "item_count": 0,
         "created_at": lst.created_at.isoformat(),
         "updated_at": lst.updated_at.isoformat(),
@@ -953,6 +977,10 @@ async def clear_all_lists(
 ):
     # ListItem rows cascade via the FK's ondelete=CASCADE - no separate delete needed.
     await db.execute(delete(ListModel).where(ListModel.user_id == current_user.id))
+    # The watchlist goes too. Its sync baselines must not outlive it, or the
+    # next reconcile would read every synced title as removed in Scrob and
+    # remove it from the services as well.
+    await reset_watchlist_baselines(db, current_user.id)
     await db.commit()
     return {"status": "ok"}
 
@@ -969,6 +997,8 @@ async def delete_list(
     lst = result.scalar_one_or_none()
     if not lst:
         raise HTTPException(status_code=404, detail="List not found")
+    if lst.is_watchlist:
+        raise HTTPException(status_code=400, detail="The watchlist can't be deleted")
     await db.delete(lst)
     await db.commit()
     return {"message": "List deleted"}
@@ -1136,10 +1166,9 @@ async def _push_list_item_to_trakt(
 
 
 
-async def _push_list_item_to_mdblist(
+async def _push_watchlist_item_to_mdblist(
     db: AsyncSession,
     user_id: int,
-    list_mdblist_slug: str,
     media: Media,
     season_number: Optional[int] = None,
     remove: bool = False,
@@ -1147,7 +1176,6 @@ async def _push_list_item_to_mdblist(
     # MDBList watchlists have no season granularity - only whole movies/shows apply.
     if (
         season_number is not None
-        or list_mdblist_slug != "__watchlist__"
         or not media.tmdb_id
         or media.media_type not in (MediaType.movie, MediaType.series)
     ):
@@ -1172,6 +1200,21 @@ async def _push_list_item_to_mdblist(
             remove,
             exc,
         )
+
+
+async def _push_watchlist_item(
+    db: AsyncSession,
+    user_id: int,
+    media: Media,
+    season_number: Optional[int] = None,
+    remove: bool = False,
+) -> None:
+    """Live push of a native watchlist edit to every service that has
+    watchlist push on. Best-effort: a failed push is retried by that
+    service's next watchlist reconcile."""
+    await _push_list_item_to_trakt(db, user_id, "__watchlist__", media, season_number=season_number, remove=remove)
+    await _push_watchlist_item_to_mdblist(db, user_id, media, season_number=season_number, remove=remove)
+    await _push_list_item_to_plex_watchlist(db, user_id, media, season_number=season_number, remove=remove)
 
 
 @router.post("/{list_id}/items", status_code=201)
@@ -1284,15 +1327,10 @@ async def add_list_item(
     db.add(item)
     await db.commit()
 
-    if lst.trakt_slug:
+    if lst.is_watchlist:
+        await _push_watchlist_item(db, current_user.id, media, season_number=body.season_number, remove=False)
+    elif lst.trakt_slug:
         await _push_list_item_to_trakt(db, current_user.id, lst.trakt_slug, media, season_number=body.season_number, remove=False)
-        if lst.trakt_slug == "__plex_watchlist__":
-            await _push_list_item_to_plex_watchlist(db, current_user.id, media, season_number=body.season_number, remove=False)
-
-    if lst.mdblist_slug:
-        await _push_list_item_to_mdblist(
-            db, current_user.id, lst.mdblist_slug, media, season_number=body.season_number, remove=False
-        )
 
     item_result = await db.execute(
         select(ListItem)
@@ -1340,14 +1378,9 @@ async def remove_list_item(
     await db.delete(item)
     await db.commit()
 
-    if lst and lst.trakt_slug and media:
+    if lst and media and lst.is_watchlist:
+        await _push_watchlist_item(db, current_user.id, media, season_number=season_number, remove=True)
+    elif lst and lst.trakt_slug and media:
         await _push_list_item_to_trakt(db, current_user.id, lst.trakt_slug, media, season_number=season_number, remove=True)
-        if lst.trakt_slug == "__plex_watchlist__":
-            await _push_list_item_to_plex_watchlist(db, current_user.id, media, season_number=season_number, remove=True)
-
-    if lst and lst.mdblist_slug and media:
-        await _push_list_item_to_mdblist(
-            db, current_user.id, lst.mdblist_slug, media, season_number=season_number, remove=True
-        )
 
     return {"message": "Item removed"}

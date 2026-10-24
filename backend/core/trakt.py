@@ -620,6 +620,19 @@ async def remove_from_watchlist(client_id: str, access_token: str, media_type: s
         resp.raise_for_status()
 
 
+async def update_watchlist(
+    client_id: str, access_token: str, items: dict[str, list[dict]], *, remove: bool = False,
+) -> dict:
+    """Add (or remove) many movies/shows in one call - items is
+    {"movies": [{"ids": {"tmdb": 1}}], "shows": [...]}. Returns Trakt's
+    response, whose "not_found" lists the items it couldn't match."""
+    path = "/sync/watchlist/remove" if remove else "/sync/watchlist"
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.post(f"{TRAKT_BASE}{path}", json=items, headers=_headers(client_id, access_token))
+        resp.raise_for_status()
+        return resp.json() if resp.content else {}
+
+
 async def add_to_list(client_id: str, access_token: str, list_slug: str, media_type: str, tmdb_id: int) -> None:
     """Add a movie or show to a Trakt list.
 

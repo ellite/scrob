@@ -101,7 +101,10 @@ class UserSettings(Base):
     # Trakt list import/export
     trakt_sync_lists         : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     trakt_push_lists         : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    trakt_watchlist_split    : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    trakt_watchlist_split    : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")  # unused since the native watchlist
+    # Typed keys ("movie:603") as of the last watchlist reconcile with Trakt
+    # (core/watchlist_reconcile.py). NULL = never reconciled.
+    trakt_watchlist_synced_keys : Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
 
     # Trakt auto sync/push interval, in hours (null = disabled)
     trakt_auto_sync_interval : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -127,6 +130,8 @@ class UserSettings(Base):
     simkl_sync_ratings       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
     simkl_sync_lists         : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
     simkl_sync_dropped       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Same as trakt_watchlist_synced_keys, for the Simkl plan-to-watch list.
+    simkl_watchlist_synced_keys : Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
 
     # Simkl outbound push flags (Scrob → Simkl)
     simkl_push_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
@@ -212,6 +217,8 @@ class UserSettings(Base):
     mdblist_push_watched: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     mdblist_push_ratings: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     mdblist_push_watchlist: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Same as trakt_watchlist_synced_keys, for the MDBList watchlist.
+    mdblist_watchlist_synced_keys: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     mdblist_push_collection: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     mdblist_push_dropped: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     mdblist_scrobble: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

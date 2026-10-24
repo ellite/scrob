@@ -1730,7 +1730,7 @@ async def _simkl_status_for_undropped_show(db: AsyncSession, user_id: int, tmdb_
     - completed: the show has ended and every aired episode is watched;
     - watching: at least one episode watched;
     - hold: nothing watched. Not plantowatch, which Scrob would pull into the
-      "Simkl - Watchlist"; not watching, which claims a show was started.
+      watchlist; not watching, which claims a show was started.
     """
     show = (await db.execute(select(Show).where(Show.tmdb_id == tmdb_id))).scalar_one_or_none()
     if not show:

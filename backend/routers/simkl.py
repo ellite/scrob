@@ -19,12 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import simkl as simkl_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
+from core.identity import coerce_id
+from core.native_watchlist import sync_service_watchlist, watchlist_lock
+from core.watchlist_reconcile import media_key
 from core.rewatch import record_rewatch_progress
 from db import get_db, engine
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
 from models.events import WatchEvent
-from models.lists import List as ListModel, ListItem
 from models.media import Media
 from models.ratings import Rating, RatingChanges
 from models.show import Show
@@ -37,7 +39,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 TMDB_CONCURRENCY = 10
-SIMKL_WATCHLIST_SLUG = "__simkl_watchlist__"
 SIMKL_PUSH_BATCH_SIZE = 50
 
 
@@ -605,60 +606,39 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
             # ── Watchlist / plan-to-watch ─────────────────────────────────────
             if settings.simkl_sync_lists:
                 print("  Processing Simkl watchlist (plan to watch)…")
-                wl_result = await db.execute(
-                    select(ListModel).where(
-                        ListModel.user_id == user_id,
-                        ListModel.trakt_slug == SIMKL_WATCHLIST_SLUG,
+                remote = {}
+                for items, key_kind, getter in (
+                    (raw_movies, "movie", _get_or_create_movie_media),
+                    (raw_shows, "show", _get_or_create_series_media),
+                ):
+                    for item in items:
+                        if item.get("status") != "plantowatch":
+                            continue
+                        data = item.get(key_kind) or {}
+                        tmdb_id = coerce_id((data.get("ids") or {}).get("tmdb"))
+                        if not tmdb_id:
+                            continue
+
+                        async def _resolve(getter=getter, tmdb_id=tmdb_id, title=data.get("title", "")):
+                            return await getter(db, tmdb_id, title, api_key)
+
+                        remote[media_key(key_kind, tmdb_id)] = _resolve
+
+                # Simkl has no watchlist push, so this only ever pulls.
+                async with watchlist_lock(user_id):
+                    wl_result = await sync_service_watchlist(
+                        db, user_id,
+                        service="Simkl",
+                        remote=remote,
+                        baseline=settings.simkl_watchlist_synced_keys,
+                        pull_enabled=True,
+                        push_enabled=False,
                     )
-                )
-                watchlist = wl_result.scalar_one_or_none()
-                if not watchlist:
-                    watchlist = ListModel(user_id=user_id, name="Simkl - Watchlist", trakt_slug=SIMKL_WATCHLIST_SLUG)
-                    db.add(watchlist)
-                    await db.flush()
-                    stats["lists"] += 1
-
-                wl_items_res = await db.execute(select(ListItem.media_id).where(ListItem.list_id == watchlist.id))
-                wl_existing: set[int] = {row[0] for row in wl_items_res}
-
-                plantowatch_movies = [m for m in raw_movies if m.get("status") == "plantowatch"]
-                plantowatch_shows  = [s for s in raw_shows  if s.get("status") == "plantowatch"]
-
-                for item in plantowatch_movies:
-                    movie_data = item.get("movie", {})
-                    tmdb_id = movie_data.get("ids", {}).get("tmdb")
-                    if not tmdb_id:
-                        continue
-                    tmdb_id = int(tmdb_id)
-                    try:
-                        async with db.begin_nested():
-                            media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
-                        if media and media.id not in wl_existing:
-                            db.add(ListItem(list_id=watchlist.id, media_id=media.id))
-                            wl_existing.add(media.id)
-                            stats["list_items"] += 1
-                    except Exception as exc:
-                        logger.warning("Error processing Simkl watchlist movie tmdb=%s: %s", tmdb_id, exc)
-                        stats["errors"] += 1
-
-                for item in plantowatch_shows:
-                    show_data = item.get("show", {})
-                    tmdb_id = show_data.get("ids", {}).get("tmdb")
-                    if not tmdb_id:
-                        continue
-                    tmdb_id = int(tmdb_id)
-                    try:
-                        async with db.begin_nested():
-                            media = await _get_or_create_series_media(db, tmdb_id, show_data.get("title", ""), api_key)
-                        if media and media.id not in wl_existing:
-                            db.add(ListItem(list_id=watchlist.id, media_id=media.id))
-                            wl_existing.add(media.id)
-                            stats["list_items"] += 1
-                    except Exception as exc:
-                        logger.warning("Error processing Simkl watchlist show tmdb=%s: %s", tmdb_id, exc)
-                        stats["errors"] += 1
-
-                await db.commit()
+                    if wl_result.baseline is not None:
+                        settings.simkl_watchlist_synced_keys = wl_result.baseline
+                    await db.commit()
+                stats["list_items"] += wl_result.added
+                stats["watchlist_removed"] = wl_result.removed
 
             # ── Dropped shows (#474) ──────────────────────────────────────────
             if settings.simkl_sync_dropped:

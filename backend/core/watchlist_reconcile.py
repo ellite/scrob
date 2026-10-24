@@ -1,29 +1,37 @@
-"""Three-way reconciliation for the Plex watchlist mirror.
+"""Three-way reconciliation between Scrob's watchlist and a service's.
 
-The watchlist is synced by pull and push jobs on independent schedules, so
-an item missing on one side is ambiguous: never synced, or deliberately
-removed there. Guessing wrong is how Plex's auto-remove-after-watching used
-to get undone by the next push.
+Scrob has one watchlist per user (core/native_watchlist.py) and every
+service with a watchlist - Plex, Trakt, MDBList, Simkl - reconciles against
+that same list, each with its own baseline. The watchlist is synced by pull
+and push jobs on independent schedules, so an item missing on one side is
+ambiguous: never synced, or deliberately removed there. Guessing wrong is
+how Plex's auto-remove-after-watching used to get undone by the next push.
 
-The tiebreaker is a persisted baseline - the key set both sides agreed on
-after the last reconcile (None until a first one completes). Comparing
-local L, remote R and baseline B classifies every key, and the same plan
-comes out no matter which job runs first:
+The tiebreaker is a persisted baseline per service (None until a first
+reconcile completes). Comparing local L, remote R and baseline B classifies
+every key, and the same plan comes out no matter which job runs first:
 
     L R B   both directions      pull only              push only
     -----   ------------------   --------------------   ------------------
     1 1 *   in sync              in sync                in sync
-    1 0 0   push_add             remove_local (mirror)  push_add
+    1 0 0   push_add             (ignored)              push_add
     0 1 0   add_local            add_local              (ignored)
     1 0 1   remove_local         remove_local           push_add (master)
-    0 1 1   push_remove          add_local (mirror)     push_remove
+    0 1 1   push_remove          (ignored)              push_remove
     0 0 1   drops from baseline  drops from baseline    drops from baseline
 
-Pull-only stays a plain mirror of the remote and push-only keeps Scrob as
-the master, same as before. With both directions on, each side's removals
-now propagate exactly once ((1,0,1) is the resurrection fix), and a local
-add whose fire-and-forget live push failed gets retried instead of deleted
-by the next pull ((1,0,0)).
+With both directions on, each side's removals propagate exactly once
+((1,0,1) is the resurrection fix), and a local add whose fire-and-forget
+live push failed gets retried instead of deleted by the next pull
+((1,0,0)). Push-only keeps Scrob as the master.
+
+Pull-only only applies the service's own changes. It used to be a plain
+mirror of the remote, which is wrong once the list is shared: mirroring
+Simkl would wipe everything Plex or the lists UI added. So in pull-only
+mode the baseline is the remote as last seen (compute_pull_only_baseline),
+not the agreed state, and only keys that appeared or disappeared on the
+remote since then touch the local list. A local removal of a key that is
+still on a pull-only remote sticks.
 
 With no baseline yet nothing is ever deleted - the plan is purely additive
 in whichever directions are enabled, like a first sync always was.
@@ -93,26 +101,25 @@ def plan_watchlist_reconcile(
     push_add: set[str] = set()
     push_remove: set[str] = set()
 
-    for key in l - r:
-        if key in b:  # (1,0,1) synced before, gone remotely
-            if pull_enabled:
-                remove_local.add(key)
-            elif push_enabled:  # Scrob is master: put it back
+    if pull_enabled and not push_enabled:
+        # Remote deltas only - see "Pull-only" in the module docstring.
+        add_local = (r - b) - l
+        remove_local = (b - r) & l
+    else:
+        for key in l - r:
+            if key in b:  # (1,0,1) synced before, gone remotely
+                if pull_enabled:
+                    remove_local.add(key)
+                elif push_enabled:  # Scrob is master: put it back
+                    push_add.add(key)
+            elif push_enabled:  # (1,0,0) added locally since last reconcile
                 push_add.add(key)
-        else:  # (1,0,0) added locally since last reconcile
-            if push_enabled:
-                push_add.add(key)
-            elif pull_enabled:  # plain mirror: remote wins
-                remove_local.add(key)
 
-    for key in r - l:
-        if key in b:  # (0,1,1) synced before, gone locally
-            if push_enabled:
-                push_remove.add(key)
-            elif pull_enabled:  # plain mirror: remote wins
-                add_local.add(key)
-        else:  # (0,1,0) added remotely since last reconcile
-            if pull_enabled:
+        for key in r - l:
+            if key in b:  # (0,1,1) synced before, gone locally
+                if push_enabled:
+                    push_remove.add(key)
+            elif pull_enabled:  # (0,1,0) added remotely since last reconcile
                 add_local.add(key)
 
     if remove_local and len(b) >= SUPPRESS_MIN_BASELINE:
@@ -151,3 +158,15 @@ def compute_new_baseline(
     out so they retry as (1,0,0); failed remote removes are kept in so they
     retry as (0,1,1)."""
     return sorted((set(final_local) | set(failed_push_remove)) - set(failed_push_add))
+
+
+def compute_pull_only_baseline(
+    remote: Iterable[str],
+    *,
+    failed_add_local: Iterable[str] = (),
+) -> list[str]:
+    """Next baseline for a pull-only reconcile: the remote as seen this run.
+
+    A remote add that failed to import locally is left out, so it still
+    reads as new on the remote next time and is retried."""
+    return sorted(set(remote) - set(failed_add_local))

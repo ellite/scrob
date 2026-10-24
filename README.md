@@ -41,6 +41,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **A
   - [Scheduling, Full Resync, and Limitations](#scheduling-full-resync-and-limitations)
 - [Simkl Synchronization](#simkl-synchronization)
 - [MDBList Synchronization](#mdblist-synchronization)
+- [Watchlist](#watchlist)
 - [Webhooks](#webhooks-real-time-scrobbling)
   - [Jellyfin](#jellyfin)
   - [Plex](#plex)
@@ -66,6 +67,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **A
 - **Watch history & ratings**: Track every movie and episode you've watched, including multiple plays with individual timestamps. Log plays manually with a custom date, or remove individual entries - all from the watched button on any movie or episode page. Rate them on a 10-point scale with optional reviews.
 - **Season ratings**: Rate individual seasons separately from the overall show.
 - **Rewatches**: Start a rewatch on any show and Scrob tracks progress for that cycle separately, without touching your original watch history.
+- **Watchlist**: One watchlist that Plex, Trakt, MDBList and Simkl all sync with, so a title added on any of them shows up once and reaches the others. See [Watchlist](#watchlist).
 - **Personal lists**: Create and curate lists of movies and shows. Mark them public to share with other users on the same instance.
 - **Comments**: Leave comments on movies, shows, seasons, and episodes.
 - **Social**: Follow other users and see their activity.
@@ -504,7 +506,7 @@ Scrob signs in with Simkl's AUTH V2 device flow through its own Simkl app, and r
 |---|---|---|
 | Simkl → Scrob | **Watched history** | Imports watched movies and episodes. |
 | Simkl → Scrob | **Ratings** | Imports ratings. |
-| Simkl → Scrob | **Lists / Watchlist** | Imports "plan to watch" items into a managed **Simkl - Watchlist** list. |
+| Simkl → Scrob | **Lists / Watchlist** | Syncs "plan to watch" items into the [Watchlist](#watchlist): new ones are added, ones removed on Simkl are removed. |
 | Simkl → Scrob | **Dropped shows** | Marks shows you dropped on Simkl as dropped in Scrob. Only shows Scrob already knows are marked, and a show un-dropped on Simkl is not un-dropped in Scrob. Off by default. |
 | Scrob → Simkl | **Watched status** | Pushes watched and unwatched changes made in Scrob or imported from another connected provider. |
 | Scrob → Simkl | **Ratings** | Pushes rating changes. |
@@ -520,11 +522,34 @@ The manual **Push** action sends the complete enabled watched-history and rating
 1. Open **Connections → Media Trackers → MDBList**.
 2. Copy the API key from [MDBList Preferences](https://mdblist.com/preferences), paste it into Scrob, and select **Save Changes**.
 3. Choose the data to import under **MDBList → Scrob**, then select **Pull**. MDBList pulls run only when this button is selected.
-4. To send changes back, enable the required **Scrob → MDBList** options. Watched-state and rating edits are pushed as they happen; edits to the managed **MDBList - Watchlist** are pushed to the MDBList watchlist.
+4. To send changes back, enable the required **Scrob → MDBList** options. Watched-state and rating edits are pushed as they happen; edits to the [Watchlist](#watchlist) are pushed to the MDBList watchlist.
 
-The manual **Push** action sends the complete enabled watched, ratings, or managed-watchlist snapshot. MDBList pagination follows `next_cursor` and requests the documented maximum of 1,000 items per page.
+The manual **Push** action sends the complete enabled watched or ratings snapshot and reconciles the watchlist. MDBList pagination follows `next_cursor` and requests the documented maximum of 1,000 items per page.
 
 **Auto Pull** and **Auto Push** can run independently every 15 minutes, 30 minutes, 1 hour, 3 hours, 6 hours, 12 hours, 24 hours, or 48 hours.
+
+## Watchlist
+
+Every user has one **Watchlist**, shown first under **Lists**. It can't be deleted. Plex, Trakt, MDBList and Simkl all sync their watchlist with it, instead of each filling a list of its own, so Scrob works as the hub between them:
+
+- A title added on one service lands on the Watchlist once, and goes out to every other service with watchlist push enabled on its next sync.
+- A title removed on a service is removed from the Watchlist, and then from the other services with push enabled.
+- A title added or removed in Scrob is pushed to those services right away.
+
+Each service remembers what its watchlist looked like after its last sync, so it can tell a removal from a title that was never there. A service that only pulls (Simkl, or any service with push off) adds and removes only what changed on that service, and never removes titles that came from somewhere else. A sync that would remove more than half of a watchlist of 10 or more titles is skipped as a probably broken fetch.
+
+| Service | Pull setting | Push setting |
+|---|---|---|
+| Plex | **Watchlist** under the connection's import options | **Watchlist** under its push options |
+| Trakt | **Lists** | **Lists** |
+| MDBList | **Watchlist** | **Watchlist** |
+| Simkl | **Lists / Watchlist** | none (Simkl has no watchlist push) |
+
+Only whole movies and shows take part. Seasons added to the Watchlist stay in Scrob.
+
+API clients use `GET /api/proxy/lists/watchlist` to get the Watchlist's id, then the usual `/api/proxy/lists/{id}/items` endpoints.
+
+When upgrading from a version with per-service lists, the "Trakt - Watchlist", "Plex - Watchlist", "MDBList - Watchlist" and "Simkl - Watchlist" lists are merged into the Watchlist, without duplicates. The old lists are kept, renamed with "(old)", and no longer sync. Delete them once you've checked the Watchlist. The first sync of each service after the upgrade only adds titles and never removes any.
 
 ## Webhooks (Real-time Scrobbling)
 

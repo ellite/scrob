@@ -23,7 +23,7 @@ from routers.mdblist import (
     _resolve_external_tmdb_id,
     _season_identity,
 )
-from routers.lists import _push_list_item_to_mdblist
+from routers.lists import _push_watchlist_item_to_mdblist
 
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
@@ -407,7 +407,7 @@ class MDBListRateLimitTests(unittest.IsolatedAsyncioTestCase):
 
 
 class MDBListListFanoutTests(unittest.IsolatedAsyncioTestCase):
-    async def test_managed_watchlist_edit_pushes_to_mdblist(self) -> None:
+    async def test_native_watchlist_edit_pushes_to_mdblist(self) -> None:
         result = MagicMock()
         result.scalar_one_or_none.return_value = SimpleNamespace(
             mdblist_push_watchlist=True,
@@ -419,10 +419,9 @@ class MDBListListFanoutTests(unittest.IsolatedAsyncioTestCase):
         push_watchlist = AsyncMock()
 
         with patch.object(mdblist, "push_watchlist", push_watchlist):
-            await _push_list_item_to_mdblist(
+            await _push_watchlist_item_to_mdblist(
                 db,
                 user_id=1,
-                list_mdblist_slug="__watchlist__",
                 media=media,
             )
 
