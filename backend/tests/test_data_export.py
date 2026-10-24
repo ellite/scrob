@@ -145,11 +145,11 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ListsTests(unittest.IsolatedAsyncioTestCase):
-    async def test_watchlist_slug_is_separated_from_custom_lists(self) -> None:
-        watchlist = SimpleNamespace(id=1, name="Watchlist", trakt_slug="__watchlist__", mdblist_slug=None,
+    async def test_native_watchlist_is_separated_from_custom_lists(self) -> None:
+        watchlist = SimpleNamespace(id=1, name="Watchlist", trakt_slug=None, mdblist_slug=None, is_watchlist=True,
                                      description=None, privacy_level=PrivacyLevel.private,
                                      created_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 1))
-        custom = SimpleNamespace(id=2, name="My Faves", trakt_slug=None, mdblist_slug=None,
+        custom = SimpleNamespace(id=2, name="My Faves", trakt_slug=None, mdblist_slug=None, is_watchlist=False,
                                   description="desc", privacy_level=PrivacyLevel.public,
                                   created_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 1))
         item1 = SimpleNamespace(id=11, added_at=datetime(2026, 1, 1), notes=None)

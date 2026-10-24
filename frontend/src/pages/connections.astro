@@ -733,12 +733,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                             <input type="checkbox" name="trakt_sync_lists" id="trakt_sync_lists" checked={settings.trakt_sync_lists !== false} class="sync-pref-checkbox w-4 h-4 rounded accent-red-500 cursor-pointer" />
                             <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">Lists</span>
                           </label>
-                          <div id="trakt-watchlist-split-row" class:list={["ml-7 mt-2", !settings.trakt_sync_lists && "hidden"]}>
-                            <label class="flex items-center gap-3 cursor-pointer group">
-                              <input type="checkbox" name="trakt_watchlist_split" id="trakt_watchlist_split" checked={!!settings.trakt_watchlist_split} class="sync-pref-checkbox w-4 h-4 rounded accent-red-500 cursor-pointer" />
-                              <span class="text-sm text-zinc-400 group-hover:text-zinc-200 transition-colors">Split Watchlist into Movies / Shows</span>
-                            </label>
-                          </div>
                         </div>
                         <label class="flex items-center gap-3 cursor-pointer group">
                           <input type="checkbox" name="trakt_sync_dropped" id="trakt_sync_dropped" checked={settings.trakt_sync_dropped !== false} class="sync-pref-checkbox w-4 h-4 rounded accent-red-500 cursor-pointer" />
@@ -3464,7 +3458,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               })(),
             };
             const traktSyncKeys = [
-              'trakt_sync_watched', 'trakt_sync_ratings', 'trakt_sync_lists', 'trakt_sync_dropped', 'trakt_watchlist_split',
+              'trakt_sync_watched', 'trakt_sync_ratings', 'trakt_sync_lists', 'trakt_sync_dropped',
               'trakt_push_watched', 'trakt_push_ratings', 'trakt_push_collection', 'trakt_push_lists', 'trakt_push_dropped', 'trakt_scrobble',
               'trakt_show_comments',
             ];
@@ -5474,15 +5468,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         if (!open) loadPlexFriends(picker, token);
       });
     });
-
-    // Show/hide the watchlist split sub-option based on the Lists checkbox
-    const syncListsCb = document.getElementById('trakt_sync_lists') as HTMLInputElement | null;
-    const splitRow = document.getElementById('trakt-watchlist-split-row');
-    if (syncListsCb && splitRow) {
-      syncListsCb.addEventListener('change', () => {
-        splitRow.classList.toggle('hidden', !syncListsCb.checked);
-      });
-    }
   }
   async function copyToClipboard(text: string): Promise<void> {
     if (navigator.clipboard && window.isSecureContext) {

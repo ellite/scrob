@@ -292,6 +292,9 @@ export interface UserList {
   name: string;
   description: string | null;
   privacy_level: PrivacyLevel;
+  // The user's native watchlist: every service's watchlist syncs with it,
+  // and it can't be deleted.
+  is_watchlist?: boolean;
   item_count: number;
   created_at: string;
   updated_at: string;
