@@ -550,10 +550,19 @@ class ClearAllListsTests(unittest.IsolatedAsyncioTestCase):
         response = await lists.clear_all_lists(db=db, current_user=SimpleNamespace(id=7))
 
         self.assertEqual(response["status"], "ok")
-        db.execute.assert_awaited_once()
-        stmt = db.execute.call_args.args[0]
-        self.assertEqual(stmt.table.name, ListModel.__tablename__)
+        tables = [call.args[0].table.name for call in db.execute.await_args_list]
+        self.assertEqual(tables[0], ListModel.__tablename__)
         db.commit.assert_awaited_once()
+
+    async def test_also_resets_watchlist_baselines(self) -> None:
+        # The watchlist is gone, so its baselines must be too - or the next
+        # reconcile reads every synced title as removed in Scrob.
+        db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+
+        await lists.clear_all_lists(db=db, current_user=SimpleNamespace(id=7))
+
+        tables = [call.args[0].table.name for call in db.execute.await_args_list]
+        self.assertEqual(tables, ["lists", "user_settings", "media_server_connections"])
 
 
 if __name__ == "__main__":

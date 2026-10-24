@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import mdblist as mdblist_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
+from core.native_watchlist import split_key, sync_service_watchlist, watchlist_lock
+from core.watchlist_reconcile import media_key
 from core.rewatch import record_rewatch_progress
 from core.watch_dedup import get_dedup_window_minutes
 from db import engine, get_db
@@ -21,7 +23,6 @@ from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
 from models.collection import Collection
 from models.events import WatchEvent
-from models.lists import List as ListModel, ListItem
 from models.media import Media
 from models.ratings import Rating, RatingChanges
 from models.show import Show
@@ -38,7 +39,6 @@ from core.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-WATCHLIST_SLUG = "__watchlist__"
 
 # MDBList's own watched_at for the same play can differ slightly between pulls
 # (and doesn't always agree with a timestamp for the same watch reported by
@@ -592,63 +592,96 @@ async def _import_ratings(
     return changed
 
 
-async def _import_watchlist(
+def _watchlist_payload(keys: list[str]) -> dict[str, list[dict[str, Any]]]:
+    payload = _empty_payload()
+    for key in keys:
+        kind, tmdb_id = split_key(key)
+        payload["movies" if kind == "movie" else "shows"].append({"ids": {"tmdb": tmdb_id}})
+    return payload
+
+
+def _not_found_keys(result: dict[str, Any], keys: list[str]) -> set[str]:
+    """Keys MDBList echoed back as not found. If an echo can't be mapped to
+    a key, every key counts as failed - re-adding to a watchlist is harmless,
+    while a key wrongly treated as added would later read as a removal."""
+    failed: set[str] = set()
+    for entry in result.get("not_found_items") or []:
+        item = entry.get("item") if isinstance(entry, dict) else None
+        ids = item.get("ids") if isinstance(item, dict) else None
+        tmdb_id = _integer(ids.get("tmdb")) if isinstance(ids, dict) else None
+        if tmdb_id is None:
+            return set(keys)
+        failed.add(media_key("movie" if entry.get("kind") == "movie" else "show", tmdb_id))
+    if (result.get("not_found") or 0) > len(failed):
+        return set(keys)
+    return failed & set(keys)
+
+
+async def _sync_watchlist(
     db: AsyncSession,
     user_id: int,
+    settings: UserSettings,
     payload: dict[str, Any],
     api_key: str | None,
     external_cache: dict[tuple[str, str], int | None],
     stats: dict[str, int],
+    *,
+    pull_enabled: bool,
+    push_enabled: bool,
 ) -> None:
-    list_result = await db.execute(
-        select(ListModel).where(
-            ListModel.user_id == user_id,
-            ListModel.mdblist_slug == WATCHLIST_SLUG,
-        )
-    )
-    watchlist = list_result.scalar_one_or_none()
-    if not watchlist:
-        watchlist = ListModel(
-            user_id=user_id,
-            name="MDBList - Watchlist",
-            mdblist_slug=WATCHLIST_SLUG,
-        )
-        db.add(watchlist)
-        await db.flush()
-        stats["lists"] += 1
-
-    existing_result = await db.execute(
-        select(ListItem.media_id).where(ListItem.list_id == watchlist.id)
-    )
-    existing = {row[0] for row in existing_result.all()}
-    remote_ids: set[int] = set()
-
-    for kind in ("movies", "shows"):
+    """Reconcile the MDBList watchlist (`payload`, fetched in full) with the
+    native Scrob watchlist and store the new baseline on settings."""
+    remote = {}
+    for kind, media_type, key_kind in (("movies", "movie", "movie"), ("shows", "tv", "show")):
         for entry in payload.get(kind, []):
-            try:
-                async with db.begin_nested():
-                    media = await _resolve_media(db, kind, entry, api_key, external_cache)
-                    if not media:
-                        stats["skipped"] += 1
-                        continue
-                    remote_ids.add(media.id)
-                    if media.id not in existing:
-                        db.add(ListItem(list_id=watchlist.id, media_id=media.id))
-                        existing.add(media.id)
-                        stats["watchlist_added"] += 1
-            except Exception as exc:
-                logger.warning("Error importing MDBList watchlist %s: %s", kind, exc)
-                stats["errors"] += 1
+            data = _entry_data(kind, entry)
+            tmdb_id = await _resolve_external_tmdb_id(data, media_type, api_key, external_cache)
+            if not tmdb_id:
+                stats["skipped"] += 1
+                continue
+            title = str(data.get("title") or data.get("name") or "")
+            getter = _get_or_create_movie_media if kind == "movies" else _get_or_create_series_media
 
-    stale = existing - remote_ids
-    if stale:
-        await db.execute(
-            delete(ListItem).where(
-                ListItem.list_id == watchlist.id,
-                ListItem.media_id.in_(stale),
-            )
+            async def _resolve(getter=getter, tmdb_id=tmdb_id, title=title):
+                return await getter(db, tmdb_id, title, api_key)
+
+            remote[media_key(key_kind, tmdb_id)] = _resolve
+
+    async def _push_add(keys: list[str], _local) -> set[str]:
+        try:
+            result = await mdblist_client.push_watchlist(settings.mdblist_api_key, _watchlist_payload(keys))
+        except Exception as exc:
+            logger.warning("MDBList watchlist add failed for %d item(s): %s", len(keys), exc)
+            return set(keys)
+        return _not_found_keys(result, keys)
+
+    async def _push_remove(keys: list[str], _local) -> set[str]:
+        # "Not found" on a removal means it's already gone - nothing to retry.
+        try:
+            await mdblist_client.remove_watchlist(settings.mdblist_api_key, _watchlist_payload(keys))
+        except Exception as exc:
+            logger.warning("MDBList watchlist remove failed for %d item(s): %s", len(keys), exc)
+            return set(keys)
+        return set()
+
+    async with watchlist_lock(user_id):
+        result = await sync_service_watchlist(
+            db, user_id,
+            service="MDBList",
+            remote=remote,
+            baseline=settings.mdblist_watchlist_synced_keys,
+            pull_enabled=pull_enabled,
+            push_enabled=push_enabled,
+            push_add=_push_add,
+            push_remove=_push_remove,
         )
-        stats["watchlist_removed"] += len(stale)
+        if result.baseline is not None:
+            settings.mdblist_watchlist_synced_keys = result.baseline
+        await db.commit()
+    stats["watchlist_added"] += result.added
+    stats["watchlist_removed"] += result.removed
+    stats["watchlist_pushed"] = stats.get("watchlist_pushed", 0) + result.pushed_added
+    stats["watchlist_unpushed"] = stats.get("watchlist_unpushed", 0) + result.pushed_removed
 
 
 async def run_mdblist_sync(user_id: int, job_id: int) -> None:
@@ -676,7 +709,7 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
             if settings.mdblist_sync_ratings:
                 labels.append("ratings")
                 requests.append(mdblist_client.get_ratings(settings.mdblist_api_key))
-            if settings.mdblist_sync_watchlist:
+            if settings.mdblist_sync_watchlist or settings.mdblist_push_watchlist:
                 labels.append("watchlist")
                 requests.append(mdblist_client.get_watchlist(settings.mdblist_api_key))
             if settings.mdblist_sync_dropped:
@@ -723,8 +756,10 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
                 )
                 await _raise_if_cancelled(db, job_id)
             if "watchlist" in snapshots:
-                await _import_watchlist(
-                    db, user_id, snapshots["watchlist"], tmdb_key, external_cache, stats
+                await _sync_watchlist(
+                    db, user_id, settings, snapshots["watchlist"], tmdb_key, external_cache, stats,
+                    pull_enabled=bool(settings.mdblist_sync_watchlist),
+                    push_enabled=bool(settings.mdblist_push_watchlist),
                 )
             if "dropped" in snapshots:
                 stats["dropped"] = await _apply_dropped_shows_import(
@@ -826,7 +861,6 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
 
             watched_rows: list[tuple[int, datetime]] = []
             rating_rows: list[tuple[int, int | None, float, datetime | None]] = []
-            watchlist_ids: set[int] = set()
             collected_rows: list[tuple[int, datetime]] = []
 
             if settings.mdblist_push_watched:
@@ -853,31 +887,16 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                     (media_id, season_number, float(rating), rated_at)
                     for media_id, season_number, rating, rated_at in ratings_result.all()
                 ]
-            if settings.mdblist_push_watchlist:
-                watchlist_result = await db.execute(
-                    select(ListModel).where(
-                        ListModel.user_id == user_id,
-                        ListModel.mdblist_slug == WATCHLIST_SLUG,
-                    )
-                )
-                watchlist = watchlist_result.scalar_one_or_none()
-                if watchlist:
-                    item_result = await db.execute(
-                        select(ListItem.media_id).where(ListItem.list_id == watchlist.id)
-                    )
-                    watchlist_ids = {row[0] for row in item_result.all()}
 
             all_ids = (
                 {row[0] for row in watched_rows}
                 | {row[0] for row in rating_rows}
-                | watchlist_ids
                 | {row[0] for row in collected_rows}
             )
             media_by_id = await _load_payload_media(db, all_ids)
             shows_by_id = await _load_shows_for_episodes(db, media_by_id)
             watched_payload = _empty_payload()
             ratings_payload = _empty_payload()
-            watchlist_payload = _empty_payload()
             collection_payload = _empty_payload()
 
             for media_id, watched_at in watched_rows:
@@ -913,18 +932,12 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                 )
                 if item:
                     ratings_payload[item[0]].append(item[1])
-            for media_id in watchlist_ids:
-                media = media_by_id.get(media_id)
-                item = _payload_item(media) if media else None
-                if item and item[0] in ("movies", "shows"):
-                    watchlist_payload[item[0]].append(item[1])
-
             watched_payload["shows"] = _merge_show_entries(watched_payload["shows"])
             collection_payload["shows"] = _merge_show_entries(collection_payload["shows"])
 
             total_items = sum(
                 mdblist_client._count_leaf_items(payload)
-                for payload in (watched_payload, ratings_payload, watchlist_payload, collection_payload)
+                for payload in (watched_payload, ratings_payload, collection_payload)
             ) + len(dropped_to_push)
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_items)
@@ -934,7 +947,7 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
             print(
                 f"MDBList push job {job_id}: queued "
                 f"{len(watched_rows)} watched, {len(rating_rows)} ratings, "
-                f"{len(watchlist_ids)} watchlist, {len(collected_rows)} collection, "
+                f"{len(collected_rows)} collection, "
                 f"{len(dropped_to_push)} dropped "
                 f"({total_items} payload entries after merging by show)."
             )
@@ -961,9 +974,22 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
                     settings.mdblist_api_key, ratings_payload, on_batch=_report_progress
                 )
             if settings.mdblist_push_watchlist:
-                results["watchlist"] = await mdblist_client.push_watchlist(
-                    settings.mdblist_api_key, watchlist_payload, on_batch=_report_progress
+                # The watchlist reconciles against MDBList's own (the same
+                # reconcile the pull runs), so removals reach it too, not
+                # just a snapshot of what's on the Scrob watchlist.
+                wl_stats = {"watchlist_added": 0, "watchlist_removed": 0, "skipped": 0}
+                remote_watchlist = await mdblist_client.get_watchlist(settings.mdblist_api_key)
+                await _sync_watchlist(
+                    db, user_id, settings, remote_watchlist, await _effective_tmdb_key(db, settings),
+                    {}, wl_stats,
+                    pull_enabled=bool(settings.mdblist_sync_watchlist),
+                    push_enabled=True,
                 )
+                results["watchlist"] = {
+                    "submitted": wl_stats["watchlist_pushed"] + wl_stats["watchlist_unpushed"],
+                    "not_found": 0,
+                    "batches": 1,
+                }
             if settings.mdblist_push_collection:
                 results["collection"] = await mdblist_client.push_collection(
                     settings.mdblist_api_key, collection_payload, on_batch=_report_progress

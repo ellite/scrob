@@ -69,7 +69,6 @@ _SCROBBLE_CONNECTION_FIELDS = (
     "sync_collection", "sync_watched", "sync_playback",
 )
 
-_WATCHLIST_SLUGS = {"__watchlist__", "__watchlist_movies__", "__watchlist_shows__", "__plex_watchlist__"}
 
 # Sync preferences only (booleans + auto-sync intervals) — never a URL, token, or API key.
 _SAFE_SETTINGS_FIELDS = (
@@ -279,8 +278,7 @@ async def build_lists(db: AsyncSession, user_id: int) -> tuple[list[dict], list[
                 continue
             items.append(entry)
 
-        is_watchlist = lst.trakt_slug in _WATCHLIST_SLUGS or lst.mdblist_slug in _WATCHLIST_SLUGS
-        if is_watchlist:
+        if lst.is_watchlist:
             watchlist_items.extend(items)
             continue
 
