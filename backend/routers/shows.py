@@ -21,7 +21,7 @@ from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.rewatch import RewatchProgress
-from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch, _effective_sonarr, _get_global_settings, require_anon_nav_allowed
+from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch, _effective_sonarr, _get_global_settings, require_anon_nav_allowed, MyRatingValue, my_rating_value_sql
 
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, ANON_USER_ID
 from core import tmdb
@@ -261,6 +261,7 @@ async def list_shows(
     year: list[int] = Query(default=[]),
     status: list[str] = Query(default=[]),
     watched: list[str] = Query(default=[]),
+    my_rating: list[MyRatingValue] = Query(default=[]),
     # in_list = in|out: membership of any of the user's lists (#255;
     # season-level list items live on the same series Media row and count too).
     in_list: str | None = Query(None),
@@ -349,6 +350,29 @@ async def list_shows(
         else:
             base_query = base_query.where(ShowModel.id.notin_(select(watched_show_ids)))
 
+    # A whole-show rating is stored against a MediaType.series row rather than
+    # the Show row. Match by either stable provider id so TVDB-only shows work
+    # as well as TMDB-backed shows.
+    rated_series = aliased(Media)
+    user_rating = (
+        select(func.max(Rating.rating))
+        .join(rated_series, Rating.media_id == rated_series.id)
+        .where(
+            rated_series.media_type == MediaType.series,
+            Rating.user_id == current_user.id,
+            Rating.season_number.is_(None),
+            Rating.rating.isnot(None),
+            or_(
+                and_(ShowModel.tmdb_id.isnot(None), rated_series.tmdb_id == ShowModel.tmdb_id),
+                and_(ShowModel.tvdb_id.isnot(None), rated_series.tvdb_id == ShowModel.tvdb_id),
+            ),
+        )
+        .correlate(ShowModel)
+        .scalar_subquery()
+    )
+    if my_rating:
+        base_query = base_query.where(my_rating_value_sql(user_rating).in_(my_rating))
+
     # Count total
     count_query = select(func.count()).select_from(base_query.subquery())
     total_result = await db.execute(count_query)
@@ -358,6 +382,12 @@ async def list_shows(
     # Sort and Paginate
     if sort == "rating":
         q = base_query.order_by(ShowModel.tmdb_rating.desc().nulls_last())
+    elif sort == "user_rating":
+        q = base_query.order_by(
+            user_rating.desc().nulls_last(),
+            ShowModel.tmdb_rating.desc().nulls_last(),
+            ShowModel.id.desc(),
+        )
     elif sort == "release_date":
         q = base_query.order_by(ShowModel.first_air_date.desc().nulls_last())
     elif sort == "created_at":

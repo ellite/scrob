@@ -7,7 +7,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from routers.media import _apply_local_filters, _paginate_matches
 
 
-def _item(tmdb_id, in_library=False, watched=False, watch_started=False, is_monitored=False, release_date=None):
+def _item(tmdb_id, in_library=False, watched=False, watch_started=False, is_monitored=False, release_date=None, user_rating=None):
     return {
         "tmdb_id": tmdb_id,
         "in_library": in_library,
@@ -15,6 +15,7 @@ def _item(tmdb_id, in_library=False, watched=False, watch_started=False, is_moni
         "watch_started": watch_started,
         "is_monitored": is_monitored,
         "release_date": release_date,
+        "user_rating": user_rating,
     }
 
 
@@ -107,6 +108,35 @@ class ApplyLocalFiltersTests(unittest.TestCase):
         items = [_item(1, watched=True), _item(2, watched=False)]
         result = _apply_local_filters(items, [], ["bogus", "watched"], [])
         self.assertEqual([i["tmdb_id"] for i in result], [1])
+
+    def test_my_rating_matches_selected_personal_ratings(self):
+        items = [
+            _item(1, user_rating=10),
+            _item(2, user_rating=8),
+            _item(3, user_rating=None),
+        ]
+        result = _apply_local_filters(items, [], [], [], my_rating=[8, 10])
+        self.assertEqual([i["tmdb_id"] for i in result], [1, 2])
+
+    def test_my_rating_combines_with_other_local_filters(self):
+        items = [
+            _item(1, in_library=True, user_rating=8),
+            _item(2, in_library=False, user_rating=8),
+            _item(3, in_library=True, user_rating=7),
+        ]
+        result = _apply_local_filters(items, ["in"], [], [], my_rating=[8])
+        self.assertEqual([i["tmdb_id"] for i in result], [1])
+
+    def test_my_rating_rounds_half_ratings_up(self):
+        # Media servers can store fractional ratings; 7.5 counts as an 8.
+        items = [
+            _item(1, user_rating=7.4),
+            _item(2, user_rating=7.5),
+            _item(3, user_rating=8.0),
+            _item(4, user_rating=8.5),
+        ]
+        result = _apply_local_filters(items, [], [], [], my_rating=[8])
+        self.assertEqual([i["tmdb_id"] for i in result], [2, 3])
 
 
 class ApplyLocalFiltersYearTests(unittest.TestCase):
