@@ -890,32 +890,6 @@ async def get_show(
             select(Media).where(Media.tmdb_id == series_tmdb_id, Media.media_type == MediaType.series)
         )
         show_media = show_media_q.scalar_one_or_none()
-        if show_media:
-            # Reconcile any existing manual series/season values to the
-            # episode-derived ratings on first view after this feature ships.
-            episode_id_q = await db.execute(
-                select(Media.id)
-                .where(
-                    Media.show_id == show.id,
-                    Media.media_type == MediaType.episode,
-                    Media.season_number.isnot(None),
-                    Media.season_number != 0,
-                )
-                .order_by(Media.id)
-                .limit(1)
-            )
-            episode_media_id = episode_id_q.scalar_one_or_none()
-            if episode_media_id is not None:
-                from routers.ratings import (
-                    _recalculate_derived_series_ratings,
-                    _sync_derived_rating_changes,
-                )
-                derived_changes, derived_removed = await _recalculate_derived_series_ratings(
-                    db, effective_user_id, episode_media_id
-                )
-                await _sync_derived_rating_changes(
-                    db, effective_user_id, derived_changes, derived_removed
-                )
         if show_media and not show_media.adult and (tmdb_extra or {}).get("adult", False):
             show_media.adult = True
             await db.commit()
