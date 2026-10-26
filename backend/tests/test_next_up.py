@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _next_up_needs_live_fetch, _progress_percentages, _remaining_episode_stats, _stream_next_up_refresh
+from routers.history import _compute_next_episode, _group_last_watched, _next_episode_candidates_stmt, _has_aired, _has_confirmed_air_date, _next_up_needs_live_fetch, _progress_percentages, _remaining_episode_stats, _stream_next_up_refresh
 from core.rewatch import capped_season_episode_counts
 
 
@@ -43,6 +43,37 @@ class ComputeNextEpisodeTests(unittest.TestCase):
     def test_specials_season_zero_is_never_returned_and_never_used_as_current(self):
         seasons = [{"season_number": 0, "episode_count": 5}, {"season_number": 1, "episode_count": 12}]
         self.assertEqual(_compute_next_episode(seasons, 0, 3), (1, 1))
+
+
+class NextEpisodeCandidatesStmtTests(unittest.TestCase):
+    """The next-episode lookup is one statement of a fixed shape, however many shows
+    the user watches (it used to grow an OR branch and four bind parameters per show)."""
+
+    @staticmethod
+    def compiled(show_count):
+        from sqlalchemy.dialects import postgresql
+
+        stmt = _next_episode_candidates_stmt({i: (1, i) for i in range(1, show_count + 1)})
+        compiled = stmt.compile(dialect=postgresql.dialect())
+        return str(compiled), compiled.params
+
+    def test_the_sql_and_the_parameter_count_do_not_depend_on_the_number_of_shows(self):
+        small_sql, small_params = self.compiled(3)
+        large_sql, large_params = self.compiled(300)
+        self.assertEqual(small_sql, large_sql)
+        self.assertEqual(len(small_params), len(large_params))
+
+    def test_positions_travel_as_arrays_and_one_row_per_show_comes_back(self):
+        sql, params = self.compiled(3)
+        self.assertIn("unnest(", sql.lower())
+        self.assertIn("DISTINCT ON (media.show_id)", sql)
+        self.assertEqual(params["pos_show"], [1, 2, 3])
+        self.assertEqual(params["pos_season"], [1, 1, 1])
+        self.assertEqual(params["pos_episode"], [1, 2, 3])
+
+    def test_the_next_episode_is_strictly_after_the_last_watched_one(self):
+        sql, _ = self.compiled(1)
+        self.assertIn("(media.season_number, media.episode_number) > (pos.season, pos.episode)", sql)
 
 
 class GroupLastWatchedTests(unittest.TestCase):

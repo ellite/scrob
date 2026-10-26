@@ -5,7 +5,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import and_, or_, select, desc, func, delete, case
+from sqlalchemy import Integer, and_, bindparam, case, column, delete, desc, func, or_, select, tuple_
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, aliased
 from db import get_db, AsyncSessionLocal
@@ -887,6 +888,51 @@ def _group_last_watched(
     return last_per_show, last_watched_at
 
 
+def _next_episode_candidates_stmt(last_per_show: dict[int, tuple[int, int]]):
+    """The immediately next episode of each show, as one statement.
+
+    `last_per_show` maps a show id to its furthest watched (season, episode). The
+    positions travel as three array parameters joined through unnest(), so the
+    statement has the same shape however many shows there are (no per-show OR
+    branch to build, cache and plan, and no bind parameter per show), and
+    DISTINCT ON returns the one next row per show rather than every later
+    episode. Media.id only settles a tie between two rows for the same episode.
+    """
+    show_ids = list(last_per_show)
+    positions = (
+        func.unnest(
+            bindparam("pos_show", show_ids, type_=ARRAY(Integer)),
+            bindparam("pos_season", [last_per_show[i][0] for i in show_ids], type_=ARRAY(Integer)),
+            bindparam("pos_episode", [last_per_show[i][1] for i in show_ids], type_=ARRAY(Integer)),
+        )
+        .table_valued(column("show_id", Integer), column("season", Integer), column("episode", Integer))
+        .render_derived(name="pos")
+    )
+    return (
+        select(Media)
+        .options(selectinload(Media.show))
+        .join(
+            positions,
+            and_(
+                Media.show_id == positions.c.show_id,
+                tuple_(Media.season_number, Media.episode_number) > tuple_(positions.c.season, positions.c.episode),
+            ),
+        )
+        .where(
+            Media.media_type == MediaType.episode,
+            # Exclude phantom placeholder rows (imported watch/rating history for
+            # an episode number TMDB doesn't actually have, e.g. a provider
+            # numbering mismatch) — they have no real metadata and would surface
+            # a broken Next Up card that 404s when opened.
+            # A TVDB-only episode carries its TVDB episode id instead of a
+            # TMDB one, and is just as real.
+            or_(Media.tmdb_id.isnot(None), Media.tvdb_id.isnot(None)),
+        )
+        .distinct(Media.show_id)
+        .order_by(Media.show_id, Media.season_number, Media.episode_number, Media.id)
+    )
+
+
 def _has_aired(release_date: str | None, today: date) -> bool:
     """True if release_date (ISO 8601, e.g. from TMDB air_date) is on or before
     today, or unknown. ISO 8601 strings sort lexicographically the same as their
@@ -1148,16 +1194,28 @@ async def get_next_up(
     ]
     if active_rewatch_show_ids:
         watch_filters.append(Media.show_id.notin_(active_rewatch_show_ids))
+    # One row per show, computed in the database: the furthest watched
+    # (season, episode) and the show's most recent watched_at (a window max over
+    # the show's qualifying events). Rows with an unknown season or episode are
+    # left out up front, the way _group_last_watched leaves them out.
     result = await db.execute(
-        select(Media.show_id, Media.season_number, Media.episode_number, WatchEvent.watched_at)
+        select(
+            Media.show_id,
+            Media.season_number,
+            Media.episode_number,
+            func.max(WatchEvent.watched_at).over(partition_by=Media.show_id),
+        )
         .join(WatchEvent, WatchEvent.media_id == Media.id)
-        .where(*watch_filters)
+        .where(*watch_filters, Media.season_number.isnot(None), Media.episode_number.isnot(None))
+        .distinct(Media.show_id)
         .order_by(Media.show_id, desc(Media.season_number), desc(Media.episode_number))
     )
-    rows = result.all()
-
-    # Keep only the furthest episode per show, and the most recent watched_at per show.
-    last_per_show, last_watched_at = _group_last_watched(rows)
+    last_per_show: dict[int, tuple[int, int]] = {}
+    last_watched_at: dict[int, datetime] = {}
+    for show_id, season, episode, latest in result.all():
+        last_per_show[show_id] = (season, episode)
+        if latest:
+            last_watched_at[show_id] = latest
 
     # Step 1b: Rewatching shows - candidate position comes from that rewatch's
     # progress (furthest re-watched episode so far), defaulting to "before
@@ -1183,34 +1241,8 @@ async def get_next_up(
     if not last_per_show:
         return {"next_up": []}
 
-    # Step 2: Candidate next episodes (anything after the last watched one, per show)
-    show_filters = [
-        and_(
-            Media.show_id == show_id,
-            or_(
-                Media.season_number > season,
-                and_(Media.season_number == season, Media.episode_number > episode),
-            ),
-        )
-        for show_id, (season, episode) in last_per_show.items()
-    ]
-
-    candidates_result = await db.execute(
-        select(Media)
-        .options(selectinload(Media.show))
-        .where(
-            Media.media_type == MediaType.episode,
-            # Exclude phantom placeholder rows (imported watch/rating history for
-            # an episode number TMDB doesn't actually have, e.g. a provider
-            # numbering mismatch) — they have no real metadata and would surface
-            # a broken Next Up card that 404s when opened.
-            # A TVDB-only episode carries its TVDB episode id instead of a
-            # TMDB one, and is just as real.
-            or_(Media.tmdb_id.isnot(None), Media.tvdb_id.isnot(None)),
-            or_(*show_filters),
-        )
-        .order_by(Media.show_id, Media.season_number, Media.episode_number)
-    )
+    # Step 2: the immediately next episode per show, picked in the database.
+    candidates_result = await db.execute(_next_episode_candidates_stmt(last_per_show))
     candidates = candidates_result.scalars().all()
 
     # Take only the immediately next episode per show
