@@ -120,6 +120,63 @@ class GroupLastWatchedTests(unittest.TestCase):
         last_per_show, last_watched_at = _group_last_watched(rows)
         self.assertNotIn(1, last_per_show)
 
+    def test_by_recent_picks_most_recently_watched_episode_not_furthest(self):
+        # Arrange
+        older = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        newer = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        rows = [(1, 8, 14, older), (1, 1, 3, newer)]
+
+        # Act
+        last_per_show, last_watched_at = _group_last_watched(rows, by_recent=True)
+
+        # Assert
+        self.assertEqual(last_per_show[1], (1, 3))
+        self.assertEqual(last_watched_at[1], newer)
+
+    def test_by_recent_tie_keeps_furthest_episode(self):
+        # Arrange
+        same = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        rows = [(1, 1, 5, same), (1, 1, 4, same)]
+
+        # Act
+        last_per_show, _ = _group_last_watched(rows, by_recent=True)
+
+        # Assert
+        self.assertEqual(last_per_show[1], (1, 5))
+
+    def test_by_recent_timestamped_row_beats_null_row_seen_first(self):
+        # Arrange
+        stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        rows = [(1, 8, 14, None), (1, 1, 3, stamp)]
+
+        # Act
+        last_per_show, _ = _group_last_watched(rows, by_recent=True)
+
+        # Assert
+        self.assertEqual(last_per_show[1], (1, 3))
+
+    def test_by_recent_with_only_null_watched_at_falls_back_to_furthest(self):
+        # Arrange
+        rows = [(1, 1, 2, None), (1, 1, 1, None)]
+
+        # Act
+        last_per_show, _ = _group_last_watched(rows, by_recent=True)
+
+        # Assert
+        self.assertEqual(last_per_show[1], (1, 2))
+
+    def test_by_recent_tracks_each_show_independently(self):
+        # Arrange
+        older = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        newer = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        rows = [(1, 2, 2, older), (1, 1, 1, newer), (2, 3, 3, newer), (2, 1, 1, older)]
+
+        # Act
+        last_per_show, _ = _group_last_watched(rows, by_recent=True)
+
+        # Assert
+        self.assertEqual(last_per_show, {1: (1, 1), 2: (3, 3)})
+
 
 class AttachShowLastWatchedTests(unittest.TestCase):
     """#521: enrich_with_state stamps episodes with their own (null, for an

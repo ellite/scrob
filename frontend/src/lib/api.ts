@@ -551,6 +551,7 @@ export interface UserSettings {
   show_play_button: boolean;
   shuffle_next_up: boolean;
   minimalist_next_up: boolean;
+  next_up_by_recent_watch: boolean;
   rate_prompt_movies: boolean;
   rate_prompt_episodes: boolean;
   duplicate_watch_window_minutes: number | null;

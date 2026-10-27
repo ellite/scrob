@@ -229,6 +229,7 @@ class UserSettings(BaseModel):
     show_play_button: Optional[bool] = None
     shuffle_next_up: Optional[bool] = None
     minimalist_next_up: Optional[bool] = None
+    next_up_by_recent_watch: Optional[bool] = None
     hide_watched_from_recently_added: Optional[bool] = None
     condense_history_by_show: Optional[bool] = None
     rate_prompt_movies: Optional[bool] = None

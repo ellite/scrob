@@ -868,11 +868,14 @@ def _compute_next_episode(seasons: list[dict], season: int, episode: int) -> tup
 
 def _group_last_watched(
     rows: list[tuple[int, int, int, datetime | None]],
+    by_recent: bool = False,
 ) -> tuple[dict[int, tuple[int, int]], dict[int, datetime]]:
     """Reduce next-up candidate rows (ordered by show, season desc, episode desc)
     to each show's furthest-watched (season, episode) and its most recent
     watched_at. watched_at may be NULL (e.g. imported history with no date), so
-    a show with no timestamped watch simply gets no last_watched_at entry."""
+    a show with no timestamped watch simply gets no last_watched_at entry.
+    With by_recent, the position is the most recently watched episode instead
+    (the furthest one among ties, or when nothing is timestamped)."""
     last_per_show: dict[int, tuple[int, int]] = {}
     last_watched_at: dict[int, datetime] = {}
     for show_id, season, episode, watched_at in rows:
@@ -886,6 +889,8 @@ def _group_last_watched(
             last_per_show[show_id] = (season, episode)
         if watched_at and (show_id not in last_watched_at or watched_at > last_watched_at[show_id]):
             last_watched_at[show_id] = watched_at
+            if by_recent:
+                last_per_show[show_id] = (season, episode)
     return last_per_show, last_watched_at
 
 
@@ -1256,6 +1261,7 @@ async def get_next_up(
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
     dropped_show_ids = set(settings.dropped_shows or []) if settings else set()
+    by_recent = bool(settings and settings.next_up_by_recent_watch)
 
     # Shows the user is mid-rewatch on read their Next Up position from that
     # rewatch's progress instead of full history - excluded from the Step 1
@@ -1565,7 +1571,7 @@ async def get_next_up(
     )
     next_up = [
         m for m in next_per_show.values()
-        if m.id not in completed_ids
+        if (by_recent or m.id not in completed_ids)
         and (include_hidden or (m.show_id not in hidden_set and m.show_id not in dropped_show_ids))
         # Don't surface an episode that hasn't aired yet — the immediately-next
         # episode for the show, not a later one, so we simply show nothing for
