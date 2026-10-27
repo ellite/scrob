@@ -6,7 +6,7 @@ COPY frontend/package*.json ./
 RUN npm ci
 
 COPY frontend/ .
-RUN npm run build
+RUN npm run build && npm prune --omit=dev
 
 # Runtime needs only the production dependencies
 RUN npm prune --omit=dev

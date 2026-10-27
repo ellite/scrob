@@ -1,20 +1,17 @@
 ---
 // Left-hand marketing column shared by /login and /register so the two pages
 // read as a set. Purely presentational.
+import { m } from "../paraglide/messages.js";
 ---
 
 <div class="text-center md:text-left hero-copy">
   <div class="flex items-center justify-center md:justify-start gap-3 mb-5 md:mb-7">
-    <img src="/scrob.png" alt="Scrob Logo" class="w-12 md:w-14 object-contain" />
+    <img src="/scrob.png" alt={m.nav_logo_alt()} class="w-12 md:w-14 object-contain" />
     <span class="text-zinc-100 font-black text-2xl md:text-3xl tracking-tight">Scrob</span>
   </div>
-  <h1 class="text-3xl md:text-5xl font-black text-zinc-100 leading-tight mb-4">
-    Track <span class="hero-gradient-text text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-blue-600">everything</span> you watch.
-  </h1>
+  <h1 class="text-3xl md:text-5xl font-black text-zinc-100 leading-tight mb-4" set:html={m.auth_hero_headline()} />
   <p class="hero-lead text-zinc-400 text-sm md:text-base leading-relaxed max-w-lg mx-auto md:mx-0">
-    <span class="hero-highlight-mark">Scrob is your private, self-hosted home for movies and TV. Sync your
-    media servers, keep your watch history, rate and review, and always
-    know what to watch next.</span>
+    <span class="hero-highlight-mark">{m.auth_hero_lead()}</span>
   </p>
 
   <ul class="hidden md:flex flex-col gap-4 mt-8">
@@ -23,8 +20,8 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
       </span>
       <span>
-        <span class="block text-sm font-semibold text-zinc-100">Syncs with your servers</span>
-        <span class="hero-lead block text-sm text-zinc-400">Jellyfin, Plex, Emby, Kodi and more - in and out.</span>
+        <span class="block text-sm font-semibold text-zinc-100">{m.auth_feature_sync_title()}</span>
+        <span class="hero-lead block text-sm text-zinc-400">{m.auth_feature_sync_body()}</span>
       </span>
     </li>
     <li class="flex items-start gap-3">
@@ -32,8 +29,8 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       </span>
       <span>
-        <span class="block text-sm font-semibold text-zinc-100">Complete watch history</span>
-        <span class="hero-lead block text-sm text-zinc-400">Every movie, episode and rewatch, with ratings and reviews.</span>
+        <span class="block text-sm font-semibold text-zinc-100">{m.auth_feature_history_title()}</span>
+        <span class="hero-lead block text-sm text-zinc-400">{m.auth_feature_history_body()}</span>
       </span>
     </li>
     <li class="flex items-start gap-3">
@@ -41,8 +38,8 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/></svg>
       </span>
       <span>
-        <span class="block text-sm font-semibold text-zinc-100">Lists and collections</span>
-        <span class="hero-lead block text-sm text-zinc-400">Watchlists, custom lists and lists shared by the community.</span>
+        <span class="block text-sm font-semibold text-zinc-100">{m.auth_feature_lists_title()}</span>
+        <span class="hero-lead block text-sm text-zinc-400">{m.auth_feature_lists_body()}</span>
       </span>
     </li>
     <li class="flex items-start gap-3">
@@ -50,15 +47,15 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>
       </span>
       <span>
-        <span class="block text-sm font-semibold text-zinc-100">Discover and stats</span>
-        <span class="hero-lead block text-sm text-zinc-400">Trending titles, personal recommendations and your viewing stats.</span>
+        <span class="block text-sm font-semibold text-zinc-100">{m.auth_feature_discover_title()}</span>
+        <span class="hero-lead block text-sm text-zinc-400">{m.auth_feature_discover_body()}</span>
       </span>
     </li>
   </ul>
 
   <div class="hidden md:flex items-center gap-2 mt-8 text-xs text-zinc-500">
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.07 1.83 2.8 1.3 3.49 1 .1-.78.42-1.31.76-1.61-2.66-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.63-5.48 5.92.43.37.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg>
-    <span>Open source and self-hosted.</span>
+    <span>{m.auth_open_source()}</span>
     <a href="https://github.com/ellite/scrob" target="_blank" rel="noopener noreferrer" class="text-zinc-400 hover:text-zinc-100 underline underline-offset-2 transition-colors">GitHub</a>
   </div>
 </div>

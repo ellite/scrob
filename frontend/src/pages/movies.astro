@@ -5,6 +5,8 @@ import Pagination from "../components/Pagination.astro";
 import FilterPanel from "../components/FilterPanel.astro";
 import SortButton from "../components/SortButton.astro";
 import { api, type MediaItem } from "../lib/api";
+import { genreLabel, languageName, sortByLabel } from "../lib/labels";
+import { m } from "../paraglide/messages.js";
 export const prerender = false;
 
 const category = Astro.url.searchParams.get("category") ?? "popular";
@@ -60,16 +62,8 @@ const MOVIE_GENRES = [
   "Romance", "Science Fiction", "Thriller", "War", "Western",
 ];
 
-const LANGUAGES = [
-  { value: "en", label: "English" }, { value: "nl", label: "Dutch" },
-  { value: "fr", label: "French" }, { value: "de", label: "German" },
-  { value: "es", label: "Spanish" }, { value: "it", label: "Italian" },
-  { value: "pt", label: "Portuguese" }, { value: "ja", label: "Japanese" },
-  { value: "ko", label: "Korean" }, { value: "zh", label: "Chinese" },
-  { value: "sv", label: "Swedish" }, { value: "da", label: "Danish" },
-  { value: "no", label: "Norwegian" }, { value: "tr", label: "Turkish" },
-  { value: "hi", label: "Hindi" },
-];
+const LANGUAGES = ["en", "nl", "fr", "de", "es", "it", "pt", "ja", "ko", "zh", "sv", "da", "no", "tr", "hi"]
+  .map((value) => ({ value, label: languageName(value) }));
 
 const currentYear = new Date().getFullYear();
 const years = Array.from({ length: currentYear - 1899 }, (_, i) => currentYear - i);
@@ -88,15 +82,15 @@ inList.forEach((v) => baseParams.append("in_list", v));
 const baseUrl = `/movies?${baseParams.toString()}`;
 ---
 
-<Base title="Explore Movies">
+<Base title={m.explore_movies_title()}>
   {user && (
     <div class="flex items-center gap-1 mb-6 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit">
-      <a href="/movies" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors active:scale-95 active:opacity-70">Explore</a>
-      <a href="/collection/movies" class="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors active:scale-95 active:opacity-70">My Collection</a>
+      <a href="/movies" class="px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors active:scale-95 active:opacity-70">{m.explore_tab()}</a>
+      <a href="/collection/movies" class="px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors active:scale-95 active:opacity-70">{m.explore_my_collection()}</a>
     </div>
   )}
   <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
-    <h1 class="page-title">Explore Movies</h1>
+    <h1 class="page-title">{m.explore_movies_title()}</h1>
 
     {hasTmdbKey && (
       <div class="flex items-center gap-3">
@@ -104,15 +98,15 @@ const baseUrl = `/movies?${baseParams.toString()}`;
           id="explore-movie-category"
           current={category}
           paramKey="category"
-          label="Category"
+          label={m.explore_category()}
           iconPaths={[
             "M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.169.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z",
             "M6 6h.008v.008H6V6Z",
           ]}
           options={[
-            { value: "popular", label: "Popular" },
-            { value: "top_rated", label: "Top Rated" },
-            { value: "trending", label: "Trending" },
+            { value: "popular", label: m.explore_category_popular() },
+            { value: "top_rated", label: m.explore_category_top_rated() },
+            { value: "trending", label: m.explore_category_trending() },
           ]}
         />
         <FilterPanel
@@ -120,16 +114,16 @@ const baseUrl = `/movies?${baseParams.toString()}`;
           basePath="/movies"
           extraParams={{ category }}
           sections={[
-            { key: "genre", label: "Genre", options: MOVIE_GENRES.map((g) => ({ value: g, label: g })), selected: genre },
-            { key: "year", label: "Year", options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },
-            { key: "min_rating", label: "Rating", options: [9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: `${r}+ Stars` })), selected: minRating ? [String(minRating)] : [], multi: false },
+            { key: "genre", label: m.filter_genre(), options: sortByLabel(MOVIE_GENRES.map((g) => ({ value: g, label: genreLabel(g) }))), selected: genre },
+            { key: "year", label: m.filter_year(), options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },
+            { key: "min_rating", label: m.filter_rating(), options: [9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: m.filter_rating_min_stars({ rating: r }) })), selected: minRating ? [String(minRating)] : [], multi: false },
             ...(user ? [
-              { key: "collection", label: "Collection", options: [{ value: "in", label: "In My Collection" }, { value: "out", label: "Not In My Collection" }], selected: collection },
-              { key: "watch", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }], selected: watch },
+              { key: "collection", label: m.filter_collection(), options: [{ value: "in", label: m.filter_in_my_collection() }, { value: "out", label: m.filter_not_in_my_collection() }], selected: collection },
+              { key: "watch", label: m.filter_watched(), options: [{ value: "watched", label: m.filter_watched_option() }, { value: "unwatched", label: m.filter_unwatched_option() }], selected: watch },
             ] : []),
-            ...(hasRadarr ? [{ key: "arr", label: "Radarr", options: [{ value: "added", label: "In Radarr" }, { value: "notadded", label: "Not In Radarr" }], selected: arr }] : []),
-            { key: "lang", label: "Language", options: LANGUAGES, selected: langs },
-            { key: "in_list", label: "Lists", options: [{ value: "in", label: "In a List" }, { value: "out", label: "Not In a List" }], selected: inList },
+            ...(hasRadarr ? [{ key: "arr", label: "Radarr", options: [{ value: "added", label: m.filter_in_radarr() }, { value: "notadded", label: m.filter_not_in_radarr() }], selected: arr }] : []),
+            { key: "lang", label: m.filter_language(), options: LANGUAGES, selected: langs },
+            { key: "in_list", label: m.filter_lists(), options: [{ value: "in", label: m.filter_in_a_list() }, { value: "out", label: m.filter_not_in_a_list() }], selected: inList },
           ]}
         />
       </div>
@@ -139,10 +133,10 @@ const baseUrl = `/movies?${baseParams.toString()}`;
   {!hasTmdbKey ? (
     <div class="p-12 bg-zinc-900/50 border border-zinc-800 rounded-2xl text-center">
       <div class="text-4xl mb-4">🎬</div>
-      <h2 class="text-xl font-bold text-zinc-100 mb-2">TMDB Read Access Token Required</h2>
-      <p class="text-zinc-400 mb-6 max-w-md mx-auto">To explore movies from The Movie Database, add your TMDB Read Access Token in settings.</p>
+      <h2 class="text-xl font-bold text-zinc-100 mb-2">{m.common_tmdb_token_required()}</h2>
+      <p class="text-zinc-400 mb-6 max-w-md mx-auto">{m.explore_tmdb_required_body({ type: "movie" })}</p>
       <a href="/settings" class="inline-flex px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/20 active:scale-95">
-        Go to Settings
+        {m.common_go_to_settings()}
       </a>
     </div>
   ) : (

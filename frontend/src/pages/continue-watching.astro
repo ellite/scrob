@@ -1,16 +1,17 @@
 ---
 import Base from "../layouts/Base.astro";
+import { m } from "../paraglide/messages.js";
 export const prerender = false;
 
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 ---
 
-<Base title="Continue Watching">
+<Base title={m.section_continue_watching()}>
   <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
     <div>
-      <h1 class="page-title mb-2">Continue Watching</h1>
-      <p class="text-zinc-500">Pick up where you left off</p>
+      <h1 class="page-title mb-2">{m.section_continue_watching()}</h1>
+      <p class="text-zinc-500">{m.cw_subtitle()}</p>
     </div>
     <button
       id="toggle-hidden-btn"
@@ -20,7 +21,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
         <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/>
         <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>
       </svg>
-      <span id="toggle-label">Show hidden</span>
+      <span id="toggle-label">{m.cw_show_hidden()}</span>
     </button>
   </div>
 
@@ -39,12 +40,15 @@ Astro.response.headers.set("Cache-Control", "no-store");
   <div id="cw-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 hidden"></div>
 
   <div id="empty-state" class="hidden text-center py-20 text-zinc-500">
-    <p class="text-lg">Nothing in progress.</p>
-    <p class="text-sm mt-2">Start watching something to see it here.</p>
+    <p class="text-lg">{m.cw_empty()}</p>
+    <p class="text-sm mt-2">{m.cw_empty_hint()}</p>
   </div>
 </Base>
 
-<script define:vars={{ token }}>
+<script>
+  import { m } from '../paraglide/messages.js';
+
+  const token = (window as any).__AUTH_TOKEN__ ?? '';
   function esc(str) {
     if (str == null) return '';
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -53,8 +57,8 @@ Astro.response.headers.set("Cache-Control", "no-store");
   function tmdbImageUrl(path, size = 'w500') {
     if (!path) return null;
     if (path.startsWith('http://') || path.startsWith('https://')) {
-      const m = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
-      if (m) return `/api/proxy/media/image/${m[1]}${m[2]}`;
+      const tm = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
+      if (tm) return `/api/proxy/media/image/${tm[1]}${tm[2]}`;
       const t = /artworks\.thetvdb\.com(\/.+)$/.exec(path);
       if (t) return `/api/proxy/media/image/tvdb${t[1]}`;
       return path;
@@ -70,31 +74,31 @@ Astro.response.headers.set("Cache-Control", "no-store");
   let allItems = [];
 
   function buildCard(item) {
-    const m = item.media;
-    const isEpisode = m.type === 'episode';
+    const media = item.media;
+    const isEpisode = media.type === 'episode';
     // Only movies can be dropped - episodes have no drop concept, so they're
     // never suppressed here.
-    const isDropped = !isEpisode && m.dropped === true;
+    const isDropped = !isEpisode && media.dropped === true;
 
     // Local copy of lib/episodeHref's episode branch - this define:vars
     // script can't import (see lib/episodeHref.ts's header comment for the
     // full list of duplicate sites to keep in sync).
-    const ordered = m.show_episode_order && m.show_episode_order !== 'tmdb:aired';
-    const href = !m.tvdb_sourced && ordered && m.show_tmdb_id
-      && m.display_season_number != null && m.display_episode_number != null
-      ? `/show/${m.show_tmdb_id}/season/${m.display_season_number}/${m.display_episode_number}`
-      : !m.tvdb_sourced && m.show_tmdb_id && m.season_number != null && m.episode_number != null
-      ? `/show/${m.show_tmdb_id}/season/${m.season_number}/${m.episode_number}`
-      : m.show_tvdb_id && m.season_number != null && m.episode_number != null
-        ? `/show/tvdb/${m.show_tvdb_id}/season/${m.season_number}/${m.episode_number}`
-        : m.show_tmdb_id ? `/show/${m.show_tmdb_id}`
-        : m.show_tvdb_id ? `/show/tvdb/${m.show_tvdb_id}`
-        : m.tmdb_id ? `/media/${m.type}/${m.tmdb_id}` : '#';
+    const ordered = media.show_episode_order && media.show_episode_order !== 'tmdb:aired';
+    const href = !media.tvdb_sourced && ordered && media.show_tmdb_id
+      && media.display_season_number != null && media.display_episode_number != null
+      ? `/show/${media.show_tmdb_id}/season/${media.display_season_number}/${media.display_episode_number}`
+      : !media.tvdb_sourced && media.show_tmdb_id && media.season_number != null && media.episode_number != null
+      ? `/show/${media.show_tmdb_id}/season/${media.season_number}/${media.episode_number}`
+      : media.show_tvdb_id && media.season_number != null && media.episode_number != null
+        ? `/show/tvdb/${media.show_tvdb_id}/season/${media.season_number}/${media.episode_number}`
+        : media.show_tmdb_id ? `/show/${media.show_tmdb_id}`
+        : media.show_tvdb_id ? `/show/tvdb/${media.show_tvdb_id}`
+        : media.tmdb_id ? `/media/${media.type}/${media.tmdb_id}` : '#';
 
-    const originalPosterSrc = tmdbImageUrl(isEpisode && m.show_poster_path ? m.show_poster_path : m.poster_path, 'w500');
-    const posterSrc = window.ratingPosterUrl(originalPosterSrc, m, window.__HAS_RPDB__);
-    const sxe = isEpisode && m.season_number != null && m.episode_number != null
-      ? `S${String(m.season_number).padStart(2, '0')}E${String(m.episode_number).padStart(2, '0')}`
+    const originalPosterSrc = tmdbImageUrl(isEpisode && media.show_poster_path ? media.show_poster_path : media.poster_path, 'w500');
+    const posterSrc = window.ratingPosterUrl(originalPosterSrc, media, window.__HAS_RPDB__);
+    const sxe = isEpisode && media.season_number != null && media.episode_number != null
+      ? `S${String(media.season_number).padStart(2, '0')}E${String(media.episode_number).padStart(2, '0')}`
       : null;
     const progressPct = item.progress_percent != null ? Math.round(item.progress_percent * 100) : 0;
 
@@ -107,24 +111,24 @@ Astro.response.headers.set("Cache-Control", "no-store");
     const actionBtn = isEpisode ? `
       <button
         class="dismiss-cw absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-rose-200 hover:border-rose-700 hover:bg-rose-900 transition-all duration-200 cursor-pointer"
-        data-media-id="${esc(String(m.id))}"
-        title="Remove from Continue Watching"
+        data-media-id="${esc(String(media.id))}"
+        title="${esc(m.cw_remove())}"
       >${TRASH_ICON}</button>
     ` : isDropped ? `
       <button
         class="cw-undrop-btn absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 cursor-pointer bg-rose-900/60 border border-rose-600 text-rose-300 hover:bg-rose-700 hover:border-rose-500 hover:text-white"
-        data-media-id="${esc(String(m.id))}"
-        title="Undrop this movie"
+        data-media-id="${esc(String(media.id))}"
+        title="${esc(m.dropped_undrop_movie())}"
       >${DROP_ICON}</button>
     ` : `
       <button
         data-card
         data-media-type="movie"
         data-action="drop"
-        data-media-id="${esc(String(m.id))}"
+        data-media-id="${esc(String(media.id))}"
         data-dropped="false"
         class="absolute top-1.5 right-1.5 z-10 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 cursor-pointer bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-rose-200 hover:border-rose-700 hover:bg-rose-900"
-        title="Drop this movie"
+        title="${esc(m.cw_drop_movie())}"
       >${DROP_ICON}</button>
     `;
 
@@ -139,8 +143,8 @@ Astro.response.headers.set("Cache-Control", "no-store");
           <a href="${esc(href)}" class="block active:scale-95 active:opacity-70 transition-all duration-100">
             <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
               ${posterSrc
-                ? `<img src="${esc(posterSrc)}" alt="${esc(m.title)}" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" loading="lazy" decoding="async" />`
-                : `<div class="w-full h-full flex flex-col items-center justify-center text-zinc-600 bg-zinc-900 p-4 text-center"><svg xmlns="http://www.w3.org/2000/svg" width="30%" height="30%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 16.5h4M17 7.5h4M17 16.5h4M3 12h18"/></svg><span class="text-xs font-bold uppercase tracking-widest mt-2">${esc(m.title)}</span></div>`
+                ? `<img src="${esc(posterSrc)}" alt="${esc(media.title)}" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" loading="lazy" decoding="async" />`
+                : `<div class="w-full h-full flex flex-col items-center justify-center text-zinc-600 bg-zinc-900 p-4 text-center"><svg xmlns="http://www.w3.org/2000/svg" width="30%" height="30%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 16.5h4M17 7.5h4M17 16.5h4M3 12h18"/></svg><span class="text-xs font-bold uppercase tracking-widest mt-2">${esc(media.title)}</span></div>`
               }
               <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               <div class="absolute bottom-0 left-0 right-0 h-1.5 bg-zinc-800/80">
@@ -150,8 +154,8 @@ Astro.response.headers.set("Cache-Control", "no-store");
           </a>
           ${actionBtn}
           <a href="${esc(href)}" class="block p-3 bg-gradient-to-b from-zinc-900 to-zinc-950 flex-1">
-            ${isEpisode && m.show_title ? `<h3 class="text-xs font-medium text-zinc-400 truncate mb-0.5">${esc(m.show_title)}</h3>` : ''}
-            <h3 class="text-sm font-bold text-zinc-100 group-hover:text-blue-400 truncate transition-colors leading-tight mb-1">${esc(m.title)}</h3>
+            ${isEpisode && media.show_title ? `<h3 class="text-xs font-medium text-zinc-400 truncate mb-0.5">${esc(media.show_title)}</h3>` : ''}
+            <h3 class="text-sm font-bold text-zinc-100 group-hover:text-blue-400 truncate transition-colors leading-tight mb-1">${esc(media.title)}</h3>
             <div class="flex items-center justify-between">
               ${sxe ? `<span class="text-[11px] font-bold text-blue-400 tracking-wide">${esc(sxe)}</span>` : '<span></span>'}
               <span class="text-xs font-bold text-zinc-500 tabular-nums">${progressPct}%</span>
@@ -274,7 +278,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
   document.getElementById('toggle-hidden-btn').addEventListener('click', () => {
     showingHidden = !showingHidden;
 
-    document.getElementById('toggle-label').textContent = showingHidden ? 'Hide hidden' : 'Show hidden';
+    document.getElementById('toggle-label').textContent = showingHidden ? m.cw_hide_hidden() : m.cw_show_hidden();
 
     document.getElementById('toggle-icon').innerHTML = showingHidden
       ? `<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>`

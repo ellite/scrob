@@ -1,20 +1,23 @@
+---
+import { m } from "../paraglide/messages.js";
+---
 <!-- Watched-at picker popover (shared, repositioned on use) -->
 <div id="watched-at-picker" class="hidden absolute z-50 w-72">
   <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden">
     <div class="px-4 pt-4 pb-3">
-      <p class="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3">When did you watch this?</p>
+      <p class="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3">{m.watched_at_question()}</p>
       <div class="flex gap-2 mb-3">
         <button
           id="watched-at-now-btn"
           class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white"
         >
-          Just now
+          {m.watch_just_now()}
         </button>
         <button
           id="watched-at-custom-btn"
           class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200"
         >
-          Custom
+          {m.watch_custom()}
         </button>
       </div>
       <input
@@ -25,10 +28,10 @@
     </div>
     <div class="px-4 pb-4 flex gap-2">
       <button id="watched-at-cancel" class="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
-        Cancel
+        {m.common_cancel()}
       </button>
       <button id="watched-at-confirm" class="flex-1 px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
-        Log
+        {m.watched_at_log()}
       </button>
     </div>
   </div>

@@ -19,5 +19,10 @@
     "hls.js": "^1.6.16",
     "qrcode": "^1.5.4",
     "tailwindcss": "^4.2.2"
+  },
+  "devDependencies": {
+    "@inlang/paraglide-js": "^2.25.2",
+    "@inlang/plugin-m-function-matcher": "^2.2.15",
+    "@inlang/plugin-message-format": "^4.4.4"
   }
 }
