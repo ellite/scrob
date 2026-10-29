@@ -230,7 +230,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         {[
                           ...(conn.type === "nuvio" || conn.type === "stremio" ? [{ key: "push_collection", label: "Collection status" }] : []),
                           { key: "push_watched", label: "Watched status" },
-                          ...(conn.type === "nuvio" || conn.type === "stremio" ? [{ key: "push_playback", label: "Playback progress" }] : []),
+                          ...(conn.type === "nuvio" || conn.type === "stremio" || conn.type === "plex" ? [{ key: "push_playback", label: "Playback progress" }] : []),
                           ...(conn.type === "nuvio" || conn.type === "stremio" ? [] : [{ key: "push_ratings", label: "Ratings" }]),
                           ...(conn.type === "plex" ? [{ key: "plex_push_watchlist", label: "Watchlist" }] : []),
                         ].map(({ key, label }) => (
@@ -4992,8 +4992,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const syncRatings = document.getElementById('new-sync-ratings') as HTMLInputElement | null;
       const pushRatings = document.getElementById('new-push-ratings') as HTMLInputElement | null;
       const pushPlayback = document.getElementById('new-push-playback') as HTMLInputElement | null;
-      pushPlayback?.closest('label')?.classList.toggle('hidden', !isCloud);
-      if (pushPlayback) pushPlayback.disabled = !isCloud;
+      // Plex takes resume points too; Jellyfin and Emby don't yet.
+      const pushesPlayback = isCloud || isPlex;
+      pushPlayback?.closest('label')?.classList.toggle('hidden', !pushesPlayback);
+      if (pushPlayback) pushPlayback.disabled = !pushesPlayback;
       const pushCollection = document.getElementById('new-push-collection') as HTMLInputElement | null;
       pushCollection?.closest('label')?.classList.toggle('hidden', !isCloud);
       if (pushCollection) pushCollection.disabled = !isCloud;
@@ -5307,7 +5309,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             sync_playback: (document.getElementById('new-sync-playback') as HTMLInputElement)?.checked ?? true,
             push_watched: (document.getElementById('new-push-watched') as HTMLInputElement)?.checked ?? false,
             push_collection: type === 'nuvio' && ((document.getElementById('new-push-collection') as HTMLInputElement)?.checked ?? false),
-            push_playback: type === 'nuvio' && ((document.getElementById('new-push-playback') as HTMLInputElement)?.checked ?? false),
+            push_playback: (type === 'nuvio' || type === 'plex') && ((document.getElementById('new-push-playback') as HTMLInputElement)?.checked ?? false),
             push_ratings: type === 'nuvio' ? false : ((document.getElementById('new-push-ratings') as HTMLInputElement)?.checked ?? false),
             auto_sync_interval: (() => {
               const value = (document.getElementById('new-auto-sync') as HTMLSelectElement)?.value;

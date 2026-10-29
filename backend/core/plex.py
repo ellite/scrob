@@ -840,6 +840,37 @@ async def mark_watched(url: str, token: str, rating_key: str, client: httpx.Asyn
     except Exception:
         return False
 
+async def set_progress(
+    url: str,
+    token: str,
+    rating_key: str,
+    position_ms: int,
+    client: httpx.AsyncClient | None = None,
+) -> bool:
+    """Set the resume point of a Plex item, so it shows as partly watched and
+    lands in Continue Watching.
+
+    /:/progress writes the account's viewOffset directly, the same call Plex's
+    own clients make when they save a position. It is not a playback report
+    the way /:/timeline is, so it does not start a session in Now Playing.
+    """
+    headers = {"X-Plex-Token": token, "Accept": "application/json"}
+    params = {
+        "key": rating_key,
+        "identifier": "com.plexapp.plugins.library",
+        "time": str(max(int(position_ms), 0)),
+        "state": "stopped",
+    }
+    try:
+        if client:
+            r = await client.get(f"{url.rstrip('/')}/:/progress", headers=headers, params=params)
+            return r.status_code < 400
+        async with httpx.AsyncClient(timeout=PUSH_TIMEOUT, follow_redirects=False) as c:
+            r = await c.get(f"{url.rstrip('/')}/:/progress", headers=headers, params=params)
+            return r.status_code < 400
+    except Exception:
+        return False
+
 async def mark_unwatched(url: str, token: str, rating_key: str) -> bool:
     """Unscrobble a media item on Plex."""
     try:
