@@ -179,6 +179,7 @@ class UserSettings(Base):
     show_play_button : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     shuffle_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     minimalist_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    next_up_by_recent_watch : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     next_up_hidden_shows : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="'[]'")
     # Dropped is stronger than hidden - unlike next_up_hidden_shows, dropped
     # items are also excluded from the Calendar and from Discover/

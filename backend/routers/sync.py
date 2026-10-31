@@ -28,6 +28,7 @@ from dateutil import parser
 from models.base import MediaType, CollectionSource
 from models.global_settings import GlobalSettings
 from core import arvio, jellyfin, emby, plex, nuvio, stremio, tmdb
+from core.scrobble_threshold import reached_threshold, scrobble_threshold_for
 from core.jellyfin import get_jellyfin_tmdb_id
 import core.trakt as trakt_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely, enrich_media_safely, apply_media_change_safely, enrich_episode_from_tvdb
@@ -4729,7 +4730,7 @@ async def _apply_nuvio_progress(
             continue
         progress_percent = min(1.0, position_ms / duration_ms)
         progress = existing.get(media.id)
-        if 0.05 <= progress_percent < 0.90:
+        if progress_percent >= 0.05:
             updated_at = _nuvio_datetime(row.get("last_watched")) or utcnow()
             if progress:
                 progress.progress_percent = progress_percent
@@ -4822,7 +4823,18 @@ async def _run_nuvio_sync(
 
             library_records = data["library"] if conn.sync_collection else []
             watched_records = data["watched"] if conn.sync_watched else []
-            progress_records = data["progress"] if conn.sync_playback else []
+            scrobble_threshold = scrobble_threshold_for(conn)
+            progress_records = []
+            finished_progress = []
+            for row in data["progress"] if conn.sync_playback else []:
+                position = int(row.get("position") or 0)
+                duration = int(row.get("duration") or 0)
+                if reached_threshold(position, duration, scrobble_threshold):
+                    finished_progress.append(row)
+                else:
+                    progress_records.append(row)
+            if conn.sync_watched:
+                watched_records = [*watched_records, *finished_progress]
             logger.info(
                 "Nuvio profile %s (index #%s): pulled %s library, %s watched, "
                 "and %s progress records; enabled for this sync: %s library, "
@@ -5097,8 +5109,25 @@ def _stremio_series_imdb_id(item: dict) -> str | None:
     return None
 
 
+def _stremio_unresolved_ids(
+    records: list[dict],
+    tmdb_ids: dict[str, int],
+    show_map: dict[str, int],
+) -> set[str]:
+    unresolved: set[str] = set()
+    for record in records:
+        content_id = str(record.get("content_id") or "")
+        if content_id not in tmdb_ids:
+            unresolved.add(content_id)
+        elif record.get("content_type") == "series" and content_id not in show_map:
+            unresolved.add(content_id)
+    return unresolved
+
+
 async def _stremio_records(
     items: list[dict],
+    scrobble_threshold: float = 0.75,
+    failed_ids: set[str] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict], set[str]]:
     records = [
         item
@@ -5125,7 +5154,17 @@ async def _stremio_records(
         for item in series_needing_meta
         if (imdb_id := _stremio_series_imdb_id(item)) is not None
     }
+    for item in series_needing_meta:
+        if str(item["_id"]) not in series_imdb_ids:
+            logger.warning(
+                "Stremio series %s has no IMDb id, so its watch state was skipped",
+                item["_id"],
+            )
     metas = await _stremio_series_metadata(set(series_imdb_ids.values()))
+    if failed_ids is not None:
+        failed_ids.update(
+            content_id for content_id, imdb_id in series_imdb_ids.items() if imdb_id not in metas
+        )
 
     library_records: list[dict] = []
     watched_records: list[dict] = []
@@ -5149,14 +5188,15 @@ async def _stremio_records(
                 times_watched = int(state.get("timesWatched") or 0)
             except (TypeError, ValueError):
                 times_watched = 0
-            if times_watched > 0:
-                watched_records.append({**base, "watched_at": last_watched})
             try:
                 position = int(state.get("timeOffset") or 0)
                 duration = int(state.get("duration") or 0)
             except (TypeError, ValueError):
                 position = duration = 0
-            if position > 0 and duration > 0:
+            scrobbled = duration > 0 and position / duration >= scrobble_threshold
+            if times_watched > 0 or scrobbled:
+                watched_records.append({**base, "watched_at": last_watched})
+            if position > 0 and duration > 0 and not scrobbled:
                 progress_records.append(
                     {
                         **base,
@@ -5167,7 +5207,7 @@ async def _stremio_records(
                 )
             continue
 
-        videos = _stremio_sorted_videos(metas.get(series_imdb_ids.get(content_id, content_id), {}))
+        videos = _stremio_videos(metas.get(series_imdb_ids.get(content_id, content_id), {}))
         video_ids = [str(video["id"]) for video in videos]
         watched_ids = stremio.decode_watched_bitfield(state.get("watched"), video_ids)
         for video in videos:
@@ -5201,17 +5241,29 @@ async def _stremio_records(
             position = duration = 0
         if current_parts and position > 0 and duration > 0:
             season, episode = current_parts
-            progress_records.append(
-                {
-                    **base,
-                    "title": str(current_video.get("name") or title),
-                    "season": season,
-                    "episode": episode,
-                    "position": position,
-                    "duration": duration,
-                    "last_watched": last_watched,
-                }
-            )
+            if position / duration >= scrobble_threshold:
+                if current_video_id not in watched_ids:
+                    watched_records.append(
+                        {
+                            **base,
+                            "title": str(current_video.get("name") or title),
+                            "season": season,
+                            "episode": episode,
+                            "watched_at": last_watched,
+                        }
+                    )
+            else:
+                progress_records.append(
+                    {
+                        **base,
+                        "title": str(current_video.get("name") or title),
+                        "season": season,
+                        "episode": episode,
+                        "position": position,
+                        "duration": duration,
+                        "last_watched": last_watched,
+                    }
+                )
     return library_records, watched_records, progress_records, removed_ids
 
 
@@ -5281,6 +5333,10 @@ async def _pull_stremio_items(
         modified_at = _nuvio_datetime(_stremio_epoch_ms(row[1]))
         if item_id and modified_at is not None and modified_at >= cutoff:
             changed_ids.append(item_id)
+    pending_ids = list(conn.stremio_pending_pull_ids or [])
+    if pending_ids:
+        logger.info("Retrying %d Stremio items that failed in the previous sync", len(pending_ids))
+    changed_ids = list(dict.fromkeys([*changed_ids, *pending_ids]))
     return await stremio.datastore_get(conn.token, ids=changed_ids), False, started_at
 
 
@@ -5339,7 +5395,12 @@ async def _run_stremio_sync(
                 conn,
                 full_resync=full_resync,
             )
-            library_records, watched_records, progress_records, removed_ids = await _stremio_records(items)
+            lookup_failures: set[str] = set()
+            library_records, watched_records, progress_records, removed_ids = await _stremio_records(
+                items,
+                scrobble_threshold=scrobble_threshold_for(conn),
+                failed_ids=lookup_failures,
+            )
             if not conn.sync_collection:
                 library_records = []
                 removed_ids = set()
@@ -5412,6 +5473,14 @@ async def _run_stremio_sync(
                 if series_tmdb_map
                 else ({}, {})
             )
+            pending_ids = lookup_failures | _stremio_unresolved_ids(all_records, tmdb_ids, show_map)
+            if pending_ids:
+                logger.warning(
+                    "Stremio sync job %s: %d items could not be matched and will be retried next sync: %s",
+                    job_id,
+                    len(pending_ids),
+                    ", ".join(sorted(pending_ids)[:20]),
+                )
             all_entries = [*normalized_library, *normalized_watched, *normalized_progress]
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(total_items=len(all_entries))
@@ -5491,6 +5560,7 @@ async def _run_stremio_sync(
             # other connections; users push explicitly per-service (the "Push" buttons).
             conn.stremio_pull_cursor_at = pull_started_at
             conn.stremio_full_sync_done = True
+            conn.stremio_pending_pull_ids = sorted(pending_ids)
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
             await db.execute(
                 update(SyncJob)
@@ -6328,20 +6398,13 @@ def _stremio_default_state() -> dict:
     }
 
 
-def _stremio_sorted_videos(meta: dict) -> list[dict]:
-    def sort_key(video: dict) -> tuple:
-        parts = _stremio_video_parts(video)
-        season, episode = parts if parts is not None else (-1, -1)
-        return season, episode, str(video.get("released") or "")
-
-    return sorted(
-        [
-            video
-            for video in (meta.get("videos") or [])
-            if isinstance(video, dict) and video.get("id")
-        ],
-        key=sort_key,
-    )
+def _stremio_videos(meta: dict) -> list[dict]:
+    # Watched bitfields index Cinemeta's array order, which lists specials last.
+    return [
+        video
+        for video in (meta.get("videos") or [])
+        if isinstance(video, dict) and video.get("id")
+    ]
 
 
 def _stremio_new_library_item(
@@ -6602,7 +6665,7 @@ async def _push_stremio_connection(
                 if is_watched and watched_at is not None:
                     state["lastWatched"] = watched_at
             else:
-                videos = _stremio_sorted_videos(series_meta.get(content_id, {}))
+                videos = _stremio_videos(series_meta.get(content_id, {}))
                 video_ids = [str(video["id"]) for video in videos]
                 watched_ids = stremio.decode_watched_bitfield(
                     state.get("watched"),
@@ -6646,7 +6709,7 @@ async def _push_stremio_connection(
             if record.get("content_type") == "movie":
                 state["video_id"] = content_id
             else:
-                videos = _stremio_sorted_videos(series_meta.get(content_id, {}))
+                videos = _stremio_videos(series_meta.get(content_id, {}))
                 matching_video = next(
                     (
                         video

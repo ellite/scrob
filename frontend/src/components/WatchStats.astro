@@ -1,0 +1,28 @@
+---
+import { formatMinutes } from "../lib/stats/format";
+
+interface Props {
+  plays?: number;
+  watchTimeMinutes?: number;
+}
+
+const { plays = 0, watchTimeMinutes = 0 } = Astro.props;
+const watchTimeLabel = watchTimeMinutes > 0 && watchTimeMinutes < 30
+  ? "<1h"
+  : formatMinutes(watchTimeMinutes);
+---
+
+{(plays > 0 || watchTimeMinutes > 0) && (
+  <div class="mb-6 flex flex-wrap items-center gap-2" role="group" aria-label="Your watch stats">
+    {plays > 0 && (
+      <span class="inline-flex items-center px-3 py-1.5 bg-zinc-900/70 border border-zinc-800 text-zinc-300 text-xs rounded-lg font-bold">
+        {plays} {plays === 1 ? "play" : "plays"}
+      </span>
+    )}
+    {watchTimeMinutes > 0 && (
+      <span class="inline-flex items-center px-3 py-1.5 bg-zinc-900/70 border border-zinc-800 text-zinc-300 text-xs rounded-lg font-bold">
+        {watchTimeLabel} watched
+      </span>
+    )}
+  </div>
+)}

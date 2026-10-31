@@ -168,6 +168,8 @@ export interface Season {
   tmdb_rating?: number | null;
   episodes: EpisodeItem[];
   season_number: number;
+  play_count: number;
+  watch_time_minutes: number;
   episode_order?: string;
   show_watched: boolean;
   season_watched: boolean;
@@ -206,6 +208,7 @@ export interface EpisodeDetail {
   collection_pct: number;
   user_rating?: number | null;
   play_count?: number;
+  watch_time_minutes?: number;
   last_watched_at?: string | null;
   cast: CastMember[];
   crew: CrewMember[];
@@ -547,6 +550,7 @@ export interface UserSettings {
   show_play_button: boolean;
   shuffle_next_up: boolean;
   minimalist_next_up: boolean;
+  next_up_by_recent_watch: boolean;
   rate_prompt_movies: boolean;
   rate_prompt_episodes: boolean;
   duplicate_watch_window_minutes: number | null;
@@ -750,6 +754,7 @@ export interface MediaItem {
   request_enabled?: boolean;
   user_rating?: number | null;
   play_count?: number;
+  watch_time_minutes?: number;
   library: {
     resolution: string;
     video_codec: string;
@@ -922,6 +927,7 @@ export interface TvdbEpisodeDetail {
   watched: boolean;
   user_rating: number | null;
   play_count: number;
+  watch_time_minutes: number;
   last_watched_at?: string | null;
   in_lists: number[];
   library: {
@@ -949,6 +955,8 @@ export interface TvdbSeason {
   backdrop_path: string | null;
   air_date: string | null;
   episodes: TvdbEpisode[];
+  play_count: number;
+  watch_time_minutes: number;
   season_in_library: boolean;
   season_watch_pct: number;
   season_watch_started?: boolean;
@@ -1024,6 +1032,8 @@ export interface TvdbShow {
   request_enabled: boolean;
   request_status: string | null;
   user_rating: number | null;
+  play_count: number;
+  watch_time_minutes: number;
   season_states: Record<number, SeasonState>;
   where_to_watch: { type: string; name: string; logo: string | null }[];
   rewatch?: ShowRewatch | null;
@@ -1072,6 +1082,8 @@ export interface Show {
   imdb_id?: string | null;
   adult?: boolean;
   user_rating?: number | null;
+  play_count?: number;
+  watch_time_minutes?: number;
   first_air_date: string | null;
   last_air_date: string | null;
   where_to_watch?: { type: string; name: string; logo: string | null }[];

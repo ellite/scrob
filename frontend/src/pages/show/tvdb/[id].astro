@@ -1,6 +1,7 @@
 ---
 import Base from "../../../layouts/Base.astro";
 import ActionBar from "../../../components/ActionBar.astro";
+import WatchStats from "../../../components/WatchStats.astro";
 import TrailerButton from "../../../components/TrailerButton.astro";
 import CommentsSection from "../../../components/CommentsSection.astro";
 import TraktCommentsSection from "../../../components/TraktCommentsSection.astro";
@@ -208,6 +209,7 @@ const posterPath = show
                 />
               </div>
             )}
+            {user && <WatchStats plays={show.play_count} watchTimeMinutes={show.watch_time_minutes} />}
             {user && show.tmdb_id_cross && (
               <div class="mb-6">
                 <EpisodeOrderSelector

@@ -23,6 +23,7 @@ from models.rewatch import ShowRewatch, RewatchProgress
 from models.ratings import Rating
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, _attach_episode_order_fields
 from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, resolve_display_to_canonical, normalize_order_key, is_aired_order
+from core.scrobble_threshold import DEFAULT_SCROBBLE_PERCENT
 from core.translations import get_user_metadata_language, get_media_translations, upsert_media_translation, apply_media_translations, get_show_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
 from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event
@@ -866,11 +867,14 @@ def _compute_next_episode(seasons: list[dict], season: int, episode: int) -> tup
 
 def _group_last_watched(
     rows: list[tuple[int, int, int, datetime | None]],
+    by_recent: bool = False,
 ) -> tuple[dict[int, tuple[int, int]], dict[int, datetime]]:
     """Reduce next-up candidate rows (ordered by show, season desc, episode desc)
     to each show's furthest-watched (season, episode) and its most recent
     watched_at. watched_at may be NULL (e.g. imported history with no date), so
-    a show with no timestamped watch simply gets no last_watched_at entry."""
+    a show with no timestamped watch simply gets no last_watched_at entry.
+    With by_recent, the position is the most recently watched episode instead
+    (the furthest one among ties, or when nothing is timestamped)."""
     last_per_show: dict[int, tuple[int, int]] = {}
     last_watched_at: dict[int, datetime] = {}
     for show_id, season, episode, watched_at in rows:
@@ -884,6 +888,8 @@ def _group_last_watched(
             last_per_show[show_id] = (season, episode)
         if watched_at and (show_id not in last_watched_at or watched_at > last_watched_at[show_id]):
             last_watched_at[show_id] = watched_at
+            if by_recent:
+                last_per_show[show_id] = (season, episode)
     return last_per_show, last_watched_at
 
 
@@ -1209,6 +1215,7 @@ async def get_next_up(
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
     dropped_show_ids = set(settings.dropped_shows or []) if settings else set()
+    by_recent = bool(settings and settings.next_up_by_recent_watch)
 
     # Shows the user is mid-rewatch on read their Next Up position from that
     # rewatch's progress instead of full history - excluded from the Step 1
@@ -1240,7 +1247,7 @@ async def get_next_up(
     rows = result.all()
 
     # Keep only the furthest episode per show, and the most recent watched_at per show.
-    last_per_show, last_watched_at = _group_last_watched(rows)
+    last_per_show, last_watched_at = _group_last_watched(rows, by_recent=by_recent)
 
     # Step 1b: Rewatching shows - candidate position comes from that rewatch's
     # progress (furthest re-watched episode so far), defaulting to "before
@@ -1532,7 +1539,7 @@ async def get_next_up(
     )
     next_up = [
         m for m in next_per_show.values()
-        if m.id not in completed_ids
+        if (by_recent or m.id not in completed_ids)
         and (include_hidden or (m.show_id not in hidden_set and m.show_id not in dropped_show_ids))
         # Don't surface an episode that hasn't aired yet — the immediately-next
         # episode for the show, not a later one, so we simply show nothing for
@@ -3638,7 +3645,7 @@ async def update_manual_session(
         session.state = body.state
     session.updated_at = utcnow()
 
-    if 0.05 <= progress_pct < 0.90:
+    if 0.05 <= progress_pct < DEFAULT_SCROBBLE_PERCENT / 100:
         prog_q = await db.execute(
             select(PlaybackProgress).where(
                 PlaybackProgress.user_id == current_user.id,

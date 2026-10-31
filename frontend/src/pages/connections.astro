@@ -16,6 +16,7 @@ const [settings, me, connections, scrobbleConnections, seasonOverrides, deviceGr
 const fmtGrantDate = (v: string | null) =>
   v ? new Date(v.endsWith("Z") ? v : v + "Z").toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
 const hasTmdbKey = settings.has_effective_tmdb_key;
+const SCROBBLE_PERCENT_OPTIONS = [50, 60, 70, 75, 80, 85, 90];
 const AUTO_SYNC_INTERVAL_OPTIONS = [
   { value: 0.25, label: "Every 15m" },
   { value: 0.5, label: "Every 30m" },
@@ -253,6 +254,14 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                             <option value="" selected={!conn.auto_sync_interval}>Disabled</option>
                             {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
                               <option value={String(value)} selected={conn.auto_sync_interval === value}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div class="flex items-center justify-between gap-4">
+                          <label class="text-sm text-zinc-300">Count as watched at</label>
+                          <select class="conn-scrobble-percent bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
+                            {SCROBBLE_PERCENT_OPTIONS.map((value) => (
+                              <option value={String(value)} selected={(conn.scrobble_percent ?? 75) === value}>{value}%</option>
                             ))}
                           </select>
                         </div>
@@ -3392,6 +3401,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               auto_push_interval: (() => {
                 const v = (card?.querySelector('.conn-auto-push') as HTMLSelectElement)?.value;
                 return v ? parseFloat(v) : null;
+              })(),
+              scrobble_percent: (() => {
+                const v = (card?.querySelector('.conn-scrobble-percent') as HTMLSelectElement)?.value;
+                return v ? parseInt(v, 10) : undefined;
               })(),
             };
             card?.querySelectorAll('.conn-pref-checkbox').forEach((cb: any) => {

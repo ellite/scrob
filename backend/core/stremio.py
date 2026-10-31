@@ -1,10 +1,12 @@
 import base64
+import logging
 import zlib
 from typing import Any
 
 import httpx
 
 
+logger = logging.getLogger(__name__)
 DEFAULT_URL = "https://api.strem.io"
 API_URL = f"{DEFAULT_URL}/api"
 LINK_URL = "https://link.stremio.com/api/v2"
@@ -172,15 +174,37 @@ async def get_cinemeta_series(imdb_id: str) -> dict[str, Any]:
     return meta
 
 
+def _season_episode(video_id: str) -> tuple[str, str] | None:
+    parts = video_id.rsplit(":", 2)
+    return (parts[1], parts[2]) if len(parts) == 3 else None
+
+
+def _anchor_index(anchor_video_id: str, video_ids: list[str]) -> int | None:
+    if anchor_video_id in video_ids:
+        return video_ids.index(anchor_video_id)
+    # Addons can write their own id prefix; season and episode still identify the video.
+    key = _season_episode(anchor_video_id)
+    matches = [index for index, video_id in enumerate(video_ids) if key is not None and _season_episode(video_id) == key]
+    return matches[0] if len(matches) == 1 else None
+
+
 def decode_watched_bitfield(serialized: str | None, video_ids: list[str]) -> set[str]:
     if not serialized or not video_ids:
         return set()
     try:
         anchor_video_id, anchor_length_raw, packed = serialized.rsplit(":", 2)
         anchor_length = int(anchor_length_raw)
-        anchor_index = video_ids.index(anchor_video_id)
         previous = zlib.decompress(base64.b64decode(packed))
     except (ValueError, TypeError, zlib.error, base64.binascii.Error):
+        logger.warning("Stremio watched bitfield is malformed; ignoring it")
+        return set()
+    anchor_index = _anchor_index(anchor_video_id, video_ids)
+    if anchor_index is None:
+        logger.warning(
+            "Stremio watched bitfield anchor %s is not among the %d current videos; ignoring it",
+            anchor_video_id,
+            len(video_ids),
+        )
         return set()
     if anchor_length <= 0:
         return set()
