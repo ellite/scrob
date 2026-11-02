@@ -59,7 +59,7 @@ async def _check_list_access(lst: ListModel, current_user: Optional[User], db: A
     if not (is_owner or is_admin or lst.privacy_level == PrivacyLevel.public or is_mutual_follow):
         raise HTTPException(status_code=403, detail="This list is private")
 
-    # Same reasoning as _check_profile_access in routers/profile.py: a request
+    # Same reasoning as _check_profile_access in profile/common.py: a request
     # with no valid session only gets this far because the list is public.
     # Enforce the admin's global toggle here too, server-side, since the
     # frontend's page-level gate can be bypassed by attaching any api_key query
