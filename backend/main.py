@@ -22,6 +22,7 @@ from core.limiter import limiter
 from sqlalchemy import or_, select, update, delete
 from models.sync import SyncJob, SyncStatus
 from core.job_retention import prune_old_sync_jobs
+from core import tmdb
 from models.base import CollectionSource
 from models.playback_session import PlaybackSession
 
@@ -790,6 +791,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             await db.rollback()
 
+    tmdb.init_client()
     scheduler_task = asyncio.create_task(_auto_sync_scheduler())
     watchlist_task = asyncio.create_task(_watchlist_poller())
     manual_session_task = asyncio.create_task(_manual_session_completer())
@@ -830,6 +832,7 @@ async def lifespan(app: FastAPI):
         await show_metadata_task
     except asyncio.CancelledError:
         pass
+    await tmdb.close_client()
 
 from core.config import settings
 from core.timeutil import utcnow
