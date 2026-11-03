@@ -690,7 +690,8 @@ async def create_connection(
         sync_playback=body.sync_playback,
         push_watched=body.push_watched,
         push_collection=body.push_collection if cloud_media_provider else False,
-        push_playback=body.push_playback if cloud_media_provider else False,
+        # Plex takes resume points too (core/plex_progress.py).
+        push_playback=body.push_playback if cloud_media_provider or body.type == "plex" else False,
         push_ratings=body.push_ratings if not cloud_media_provider else False,
         auto_sync_interval=body.auto_sync_interval,
         auto_push_interval=body.auto_push_interval,
@@ -781,7 +782,10 @@ async def update_connection(
             update_data["push_playback"] = update_data.get("push_playback", conn.push_playback)
             update_data["push_collection"] = update_data.get("push_collection", conn.push_collection)
         else:
-            update_data["push_playback"] = False
+            if conn.type == "plex":
+                update_data["push_playback"] = update_data.get("push_playback", conn.push_playback)
+            else:
+                update_data["push_playback"] = False
             update_data["push_collection"] = False
 
     # Re-enabling a watchlist sync direction starts from a clean bootstrap: a

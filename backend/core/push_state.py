@@ -40,6 +40,8 @@ MODE_INCREMENTAL = "incremental"
 
 RATING = "rating"
 WATCHED = "watched"
+# A resume point, stored as the pushed position in whole seconds.
+PROGRESS = "progress"
 MISS = "miss"
 
 
