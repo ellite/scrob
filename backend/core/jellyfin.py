@@ -488,17 +488,42 @@ async def scan_libraries(url: str, token: str) -> bool:
 
 PUSH_TIMEOUT = httpx.Timeout(15.0)  # shorter timeout for bulk push operations
 
-async def mark_watched(url: str, token: str, user_id: str, item_id: str, client: httpx.AsyncClient | None = None, played_at: datetime | None = None) -> bool:
-    """Mark a Jellyfin/Emby item as played, optionally stamped with the original watch date (naive UTC)."""
+# Jellyfin takes an ISO 8601 DatePlayed; Emby 4.x answers a 500 ("String ... was
+# not recognized as a valid DateTime") to that and only parses yyyyMMddHHmmss (#530).
+JELLYFIN_DATE_PLAYED_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+EMBY_DATE_PLAYED_FORMAT = "%Y%m%d%H%M%S"
+
+
+async def mark_watched(
+    url: str,
+    token: str,
+    user_id: str,
+    item_id: str,
+    client: httpx.AsyncClient | None = None,
+    played_at: datetime | None = None,
+    date_format: str = JELLYFIN_DATE_PLAYED_FORMAT,
+) -> bool:
+    """Mark a Jellyfin/Emby item as played, optionally stamped with the original watch date (naive UTC).
+
+    If the server refuses the dated request (a version that parses DatePlayed
+    differently) the item is marked played once more without a date: a watch
+    with the wrong date beats a watch that never reaches the server (#530)."""
     headers = _auth_headers(token)
-    params = {"DatePlayed": played_at.strftime("%Y-%m-%dT%H:%M:%SZ")} if played_at else None
+    endpoint = f"{url.rstrip('/')}/Users/{user_id}/PlayedItems/{item_id}"
+
+    async def _post(c: httpx.AsyncClient) -> bool:
+        if played_at:
+            r = await c.post(endpoint, headers=headers, params={"DatePlayed": played_at.strftime(date_format)})
+            if r.status_code < 400:
+                return True
+        r = await c.post(endpoint, headers=headers)
+        return r.status_code < 400
+
     try:
         if client:
-            r = await client.post(f"{url.rstrip('/')}/Users/{user_id}/PlayedItems/{item_id}", headers=headers, params=params)
-            return r.status_code < 400
+            return await _post(client)
         async with httpx.AsyncClient(timeout=PUSH_TIMEOUT, follow_redirects=False) as c:
-            r = await c.post(f"{url.rstrip('/')}/Users/{user_id}/PlayedItems/{item_id}", headers=headers, params=params)
-            return r.status_code < 400
+            return await _post(c)
     except Exception:
         return False
 

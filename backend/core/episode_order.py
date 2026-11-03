@@ -43,6 +43,31 @@ def _date_distance(left: str | None, right: str | None) -> int | None:
         return None
 
 
+_MIN_PREFIX_MATCH_LENGTH = 4
+
+
+def _titles_match(tmdb_title: str, tvdb_title: str, air_date_distance: int | None) -> bool:
+    """Whether a TMDB and a TVDB episode title (both already normalised) name
+    the same episode, given how far apart their air dates are.
+
+    Equal titles within a day of each other have always matched (a missing date
+    counts as no disagreement). TVDB also often prefixes the series name onto a
+    special ("Kimagure Orange Road: White Lovers" against TMDB's "White
+    Lovers"), so one title that is the other with a prefix in front matches
+    too - but only when both dates are known and within a day, since a
+    title-suffix match alone is much weaker than an equal title (#351)."""
+    if not tmdb_title or not tvdb_title:
+        return False
+    if air_date_distance is not None and air_date_distance > 1:
+        return False
+    if tmdb_title == tvdb_title:
+        return True
+    if air_date_distance is None:
+        return False
+    shorter, longer = sorted((tmdb_title, tvdb_title), key=len)
+    return len(shorter) >= _MIN_PREFIX_MATCH_LENGTH and longer.endswith(shorter)
+
+
 # ── Order keys (#174) ────────────────────────────────────────────────────────
 #
 # An "order key" identifies one ordering of a show's episodes:
@@ -600,8 +625,10 @@ async def _match_tmdb_to_tvdb_episodes(
         if not title:
             return False
         return any(
-            _normalise_title(candidate.get("name")) == title
-            and (_date_distance(episode.get("air_date"), candidate.get("aired")) or 0) <= 1
+            _titles_match(
+                title, _normalise_title(candidate.get("name")),
+                _date_distance(episode.get("air_date"), candidate.get("aired")),
+            )
             for candidate in tvdb_episodes
         )
 
@@ -668,9 +695,10 @@ async def _match_tmdb_to_tvdb_episodes(
                 candidate
                 for candidate in tvdb_episodes
                 if candidate.get("id") not in used_tvdb_ids
-                and title
-                and _normalise_title(candidate.get("name")) == title
-                and (_date_distance(episode.get("air_date"), candidate.get("aired")) or 0) <= 1
+                and _titles_match(
+                    title, _normalise_title(candidate.get("name")),
+                    _date_distance(episode.get("air_date"), candidate.get("aired")),
+                )
             ]
             if len(candidates) == 1:
                 match = candidates[0]

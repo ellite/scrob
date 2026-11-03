@@ -502,6 +502,23 @@ class ExpandMultiEpisodeItemsTests(unittest.TestCase):
         # Original item must be untouched - other code still iterates the raw list.
         self.assertEqual(item["IndexNumber"], 1)
 
+    def test_extra_episodes_do_not_inherit_first_episode_provider_ids(self):
+        """#525: the item's ProviderIds are the first episode's. Copies for the
+        later episodes must not carry them, or every copy resolves to the same
+        Media row and the file is inserted twice (uq_collection_file_source)."""
+        item = {
+            "Id": "file-1", "IndexNumber": 1, "IndexNumberEnd": 3,
+            "ProviderIds": {"Tmdb": "353500", "Tvdb": "42"},
+        }
+
+        expanded = sync._expand_multi_episode_items(
+            [item], sync.MediaType.episode, sync.CollectionSource.jellyfin,
+        )
+
+        self.assertEqual(expanded[0]["ProviderIds"], {"Tmdb": "353500", "Tvdb": "42"})
+        self.assertEqual([e["ProviderIds"] for e in expanded[1:]], [{}, {}])
+        self.assertEqual(item["ProviderIds"], {"Tmdb": "353500", "Tvdb": "42"})
+
     def test_three_episode_span_expands_to_three(self):
         item = {"Id": "file-2", "IndexNumber": 5, "IndexNumberEnd": 7}
 
@@ -1285,6 +1302,59 @@ class FullPushPartialWatchTests(_PartialWatchDB):
         _, mark_pushed, _ = await self._push()
         armed_media_ids = [call.args[1] for call in mark_pushed.call_args_list]
         self.assertEqual(armed_media_ids, [self.finished_media_id])
+
+
+class FullPushTvdbOnlyServerSeriesTests(_PartialWatchDB):
+    """#429: a show Scrob knows by both TMDB and TVDB ids was reported "not
+    found on this server" when the Jellyfin/Emby series only carries a TVDB
+    provider id - the TVDB-keyed index was only built for shows with no TMDB id."""
+
+    async def _seed(self) -> tuple[int, int]:
+        from models.collection import CollectionSource
+        from models.events import WatchEvent
+        from models.media import Media, MediaType
+        from models.show import Show
+        from models.sync import SyncJob, SyncStatus
+
+        async with self.Session() as db:
+            conn = MediaServerConnection(
+                user_id=1, type="jellyfin", name="Jellyfin", url="http://jf", token="tok",
+                server_user_id="jf-user", push_watched=True,
+            )
+            db.add(conn)
+            await db.flush()
+            job = SyncJob(
+                user_id=1, source=CollectionSource.jellyfin, status=SyncStatus.pending,
+                connection_id=conn.id, job_type="push",
+            )
+            show = Show(tmdb_id=71446, tvdb_id=327417, title="Money Heist")
+            db.add_all([job, show])
+            await db.flush()
+            episode = Media(
+                tmdb_id=1234, media_type=MediaType.episode, title="Pilot",
+                show_id=show.id, season_number=1, episode_number=1,
+            )
+            db.add(episode)
+            await db.flush()
+            db.add(WatchEvent(
+                user_id=1, media_id=episode.id, watched_at=datetime(2026, 1, 1),
+                completed=True, play_count=1, progress_percent=1.0,
+            ))
+            await db.commit()
+            return conn.id, job.id
+
+    async def test_series_known_to_the_server_only_by_tvdb_id_is_found(self):
+        connection_id, job_id = await self._seed()
+        mark_watched = AsyncMock(return_value=True)
+        with patch.object(sync, "engine", self.engine), \
+             patch.object(sync.jellyfin, "build_tmdb_index", AsyncMock(return_value={})), \
+             patch.object(sync.jellyfin, "build_tvdb_index", AsyncMock(return_value={327417: "series-jf"})), \
+             patch.object(sync.jellyfin, "find_episode_in_series", AsyncMock(return_value={"Id": "ep-jf"})), \
+             patch.object(sync.jellyfin, "get_items_watched_state", AsyncMock(return_value={"ep-jf": False})), \
+             patch.object(sync.jellyfin, "mark_watched", mark_watched), \
+             patch("routers.webhooks.mark_pushed_watched"):
+            await sync._run_full_push(1, connection_id, job_id)
+        self.assertEqual([call.args[3] for call in mark_watched.await_args_list], ["ep-jf"])
 
 
 class FullPushEchoTokenTimingTests(_PartialWatchDB):

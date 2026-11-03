@@ -8,6 +8,8 @@ from sqlalchemy.exc import IntegrityError
 
 from core.episode_order import (
     _match_tmdb_to_tvdb_episodes,
+    _normalise_title,
+    _titles_match,
     _merge_episode_media,
     _reset_season_mapping_guards,
     ensure_episode_order_mapping,
@@ -733,6 +735,20 @@ class MatchTmdbToTvdbEpisodesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_tmdb[(18, 2)].tvdb_id, 4404875)
         self.assertEqual(len({m.tvdb_id for m in mappings}), len(mappings))
 
+    async def test_series_name_prefixed_special_is_matched_by_title_and_date(self) -> None:
+        tmdb_episodes = [
+            {"id": 1, "season_number": 0, "episode_number": 1, "name": "White Lovers", "air_date": "1989-03-01"},
+            {"id": 2, "season_number": 0, "episode_number": 2, "name": "Hawaiian Suspense", "air_date": "1989-04-01"},
+        ]
+        tvdb_episodes = [
+            {"id": 61, "seasonNumber": 0, "number": 6, "name": "Kimagure Orange Road: White Lovers", "aired": "1989-03-01"},
+            {"id": 62, "seasonNumber": 0, "number": 7, "name": "Kimagure Orange Road: Hawaiian Suspense", "aired": "1989-04-01"},
+        ]
+        with patch("core.episode_order.tmdb.get_episode_external_ids", AsyncMock(return_value={"tvdb_id": None})):
+            mappings = await _match_tmdb_to_tvdb_episodes(tmdb_episodes, tvdb_episodes, 9103, "tmdb-key")
+        got = {(m.tmdb_season_number, m.tmdb_episode_number): (m.tvdb_id, m.match_method) for m in mappings}
+        self.assertEqual(got, {(0, 1): (61, "title_date"), (0, 2): (62, "title_date")})
+
     async def test_used_tvdb_ids_seed_applies_to_external_id_matches_too(self) -> None:
         tmdb_episodes = [
             {"id": 1, "season_number": 1, "episode_number": 1, "name": "Pilot", "air_date": "2020-01-01"},
@@ -747,6 +763,43 @@ class MatchTmdbToTvdbEpisodesTests(unittest.IsolatedAsyncioTestCase):
         # Already mapped to another TMDB episode in an earlier (incremental)
         # pass - not available, by either matching method.
         self.assertEqual(mappings, [])
+
+
+class TitlesMatchTests(unittest.TestCase):
+    """#351: TVDB prefixes the series name onto specials ("Kimagure Orange
+    Road: White Lovers" against TMDB's "White Lovers")."""
+
+    def _match(self, tmdb_title, tvdb_title, distance):
+        return _titles_match(_normalise_title(tmdb_title), _normalise_title(tvdb_title), distance)
+
+    def test_equal_titles_within_a_day_match(self):
+        self.assertTrue(self._match("Pilot", "Pilot", 0))
+        self.assertTrue(self._match("Pilot", "Pilot", 1))
+
+    def test_equal_titles_with_an_unknown_date_still_match(self):
+        self.assertTrue(self._match("Pilot", "Pilot", None))
+
+    def test_equal_titles_far_apart_in_time_do_not_match(self):
+        self.assertFalse(self._match("Pilot", "Pilot", 30))
+
+    def test_series_name_prefix_matches_when_dates_agree(self):
+        self.assertTrue(self._match("White Lovers", "Kimagure Orange Road: White Lovers", 0))
+        self.assertTrue(self._match("Kimagure Orange Road: White Lovers", "White Lovers", 1))
+
+    def test_prefix_match_needs_a_known_date(self):
+        self.assertFalse(self._match("White Lovers", "Kimagure Orange Road: White Lovers", None))
+
+    def test_prefix_match_rejected_when_dates_disagree(self):
+        self.assertFalse(self._match("White Lovers", "Kimagure Orange Road: White Lovers", 2))
+
+    def test_very_short_title_is_not_matched_as_a_suffix(self):
+        self.assertFalse(self._match("Go", "Let It Go", 0))
+
+    def test_different_titles_do_not_match(self):
+        self.assertFalse(self._match("Hawaiian Suspense", "Kimagure Orange Road: White Lovers", 0))
+
+    def test_empty_titles_never_match(self):
+        self.assertFalse(self._match("", "", 0))
 
 
 class MergeEpisodeMediaTests(unittest.IsolatedAsyncioTestCase):

@@ -1879,6 +1879,13 @@ def _expand_multi_episode_items(items: list, media_type: MediaType, source: Coll
             for ep in range(start, end + 1):
                 copy = dict(item)
                 copy["IndexNumber"] = ep
+                if ep != start:
+                    # The item's ProviderIds are the FIRST episode's episode-level
+                    # ids. Left on the extra copies they resolve to that same
+                    # Media row, so the file is inserted twice for one collection
+                    # entry and trips uq_collection_file_source (#525). Drop them
+                    # so the extra episodes resolve by show + season + number.
+                    copy["ProviderIds"] = {}
                 expanded.append(copy)
         else:
             expanded.append(item)
@@ -7094,11 +7101,14 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
                     jellyfin_series_index = await client_mod.build_tmdb_index(conn.url, conn.token, "Series")
                     # Shows Scrob only ever matched via TVDB (e.g. a legacy-agent
                     # Plex library) have no Show.tmdb_id at all, so the index
-                    # above can never resolve them - only build this second,
-                    # TVDB-keyed index when at least one such show is actually
-                    # in play (#436).
+                    # above can never resolve them - and a show with both ids
+                    # still misses it when the server only knows the series by
+                    # its TVDB id (a TVDB-scraped library, #429). Only build
+                    # this second, TVDB-keyed index when at least one such show
+                    # is actually in play (#436).
                     if any(
-                        m.media_type == MediaType.episode and m.show_id and not show_tmdb_map.get(m.show_id) and show_tvdb_map.get(m.show_id)
+                        m.media_type == MediaType.episode and m.show_id and show_tvdb_map.get(m.show_id)
+                        and (not show_tmdb_map.get(m.show_id) or show_tmdb_map[m.show_id] not in jellyfin_series_index)
                         for m in media_info.values()
                     ):
                         jellyfin_series_tvdb_index = await client_mod.build_tvdb_index(conn.url, conn.token, "Series")
@@ -8948,9 +8958,24 @@ async def heal_duplicate_history(
             tier = 2
         return (tier, _effective_time(event))
 
-    by_media: dict[int, list[WatchEvent]] = {}
+    # Group by what was watched, not by Media row: the same episode can exist
+    # as two rows (a webhook and a Trakt import resolving it differently,
+    # #527), and those plays are duplicates of each other too.
+    positions = await db.execute(
+        select(Media.id, Media.show_id, Media.season_number, Media.episode_number).where(
+            Media.id.in_({e.media_id for e in events}),
+            Media.media_type == MediaType.episode,
+            Media.show_id.isnot(None),
+            Media.season_number.isnot(None),
+            Media.episode_number.isnot(None),
+        )
+    )
+    identity: dict[int, tuple] = {
+        media_id: ("episode", show_id, season, episode) for media_id, show_id, season, episode in positions.all()
+    }
+    by_media: dict[tuple, list[WatchEvent]] = {}
     for event in events:
-        by_media.setdefault(event.media_id, []).append(event)
+        by_media.setdefault(identity.get(event.media_id, ("media", event.media_id)), []).append(event)
 
     tolerance = timedelta(minutes=body.window_minutes).total_seconds()
     to_delete: list[int] = []

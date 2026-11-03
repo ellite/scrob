@@ -9,6 +9,7 @@ export const prerender = false;
 
 const category = Astro.url.searchParams.get("category") ?? "popular";
 const genre = Astro.url.searchParams.getAll("genre");
+const excludedGenres = Astro.url.searchParams.getAll("exclude_genre");
 const year = Astro.url.searchParams.getAll("year").map(Number);
 const minRating = Astro.url.searchParams.get("min_rating") ? Number(Astro.url.searchParams.get("min_rating")) : undefined;
 const status = Astro.url.searchParams.get("status") ?? "";
@@ -16,6 +17,7 @@ const collection = Astro.url.searchParams.getAll("collection");
 const watch = Astro.url.searchParams.getAll("watch");
 const arr = Astro.url.searchParams.getAll("arr");
 const langs = Astro.url.searchParams.getAll("lang");
+const excludedLangs = Astro.url.searchParams.getAll("exclude_lang");
 const inList = Astro.url.searchParams.getAll("in_list");
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token, user } = Astro.locals;
@@ -42,6 +44,7 @@ if (hasTmdbKey) {
       category,
       page,
       ...(genre.length ? { genre } : {}),
+      ...(excludedGenres.length ? { exclude_genre: excludedGenres } : {}),
       ...(year.length ? { year } : {}),
       ...(minRating ? { min_rating: minRating } : {}),
       ...(status ? { status } : {}),
@@ -49,6 +52,7 @@ if (hasTmdbKey) {
       ...(watch.length ? { watch } : {}),
       ...(hasSonarr && arr.length ? { arr } : {}),
       ...(langs.length ? { original_language: langs.join("|") } : {}),
+      ...(excludedLangs.length ? { exclude_language: excludedLangs } : {}),
       ...(inList.length ? { in_list: inList } : {}),
     }, token);
   } catch (e) {
@@ -73,22 +77,22 @@ const LANGUAGES = [
   { value: "fr", label: "French" }, { value: "de", label: "German" },
   { value: "el", label: "Greek" }, { value: "gu", label: "Gujarati" },
   { value: "he", label: "Hebrew" }, { value: "hi", label: "Hindi" },
-  { value: "hu", label: "Hungarian" }, { value: "id", label: "Indonesian" },
-  { value: "it", label: "Italian" }, { value: "ja", label: "Japanese" },
-  { value: "kn", label: "Kannada" }, { value: "ko", label: "Korean" },
-  { value: "ms", label: "Malay" }, { value: "ml", label: "Malayalam" },
-  { value: "mr", label: "Marathi" }, { value: "no", label: "Norwegian" },
-  { value: "fa", label: "Persian" }, { value: "pl", label: "Polish" },
-  { value: "pt", label: "Portuguese" }, { value: "pa", label: "Punjabi" },
-  { value: "ro", label: "Romanian" }, { value: "ru", label: "Russian" },
-  { value: "si", label: "Sinhala" }, { value: "es", label: "Spanish" },
-  { value: "sw", label: "Swahili" }, { value: "sv", label: "Swedish" },
-  { value: "tl", label: "Tagalog" }, { value: "ta", label: "Tamil" },
-  { value: "te", label: "Telugu" }, { value: "th", label: "Thai" },
-  { value: "tr", label: "Turkish" }, { value: "uk", label: "Ukrainian" },
-  { value: "ur", label: "Urdu" }, { value: "vi", label: "Vietnamese" },
+  { value: "hu", label: "Hungarian" }, { value: "is", label: "Icelandic" },
+  { value: "id", label: "Indonesian" }, { value: "it", label: "Italian" },
+  { value: "ja", label: "Japanese" }, { value: "kn", label: "Kannada" },
+  { value: "ko", label: "Korean" }, { value: "ms", label: "Malay" },
+  { value: "ml", label: "Malayalam" }, { value: "mr", label: "Marathi" },
+  { value: "no", label: "Norwegian" }, { value: "fa", label: "Persian" },
+  { value: "pl", label: "Polish" }, { value: "pt", label: "Portuguese" },
+  { value: "pa", label: "Punjabi" }, { value: "ro", label: "Romanian" },
+  { value: "ru", label: "Russian" }, { value: "si", label: "Sinhala" },
+  { value: "es", label: "Spanish" }, { value: "sw", label: "Swahili" },
+  { value: "sv", label: "Swedish" }, { value: "tl", label: "Tagalog" },
+  { value: "ta", label: "Tamil" }, { value: "te", label: "Telugu" },
+  { value: "th", label: "Thai" }, { value: "tr", label: "Turkish" },
+  { value: "uk", label: "Ukrainian" }, { value: "ur", label: "Urdu" },
+  { value: "vi", label: "Vietnamese" },
 ];
-
 
 const currentYear = new Date().getFullYear();
 const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear - i);
@@ -97,6 +101,7 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
 const baseParams = new URLSearchParams();
 baseParams.set("category", category);
 genre.forEach((v) => baseParams.append("genre", v));
+excludedGenres.forEach((v) => baseParams.append("exclude_genre", v));
 year.forEach((v) => baseParams.append("year", String(v)));
 if (minRating) baseParams.set("min_rating", String(minRating));
 if (status) baseParams.set("status", status);
@@ -104,6 +109,7 @@ collection.forEach((v) => baseParams.append("collection", v));
 watch.forEach((v) => baseParams.append("watch", v));
 if (hasSonarr) arr.forEach((v) => baseParams.append("arr", v));
 langs.forEach((l) => baseParams.append("lang", l));
+excludedLangs.forEach((l) => baseParams.append("exclude_lang", l));
 inList.forEach((v) => baseParams.append("in_list", v));
 const baseUrl = `/shows?${baseParams.toString()}`;
 ---
@@ -140,7 +146,7 @@ const baseUrl = `/shows?${baseParams.toString()}`;
           basePath="/shows"
           extraParams={{ category }}
           sections={[
-            { key: "genre", label: "Genre", options: TV_GENRES.map((g) => ({ value: g, label: g })), selected: genre },
+            { key: "genre", label: "Genre", options: TV_GENRES.map((g) => ({ value: g, label: g })), selected: genre, excluded: excludedGenres, tristate: true },
             { key: "year", label: "Year", options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },
             { key: "min_rating", label: "Rating", options: [9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: `${r}+ Stars` })), selected: minRating ? [String(minRating)] : [], multi: false },
             { key: "status", label: "Status", options: TV_STATUSES.map((s) => ({ value: s, label: s })), selected: status ? [status] : [], multi: false },
@@ -149,7 +155,7 @@ const baseUrl = `/shows?${baseParams.toString()}`;
               { key: "watch", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }, { value: "started", label: "In Progress" }], selected: watch },
             ] : []),
             ...(hasSonarr ? [{ key: "arr", label: "Sonarr", options: [{ value: "added", label: "In Sonarr" }, { value: "notadded", label: "Not In Sonarr" }], selected: arr }] : []),
-            { key: "lang", label: "Language", options: LANGUAGES, selected: langs },
+            { key: "lang", label: "Language", options: LANGUAGES, selected: langs, excluded: excludedLangs, tristate: true },
             { key: "in_list", label: "Lists", options: [{ value: "in", label: "In a List" }, { value: "out", label: "Not In a List" }], selected: inList },
           ]}
         />

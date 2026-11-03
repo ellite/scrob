@@ -4,6 +4,7 @@ import PosterWall from "../components/PosterWall.astro";
 import AuthHero from "../components/AuthHero.astro";
 import AuthMobileFeatures from "../components/AuthMobileFeatures.astro";
 import { api } from "../lib/api";
+import { isSecureRequest } from "../lib/secureCookie";
 
 let error = "";
 let pendingEmailConfirmation = false;
@@ -46,7 +47,7 @@ if (Astro.request.method === "POST") {
       Astro.cookies.set("token", result.access_token, {
         path: "/",
         httpOnly: true,
-        secure: import.meta.env.PROD,
+        secure: isSecureRequest(Astro.url, Astro.request),
         sameSite: "lax",
         maxAge: 60 * 60 * 24 * 7,
       });

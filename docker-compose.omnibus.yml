@@ -10,6 +10,10 @@ services:
       # Generate with: openssl rand -hex 32
       SECRET_KEY: changeme
 
+      # ── Logging ──────────────────────────────────────────────────────────────
+      # LOG_LEVEL: "INFO"            # WARNING or higher hides the per-request access log
+      # ACCESS_LOG_EXCLUDE: ""       # comma-separated path prefixes to skip (default: webhooks + polled endpoints; empty = log all)
+
       # ── Registrations ────────────────────────────────────────────────────────
       # Registrations are disabled by default. Set to true to allow additional users.
       # ENABLE_REGISTRATIONS: "true"

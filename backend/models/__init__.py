@@ -32,6 +32,7 @@ from .plex_pending_push import PlexPendingPush
 from .connection_push_state import ConnectionPushState
 from .oauth_device import OAuthDeviceGrant
 from .oidc_identity import OidcIdentity
+from .saved_filter import SavedFilter
 
 __all__ = [
     "Base",
@@ -65,5 +66,5 @@ __all__ = [
     "PlexPendingPush",
     "ConnectionPushState",
     "OAuthDeviceGrant",
-    "OidcIdentity",
+    "OidcIdentity", "SavedFilter",
 ]

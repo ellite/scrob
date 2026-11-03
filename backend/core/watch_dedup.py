@@ -11,10 +11,12 @@ produced either row.
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import func, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from models.events import WatchEvent
+from models.media import Media, MediaType
 from models.users import UserSettings
 from core.timeutil import utcnow
 
@@ -68,6 +70,29 @@ async def _acquire_dedup_lock(db: AsyncSession, user_id: int, media_id: int) -> 
     )
 
 
+def _same_episode_media_ids(media_id: int):
+    """Subquery of every Media id that is the same episode as media_id: same
+    show, season and episode number. The same episode can exist as more than
+    one Media row (e.g. a webhook and a Trakt import resolving it through
+    different ids, #527), and a play of either is a play of the other, so the
+    duplicate check has to look across all of them. Empty for movies and for
+    episodes without a show, which only ever match by media_id."""
+    anchor = aliased(Media)
+    return (
+        select(Media.id)
+        .join(
+            anchor,
+            and_(
+                anchor.id == media_id,
+                anchor.media_type == MediaType.episode,
+                Media.show_id == anchor.show_id,
+                Media.season_number == anchor.season_number,
+                Media.episode_number == anchor.episode_number,
+            ),
+        )
+    )
+
+
 async def find_duplicate_watch_event(
     db: AsyncSession,
     user_id: int,
@@ -98,7 +123,7 @@ async def find_duplicate_watch_event(
     effective_time = func.coalesce(WatchEvent.watched_at, WatchEvent.created_at)
     query = select(WatchEvent).where(
         WatchEvent.user_id == user_id,
-        WatchEvent.media_id == media_id,
+        or_(WatchEvent.media_id == media_id, WatchEvent.media_id.in_(_same_episode_media_ids(media_id))),
         WatchEvent.completed.is_(True),
         effective_time.between(at - delta, at + delta),
     )
@@ -112,7 +137,12 @@ async def load_existing_watch_times(db: AsyncSession, user_id: int) -> dict[int,
     """Preload every existing WatchEvent's effective time for this user,
     grouped by media_id - for bulk import loops (Trakt/Simkl/etc.) that would
     otherwise run one duplicate-check query per item. Pair with
-    is_duplicate_watch_time."""
+    is_duplicate_watch_time.
+
+    An episode that exists as several Media rows (same show/season/episode,
+    #527) shares one list of times across all of them, so a play recorded
+    against one row is seen as a duplicate when the import resolves the same
+    episode to another."""
     result = await db.execute(
         select(WatchEvent.media_id, func.coalesce(WatchEvent.watched_at, WatchEvent.created_at))
         .where(WatchEvent.user_id == user_id)
@@ -120,6 +150,38 @@ async def load_existing_watch_times(db: AsyncSession, user_id: int) -> dict[int,
     times: dict[int, list[datetime]] = {}
     for media_id, at in result.all():
         times.setdefault(media_id, []).append(at)
+    if not times:
+        return times
+
+    # Every Media row sharing an episode position with a watched episode.
+    watched = select(Media.show_id, Media.season_number, Media.episode_number).where(
+        Media.id.in_(times.keys()),
+        Media.media_type == MediaType.episode,
+        Media.show_id.isnot(None),
+        Media.season_number.isnot(None),
+        Media.episode_number.isnot(None),
+    ).distinct().subquery()
+    siblings = await db.execute(
+        select(Media.id, Media.show_id, Media.season_number, Media.episode_number)
+        .join(
+            watched,
+            and_(
+                Media.show_id == watched.c.show_id,
+                Media.season_number == watched.c.season_number,
+                Media.episode_number == watched.c.episode_number,
+            ),
+        )
+        .where(Media.media_type == MediaType.episode)
+    )
+    groups: dict[tuple, list[int]] = {}
+    for media_id, show_id, season, episode in siblings.all():
+        groups.setdefault((show_id, season, episode), []).append(media_id)
+    for ids in groups.values():
+        if len(ids) < 2:
+            continue
+        merged = [t for i in ids for t in times.get(i, ())]
+        for i in ids:
+            times[i] = list(merged)
     return times
 
 

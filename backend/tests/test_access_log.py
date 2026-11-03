@@ -5,7 +5,12 @@ import unittest
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from core.access_log import _RedactQuerySecretsFilter
+from core.access_log import (
+    DEFAULT_ACCESS_LOG_EXCLUDE,
+    _ExcludePathsFilter,
+    _RedactQuerySecretsFilter,
+    parse_exclude_prefixes,
+)
 
 
 def _filtered_path(path_with_query: str) -> str:
@@ -60,6 +65,43 @@ class RedactQuerySecretsFilterTests(unittest.TestCase):
         result = _RedactQuerySecretsFilter().filter(record)
         self.assertTrue(result)
         self.assertEqual(record.msg, "some other message with api_key=SECRET123")
+
+
+def _kept(path: str, status: int = 200, prefixes=DEFAULT_ACCESS_LOG_EXCLUDE) -> bool:
+    record = logging.LogRecord(
+        name="uvicorn.access", level=logging.INFO, pathname=__file__, lineno=1,
+        msg='%s - "%s %s HTTP/%s" %d',
+        args=("127.0.0.1:1234", "POST", path, "1.1", status),
+        exc_info=None,
+    )
+    return _ExcludePathsFilter(prefixes).filter(record)
+
+
+class ExcludePathsFilterTests(unittest.TestCase):
+    def test_drops_successful_webhook_with_query(self) -> None:
+        self.assertFalse(_kept("/webhooks/jellyfin/1?api_key=REDACTED"))
+
+    def test_drops_polled_endpoint(self) -> None:
+        self.assertFalse(_kept("/auth/me"))
+
+    def test_keeps_failed_requests_on_excluded_paths(self) -> None:
+        self.assertTrue(_kept("/webhooks/jellyfin/1", status=500))
+        self.assertTrue(_kept("/auth/me", status=401))
+
+    def test_keeps_other_paths(self) -> None:
+        self.assertTrue(_kept("/media/recently-added?type=movie"))
+
+    def test_non_access_records_pass(self) -> None:
+        record = logging.LogRecord(
+            name="uvicorn.access", level=logging.INFO, pathname=__file__, lineno=1,
+            msg="hello", args=(), exc_info=None,
+        )
+        self.assertTrue(_ExcludePathsFilter(DEFAULT_ACCESS_LOG_EXCLUDE).filter(record))
+
+    def test_parse_defaults_custom_and_empty(self) -> None:
+        self.assertEqual(parse_exclude_prefixes(None), DEFAULT_ACCESS_LOG_EXCLUDE)
+        self.assertEqual(parse_exclude_prefixes(" /a , /b/ ,"), ("/a", "/b/"))
+        self.assertEqual(parse_exclude_prefixes(""), ())
 
 
 if __name__ == "__main__":
