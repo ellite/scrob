@@ -348,6 +348,7 @@ class MediaServerConnectionUpdate(BaseModel):
     watchlist_all_users: Optional[bool] = None
     watchlist_monitored_users: Optional[list[str]] = None
     plex_sync_watchlist: Optional[bool] = None
+    scrobble_percent: Optional[int] = Field(default=None, ge=1, le=100)
     plex_push_watchlist: Optional[bool] = None
 
 
@@ -355,6 +356,7 @@ class MediaServerConnectionResponse(MediaServerConnectionBase):
     id: int
     user_id: int
     created_at: datetime
+    scrobble_percent: int = 75
 
     @model_validator(mode="after")
     def redact_cloud_credentials(self):
@@ -378,12 +380,14 @@ class ScrobbleConnectionUpdate(BaseModel):
     sync_collection: Optional[bool] = None
     sync_watched: Optional[bool] = None
     sync_playback: Optional[bool] = None
+    scrobble_percent: Optional[int] = Field(default=None, ge=1, le=100)
 
 
 class ScrobbleConnectionResponse(ScrobbleConnectionCreate):
     id: int
     user_id: int
     created_at: datetime
+    scrobble_percent: int = 75
 
     model_config = ConfigDict(from_attributes=True)
 

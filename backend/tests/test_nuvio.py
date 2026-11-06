@@ -860,21 +860,23 @@ class NuvioProgressTests(unittest.IsolatedAsyncioTestCase):
 
         db.add.assert_not_called()
 
-    async def test_finished_progress_is_not_tracked_and_clears_an_existing_row(self) -> None:
+    async def test_finished_progress_stays_tracked_for_the_scrobble_threshold(self) -> None:
         existing = PlaybackProgress(user_id=7, media_id=10, progress_percent=0.5, progress_seconds=50)
         db = self._db(_Result(scalars=[self.MOVIE]), _Result(scalars=[existing]))
 
         await self._apply_movie(db, self._movie_row(position=95_000))
 
         db.add.assert_not_called()
-        db.delete.assert_awaited_once_with(existing)
+        db.delete.assert_not_awaited()
+        self.assertEqual(existing.progress_percent, 0.95)
+        self.assertEqual(existing.progress_seconds, 95)
 
-    async def test_position_beyond_duration_is_treated_as_finished(self) -> None:
+    async def test_position_beyond_duration_is_capped_at_full_progress(self) -> None:
         db = self._db(_Result(scalars=[self.MOVIE]), _Result())
 
         await self._apply_movie(db, self._movie_row(position=150_000))
 
-        db.add.assert_not_called()
+        self.assertEqual(db.add.call_args.args[0].progress_percent, 1.0)
 
     async def test_zero_duration_and_garbage_values_are_skipped(self) -> None:
         db = self._db(_Result(scalars=[self.MOVIE]), _Result())
