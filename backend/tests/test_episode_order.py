@@ -79,6 +79,14 @@ class _ScalarOneResult:
         return self.item
 
 
+class _RowResult:
+    def __init__(self, row):
+        self.row = row
+
+    def one(self):
+        return self.row
+
+
 class _NestedTxn:
     async def __aenter__(self):
         return self
@@ -433,6 +441,7 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
                     _ScalarOneResult(show),                             # show_result
                     _ExistingResult([mapping]),                         # mapping_result
                     _ExistingResult([mapped_episode, unmapped_episode]),  # ep_result
+                    _RowResult((2, 0, None)),                           # get_watch_stats
                     _ScalarOneResult(None),                             # get_active_rewatch — none active
                     _ExistingResult([(201,), (202,)]),                  # watched_q — both watched
                     _ExistingResult([]),                                # last-watched dates

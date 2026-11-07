@@ -55,6 +55,7 @@ from core.enrichment import (
     is_unmapped_tvdb_episode,
 )
 from core.identity import find_media, link_show_ids
+from core.watch_stats import WatchStats, get_watch_stats
 from core.rewatch import (
     capped_season_episode_counts,
     total_aired_episodes,
@@ -1455,6 +1456,8 @@ async def get_show(
                 "total": total_aired_episodes(show),
             }
 
+        show_watch_stats = await get_watch_stats(db, effective_user_id, show_id=show.id)
+
         show_dict = format_show(show)
         if metadata_lang and tmdb_extra:
             for field, tmdb_key in [("title", "name"), ("overview", "overview"), ("tagline", "tagline")]:
@@ -1495,6 +1498,9 @@ async def get_show(
             "request_enabled": state_item.get("request_enabled", False),
             "request_status": state_item.get("request_status"),
             "user_rating": state_item.get("user_rating"),
+            "play_count": show_watch_stats.plays,
+            "watch_time_minutes": show_watch_stats.watch_time_minutes,
+            "last_watched_at": show_watch_stats.last_watched_at,
             "season_states": season_states,
             "seasons": {f"season_{k}": v for k, v in sorted(seasons.items())},
             "created_by": [
@@ -1802,6 +1808,7 @@ async def get_show_season(
             # Find all local Media rows for these episodes (even if show_id is null)
             # and map them by TMDB ID for easy lookup.
             local_media_by_tmdb: dict[int, Media] = {}
+            local_episode_media_ids: list[int] = []
             if season_ep_tmdb_ids:
                 media_q = await db.execute(
                     select(Media).where(
@@ -1810,9 +1817,13 @@ async def get_show_season(
                     )
                 )
                 for m in media_q.scalars().all():
+                    local_episode_media_ids.append(m.id)
                     local_media_by_tmdb[m.tmdb_id] = m
 
             local_media_ids = [m.id for m in local_media_by_tmdb.values()]
+            season_watch_stats = await get_watch_stats(
+                db, effective_user_id, media_ids=local_episode_media_ids
+            )
 
             if local_media_ids:
                 active_rewatch = await get_active_rewatch(db, effective_user_id, show.id) if show else None
@@ -2117,6 +2128,9 @@ async def get_show_season(
                 "season_in_library": season_in_library,
                 "season_collection_pct": season_collection_pct,
                 "season_user_rating": season_user_rating,
+                "play_count": season_watch_stats.plays,
+                "watch_time_minutes": season_watch_stats.watch_time_minutes,
+                "last_watched_at": season_watch_stats.last_watched_at,
                 "season_in_lists": season_in_lists,
                 "show_in_lists": show_state.get("in_lists", []),
                 "show_in_library": show_state.get("collection_pct", 0) > 0,
@@ -2126,11 +2140,17 @@ async def get_show_season(
             }
         elif show:
             # Fallback to local only if no TMDB key
+            local_season_watch_stats = await get_watch_stats(
+                db, effective_user_id, media_ids=[episode.id for episode in local_episodes]
+            )
             return {
                 "season_number": season_number,
                 "name": f"Season {season_number}",
                 "episodes": [format_media(ep) for ep in local_episodes],
                 "show": format_show(show),
+                "play_count": local_season_watch_stats.plays,
+                "watch_time_minutes": local_season_watch_stats.watch_time_minutes,
+                "last_watched_at": local_season_watch_stats.last_watched_at,
             }
         else:
             raise HTTPException(status_code=404, detail="Show not found")
@@ -2332,6 +2352,9 @@ async def get_episode_detail(
         ep_tmdb_id = ep_data.get("id")
         ep_state: dict = {"tmdb_id": ep_tmdb_id, "type": "episode"}
         await enrich_with_state(db, effective_user_id, [ep_state])
+        watch_time_minutes = (await get_watch_stats(
+            db, effective_user_id, tmdb_id=ep_tmdb_id, media_type="episode"
+        )).watch_time_minutes
 
         return {
             "id": local_ep.id if local_ep else None,
@@ -2342,6 +2365,7 @@ async def get_episode_detail(
             "collection_pct": ep_state.get("collection_pct", 100 if local_ep else 0),
             "user_rating": ep_state.get("user_rating"),
             "play_count": ep_state.get("play_count", 0),
+            "watch_time_minutes": watch_time_minutes,
             "last_watched_at": ep_state.get("last_watched_at"),
             "episode_order": order_key,
             "episode_number": display_episode,
@@ -2925,6 +2949,12 @@ async def get_tvdb_show(
         )
         show_user_rating = show_rating_result.scalar_one_or_none()
 
+    show_watch_stats = (
+        await get_watch_stats(db, effective_user_id, show_id=show.id)
+        if show
+        else WatchStats(0, 0, None)
+    )
+
     return {
         **show_data,
         "id": show.id if show else None,
@@ -2948,6 +2978,9 @@ async def get_tvdb_show(
         "request_enabled": request_enabled,
         "request_status": None,
         "user_rating": show_user_rating,
+        "play_count": show_watch_stats.plays,
+        "watch_time_minutes": show_watch_stats.watch_time_minutes,
+        "last_watched_at": show_watch_stats.last_watched_at,
         "season_states": season_states,
         "seasons": {},
         "seasons_meta": show_data["seasons"],
@@ -3159,6 +3192,7 @@ async def get_tvdb_season(
         for _, _, local_episode, _ in mapped_rows
         if local_episode
     })
+    season_watch_stats = await get_watch_stats(db, effective_user_id, media_ids=local_media_ids)
     watched_ep_ids: set[int] = set()
     last_watched_at: dict[int, str] = {}
     collected_ep_ids: set[int] = set()
@@ -3302,6 +3336,9 @@ async def get_tvdb_season(
         "season_watch_started": season_watch_started,
         "season_collection_pct": season_collection_pct,
         "season_user_rating": season_user_rating,
+        "play_count": season_watch_stats.plays,
+        "watch_time_minutes": season_watch_stats.watch_time_minutes,
+        "last_watched_at": season_watch_stats.last_watched_at,
         "season_in_lists": season_in_lists,
         "show_in_library": show is not None,
         "show": {
@@ -3493,6 +3530,7 @@ async def get_tvdb_episode(
     local_ep = None
     library_info = None
     play_count = 0
+    watch_time_minutes = 0
 
     if show and not unmatched:
         local_ep_q = await db.execute(
@@ -3530,6 +3568,9 @@ async def get_tvdb_episode(
                 )
             play_count = watched_q.scalar_one()
             watched = play_count > 0
+            watch_time_minutes = (await get_watch_stats(
+                db, effective_user_id, media_ids=[local_ep.id]
+            )).watch_time_minutes
             rating_q = await db.execute(
                 select(Rating.rating).where(
                     Rating.media_id == local_ep.id,
@@ -3607,6 +3648,7 @@ async def get_tvdb_episode(
         "watched": watched,
         "user_rating": user_rating,
         "play_count": play_count,
+        "watch_time_minutes": watch_time_minutes,
         "in_lists": in_lists,
         "library": library_info,
         "cast": cast,

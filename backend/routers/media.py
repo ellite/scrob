@@ -39,6 +39,7 @@ from core.episode_order import (
 from models.profile import UserProfileData
 from core import tmdb
 from core.identity import find_media
+from core.watch_stats import get_watch_stats
 from core.limiter import limiter
 from core.networks import search_curated_networks
 from core.rewatch import get_active_rewatches_for_shows
@@ -5485,6 +5486,9 @@ async def get_media_details(
                     ep_data.get("still_path"),
                 )
                 await db.commit()
+            watch_time_minutes = (await get_watch_stats(
+                db, effective_user_id, tmdb_id=tmdb_id, media_type="episode"
+            )).watch_time_minutes
             # Check local info for library tags
             library_info = None
             playable = False
@@ -5555,6 +5559,7 @@ async def get_media_details(
                 "in_lists": ep_state.get("in_lists", []),
                 "user_rating": ep_state.get("user_rating"),
                 "play_count": ep_state.get("play_count", 0),
+                "watch_time_minutes": watch_time_minutes,
                 "last_watched_at": ep_state.get("last_watched_at"),
                 "library": library_info,
             }
@@ -5640,6 +5645,9 @@ async def get_media_details(
 
         # DB operations must run sequentially — async session doesn't support concurrent use
         await enrich_with_state(db, effective_user_id, [state_item])
+        watch_time_minutes = (await get_watch_stats(
+            db, effective_user_id, tmdb_id=tmdb_id, media_type=type.value
+        )).watch_time_minutes
         where_to_watch = await get_where_to_watch(db, effective_user_id, tmdb_id, MediaType.movie, media=media, tmdb_key=tmdb_key)
         coll_data = await tmdb.get_collection(raw_coll["id"], api_key=tmdb_key) if raw_coll else None
 
@@ -5680,6 +5688,7 @@ async def get_media_details(
             "in_lists": state_item.get("in_lists", []),
             "user_rating": state_item.get("user_rating"),
             "play_count": state_item.get("play_count", 0),
+            "watch_time_minutes": watch_time_minutes,
             "last_watched_at": state_item.get("last_watched_at"),
             "in_library": state_item.get("in_library", local_info["in_library"]),
             "collection_pct": state_item.get("collection_pct", 100 if local_info["in_library"] else 0),
