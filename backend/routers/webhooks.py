@@ -1551,7 +1551,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             for m in media_list:
                 await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= scrobble_threshold_for(conn), window_minutes, source=source)
         await db.commit()
-        if (not conn or conn.sync_watched) and 0.05 < progress_percent < 0.90:
+        if (not conn or conn.sync_watched) and 0.05 < progress_percent < scrobble_threshold_for(conn):
             await _push_stop_progress(db, user.id, [m.id for m in media_list])
         for m in media_list:
             await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
@@ -1809,7 +1809,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             for m in media_list:
                 await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= scrobble_threshold_for(conn), window_minutes, source="emby")
         await db.commit()
-        if (not conn or conn.sync_watched) and 0.05 < progress_percent < 0.90:
+        if (not conn or conn.sync_watched) and 0.05 < progress_percent < scrobble_threshold_for(conn):
             await _push_stop_progress(db, user.id, [m.id for m in media_list])
         for m in media_list:
             await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
@@ -1989,7 +1989,7 @@ async def _handle_jellyfin_scrobble_webhook(
             for m in media_list:
                 await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= scrobble_threshold_for(conn), window_minutes, source=source)
         await db.commit()
-        if conn.sync_watched and 0.05 < progress_percent < 0.90 and not is_duplicate:
+        if conn.sync_watched and 0.05 < progress_percent < scrobble_threshold_for(conn) and not is_duplicate:
             await _push_stop_progress(db, user.id, [m.id for m in media_list])
         if not is_duplicate:
             for m in media_list:
