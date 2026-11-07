@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _refresh_next_episode_air_dates, _attach_show_last_watched, _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _next_up_needs_live_fetch, _progress_percentages, _remaining_episode_stats, _stream_next_up_refresh, _next_episode_candidates_stmt
+from routers.history import _refresh_next_episode_air_dates, _attach_show_last_watched, _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _next_up_needs_live_fetch, _progress_percentages, _remaining_episode_stats, _stream_next_up_refresh, _next_episode_candidates_stmt, _last_watched_per_show_stmt
 from core.rewatch import capped_season_episode_counts
 
 
@@ -43,6 +43,42 @@ class ComputeNextEpisodeTests(unittest.TestCase):
     def test_specials_season_zero_is_never_returned_and_never_used_as_current(self):
         seasons = [{"season_number": 0, "episode_count": 5}, {"season_number": 1, "episode_count": 12}]
         self.assertEqual(_compute_next_episode(seasons, 0, 3), (1, 1))
+
+
+class LastWatchedPerShowStmtTests(unittest.TestCase):
+    """Next Up's position per show is picked in SQL; by_recent only changes the
+    ordering DISTINCT ON uses to pick the row."""
+
+    @staticmethod
+    def order_by(by_recent):
+        from sqlalchemy.dialects import postgresql
+
+        sql = str(_last_watched_per_show_stmt([], by_recent).compile(dialect=postgresql.dialect()))
+        return " ".join(sql.split("ORDER BY", 1)[1].split())
+
+    def test_default_is_the_furthest_watched_episode(self):
+        self.assertEqual(
+            self.order_by(False),
+            "media.show_id, media.season_number DESC, media.episode_number DESC",
+        )
+
+    def test_by_recent_orders_by_latest_watch_first_and_then_by_furthest(self):
+        # NULL watched_at sorts last, so an untimestamped row never beats a dated
+        # one, and a show with no dates falls back to its furthest episode.
+        self.assertEqual(
+            self.order_by(True),
+            "media.show_id, watch_events.watched_at DESC NULLS LAST, "
+            "media.season_number DESC, media.episode_number DESC",
+        )
+
+    def test_both_modes_keep_one_row_per_show_and_skip_unknown_positions(self):
+        from sqlalchemy.dialects import postgresql
+
+        for by_recent in (False, True):
+            sql = str(_last_watched_per_show_stmt([], by_recent).compile(dialect=postgresql.dialect()))
+            self.assertIn("DISTINCT ON (media.show_id)", sql)
+            self.assertIn("media.season_number IS NOT NULL", sql)
+            self.assertIn("media.episode_number IS NOT NULL", sql)
 
 
 class NextEpisodeCandidatesStmtTests(unittest.TestCase):

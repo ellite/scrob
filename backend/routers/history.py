@@ -906,6 +906,33 @@ def _attach_show_last_watched(items: list[dict], last_watched_at: dict[int, date
         item["last_watched_at"] = show_last_watched_at.isoformat() if show_last_watched_at else None
 
 
+def _last_watched_per_show_stmt(watch_filters: list, by_recent: bool = False):
+    """One row per show, computed in the database: the show's position
+    (season, episode) and its most recent watched_at (a window max over the
+    show's qualifying events). Rows with an unknown season or episode are left
+    out up front, the way _group_last_watched leaves them out.
+
+    By default the position is the furthest watched episode. With by_recent it
+    is the most recently watched one (the furthest among ties, or when nothing
+    is timestamped, because NULL watched_at sorts last)."""
+    ordering = [Media.show_id]
+    if by_recent:
+        ordering.append(WatchEvent.watched_at.desc().nulls_last())
+    ordering += [desc(Media.season_number), desc(Media.episode_number)]
+    return (
+        select(
+            Media.show_id,
+            Media.season_number,
+            Media.episode_number,
+            func.max(WatchEvent.watched_at).over(partition_by=Media.show_id),
+        )
+        .join(WatchEvent, WatchEvent.media_id == Media.id)
+        .where(*watch_filters, Media.season_number.isnot(None), Media.episode_number.isnot(None))
+        .distinct(Media.show_id)
+        .order_by(*ordering)
+    )
+
+
 def _next_episode_candidates_stmt(last_per_show: dict[int, tuple[int, int]]):
     """The immediately next episode of each show, as one statement.
 
@@ -1284,22 +1311,7 @@ async def get_next_up(
     ]
     if active_rewatch_show_ids:
         watch_filters.append(Media.show_id.notin_(active_rewatch_show_ids))
-    # One row per show, computed in the database: the furthest watched
-    # (season, episode) and the show's most recent watched_at (a window max over
-    # the show's qualifying events). Rows with an unknown season or episode are
-    # left out up front, the way _group_last_watched leaves them out.
-    result = await db.execute(
-        select(
-            Media.show_id,
-            Media.season_number,
-            Media.episode_number,
-            func.max(WatchEvent.watched_at).over(partition_by=Media.show_id),
-        )
-        .join(WatchEvent, WatchEvent.media_id == Media.id)
-        .where(*watch_filters, Media.season_number.isnot(None), Media.episode_number.isnot(None))
-        .distinct(Media.show_id)
-        .order_by(Media.show_id, desc(Media.season_number), desc(Media.episode_number))
-    )
+    result = await db.execute(_last_watched_per_show_stmt(watch_filters, by_recent))
     last_per_show: dict[int, tuple[int, int]] = {}
     last_watched_at: dict[int, datetime] = {}
     for show_id, season, episode, latest in result.all():
