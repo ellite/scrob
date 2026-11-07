@@ -1,5 +1,5 @@
 import { defineMiddleware } from "astro:middleware";
-import { api } from "./lib/api";
+import { api, requestContext } from "./lib/api";
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -67,7 +67,16 @@ const SECURITY_HEADERS: Record<string, string> = {
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 };
 
-export const onRequest = defineMiddleware(async (context, next) => {
+export const onRequest = defineMiddleware((context, next) =>
+  // Every backend call made while rendering this request (api.ts) forwards
+  // the browser's Accept-Language, see requestContext in lib/api.ts (#538).
+  requestContext.run(
+    { acceptLanguage: context.request.headers.get("accept-language") },
+    () => handleRequest(context, next),
+  ),
+);
+
+const handleRequest: Parameters<typeof defineMiddleware>[0] = async (context, next) => {
   const token = context.cookies.get("token")?.value;
   const { pathname } = context.url;
 
@@ -195,4 +204,4 @@ export const onRequest = defineMiddleware(async (context, next) => {
     response.headers.set(header, value);
   }
   return response;
-});
+};

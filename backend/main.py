@@ -18,6 +18,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from core.limiter import limiter
+from core.accept_language import AcceptLanguageMiddleware
 
 from sqlalchemy import or_, select, update, delete
 from models.sync import SyncJob, SyncStatus
@@ -842,6 +843,9 @@ app = FastAPI(title="Scrob", version=settings.app_version, lifespan=lifespan, do
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+# Exposes the request's Accept-Language header to get_user_metadata_language()
+# as the fallback when a viewer has no Metadata Language set (#538).
+app.add_middleware(AcceptLanguageMiddleware)
 
 
 @app.get("/openapi.json", include_in_schema=False)

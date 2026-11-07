@@ -48,6 +48,11 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
   const apiKey = request.headers.get("X-Api-Key");
   if (apiKey) forwardHeaders.set("X-Api-Key", apiKey);
 
+  // Forward the browser's language: the backend falls back to it for the
+  // Metadata Language when the viewer has no explicit setting (#538)
+  const acceptLanguage = request.headers.get("Accept-Language");
+  if (acceptLanguage) forwardHeaders.set("Accept-Language", acceptLanguage);
+
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const body = hasBody ? await request.arrayBuffer() : undefined;
 
