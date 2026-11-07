@@ -55,7 +55,7 @@ class MediaServerConnection(Base):
     stremio_pull_cursor_at     : Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     stremio_full_sync_done     : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     stremio_pushed_library_ids : Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
-    scrobble_percent   : Mapped[int] = mapped_column(Integer, nullable=False, default=75, server_default="75")
+    scrobble_percent   : Mapped[int] = mapped_column(Integer, nullable=False, default=90, server_default="90")
     stremio_pending_pull_ids   : Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
 
     # Plex watchlist ↔ Scrob list sync (Plex connections only)

@@ -1,4 +1,4 @@
-DEFAULT_SCROBBLE_PERCENT = 75
+DEFAULT_SCROBBLE_PERCENT = 90
 
 
 def scrobble_threshold_for(connection) -> float:

@@ -360,7 +360,7 @@ class MediaServerConnectionResponse(MediaServerConnectionBase):
     id: int
     user_id: int
     created_at: datetime
-    scrobble_percent: int = 75
+    scrobble_percent: int = 90
 
     @model_validator(mode="after")
     def redact_cloud_credentials(self):
@@ -391,7 +391,7 @@ class ScrobbleConnectionResponse(ScrobbleConnectionCreate):
     id: int
     user_id: int
     created_at: datetime
-    scrobble_percent: int = 75
+    scrobble_percent: int = 90
 
     model_config = ConfigDict(from_attributes=True)
 

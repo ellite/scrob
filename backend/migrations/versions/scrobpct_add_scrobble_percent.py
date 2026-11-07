@@ -1,7 +1,7 @@
 """add per-connection scrobble percent
 
 Revision ID: scrobpct
-Revises: wesrc477
+Revises: eodefault
 Create Date: 2026-10-19
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = "scrobpct"
-down_revision = "wesrc477"
+down_revision = "eodefault"
 branch_labels = None
 depends_on = None
 
@@ -19,7 +19,7 @@ def upgrade() -> None:
     for table in ("media_server_connections", "scrobble_connections"):
         op.add_column(
             table,
-            sa.Column("scrobble_percent", sa.Integer(), nullable=False, server_default="75"),
+            sa.Column("scrobble_percent", sa.Integer(), nullable=False, server_default="90"),
         )
 
 

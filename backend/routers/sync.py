@@ -5138,7 +5138,7 @@ def _stremio_unresolved_ids(
 
 async def _stremio_records(
     items: list[dict],
-    scrobble_threshold: float = 0.75,
+    scrobble_threshold: float = 0.90,
     failed_ids: set[str] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict], set[str]]:
     records = [
