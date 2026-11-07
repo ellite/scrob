@@ -15,7 +15,8 @@ from models.ratings import Rating
 from models.show import Show as ShowModel
 
 from .common import _check_profile_access
-from .top_media import _effective_runtime, _top_media, _watch_date_filters
+from core.media_runtime import effective_runtime_expression
+from .top_media import _top_media, _watch_date_filters
 
 
 router = APIRouter()
@@ -68,7 +69,7 @@ async def get_user_stats(
     )
     shows_watched = shows_q.scalar_one()
 
-    effective_runtime = _effective_runtime()
+    effective_runtime = effective_runtime_expression()
     watch_time_q = await db.execute(
         select(func.coalesce(func.sum(effective_runtime), 0))
         .join(WatchEvent, WatchEvent.media_id == Media.id)

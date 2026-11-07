@@ -27,6 +27,7 @@ from core.episode_order import get_order_keys_for_series, get_positions_for_seri
 from core.scrobble_threshold import DEFAULT_SCROBBLE_PERCENT
 from core.translations import get_user_metadata_language, get_media_translations, upsert_media_translation, apply_media_translations, get_show_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
+from core.media_runtime import effective_runtime_expression
 from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event, expand_to_same_episode_media_ids
 from core.enrichment import create_media_safely
 from core.episode_order import get_episode_orders_for_series, get_tmdb_to_tvdb_positions
@@ -1133,15 +1134,8 @@ async def _next_up_remaining_stats(
 
     # Average effective runtime per show — same coalesce as profile.py's watch
     # time stats: episodes often only carry runtime in tmdb_data['runtime'].
-    from sqlalchemy import Integer as SAInteger
-    from sqlalchemy.types import Text as SAText
-
-    json_runtime = func.cast(
-        func.nullif(func.cast(Media.tmdb_data["runtime"], SAText), "null"),
-        SAInteger,
-    )
     avg_rows = await db.execute(
-        select(Media.show_id, func.avg(func.coalesce(Media.runtime, json_runtime)))
+        select(Media.show_id, func.avg(effective_runtime_expression()))
         .where(
             Media.show_id.in_(list(shows_by_id)),
             Media.media_type == MediaType.episode,

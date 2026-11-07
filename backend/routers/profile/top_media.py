@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.media_runtime import effective_runtime_expression
 from db import get_db
 from dependencies import get_optional_user_or_api_key
 from models.base import MediaType
@@ -15,18 +16,6 @@ from models.users import User
 from .common import _check_profile_access
 
 router = APIRouter()
-
-
-def _effective_runtime():
-    from sqlalchemy import Integer as SAInteger
-    from sqlalchemy.types import Text as SAText
-    # Episodes store runtime in tmdb_data['runtime']; movies use Media.runtime.
-    # JSON (non-JSONB) has no .astext; cast to Text first, guard against JSON "null".
-    json_runtime = func.cast(
-        func.nullif(func.cast(Media.tmdb_data["runtime"], SAText), "null"),
-        SAInteger,
-    )
-    return func.coalesce(Media.runtime, json_runtime)
 
 
 def _watch_date_filters(since: Optional[DateType], until: Optional[DateType]) -> list:
@@ -46,7 +35,7 @@ async def _top_media(
     database (one row per title comes back, not one per play), and `limit`
     keeps only the top N of each."""
     plays = func.count(WatchEvent.id)
-    minutes = func.coalesce(func.sum(_effective_runtime()), 0)
+    minutes = func.coalesce(func.sum(effective_runtime_expression()), 0)
 
     movies_query = (
         select(Media.id, Media.title, Media.poster_path, Media.tmdb_id, plays.label("plays"), minutes.label("minutes"))

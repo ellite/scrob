@@ -2,19 +2,10 @@ from typing import NamedTuple
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.types import Integer as SAInteger, Text as SAText
 
+from core.media_runtime import effective_runtime_expression
 from models.events import WatchEvent
 from models.media import Media
-
-
-# PostgreSQL JSON needs a text cast, and JSON null must be cleared before the integer cast.
-def effective_runtime_expression():
-    json_runtime = func.cast(
-        func.nullif(func.cast(Media.tmdb_data["runtime"], SAText), "null"),
-        SAInteger,
-    )
-    return func.coalesce(Media.runtime, json_runtime)
 
 
 class WatchStats(NamedTuple):
