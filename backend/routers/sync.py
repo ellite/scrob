@@ -42,6 +42,7 @@ from core.image_cache import pre_cache_all_collected_bg
 from core.translations import get_user_metadata_language
 from core.rewatch import record_rewatch_progress, get_active_rewatches_for_shows
 from core.push_state import MISS, RATING, WATCHED, PushState, plan_push, season_miss_key, season_rating_key
+from core.plex_progress import ProgressPushResult, push_progress_to_plex
 from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event, is_duplicate_watch_time
 from core.native_watchlist import get_or_create_watchlist, get_watchlist, load_watchlist_keys, watchlist_lock
 from core.watchlist_reconcile import compute_new_baseline, compute_pull_only_baseline, media_key, plan_watchlist_reconcile
@@ -6855,6 +6856,19 @@ def push_failed_warning(media_id: int, media: Media | None, action: str, reason:
     }
 
 
+def _progress_push_stats(result: ProgressPushResult | None) -> dict:
+    """The playback-progress part of a push job's stats, empty when the job
+    pushed no progress. "progress" matches the Nuvio push's own key."""
+    if result is None:
+        return {}
+    return {
+        "progress": result.pushed,
+        "progress_unchanged": result.unchanged,
+        "progress_missing": result.missing,
+        "progress_failed": result.failed,
+    }
+
+
 async def _save_push_state(db: AsyncSession, push_state: PushState, connection_id: int) -> None:
     """Persist a push's state without ever masking the push's own outcome."""
     try:
@@ -7057,6 +7071,21 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
                 wl_tmdb_key = await _get_effective_tmdb_key(db, wl_settings_result.scalar_one_or_none())
                 await _reconcile_plex_watchlist(user_id, conn.id, wl_tmdb_key)
 
+            # Resume points go first and on their own: they are not part of
+            # the watched/ratings item count below, and a connection that only
+            # pushes playback progress must not stop at "nothing to push".
+            progress_result: ProgressPushResult | None = None
+            if conn.type == "plex" and conn.push_playback:
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(current_step="Pushing playback progress"))
+                await db.commit()
+                progress_result = await push_progress_to_plex(db, conn, user_id, push_state)
+                print(
+                    f"Full push ({push_mode}) for connection {connection_id}: playback progress "
+                    f"{progress_result.pushed} pushed, {progress_result.unchanged} already current, "
+                    f"{progress_result.missing} not on the server, {progress_result.failed} failed"
+                )
+            progress_stats = _progress_push_stats(progress_result)
+
             watched_ids: set[int] = set()
             ratings_map: RatingChanges = {}
 
@@ -7123,7 +7152,12 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
 
             all_media_ids = watched_ids | {media_id for media_id, _ in ratings_map}
             if not all_media_ids:
-                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, total_items=0, processed_items=0))
+                if progress_result is not None:
+                    await _save_push_state(db, push_state, connection_id)
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.completed, total_items=0, processed_items=0,
+                    **({"stats": {"succeeded": 0, "failed": 0, "mode": push_mode, **progress_stats}} if progress_stats else {}),
+                ))
                 await db.commit()
                 print(f"Full push for connection {connection_id}: nothing to push")
                 return
@@ -7308,9 +7342,11 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
             watched_group_row_count = sum(len(mids) for mids in watched_sid_to_mids.values())
             total = len(push_items) + len(lookup_items) + watched_group_row_count + len(watched_lookup_mids)
             if total == 0:
+                if progress_result is not None:
+                    await _save_push_state(db, push_state, connection_id)
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed, total_items=0, processed_items=0,
-                    stats={"succeeded": 0, "failed": 0, "skipped": push_state.skipped, "mode": push_mode},
+                    stats={"succeeded": 0, "failed": 0, "skipped": push_state.skipped, "mode": push_mode, **progress_stats},
                 ))
                 await db.commit()
                 print(f"Full push ({push_mode}) for connection {connection_id}: nothing to send"
@@ -7701,7 +7737,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int, incremen
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
                 status=SyncStatus.completed,
                 processed_items=total,
-                stats={"succeeded": succeeded, "failed": failed_count, "skipped": push_state.skipped, "mode": push_mode},
+                stats={"succeeded": succeeded, "failed": failed_count, "skipped": push_state.skipped, "mode": push_mode, **progress_stats},
                 warnings=lookup_warnings or None,
             ))
             await db.commit()

@@ -596,6 +596,16 @@ Plex webhooks require a **Plex Pass** subscription.
 2. Paste your Scrob Plex webhook URL.
 3. In Scrob → Connections, enter your **Plex username** so events are attributed to the right account.
 
+#### Playback progress to Plex
+
+Turn on **Scrob → Plex → Playback progress** on a Plex connection to send Scrob's Continue Watching to Plex, so a movie or episode you stopped part way on another player (Kodi, Jellyfin, Emby, or an app using Scrob's player webhook) shows as in progress in Plex and resumes there.
+
+- **Push** and **Auto Push** write every resume point to Plex, looking titles up in the Plex libraries when Scrob hasn't seen them on that server yet. Auto Push skips positions it already sent.
+- A stop from a player other than Plex is sent right away, without waiting for Auto Push, for titles Scrob has already seen on that Plex server. Others follow on the next push.
+- Scrob never moves Plex backwards: a title Plex played more recently than Scrob recorded its position is left alone.
+
+Like the other Plex pushes, this uses the connection's token, so it sets the resume point of the Plex account that token belongs to.
+
 ### Emby
 
 1. In Emby, go to **Dashboard → Notifications → Add Notification → Webhook**.
