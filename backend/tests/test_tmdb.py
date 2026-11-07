@@ -1,3 +1,4 @@
+import asyncio
 import os
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -184,6 +185,111 @@ class SharedClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client_cls.call_count, 2)
 
         self.assertEqual(len(requests), 3)
+
+
+class StaleWhileRevalidateTests(unittest.IsolatedAsyncioTestCase):
+    """An expired entry is served at once and refreshed in the background, one
+    fetch per key is shared by concurrent callers, and a failed refresh keeps
+    serving the old entry instead of turning a TMDB hiccup into an error."""
+
+    URL = f"{tmdb.TMDB_BASE}/movie/1"
+
+    def setUp(self) -> None:
+        tmdb._cache._store.clear()
+        tmdb._inflight.clear()
+        self.requests: list[int] = []
+        self.fail = False
+        self.gate: asyncio.Event | None = None
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(1)
+            if self.gate is not None:
+                await self.gate.wait()
+            if self.fail:
+                return httpx.Response(500, json={})
+            return httpx.Response(200, json={"v": len(self.requests)})
+
+        transport = httpx.MockTransport(handler)
+        patcher = patch.object(
+            tmdb.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def asyncTearDown(self) -> None:
+        await asyncio.gather(*tmdb._inflight.values(), return_exceptions=True)
+
+    def _age(self, seconds: float) -> None:
+        for key, (expires_at, value) in tmdb._cache._store.items():
+            tmdb._cache._store[key] = (expires_at - seconds, value)
+
+    async def test_stale_entry_is_served_at_once_and_refreshed_once(self) -> None:
+        await tmdb._get(self.URL)
+        self._age(tmdb.DEFAULT_CACHE_TTL + 1)
+
+        results = await asyncio.gather(*(tmdb._get(self.URL) for _ in range(10)))
+        self.assertEqual(results, [{"v": 1}] * 10)
+
+        await asyncio.gather(*tmdb._inflight.values())
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(await tmdb._get(self.URL), {"v": 2})
+
+    async def test_concurrent_misses_share_one_fetch(self) -> None:
+        results = await asyncio.gather(*(tmdb._get(self.URL) for _ in range(10)))
+
+        self.assertEqual(results, [{"v": 1}] * 10)
+        self.assertEqual(len(self.requests), 1)
+
+    async def test_a_failed_fetch_reaches_every_waiter(self) -> None:
+        self.fail = True
+        results = await asyncio.gather(*(tmdb._get(self.URL) for _ in range(3)), return_exceptions=True)
+
+        self.assertTrue(all(isinstance(r, httpx.HTTPStatusError) for r in results))
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(tmdb._inflight, {})
+
+    async def test_a_cancelled_caller_does_not_cancel_the_shared_fetch(self) -> None:
+        self.gate = asyncio.Event()
+        first = asyncio.create_task(tmdb._get(self.URL))
+        second = asyncio.create_task(tmdb._get(self.URL))
+        while not self.requests:
+            await asyncio.sleep(0)
+
+        first.cancel()
+        self.gate.set()
+
+        self.assertEqual(await second, {"v": 1})
+        with self.assertRaises(asyncio.CancelledError):
+            await first
+        self.assertEqual(await tmdb._get(self.URL), {"v": 1})
+        self.assertEqual(len(self.requests), 1)
+
+    async def test_a_failed_refresh_keeps_serving_the_stale_entry(self) -> None:
+        await tmdb._get(self.URL)
+        self._age(tmdb.DEFAULT_CACHE_TTL + 1)
+        self.fail = True
+
+        self.assertEqual(await tmdb._get(self.URL), {"v": 1})
+        await asyncio.gather(*tmdb._inflight.values(), return_exceptions=True)
+        self.assertEqual(await tmdb._get(self.URL), {"v": 1})
+
+    async def test_an_entry_beyond_max_stale_is_fetched_inline(self) -> None:
+        await tmdb._get(self.URL)
+        self._age(tmdb.DEFAULT_CACHE_TTL + tmdb._MAX_STALE + 1)
+
+        self.assertEqual(await tmdb._get(self.URL), {"v": 2})
+
+    def test_reads_and_refreshes_protect_an_entry_from_eviction(self) -> None:
+        for touch in (lambda c: c.get("a"), lambda c: c.set("a", {}, 60)):
+            cache = tmdb._TTLCache(maxsize=3)
+            cache.set("a", {}, 60)
+            cache.set("b", {}, 60)
+            touch(cache)
+            cache.set("c", {}, 60)
+            cache.set("d", {}, 60)
+
+            self.assertIsNotNone(cache.get("a"))
+            self.assertIsNone(cache.get("b"))
 
 
 class DiscoverGenreIdsTests(unittest.IsolatedAsyncioTestCase):

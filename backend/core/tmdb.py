@@ -17,6 +17,9 @@ _RETRYABLE = (
 )
 
 DEFAULT_CACHE_TTL = 1800  # 30 minutes — TMDB metadata/discovery results don't need to be fresher than this
+# How long past its TTL a cached response is still served (while it refreshes
+# in the background) instead of making the caller wait; same as CREDITS_TTL.
+_MAX_STALE = 7 * 24 * 3600
 
 # Crew jobs surfaced in a title's "Crew" tab - a curated allowlist, not a
 # department filter: TMDB's "Production" department alone pulls in Casting,
@@ -67,8 +70,8 @@ def _breaker_record_failure() -> None:
 
 
 class _TTLCache:
-    """Minimal bounded in-process cache: TTL expiry checked lazily on read, oldest
-    entry evicted on overflow (dict insertion order). No shared/multi-worker
+    """Minimal bounded in-process cache: entries outlive their TTL so _get can
+    serve them stale; least recently used evicted on overflow. No shared/multi-worker
     guarantees — fine here since scrob runs a single uvicorn process; this just
     avoids re-hitting TMDB for identical requests within the TTL window, which is
     what was actually making every click slow for users far from TMDB's servers."""
@@ -77,18 +80,15 @@ class _TTLCache:
         self._store: dict[tuple, tuple[float, dict]] = {}
         self._maxsize = maxsize
 
-    def get(self, key: tuple):
-        entry = self._store.get(key)
-        if entry is None:
-            return None
-        expires_at, value = entry
-        if time.monotonic() >= expires_at:
-            del self._store[key]
-            return None
-        return value
+    def get(self, key: tuple) -> tuple[float, dict] | None:
+        entry = self._store.pop(key, None)
+        if entry is not None:
+            self._store[key] = entry
+        return entry
 
     def set(self, key: tuple, value: dict, ttl: float) -> None:
-        if key not in self._store and len(self._store) >= self._maxsize:
+        self._store.pop(key, None)
+        if len(self._store) >= self._maxsize:
             self._store.pop(next(iter(self._store)))
         self._store[key] = (time.monotonic() + ttl, value)
 
@@ -145,16 +145,50 @@ async def _get(
     jobs. Pass cache_ttl=None to bypass caching (e.g. validate_api_key, where the
     response genuinely depends on which key was used).
 
-    Raises TMDBUnavailable immediately (no HTTP attempt) while the circuit
-    breaker is open — see the _breaker_* helpers above.
-    """
-    cache_key = None
-    if cache_ttl is not None:
-        cache_key = (url, tuple(sorted((params or {}).items())))
-        cached = _cache.get(cache_key)
-        if cached is not None:
-            return cached
+    An entry past its TTL is returned at once and refreshed in the background;
+    only one more than _MAX_STALE past it makes the caller wait. A failed
+    refresh keeps the old entry, so it keeps serving while TMDB is down.
 
+    On a miss, raises TMDBUnavailable immediately (no HTTP attempt) while the
+    circuit breaker is open — see the _breaker_* helpers above.
+    """
+    if cache_ttl is None:
+        return await _fetch(url, headers, params, max_retries)
+    key = (url, tuple(sorted((params or {}).items())))
+    entry = _cache.get(key)
+    if entry is not None:
+        expires_at, value = entry
+        now = time.monotonic()
+        if now < expires_at:
+            return value
+        if now < expires_at + _MAX_STALE:
+            _refresh(key, url, headers, params, max_retries, cache_ttl)
+            return value
+    return await asyncio.shield(_refresh(key, url, headers, params, max_retries, cache_ttl))
+
+
+_inflight: dict[tuple, asyncio.Task] = {}
+
+
+def _refresh(key: tuple, url: str, headers: dict, params: dict, max_retries: int, ttl: float) -> asyncio.Task:
+    """The one in-flight fetch for `key`, started if there is none. Concurrent
+    callers share it, and as its own task it survives a cancelled caller."""
+    task = _inflight.get(key)
+    if task is None:
+        task = asyncio.create_task(_fetch(url, headers, params, max_retries))
+        _inflight[key] = task
+
+        def done(t: asyncio.Task) -> None:
+            _inflight.pop(key, None)
+            # t.exception() also marks a background failure as retrieved (no asyncio warning).
+            if not t.cancelled() and t.exception() is None:
+                _cache.set(key, t.result(), ttl)
+
+        task.add_done_callback(done)
+    return task
+
+
+async def _fetch(url: str, headers: dict, params: dict, max_retries: int) -> dict:
     if _breaker_blocked():
         raise TMDBUnavailable("TMDB circuit breaker open")
 
@@ -174,8 +208,6 @@ async def _get(
                     continue
                 r.raise_for_status()
                 data = r.json()
-                if cache_key is not None:
-                    _cache.set(cache_key, data, cache_ttl)
                 _breaker_record_success()
                 return data
         except _RETRYABLE as e:
