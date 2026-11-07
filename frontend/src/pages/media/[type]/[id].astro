@@ -1,9 +1,9 @@
 ---
-import { formatWatchedOn } from "../../../lib/media-format";
 import { getViewerTimeZone } from "../../../lib/viewerTimeZone";
 import Base from "../../../layouts/Base.astro";
 import MediaRow from "../../../components/MediaRow.astro";
 import ActionBar from "../../../components/ActionBar.astro";
+import WatchStats from "../../../components/WatchStats.astro";
 import CommentsSection from "../../../components/CommentsSection.astro";
 import TraktCommentsSection from "../../../components/TraktCommentsSection.astro";
 import CastCrewSection from "../../../components/CastCrewSection.astro";
@@ -66,7 +66,6 @@ const originalLanguage = item?.original_language
 const refreshUrl = isEpisode
   ? `/api/proxy/shows/${item?.show_tmdb_id}/refresh`
   : `/api/proxy/media/movie/${item?.tmdb_id}/refresh`;
-const lastWatchedLabel = formatWatchedOn(item?.last_watched_at, getViewerTimeZone(Astro.cookies));
 ---
 
 <Base title={item?.title || "Media Details"}>
@@ -251,7 +250,6 @@ const lastWatchedLabel = formatWatchedOn(item?.last_watched_at, getViewerTimeZon
 
             {user && (
               <div class="mb-4">
-                {lastWatchedLabel && <p class="mb-2 text-xs font-bold text-zinc-500">{lastWatchedLabel}</p>}
                 <ActionBar
                   tmdbId={item.tmdb_id}
                   mediaType={item.type}
@@ -277,6 +275,8 @@ const lastWatchedLabel = formatWatchedOn(item?.last_watched_at, getViewerTimeZon
               </div>
             )}
 
+            {user && <WatchStats plays={item.play_count} watchTimeMinutes={item.watch_time_minutes} lastWatchedAt={item.last_watched_at} timeZone={getViewerTimeZone(Astro.cookies)} />}
+
             {user && (item.type === 'movie' || item.type === 'episode') && (
               <ManualScrobble
                 tmdbId={item.tmdb_id}
@@ -292,11 +292,6 @@ const lastWatchedLabel = formatWatchedOn(item?.last_watched_at, getViewerTimeZon
             <!-- Library info -->
             {item.library && (
               <div class="mb-4 flex flex-wrap gap-2">
-                {!!item.play_count && (
-                  <span class="inline-flex items-center px-3 py-1.5 bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs rounded-lg font-bold">
-                    {item.play_count} {item.play_count === 1 ? 'Play' : 'Plays'}
-                  </span>
-                )}
                 {[
                   item.library.resolution,
                   item.library.video_codec,

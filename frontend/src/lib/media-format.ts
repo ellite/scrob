@@ -84,10 +84,15 @@ export function episodeCode(item: Parameters<typeof displaySeasonEpisode>[0]): s
   return `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
 }
 
+// Backend timestamps are naive UTC, so the "Z" suffix keeps them from parsing as local time.
+export function formatWatchedDate(iso?: string | null, timeZone?: string): string | null {
+  if (!iso) return null;
+  return new Date(iso + "Z").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone });
+}
+
 // "Watched Oct 12, 2026" for the most recent play (#317), or null when there
 // isn't one with a known date.
 export function formatWatchedOn(iso?: string | null, timeZone?: string): string | null {
-  if (!iso) return null;
-  const date = new Date(iso + "Z").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone });
-  return `Watched ${date}`;
+  const date = formatWatchedDate(iso, timeZone);
+  return date ? `Watched ${date}` : null;
 }
