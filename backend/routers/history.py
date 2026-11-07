@@ -25,7 +25,7 @@ from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, 
 from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, resolve_display_to_canonical, normalize_order_key, is_aired_order
 from core.translations import get_user_metadata_language, get_media_translations, upsert_media_translation, apply_media_translations, get_show_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
-from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event
+from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event, expand_to_same_episode_media_ids
 from core.enrichment import create_media_safely
 from core.episode_order import get_episode_orders_for_series, get_tmdb_to_tvdb_positions
 
@@ -2603,13 +2603,37 @@ async def get_item_events(
         id_clause = Media.tmdb_id == tmdb_id
     else:
         id_clause = Media.tvdb_id == tvdb_id
+    # An episode can exist as several Media rows (a webhook and a Trakt import
+    # resolving it differently, #527); show the plays of all of them, not just
+    # the row this particular id happens to point at. One statement, so no
+    # extra round trip: also match any episode row sharing the anchor's
+    # show/season/episode.
+    event_media_clause = id_clause
+    if media_type == MediaType.episode:
+        anchor = aliased(Media)
+        if media_id:
+            anchor_clause = anchor.id == media_id
+        elif tmdb_id:
+            anchor_clause = anchor.tmdb_id == tmdb_id
+        else:
+            anchor_clause = anchor.tvdb_id == tvdb_id
+        siblings = (
+            select(Media.id)
+            .join(anchor, and_(
+                Media.show_id == anchor.show_id,
+                Media.season_number == anchor.season_number,
+                Media.episode_number == anchor.episode_number,
+            ))
+            .where(anchor_clause, anchor.media_type == MediaType.episode, Media.media_type == MediaType.episode)
+        )
+        event_media_clause = or_(id_clause, Media.id.in_(siblings))
     query = (
         select(WatchEvent, Media.id)
         .join(Media, Media.id == WatchEvent.media_id)
         .where(
             WatchEvent.user_id == current_user.id,
             WatchEvent.completed == True,
-            id_clause,
+            event_media_clause,
             Media.media_type == media_type,
         )
         .order_by(WatchEvent.watched_at.desc().nulls_last(), WatchEvent.id.desc())
@@ -2775,10 +2799,12 @@ async def unwatch_item(
     media = await find_media(db, media_type, media_id=media_id, tmdb_id=tmdb_id, tvdb_id=tvdb_id)
     if not media:
         return {"status": "ok", "count": 0}
+    # Clear the plays of every Media row for this episode, otherwise a sibling
+    # row's plays (#527) would keep it looking watched.
     await db.execute(
         delete(WatchEvent).where(
             WatchEvent.user_id == current_user.id,
-            WatchEvent.media_id == media.id,
+            WatchEvent.media_id.in_(await expand_to_same_episode_media_ids(db, [media.id])),
         )
     )
     await db.commit()

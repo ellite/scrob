@@ -93,6 +93,36 @@ def _same_episode_media_ids(media_id: int):
     )
 
 
+async def expand_to_same_episode_media_ids(db: AsyncSession, media_ids) -> list[int]:
+    """Given Media ids, return them plus every other Media row that is the same
+    episode (same show, season and episode number, #527). For reading or
+    clearing a play history, where a play recorded against a sibling row is
+    still a play of this episode. Non-episodes and episodes without a full
+    position come back unchanged."""
+    ids = {i for i in media_ids if i is not None}
+    if not ids:
+        return []
+    watched = select(Media.show_id, Media.season_number, Media.episode_number).where(
+        Media.id.in_(ids),
+        Media.media_type == MediaType.episode,
+        Media.show_id.isnot(None),
+        Media.season_number.isnot(None),
+        Media.episode_number.isnot(None),
+    ).distinct().subquery()
+    siblings = await db.execute(
+        select(Media.id).join(
+            watched,
+            and_(
+                Media.show_id == watched.c.show_id,
+                Media.season_number == watched.c.season_number,
+                Media.episode_number == watched.c.episode_number,
+            ),
+        ).where(Media.media_type == MediaType.episode)
+    )
+    ids.update(row[0] for row in siblings.all())
+    return sorted(ids)
+
+
 async def find_duplicate_watch_event(
     db: AsyncSession,
     user_id: int,

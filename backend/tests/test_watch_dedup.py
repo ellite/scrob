@@ -112,3 +112,37 @@ class SameEpisodeTwoMediaRowsTests(unittest.IsolatedAsyncioTestCase):
             remaining = (await db.execute(select(WatchEvent.media_id).order_by(WatchEvent.id))).scalars().all()
         # The earlier Plex play on row 1 is kept; episode 17 is untouched.
         self.assertEqual(remaining, [1, 3])
+
+    async def test_item_events_shows_plays_from_both_rows_whichever_id_is_asked(self):
+        from routers import history
+
+        async with self.Session() as db:
+            db.add(WatchEvent(user_id=1, media_id=2, watched_at=self.TRAKT_PLAY, completed=True))
+            await db.commit()
+            for kwargs in ({"media_id": 1}, {"media_id": 2}, {"tmdb_id": 222}):
+                result = await history.get_item_events(
+                    media_type=MediaType.episode, tmdb_id=kwargs.get("tmdb_id"), tvdb_id=None,
+                    media_id=kwargs.get("media_id"), series_tmdb_id=None, series_tvdb_id=None,
+                    db=db, current_user=SimpleNamespace(id=1),
+                )
+                self.assertEqual(len(result["events"]), 2, kwargs)
+
+    async def test_item_events_leaves_other_episodes_and_movies_alone(self):
+        from routers import history
+
+        async with self.Session() as db:
+            db.add(WatchEvent(user_id=1, media_id=3, watched_at=self.TRAKT_PLAY, completed=True))
+            await db.commit()
+            result = await history.get_item_events(
+                media_type=MediaType.episode, tmdb_id=None, tvdb_id=None, media_id=3,
+                series_tmdb_id=None, series_tvdb_id=None, db=db, current_user=SimpleNamespace(id=1),
+            )
+        self.assertEqual(len(result["events"]), 1)
+
+    async def test_expand_returns_both_rows_and_ignores_movies(self):
+        from core.watch_dedup import expand_to_same_episode_media_ids
+
+        async with self.Session() as db:
+            self.assertEqual(await expand_to_same_episode_media_ids(db, [1]), [1, 2])
+            self.assertEqual(await expand_to_same_episode_media_ids(db, [4]), [4])
+            self.assertEqual(await expand_to_same_episode_media_ids(db, []), [])
