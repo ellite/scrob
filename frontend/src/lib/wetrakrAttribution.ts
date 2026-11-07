@@ -1,3 +1,5 @@
+import { m } from "../paraglide/messages.js";
+
 // WeTrakr requires every comment from its API to credit the author and the
 // platform: a logo/credit for the comment's `source` plus a link to the
 // comment on wetrakr.com ("TV Time review from WeTrakr", or "Review from
@@ -19,7 +21,7 @@ export function wetrakrCredit(
   const src = (source || "wetrakr").toLowerCase();
   const name = SOURCE_NAMES[src] ?? src.charAt(0).toUpperCase() + src.slice(1);
   return {
-    label: src === "wetrakr" ? "Review from WeTrakr" : `${name} review from WeTrakr`,
+    label: src === "wetrakr" ? m.wetrakr_review_credit() : m.wetrakr_source_review_credit({ source: name }),
     url: `https://wetrakr.com/comments/${commentId}`,
   };
 }

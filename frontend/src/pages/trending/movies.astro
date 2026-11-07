@@ -3,6 +3,7 @@ import Base from "../../layouts/Base.astro";
 import MediaCard from "../../components/MediaCard.astro";
 import Pagination from "../../components/Pagination.astro";
 import { api, type MediaItem } from "../../lib/api";
+import { m } from "../../paraglide/messages.js";
 
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -18,10 +19,10 @@ try {
 }
 ---
 
-<Base title={`Trending Movies - Page ${page}`}>
+<Base title={m.trending_page_title({ type: "movie", page })}>
   <div class="mb-8">
-    <h1 class="page-title mb-2">Trending Movies</h1>
-    <p class="text-zinc-500">Popular movies right now on TMDB</p>
+    <h1 class="page-title mb-2">{m.section_trending_movies()}</h1>
+    <p class="text-zinc-500">{m.trending_movies_subtitle()}</p>
   </div>
 
   {error && (

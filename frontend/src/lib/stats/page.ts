@@ -1,3 +1,4 @@
+import { m } from "../../paraglide/messages.js";
 import { computeRange, setLoading } from "./format";
 import { renderStats } from "./render";
 
@@ -40,7 +41,7 @@ function refresh() {
   if (nextBtn) nextBtn.disabled = currentOffset >= 0;
   if (weekdayTitle) {
     const isWeekly = currentPeriod === 'week' || currentPeriod === 'last7';
-    weekdayTitle.textContent = isWeekly ? 'Activity by Day of Week' : 'Average Activity by Day of Week';
+    weekdayTitle.textContent = isWeekly ? m.stats_by_weekday() : m.stats_avg_by_weekday();
   }
   loadStats(since, until);
 }

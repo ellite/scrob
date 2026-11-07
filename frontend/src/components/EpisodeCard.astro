@@ -5,6 +5,7 @@ import CardActionBar from "./CardActionBar.astro";
 import PosterFallback from "./PosterFallback.astro";
 import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
+import { m } from "../paraglide/messages.js";
 
 interface Props {
   item: MediaItem;
@@ -109,7 +110,7 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
         )}
 
         <div class="absolute bottom-2 left-2 right-2 bg-amber-500/90 backdrop-blur-md text-zinc-950 text-xs font-bold px-2 py-1 rounded-md text-center tracking-tight">
-          Could not identify — try pulling your library
+          {m.episode_card_unidentified()}
         </div>
       </div>
     </div>

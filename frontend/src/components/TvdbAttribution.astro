@@ -2,6 +2,9 @@
 // Attribution required by TheTVDB's free project-key licence: a visible,
 // direct link shown to end users wherever TVDB-sourced metadata is displayed
 // (GitHub #325). `tvdbId`, when given, deep-links to the specific record.
+import { m } from "../paraglide/messages.js";
+import { escapeHtml } from "../lib/format";
+
 interface Props {
   tvdbId?: number | null;
   recordType?: "series" | "movies" | "people";
@@ -14,12 +17,6 @@ const href = tvdbId
   : "https://thetvdb.com";
 ---
 
-<p class={`text-xs text-zinc-500 ${className}`}>
-  Metadata provided by
-  <a
-    href={href}
-    target="_blank"
-    rel="noopener noreferrer"
-    class="text-zinc-400 hover:text-zinc-200 underline underline-offset-2 transition-colors"
-  >TheTVDB</a>. Please add missing information or corrections there.
-</p>
+<p class={`text-xs text-zinc-500 ${className}`} set:html={m.tvdb_attribution({
+  link: `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="text-zinc-400 hover:text-zinc-200 underline underline-offset-2 transition-colors">TheTVDB</a>`,
+})} />

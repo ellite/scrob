@@ -1,3 +1,6 @@
+import { m } from "../../paraglide/messages.js";
+import { formatNumber } from "../format";
+import { formatShortDuration } from "../media-format";
 import { _fmt, formatMinutes, monthNames, fillActivityGaps, getActivityLabel } from "./format";
 import { renderBreakdownCharts } from "./charts";
 
@@ -10,10 +13,10 @@ export function renderStats(data, since, until) {
   const summaryRow = document.getElementById('summary-row');
   if (summaryRow) {
     summaryRow.innerHTML = [
-      { value: data.movies_watched.toLocaleString(),   label: 'Movies Watched' },
-      { value: data.shows_watched.toLocaleString(),    label: 'Shows Watched' },
-      { value: data.episodes_watched.toLocaleString(), label: 'Episodes Watched' },
-      { value: totalH >= 48 ? `${totalD}d` : `${totalH}h`, label: 'Watch Time' },
+      { value: formatNumber(data.movies_watched),   label: m.profile_movies_watched() },
+      { value: formatNumber(data.shows_watched),    label: m.profile_shows_watched() },
+      { value: formatNumber(data.episodes_watched), label: m.stats_episodes_watched() },
+      { value: totalH >= 48 ? m.stats_days_short({ value: formatNumber(Number(totalD)) }) : m.stats_hours_short({ value: totalH }), label: m.stats_watch_time() },
     ].map(({ value, label }) => `
         <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-5 text-center">
           <p class="text-3xl font-black text-zinc-100 tracking-tight">${value}</p>
@@ -50,10 +53,10 @@ export function renderStats(data, since, until) {
                   const moviePct = total > 0 ? (d.movies / total) * 100 : 50;
                   const parts = d.month.split('-').map(Number);
                   const barLabel = isDaily
-                    ? `${monthNames[parts[1]-1]}. ${parts[2]}, ${parts[0]}`
-                    : `${monthNames[parts[1]-1]}. ${parts[0]}`;
+                    ? m.stats_bar_label_day({ month: monthNames[parts[1]-1], day: parts[2], year: parts[0] })
+                    : m.stats_bar_label_month({ month: monthNames[parts[1]-1], year: parts[0] });
                   return `
-                    <div data-info="${barLabel}: ${d.movies} Movies, ${d.episodes} Episodes" style="flex:1;min-width:${barMinWidth}px;height:100%;display:flex;flex-direction:column;justify-content:flex-end">
+                    <div data-info="${m.stats_bar_info_counts({ label: barLabel, movies: d.movies, episodes: d.episodes })}" style="flex:1;min-width:${barMinWidth}px;height:100%;display:flex;flex-direction:column;justify-content:flex-end">
                       <div style="height:${total > 0 ? Math.max(pct, 2) : 0}%;width:100%;border-radius:3px 3px 0 0;overflow:hidden;display:flex;flex-direction:column">
                         <div style="flex:${moviePct};background:rgba(14,165,233,0.8)"></div>
                         <div style="flex:${100-moviePct};background:rgba(168,85,247,0.8)"></div>
@@ -71,8 +74,8 @@ export function renderStats(data, since, until) {
             </div>
           </div>
           <div style="display:flex;gap:16px;margin-top:10px;padding-top:8px;border-top:1px solid rgba(39,39,42,0.4)">
-            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(14,165,233,0.8);display:inline-block"></span>Movies</span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(168,85,247,0.8);display:inline-block"></span>Episodes</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(14,165,233,0.8);display:inline-block"></span>${m.stats_chart_movies()}</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(168,85,247,0.8);display:inline-block"></span>${m.stats_chart_episodes()}</span>
           </div>
         `;
       const infoText = document.getElementById('activity-info-text');
@@ -88,7 +91,7 @@ export function renderStats(data, since, until) {
         if (bar && infoText) infoText.textContent = bar.dataset.info;
       }, { passive: true });
     } else {
-      activityChart.innerHTML = '<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">No watch history for the selected period.</p>';
+      activityChart.innerHTML = `<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">${m.stats_no_history_period()}</p>`;
     }
   }
 
@@ -123,11 +126,7 @@ export function renderStats(data, since, until) {
 
     watchTimeChart.classList.remove('animate-pulse', 'bg-zinc-800/50', 'rounded-xl');
 
-    const fmtTime = (mins) => {
-      if (!mins) return '0m';
-      const h = Math.floor(mins / 60), m = mins % 60;
-      return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
-    };
+    const fmtTime = (mins) => formatShortDuration(mins || 0);
 
     if (wtData.length > 0 && wtData.some(d => d.movie_minutes + d.show_minutes > 0)) {
       const maxVal = Math.max(...wtData.map(d => d.movie_minutes + d.show_minutes), 1);
@@ -147,9 +146,9 @@ export function renderStats(data, since, until) {
                   const moviePct = total > 0 ? (d.movie_minutes / total) * 100 : 50;
                   const parts = d.month.split('-').map(Number);
                   const barLabel = isDaily
-                    ? `${monthNames[parts[1]-1]}. ${parts[2]}, ${parts[0]}`
-                    : `${monthNames[parts[1]-1]}. ${parts[0]}`;
-                  const tooltip = `${barLabel}: ${fmtTime(total)} total · ${fmtTime(d.movie_minutes)} movies · ${fmtTime(d.show_minutes)} shows`;
+                    ? m.stats_bar_label_day({ month: monthNames[parts[1]-1], day: parts[2], year: parts[0] })
+                    : m.stats_bar_label_month({ month: monthNames[parts[1]-1], year: parts[0] });
+                  const tooltip = m.stats_watch_time_tooltip({ label: barLabel, total: fmtTime(total), movies: fmtTime(d.movie_minutes), shows: fmtTime(d.show_minutes) });
                   return `
                     <div data-info="${tooltip}" style="flex:1;min-width:${barMinWidth}px;height:100%;display:flex;flex-direction:column;justify-content:flex-end">
                       <div style="height:${total > 0 ? Math.max(pct, 2) : 0}%;width:100%;border-radius:3px 3px 0 0;overflow:hidden;display:flex;flex-direction:column">
@@ -169,8 +168,8 @@ export function renderStats(data, since, until) {
             </div>
           </div>
           <div style="display:flex;gap:16px;margin-top:10px;padding-top:8px;border-top:1px solid rgba(39,39,42,0.4)">
-            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(14,165,233,0.8);display:inline-block"></span>Movies</span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(168,85,247,0.8);display:inline-block"></span>Shows</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(14,165,233,0.8);display:inline-block"></span>${m.stats_chart_movies()}</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:.1em"><span style="width:8px;height:8px;border-radius:2px;background:rgba(168,85,247,0.8);display:inline-block"></span>${m.common_shows()}</span>
           </div>
         `;
       const wtInfoText = document.getElementById('wt-info-text');
@@ -186,7 +185,7 @@ export function renderStats(data, since, until) {
         if (bar && wtInfoText) wtInfoText.textContent = bar.dataset.info;
       }, { passive: true });
     } else {
-      watchTimeChart.innerHTML = '<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">No watch time data for the selected period.</p>';
+      watchTimeChart.innerHTML = `<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">${m.stats_no_watch_time_period()}</p>`;
     }
   }
 
@@ -200,7 +199,7 @@ function renderTopStats(data) {
   const section = document.getElementById('top-stats');
   if (!section) return;
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const fmtH = (min) => { const h = Math.floor(min / 60); const m = min % 60; return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`; };
+  const fmtH = (min) => formatShortDuration(min);
   const card = (id, has) => { const el = document.getElementById(id + '-card'); if (el) el.style.display = has ? '' : 'none'; return has; };
 
   const posters = (items) => (items || []).filter(it => it.title).map(it => `
@@ -209,13 +208,13 @@ function renderTopStats(data) {
           ${it.poster_path ? `<img src="${esc(it.poster_path)}" alt="${esc(it.title)}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform">` : ''}
         </div>
         <div class="text-xs text-zinc-300 font-semibold mt-1.5 truncate">${esc(it.title)}</div>
-        <div class="text-[11px] text-zinc-500">${it.plays} play${it.plays === 1 ? '' : 's'} · ${fmtH(it.minutes || 0)}</div>
+        <div class="text-[11px] text-zinc-500">${m.stats_plays({ count: it.plays })} · ${fmtH(it.minutes || 0)}</div>
       </a>`).join('');
   document.getElementById('top-shows').innerHTML = posters(data.top_shows);
   document.getElementById('top-movies').innerHTML = posters(data.top_movies);
 
   document.getElementById('top-networks').innerHTML = (data.top_networks || []).map(n => `
-      <div class="flex items-center gap-2 bg-white/90 rounded-lg px-3 py-2" title="${esc(n.name)} · ${n.plays} plays">
+      <div class="flex items-center gap-2 bg-white/90 rounded-lg px-3 py-2" title="${esc(n.name)} · ${esc(m.stats_plays({ count: n.plays }))}">
         ${n.logo_path ? `<img src="https://image.tmdb.org/t/p/w92${esc(n.logo_path)}" alt="${esc(n.name)}" class="h-5 object-contain">` : `<span class="text-sm font-bold text-zinc-800">${esc(n.name)}</span>`}
         <span class="text-xs font-semibold text-zinc-500">${n.plays}</span>
       </div>`).join('');
@@ -224,7 +223,7 @@ function renderTopStats(data) {
     const tag = linked ? 'a' : 'span';
     const href = linked ? ` href="/person/${p.id}"` : '';
     return `
-      <${tag}${href} class="inline-flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5${linked ? ' hover:border-blue-500/50 hover:bg-zinc-800/60 transition-colors' : ''}" title="${esc(p.name)} · ${p.titles} title${p.titles === 1 ? '' : 's'} · ${p.plays} play${p.plays === 1 ? '' : 's'}">
+      <${tag}${href} class="inline-flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5${linked ? ' hover:border-blue-500/50 hover:bg-zinc-800/60 transition-colors' : ''}" title="${esc(p.name)} · ${esc(m.stats_titles({ count: p.titles }))} · ${esc(m.stats_plays({ count: p.plays }))}">
         <span class="text-sm font-semibold text-zinc-200">${esc(p.name)}</span>
         <span class="text-[11px] font-semibold text-blue-400 bg-blue-500/10 rounded-full px-1.5 py-0.5">${p.titles}</span>
       </${tag}>`;

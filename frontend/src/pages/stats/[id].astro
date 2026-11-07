@@ -1,5 +1,6 @@
 ---
 import Base from "../../layouts/Base.astro";
+import { m } from "../../paraglide/messages.js";
 export const prerender = false;
 
 const { id } = Astro.params;
@@ -14,27 +15,26 @@ try {
     `http://localhost:${import.meta.env.BACKEND_PORT ?? "7331"}/profile/${id}`,
     token ? { headers: { Authorization: `Bearer ${token}` } } : {}
   );
-  if (res.status === 404) accessError = "User not found.";
-  else if (res.status === 403) accessError = "This profile is private.";
-  else if (!res.ok) accessError = "Failed to load profile.";
+  if (res.status === 404) accessError = m.profile_not_found();
+  else if (res.status === 403) accessError = m.profile_private();
+  else if (!res.ok) accessError = m.profile_load_failed();
 } catch {
-  accessError = "Failed to load profile.";
+  accessError = m.profile_load_failed();
 }
 
-const isOwnStats = currentUser && String(currentUser.id) === String(id);
 ---
 
-<Base title="Statistics">
+<Base title={m.nav_statistics()}>
   {accessError ? (
     <div class="max-w-md mx-auto mt-20 text-center">
       <div class="bg-zinc-900/50 border border-zinc-800 p-10 rounded-3xl">
         <div class="w-20 h-20 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-6">
           <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-zinc-500"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         </div>
-        <h2 class="text-2xl font-black text-zinc-100 mb-2">Access Restricted</h2>
+        <h2 class="text-2xl font-black text-zinc-100 mb-2">{m.profile_access_restricted()}</h2>
         <p class="text-zinc-400 font-medium mb-8">{accessError}</p>
         <a href="/" class="px-6 py-3 bg-sky-600 hover:bg-sky-500 text-white font-black rounded-xl transition-all inline-block">
-          Return Home
+          {m.common_return_home()}
         </a>
       </div>
     </div>
@@ -45,9 +45,9 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
       <div>
         <a href={`/profile/${id}`} class="text-xs font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition flex items-center gap-1.5 mb-3">
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-          Profile
+          {m.nav_profile()}
         </a>
-        <h1 class="page-title">Statistics</h1>
+        <h1 class="page-title">{m.nav_statistics()}</h1>
       </div>
 
       <div id="stats-content" class="space-y-10" data-user-id={id} data-token={token ?? ""}>
@@ -65,16 +65,16 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
       <!-- Watching Statistics -->
       <section>
         <div class="flex items-center justify-between gap-4 flex-wrap mb-6">
-          <h2 class="section-headline">Watching</h2>
+          <h2 class="section-headline">{m.stats_watching()}</h2>
           <div class="flex items-center gap-2">
             <select id="period-select" class="bg-zinc-800 border border-zinc-700 text-zinc-200 text-sm font-bold rounded-xl px-3 py-2 cursor-pointer hover:border-zinc-500 transition focus:outline-none appearance-none">
-              <option value="all">All time</option>
-              <option value="year">This year</option>
-              <option value="month">This month</option>
-              <option value="week">This week</option>
-              <option value="last365">Last 365 days</option>
-              <option value="last30">Last 30 days</option>
-              <option value="last7">Last 7 days</option>
+              <option value="all">{m.stats_period_all()}</option>
+              <option value="year">{m.stats_period_year()}</option>
+              <option value="month">{m.stats_period_month()}</option>
+              <option value="week">{m.stats_period_week()}</option>
+              <option value="last365">{m.stats_period_last365()}</option>
+              <option value="last30">{m.stats_period_last30()}</option>
+              <option value="last7">{m.stats_period_last7()}</option>
             </select>
             <div id="period-nav" style="display:none" class="items-center gap-1">
               <button id="prev-btn" class="w-8 h-8 flex items-center justify-center rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition disabled:opacity-30 disabled:cursor-not-allowed">
@@ -91,13 +91,13 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
           <!-- Watch activity chart -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
-            <h3 class="group-label mb-5">Activity Over Time</h3>
+            <h3 class="group-label mb-5">{m.stats_activity_over_time()}</h3>
             <div id="activity-chart" class="h-40 animate-pulse bg-zinc-800/50 rounded-xl"></div>
           </div>
 
           <!-- Most watched genres -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
-            <h3 class="group-label mb-5">Most Watched Genres</h3>
+            <h3 class="group-label mb-5">{m.stats_most_watched_genres()}</h3>
             <div id="genres-container" class="grid grid-cols-1 md:grid-cols-2 gap-8 animate-pulse">
               <div class="space-y-3">
                 <div class="h-3 w-20 bg-zinc-800 rounded"></div>
@@ -116,13 +116,13 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
           <!-- Watch time chart -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
-            <h3 class="group-label mb-5">Watch Time Over Time</h3>
+            <h3 class="group-label mb-5">{m.stats_watch_time_over_time()}</h3>
             <div id="watch-time-chart" class="h-40 animate-pulse bg-zinc-800/50 rounded-xl"></div>
           </div>
 
           <!-- Watch time breakdown -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
-            <h3 class="group-label mb-5">Watch Time</h3>
+            <h3 class="group-label mb-5">{m.stats_watch_time()}</h3>
             <div id="watch-time-breakdown" class="space-y-3 animate-pulse">
               <div class="h-10 bg-zinc-800/50 rounded-xl"></div>
               <div class="h-10 bg-zinc-800/50 rounded-xl"></div>
@@ -131,7 +131,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
           <!-- Avg ratings -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
-            <h3 class="group-label mb-5">Average Ratings</h3>
+            <h3 class="group-label mb-5">{m.stats_average_ratings()}</h3>
             <div id="avg-ratings" class="space-y-4 animate-pulse">
               <div class="h-10 bg-zinc-800/50 rounded-xl"></div>
               <div class="h-10 bg-zinc-800/50 rounded-xl"></div>
@@ -140,13 +140,13 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
           <!-- Rating distribution -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
-            <h3 class="group-label mb-5">Rating Distribution</h3>
+            <h3 class="group-label mb-5">{m.stats_rating_distribution()}</h3>
             <div id="rating-chart" class="h-36 animate-pulse bg-zinc-800/50 rounded-xl"></div>
           </div>
 
           <!-- Most active weekday -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 lg:col-span-2">
-            <h3 id="weekday-chart-title" class="group-label mb-5">Average Activity by Day of Week</h3>
+            <h3 id="weekday-chart-title" class="group-label mb-5">{m.stats_avg_by_weekday()}</h3>
             <div id="weekday-chart" class="h-36 animate-pulse bg-zinc-800/50 rounded-xl"></div>
           </div>
 
@@ -155,40 +155,40 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
       <!-- Most Watched: top titles, networks and people (#124) -->
       <section id="top-stats" style="display:none">
-        <h2 class="section-headline mb-6">Most Watched</h2>
+        <h2 class="section-headline mb-6">{m.stats_most_watched()}</h2>
         <div class="space-y-6">
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-shows-card">
             <div class="flex items-center justify-between mb-5">
-              <h3 class="group-label">Most Played Shows</h3>
-              <a href={`/stats/${id}/shows`} data-list-link={`/stats/${id}/shows`} class="text-xs font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition">View all</a>
+              <h3 class="group-label">{m.stats_most_played_shows()}</h3>
+              <a href={`/stats/${id}/shows`} data-list-link={`/stats/${id}/shows`} class="text-xs font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition">{m.stats_view_all()}</a>
             </div>
             <div id="top-shows" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-movies-card">
             <div class="flex items-center justify-between mb-5">
-              <h3 class="group-label">Most Played Movies</h3>
-              <a href={`/stats/${id}/movies`} data-list-link={`/stats/${id}/movies`} class="text-xs font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition">View all</a>
+              <h3 class="group-label">{m.stats_most_played_movies()}</h3>
+              <a href={`/stats/${id}/movies`} data-list-link={`/stats/${id}/movies`} class="text-xs font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition">{m.stats_view_all()}</a>
             </div>
             <div id="top-movies" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-networks-card">
-            <h3 class="group-label mb-5">Favourite Networks</h3>
+            <h3 class="group-label mb-5">{m.stats_favourite_networks()}</h3>
             <div id="top-networks" class="flex flex-wrap gap-3"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-actors-card">
-            <h3 class="group-label mb-5">Most Watched Actors</h3>
+            <h3 class="group-label mb-5">{m.stats_most_watched_actors()}</h3>
             <div id="top-actors" class="flex flex-wrap gap-2"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-directors-card">
-            <h3 class="group-label mb-5">Favourite Directors</h3>
+            <h3 class="group-label mb-5">{m.stats_favourite_directors()}</h3>
             <div id="top-directors" class="flex flex-wrap gap-2"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-writers-card">
-            <h3 class="group-label mb-5">Favourite Writers</h3>
+            <h3 class="group-label mb-5">{m.stats_favourite_writers()}</h3>
             <div id="top-writers" class="flex flex-wrap gap-2"></div>
           </div>
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6" id="top-studios-card">
-            <h3 class="group-label mb-5">Favourite Studios</h3>
+            <h3 class="group-label mb-5">{m.stats_favourite_studios()}</h3>
             <div id="top-studios" class="flex flex-wrap gap-2"></div>
           </div>
         </div>
@@ -196,11 +196,11 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
 
       <!-- Collection Statistics -->
       <section>
-        <h2 class="section-headline mb-6">Collection</h2>
+        <h2 class="section-headline mb-6">{m.stats_collection()}</h2>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
           <!-- Breakdown -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
-            <h3 class="group-label mb-5">Breakdown</h3>
+            <h3 class="group-label mb-5">{m.stats_breakdown()}</h3>
             <div id="collection-breakdown" class="space-y-3 animate-pulse">
               {[...Array(3)].map(() => (
                 <div class="h-8 bg-zinc-800/50 rounded-xl"></div>
@@ -209,7 +209,7 @@ const isOwnStats = currentUser && String(currentUser.id) === String(id);
           </div>
           <!-- Pie charts -->
           <div class="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6">
-            <h3 class="group-label mb-5">Watched vs Unwatched</h3>
+            <h3 class="group-label mb-5">{m.stats_watched_vs_unwatched()}</h3>
             <div class="grid grid-cols-3 gap-4 animate-pulse" id="collection-pies">
               {[...Array(3)].map(() => (
                 <div class="flex flex-col items-center gap-3">

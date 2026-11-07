@@ -1,10 +1,12 @@
+import { m } from "../../paraglide/messages.js";
+import { formatDate, formatNumber } from "../format";
 // ── Period computation ─────────────────────────────────────────────────────
 export const _fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
-const _short = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const _short = d => formatDate(d, { month: 'short', day: 'numeric' });
 
 export function computeRange(period, offset) {
-  if (period === 'all') return { since: null, until: null, label: 'All time', canNav: false };
+  if (period === 'all') return { since: null, until: null, label: m.stats_period_all(), canNav: false };
   const today = new Date(); today.setHours(0, 0, 0, 0);
   let since, until, label;
   if (period === 'year') {
@@ -14,7 +16,7 @@ export function computeRange(period, offset) {
   } else if (period === 'month') {
     const base = new Date(today.getFullYear(), today.getMonth() + offset, 1);
     since = base; until = new Date(base.getFullYear(), base.getMonth() + 1, 0);
-    label = base.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    label = formatDate(base, { month: 'long', year: 'numeric' });
   } else if (period === 'week') {
     const dow = today.getDay();
     const monday = new Date(today);
@@ -22,20 +24,20 @@ export function computeRange(period, offset) {
     const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
     since = monday; until = sunday;
     label = monday.getMonth() === sunday.getMonth()
-      ? `${monday.toLocaleDateString('en-US',{month:'short'})} ${monday.getDate()}–${sunday.getDate()}`
+      ? `${formatDate(monday, { month: 'short' })} ${monday.getDate()}–${sunday.getDate()}`
       : `${_short(monday)} – ${_short(sunday)}`;
   } else if (period === 'last365') {
     until = new Date(today); until.setDate(today.getDate() + offset * 365);
     since = new Date(until); since.setDate(until.getDate() - 364);
-    label = offset === 0 ? 'Last 365 days' : `${_short(since)} – ${_short(until)}`;
+    label = offset === 0 ? m.stats_period_last365() : `${_short(since)} – ${_short(until)}`;
   } else if (period === 'last30') {
     until = new Date(today); until.setDate(today.getDate() + offset * 30);
     since = new Date(until); since.setDate(until.getDate() - 29);
-    label = offset === 0 ? 'Last 30 days' : `${_short(since)} – ${_short(until)}`;
+    label = offset === 0 ? m.stats_period_last30() : `${_short(since)} – ${_short(until)}`;
   } else if (period === 'last7') {
     until = new Date(today); until.setDate(today.getDate() + offset * 7);
     since = new Date(until); since.setDate(until.getDate() - 6);
-    label = offset === 0 ? 'Last 7 days' : `${_short(since)} – ${_short(until)}`;
+    label = offset === 0 ? m.stats_period_last7() : `${_short(since)} – ${_short(until)}`;
   }
   return { since: _fmt(since), until: _fmt(until), label, canNav: true };
 }
@@ -43,12 +45,15 @@ export function computeRange(period, offset) {
 // ── Helpers ────────────────────────────────────────────────────────────────
 export function formatMinutes(mins) {
   const h = Math.round(mins / 60);
-  return h >= 48 ? `${(mins / 60 / 24).toFixed(1)}d` : `${h}h`;
+  return h >= 48 ? m.stats_days_short({ value: formatNumber(Number((mins / 60 / 24).toFixed(1))) }) : m.stats_hours_short({ value: h });
 }
 
-export const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+export const monthNames = Array.from({ length: 12 }, (_, i) => formatDate(new Date(2023, i, 1), { month: 'short' }));
 
-const dayNames   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const dayNames = Array.from({ length: 7 }, (_, i) => formatDate(new Date(2023, 0, 1 + i), { weekday: 'short' }));
+// The stats API labels weekdays with these English abbreviations.
+const API_DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+export const dayLabel = (apiDay) => dayNames[API_DAY_NAMES.indexOf(apiDay)] ?? apiDay;
 
 export function fillActivityGaps(activityData, since, until, isDaily) {
   if (!since || !until) return activityData;

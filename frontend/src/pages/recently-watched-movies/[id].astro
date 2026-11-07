@@ -1,6 +1,8 @@
 ---
 import Base from "../../layouts/Base.astro";
 import Pagination from "../../components/Pagination.astro";
+import { formatNumber, formatTimeAgo as timeAgo } from "../../lib/format";
+import { m } from "../../paraglide/messages.js";
 import { api, type ProfileWatchedItem, tmdbImageUrl } from "../../lib/api";
 import { ratingPosterUrl } from "../../lib/posters";
 
@@ -21,11 +23,11 @@ try {
     `http://localhost:${import.meta.env.BACKEND_PORT ?? "7331"}/profile/${id}`,
     token ? { headers: { Authorization: `Bearer ${token}` } } : {}
   );
-  if (res.status === 404) accessError = "User not found.";
-  else if (res.status === 403) accessError = "This profile is private.";
-  else if (!res.ok) accessError = "Failed to load profile.";
+  if (res.status === 404) accessError = m.profile_not_found();
+  else if (res.status === 403) accessError = m.profile_private();
+  else if (!res.ok) accessError = m.profile_load_failed();
 } catch {
-  accessError = "Failed to load profile.";
+  accessError = m.profile_load_failed();
 }
 
 let data: { results: ProfileWatchedItem[]; page: number; total_pages: number; total_results: number } = {
@@ -36,7 +38,7 @@ if (!accessError) {
   try {
     data = await api.profile.recentlyWatchedMovies(Number(id), page, token);
   } catch {
-    accessError = "Failed to load recently watched movies.";
+    accessError = m.recently_watched_movies_load_failed();
   }
 }
 
@@ -44,31 +46,19 @@ function posterUrl(path: string | null): string | null {
   return tmdbImageUrl(path, "w342");
 }
 
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.floor(months / 12)}y ago`;
-}
 ---
 
-<Base title="Recently Watched Movies">
+<Base title={m.section_recently_watched_movies()}>
   {accessError ? (
     <div class="max-w-md mx-auto mt-20 text-center">
       <div class="bg-zinc-900/50 border border-zinc-800 p-10 rounded-3xl">
         <div class="w-20 h-20 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-6">
           <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-zinc-500"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         </div>
-        <h2 class="text-2xl font-black text-zinc-100 mb-2">Access Restricted</h2>
+        <h2 class="text-2xl font-black text-zinc-100 mb-2">{m.profile_access_restricted()}</h2>
         <p class="text-zinc-400 font-medium mb-8">{accessError}</p>
         <a href="/" class="px-6 py-3 bg-sky-600 hover:bg-sky-500 text-white font-black rounded-xl transition-all inline-block">
-          Return Home
+          {m.common_return_home()}
         </a>
       </div>
     </div>
@@ -76,16 +66,16 @@ function timeAgo(dateStr: string): string {
     <div class="max-w-screen-xl mx-auto">
       <a href={`/profile/${id}`} class="text-xs font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition flex items-center gap-1.5 mb-3">
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-        Profile
+        {m.nav_profile()}
       </a>
       <div class="flex items-baseline gap-3 mb-10">
-        <h1 class="page-title">Recently Watched Movies</h1>
-        <span class="text-zinc-500 font-medium">{data.total_results.toLocaleString()} total</span>
+        <h1 class="page-title">{m.section_recently_watched_movies()}</h1>
+        <span class="text-zinc-500 font-medium">{m.common_total_count({ count: formatNumber(data.total_results) })}</span>
       </div>
 
       {data.results.length === 0 ? (
         <div class="bg-zinc-900/40 border border-zinc-800/60 rounded-2xl p-10 text-center text-zinc-500">
-          No watched movies yet.
+          {m.recently_watched_movies_empty()}
         </div>
       ) : (
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">

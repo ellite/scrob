@@ -18,14 +18,14 @@ for (const page of ["movies.astro", "shows.astro", "collection/movies.astro", "c
     assert.match(source, /const myRating = parseMyRating\(Astro\.url\)/);
     assert.match(source, /my_rating:\s*myRating/);
     assert.match(source, /append\("my_rating", String\(rating\)\)/);
-    assert.match(source, /key:\s*"my_rating", label:\s*"My Rating"/);
+    assert.match(source, /key:\s*"my_rating", label:\s*m\.filter_my_rating\(\)/);
   });
 }
 
 for (const page of ["collection/movies.astro", "collection/shows.astro"]) {
   test(`${page} offers descending My Rating as a collection sort`, async () => {
     const source = await pageSource(page);
-    assert.match(source, /value:\s*"user_rating", label:\s*"My Rating"/);
+    assert.match(source, /value:\s*"user_rating", label:\s*m\.sort_my_rating\(\)/);
   });
 }
 

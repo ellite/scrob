@@ -10,6 +10,9 @@ interface Props {
   seasons: HeatmapSeason[];
 }
 
+import { m } from "../paraglide/messages.js";
+import { formatRating } from "../lib/format";
+
 const { seasons } = Astro.props;
 
 const rated = (r: number | null | undefined): r is number => typeof r === "number" && r > 0;
@@ -31,14 +34,14 @@ const cellClass = "flex items-center justify-center rounded-md text-white font-b
           {s.episodes.map((ep) => rated(ep.rating) ? (
             <a
               href={ep.href}
-              title={`S${s.number}E${ep.number} · ${ep.title} · ${ep.rating.toFixed(1)}`}
+              title={`S${s.number}E${ep.number} · ${ep.title} · ${formatRating(ep.rating)}`}
               class={`${cellClass} w-9 h-7 text-[11px] hover:ring-2 hover:ring-blue-400 transition`}
               style={`background:${cellColor(ep.rating)}`}
             >
-              {ep.rating.toFixed(1)}
+              {formatRating(ep.rating)}
             </a>
           ) : (
-            <a href={ep.href} title={`S${s.number}E${ep.number} · ${ep.title} · not rated`} class="w-9 h-7 rounded-md bg-zinc-800/60 hover:ring-2 hover:ring-blue-400 transition"></a>
+            <a href={ep.href} title={`S${s.number}E${ep.number} · ${ep.title} · ${m.heatmap_not_rated()}`} class="w-9 h-7 rounded-md bg-zinc-800/60 hover:ring-2 hover:ring-blue-400 transition"></a>
           ))}
         </div>
       </div>

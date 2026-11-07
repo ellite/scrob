@@ -24,6 +24,8 @@ interface Props {
   extraParams?: Record<string, string>; // static params (e.g. category) always preserved on Apply
 }
 
+import { m } from "../paraglide/messages.js";
+
 const { id, basePath, currentSort, sections, extraParams } = Astro.props;
 const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.excluded?.length ?? 0), 0);
 ---
@@ -37,7 +39,7 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
       <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m9 12h3.75M13.5 18a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 18H10.5M6 12h9.75M6 12a1.5 1.5 0 1 0-3 0m3 0a1.5 1.5 0 1 1-3 0m15.75 0H18" />
     </svg>
-    Filters
+    {m.filters_title()}
     {activeCount > 0 && (
       <span class="flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-blue-600 text-white text-xs font-semibold">{activeCount}</span>
     )}
@@ -46,7 +48,7 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
     <button
       type="button"
       data-role="clear-trigger"
-      aria-label="Clear filters"
+      aria-label={m.filters_clear()}
       class="flex items-center px-2 border-l border-zinc-700 text-zinc-500 hover:text-zinc-100 transition cursor-pointer"
     >
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
@@ -63,8 +65,8 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
       class="relative w-full sm:w-96 max-h-[85vh] sm:max-h-[80vh] bg-zinc-900 border border-zinc-800 rounded-t-2xl sm:rounded-2xl flex flex-col max-sm:translate-y-full sm:scale-95 sm:opacity-0 transition-all duration-300"
     >
       <div class="flex items-center justify-between p-4 border-b border-zinc-800 flex-shrink-0">
-        <h2 class="font-semibold text-zinc-100">Filters</h2>
-        <button type="button" data-role="close" class="p-1 text-zinc-500 hover:text-zinc-200 transition cursor-pointer" aria-label="Close">
+        <h2 class="font-semibold text-zinc-100">{m.filters_title()}</h2>
+        <button type="button" data-role="close" class="p-1 text-zinc-500 hover:text-zinc-200 transition cursor-pointer" aria-label={m.common_close()}>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
           </svg>
@@ -74,13 +76,13 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
       <div class="filter-panel-scroll overflow-y-auto flex-1 divide-y divide-zinc-800">
         <div data-role="saved-section" class="hidden">
           <button type="button" data-role="accordion-toggle" class="w-full flex items-center justify-between p-4 text-left text-sm font-medium text-zinc-200 cursor-pointer">
-            <span>Saved filters <span data-role="saved-count" class="text-blue-500 font-normal"></span></span>
+            <span>{m.filters_saved_title()} <span data-role="saved-count" class="text-blue-500 font-normal"></span></span>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="chevron w-4 h-4 transition-transform text-zinc-500">
               <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
             </svg>
           </button>
           <div data-role="accordion-content" class="hidden pb-2">
-            <p class="px-4 pt-1 pb-2 text-xs text-zinc-500">Tap one to select its filters, then Apply.</p>
+            <p class="px-4 pt-1 pb-2 text-xs text-zinc-500">{m.filters_saved_hint()}</p>
             <div data-role="saved-list"></div>
           </div>
         </div>
@@ -93,9 +95,9 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
               </svg>
             </button>
             <div data-role="accordion-content" class:list={["pb-2", { hidden: section.selected.length + (section.excluded?.length ?? 0) === 0 }]}>
-              {section.tristate && <p class="px-4 pt-1 pb-2 text-xs text-zinc-500">Click once to include, again to exclude.</p>}
+              {section.tristate && <p class="px-4 pt-1 pb-2 text-xs text-zinc-500">{m.filters_tristate_hint()}</p>}
               {section.dynamic ? (
-                <div class="px-4 py-3 text-sm text-zinc-500">Loading…</div>
+                <div class="px-4 py-3 text-sm text-zinc-500">{m.common_loading()}</div>
               ) : (section.options ?? []).map((opt) => (
                 <label class="flex items-center gap-3 px-4 py-3 text-sm text-zinc-300 cursor-pointer transition-colors hover:bg-zinc-800/60 has-[:checked]:text-zinc-100">
                   <input
@@ -125,13 +127,13 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
       </div>
 
       <div class="flex items-center gap-3 p-4 border-t border-zinc-800 flex-shrink-0">
-        <button type="button" data-role="clear" class="text-sm text-zinc-500 hover:text-zinc-300 transition cursor-pointer">Clear all</button>
-        <button type="button" data-role="save-open" aria-label="Save these filters" title="Save these filters" class="hidden ml-auto p-2 text-zinc-400 hover:text-zinc-100 border border-zinc-700 hover:border-zinc-600 rounded-lg transition cursor-pointer">
+        <button type="button" data-role="clear" class="text-sm text-zinc-500 hover:text-zinc-300 transition cursor-pointer">{m.filters_clear_all()}</button>
+        <button type="button" data-role="save-open" aria-label={m.filters_save_these()} title={m.filters_save_these()} class="hidden ml-auto p-2 text-zinc-400 hover:text-zinc-100 border border-zinc-700 hover:border-zinc-600 rounded-lg transition cursor-pointer">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
           </svg>
         </button>
-        <button type="button" data-role="apply" class="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition cursor-pointer active:scale-95">Apply Filters</button>
+        <button type="button" data-role="apply" class="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition cursor-pointer active:scale-95">{m.filters_apply()}</button>
       </div>
     </div>
   </div>
@@ -140,8 +142,8 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
     <div data-role="save-backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer"></div>
     <div data-role="save-panel" class="relative w-full sm:w-96 max-h-[85vh] sm:max-h-[80vh] bg-zinc-900 border border-zinc-800 rounded-t-2xl sm:rounded-2xl flex flex-col max-sm:translate-y-full sm:scale-95 sm:opacity-0 transition-all duration-300">
       <div class="flex items-center justify-between p-4 border-b border-zinc-800 flex-shrink-0">
-        <h2 class="font-semibold text-zinc-100">Save filters</h2>
-        <button type="button" data-role="save-close" class="p-1 text-zinc-500 hover:text-zinc-200 transition cursor-pointer" aria-label="Close">
+        <h2 class="font-semibold text-zinc-100">{m.filters_save_title()}</h2>
+        <button type="button" data-role="save-close" class="p-1 text-zinc-500 hover:text-zinc-200 transition cursor-pointer" aria-label={m.common_close()}>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
           </svg>
@@ -150,27 +152,29 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
       <div class="filter-panel-scroll overflow-y-auto flex-1 p-4 space-y-4">
         <p data-role="save-summary" class="text-xs text-zinc-500"></p>
         <div>
-          <label class="block text-xs text-zinc-500 mb-1" for={`${id}__save-name`}>Name</label>
-          <input id={`${id}__save-name`} data-role="save-name" type="text" maxlength="64" autocomplete="off" placeholder="e.g. No horror, English only" class="w-full bg-zinc-950 border border-zinc-700 focus:border-blue-500 rounded-lg px-3 py-2 text-sm text-zinc-100 outline-none" />
+          <label class="block text-xs text-zinc-500 mb-1" for={`${id}__save-name`}>{m.filters_save_name()}</label>
+          <input id={`${id}__save-name`} data-role="save-name" type="text" maxlength="64" autocomplete="off" placeholder={m.filters_save_name_placeholder()} class="w-full bg-zinc-950 border border-zinc-700 focus:border-blue-500 rounded-lg px-3 py-2 text-sm text-zinc-100 outline-none" />
         </div>
         <div data-role="save-existing-wrap" class="hidden">
-          <p class="text-xs text-zinc-500 mb-1">Or overwrite a saved filter</p>
+          <p class="text-xs text-zinc-500 mb-1">{m.filters_save_overwrite_existing()}</p>
           <div data-role="save-existing" class="rounded-lg border border-zinc-800 divide-y divide-zinc-800 overflow-hidden"></div>
         </div>
         <p data-role="save-error" class="hidden text-sm text-red-400"></p>
       </div>
       <div class="flex items-center gap-3 p-4 border-t border-zinc-800 flex-shrink-0">
-        <button type="button" data-role="save-cancel" class="text-sm text-zinc-500 hover:text-zinc-300 transition cursor-pointer">Cancel</button>
-        <button type="button" data-role="save-confirm" class="ml-auto px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition cursor-pointer active:scale-95">Save</button>
+        <button type="button" data-role="save-cancel" class="text-sm text-zinc-500 hover:text-zinc-300 transition cursor-pointer">{m.common_cancel()}</button>
+        <button type="button" data-role="save-confirm" class="ml-auto px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition cursor-pointer active:scale-95">{m.common_save()}</button>
       </div>
     </div>
   </div>
 </div>
 
 <script>
+  import { m } from '../paraglide/messages.js';
+
   function renderYearCheckboxes(content: Element, years: number[], selected: Set<string>) {
     if (years.length === 0) {
-      content.innerHTML = '<div class="px-4 py-3 text-sm text-zinc-500">No years available</div>';
+      content.innerHTML = `<div class="px-4 py-3 text-sm text-zinc-500">${m.filters_no_years()}</div>`;
       return;
     }
     content.innerHTML = years.map((y) => `
@@ -196,7 +200,7 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
         const data = await res.json();
         renderYearCheckboxes(content, data.years ?? [], selected);
       } catch (e) {
-        content.innerHTML = '<div class="text-sm text-red-400">Failed to load</div>';
+        content.innerHTML = `<div class="text-sm text-red-400">${m.common_failed_to_load()}</div>`;
       }
     }
   }
@@ -344,7 +348,7 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
       return Object.entries(params).map(([k, vs]) => {
         const excluded = k.startsWith("exclude_");
         const key = excluded ? k.slice(8) : k;
-        return vs.map((v) => (excluded ? "not " : "") + labelFor(key, v)).join(", ");
+        return vs.map((v) => (excluded ? m.filters_excluded_prefix({ label: labelFor(key, v) }) : labelFor(key, v))).join(", ");
       }).join(" · ");
     }
 
@@ -399,11 +403,11 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
         pick.addEventListener("click", () => applySaved(f));
         const del = document.createElement("button");
         del.type = "button";
-        del.setAttribute("aria-label", `Delete ${f.name}`);
+        del.setAttribute("aria-label", m.filters_delete_named({ name: f.name }));
         del.className = "px-4 text-zinc-600 hover:text-red-400 transition cursor-pointer";
         del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>';
         del.addEventListener("click", async () => {
-          const ok = await (window as any).showConfirm(`Delete "${f.name}"?`, "This removes the saved filter. This cannot be undone.");
+          const ok = await (window as any).showConfirm(m.common_delete_named_confirm({ name: f.name }), m.filters_delete_saved_body());
           if (!ok) return;
           const res = await fetch(`${SAVED_URL}/${f.id}`, { method: "DELETE" });
           if (res.ok) { saved = saved.filter((s) => s.id !== f.id); renderSaved(); }
@@ -429,7 +433,7 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
       // Typing an existing name is the same as picking it to overwrite.
       const target = saved.find((s) => s.id === overwriteId) ?? match;
       if (saveConfirm) {
-        saveConfirm.textContent = target ? "Overwrite" : "Save";
+        saveConfirm.textContent = target ? m.filters_save_overwrite() : m.common_save();
         saveConfirm.disabled = !typed || Object.keys(collectSelection()).length === 0;
       }
       saveExisting?.querySelectorAll<HTMLElement>("[data-id]").forEach((el) => {
@@ -444,7 +448,7 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
       overwriteId = null;
       if (saveName) saveName.value = "";
       saveError?.classList.add("hidden");
-      if (saveSummary) saveSummary.textContent = Object.keys(sel).length ? describe(sel) : "Select some filters first, then save them.";
+      if (saveSummary) saveSummary.textContent = Object.keys(sel).length ? describe(sel) : m.filters_save_select_first();
       if (saveExistingWrap && saveExisting) {
         saveExistingWrap.classList.toggle("hidden", saved.length === 0);
         saveExisting.replaceChildren(...saved.map((f) => {
@@ -499,7 +503,7 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
           ? await fetch(`${SAVED_URL}/${target.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ params, name }) })
           : await fetch(SAVED_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope, name, params }) });
         if (!res.ok) {
-          let msg = "Could not save";
+          let msg = m.filters_save_failed();
           try {
             const d = await res.json();
             msg = typeof d.detail === "string" ? d.detail : (d.detail?.[0]?.msg ?? msg);
@@ -513,7 +517,7 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
         renderSaved();
         closeSave();
       } catch (e) {
-        if (saveError) { saveError.textContent = "Could not save"; saveError.classList.remove("hidden"); }
+        if (saveError) { saveError.textContent = m.filters_save_failed(); saveError.classList.remove("hidden"); }
       } finally {
         syncSaveForm();
       }

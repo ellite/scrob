@@ -1,3 +1,6 @@
+import { m } from "../../paraglide/messages.js";
+import { formatNumber, formatRating } from "../format";
+import { dayLabel } from "./format";
 import { formatMinutes } from "./format";
 
 export function renderBreakdownCharts(data) {
@@ -31,7 +34,7 @@ export function renderBreakdownCharts(data) {
         `;
     } else {
       ratingChart.classList.remove('animate-pulse', 'bg-zinc-800/50', 'rounded-xl');
-      ratingChart.innerHTML = '<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">No ratings for the selected period.</p>';
+      ratingChart.innerHTML = `<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">${m.stats_no_ratings_period()}</p>`;
     }
   }
 
@@ -54,14 +57,14 @@ export function renderBreakdownCharts(data) {
                     <span class="relative text-xs font-black" style="color:${textColor}">${g.count}</span>
                   </div>
                 `;
-              }).join('') : `<p class="text-xs text-zinc-600 italic">No data</p>`}
+              }).join('') : `<p class="text-xs text-zinc-600 italic">${m.stats_no_data()}</p>`}
             </div>
           </div>
         `;
     };
     genresContainer.innerHTML =
-      renderGenreList('Movies', data.top_movie_genres || [], 'rgba(14,165,233,0.1)', '#38bdf8') +
-      renderGenreList('Shows', data.top_show_genres || [], 'rgba(168,85,247,0.1)', '#c084fc');
+      renderGenreList(m.common_movies(), data.top_movie_genres || [], 'rgba(14,165,233,0.1)', '#38bdf8') +
+      renderGenreList(m.common_shows(), data.top_show_genres || [], 'rgba(168,85,247,0.1)', '#c084fc');
   }
 
   // Watch time breakdown
@@ -69,8 +72,8 @@ export function renderBreakdownCharts(data) {
   if (watchTimeBreakdown) {
     watchTimeBreakdown.classList.remove('animate-pulse');
     watchTimeBreakdown.innerHTML = [
-      { label: 'Movies', value: data.movie_watch_minutes, textColor: '#38bdf8' },
-      { label: 'Shows',  value: data.show_watch_minutes,  textColor: '#c084fc' },
+      { label: m.common_movies(), value: data.movie_watch_minutes, textColor: '#38bdf8' },
+      { label: m.common_shows(),  value: data.show_watch_minutes,  textColor: '#c084fc' },
     ].map(({ label, value, textColor }) => `
         <div class="flex items-center justify-between bg-zinc-800/40 rounded-xl px-4 py-3">
           <span class="text-sm font-bold text-zinc-300">${label}</span>
@@ -84,14 +87,14 @@ export function renderBreakdownCharts(data) {
   if (avgRatings) {
     avgRatings.classList.remove('animate-pulse');
     avgRatings.innerHTML = [
-      { label: 'Movies', value: data.avg_movie_rating, textColor: '#38bdf8' },
-      { label: 'Shows', value: data.avg_show_rating,   textColor: '#c084fc' },
+      { label: m.common_movies(), value: data.avg_movie_rating, textColor: '#38bdf8' },
+      { label: m.common_shows(), value: data.avg_show_rating,   textColor: '#c084fc' },
     ].map(({ label, value, textColor }) => `
         <div class="flex items-center justify-between bg-zinc-800/40 rounded-xl px-4 py-3">
           <span class="text-sm font-bold text-zinc-300">${label}</span>
           ${value != null
-            ? `<span class="flex items-center gap-1.5 font-black text-lg" style="color:${textColor}"><span class="text-sm text-yellow-400">★</span>${value.toFixed(1)}</span>`
-            : `<span class="text-zinc-600 text-sm font-medium">No ratings</span>`
+            ? `<span class="flex items-center gap-1.5 font-black text-lg" style="color:${textColor}"><span class="text-sm text-yellow-400">★</span>${formatRating(value)}</span>`
+            : `<span class="text-zinc-600 text-sm font-medium">${m.stats_no_ratings()}</span>`
           }
         </div>
       `).join('');
@@ -114,9 +117,9 @@ export function renderBreakdownCharts(data) {
         const color = isPeak ? 'rgba(14,165,233,0.9)' : 'rgba(63,63,70,0.8)';
         return `
             <div style="flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px">
-              <span style="font-size:10px;font-weight:700;color:${isPeak ? 'rgba(14,165,233,0.9)' : '#52525b'}">${d.avg > 0 ? d.avg.toFixed(1) : ''}</span>
-              <div style="height:${Math.max(pct, 3)}%;width:100%;background:${color};border-radius:4px 4px 0 0" title="${d.day}: avg ${d.avg} items/week"></div>
-              <span style="font-size:11px;font-weight:800;color:${isPeak ? '#e4e4e7' : '#71717a'};text-transform:uppercase;letter-spacing:.05em">${d.day}</span>
+              <span style="font-size:10px;font-weight:700;color:${isPeak ? 'rgba(14,165,233,0.9)' : '#52525b'}">${d.avg > 0 ? formatNumber(d.avg, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : ''}</span>
+              <div style="height:${Math.max(pct, 3)}%;width:100%;background:${color};border-radius:4px 4px 0 0" title="${m.stats_weekday_tooltip({ day: dayLabel(d.day), avg: formatNumber(d.avg) })}"></div>
+              <span style="font-size:11px;font-weight:800;color:${isPeak ? '#e4e4e7' : '#71717a'};text-transform:uppercase;letter-spacing:.05em">${dayLabel(d.day)}</span>
             </div>
           `;
       }).join('');
@@ -124,7 +127,7 @@ export function renderBreakdownCharts(data) {
       weekdayChart.style.display = '';
       weekdayChart.style.gap = '';
       weekdayChart.style.alignItems = '';
-      weekdayChart.innerHTML = '<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">No watch history for the selected period.</p>';
+      weekdayChart.innerHTML = `<p style="color:#52525b;font-size:14px;font-weight:500;text-align:center;padding-top:40px">${m.stats_no_history_period()}</p>`;
     }
   }
 
@@ -133,9 +136,9 @@ export function renderBreakdownCharts(data) {
   if (collectionBreakdown) {
     collectionBreakdown.classList.remove('animate-pulse');
     collectionBreakdown.innerHTML = [
-      { label: 'Movies Collected',   value: data.movies_collected.toLocaleString(),   textColor: '#38bdf8' },
-      { label: 'Shows Collected',    value: data.shows_collected.toLocaleString(),    textColor: '#c084fc' },
-      { label: 'Episodes Collected', value: data.episodes_collected.toLocaleString(), textColor: '#818cf8' },
+      { label: m.stats_movies_collected(),   value: formatNumber(data.movies_collected),   textColor: '#38bdf8' },
+      { label: m.stats_shows_collected(),    value: formatNumber(data.shows_collected),    textColor: '#c084fc' },
+      { label: m.stats_episodes_collected(), value: formatNumber(data.episodes_collected), textColor: '#818cf8' },
     ].map(({ label, value, textColor }) => `
         <div class="flex items-center justify-between bg-zinc-800/40 rounded-xl px-4 py-3">
           <span class="text-sm font-bold text-zinc-300">${label}</span>
@@ -163,12 +166,12 @@ export function renderBreakdownCharts(data) {
               <div class="flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-sm shrink-0" style="background:${colorA}"></span>
                 <span class="text-[11px] font-bold text-zinc-500 flex-1">${labelA}</span>
-                <span class="text-[11px] font-black text-zinc-800 dark:text-zinc-100">${countA.toLocaleString()}</span>
+                <span class="text-[11px] font-black text-zinc-800 dark:text-zinc-100">${formatNumber(countA)}</span>
               </div>
               <div class="flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-sm shrink-0" style="background:${colorB}"></span>
                 <span class="text-[11px] font-bold text-zinc-500 flex-1">${labelB}</span>
-                <span class="text-[11px] font-black text-zinc-800 dark:text-zinc-100">${countB.toLocaleString()}</span>
+                <span class="text-[11px] font-black text-zinc-800 dark:text-zinc-100">${formatNumber(countB)}</span>
               </div>
             </div>
           </div>
@@ -182,8 +185,8 @@ export function renderBreakdownCharts(data) {
 
     pieContainer.classList.remove('animate-pulse');
     pieContainer.innerHTML =
-      donut(moviesPct, 'rgba(14,165,233,0.85)', 'rgba(168,85,247,0.7)', 'Movies vs Shows', 'Movies',  'Shows',     data.movies_collected,         data.shows_collected) +
-      donut(mwPct,     'rgba(34,197,94,0.85)',  'rgba(63,63,70,0.6)',   'Movies Watched',  'Watched', 'Unwatched', data.movies_watched_collected, data.movies_unwatched_collected) +
-      donut(swPct,     'rgba(34,197,94,0.85)',  'rgba(63,63,70,0.6)',   'Shows Watched',   'Watched', 'Unwatched', data.shows_watched_collected,  data.shows_unwatched_collected);
+      donut(moviesPct, 'rgba(14,165,233,0.85)', 'rgba(168,85,247,0.7)', m.stats_movies_vs_shows(), m.common_movies(), m.common_shows(), data.movies_collected,         data.shows_collected) +
+      donut(mwPct,     'rgba(34,197,94,0.85)',  'rgba(63,63,70,0.6)',   m.stats_movies_watched(), m.stats_watched(), m.stats_unwatched(), data.movies_watched_collected, data.movies_unwatched_collected) +
+      donut(swPct,     'rgba(34,197,94,0.85)',  'rgba(63,63,70,0.6)',   m.stats_shows_watched(), m.stats_watched(), m.stats_unwatched(), data.shows_watched_collected,  data.shows_unwatched_collected);
   }
 }
