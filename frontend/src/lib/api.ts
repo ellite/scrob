@@ -580,6 +580,8 @@ export interface MediaServerConnection {
   push_ratings: boolean;
   auto_sync_interval: number | null;
   auto_push_interval: number | null;
+  plex_sync_watchlist?: boolean;
+  plex_push_watchlist?: boolean;
   created_at: string;
 }
 

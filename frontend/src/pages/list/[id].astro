@@ -41,6 +41,31 @@ if (!list && !error) {
   return Astro.redirect("/lists");
 }
 
+// The Watchlist is shared with the services that sync it (Plex, Trakt, MDBList,
+// Simkl), so its owner is told which ones are on and in which direction.
+type WatchlistService = { name: string; sync: boolean; push: boolean };
+let watchlistServices: WatchlistService[] = [];
+let hasOldWatchlists = false;
+if (list?.is_watchlist && list.is_owner && token) {
+  const settings = Astro.locals.settings;
+  const connections = await api.auth.getConnections(token).catch(() => []);
+  const plex = connections.filter((c) => c.type === "plex");
+  watchlistServices = [
+    ...plex.map((c) => ({
+      name: plex.length > 1 ? `Plex (${c.name})` : "Plex",
+      sync: !!c.plex_sync_watchlist,
+      push: !!c.plex_push_watchlist,
+    })),
+    ...(settings?.trakt_connected ? [{ name: "Trakt", sync: !!settings.trakt_sync_lists, push: !!settings.trakt_push_lists }] : []),
+    ...(settings?.mdblist_connected ? [{ name: "MDBList", sync: !!settings.mdblist_sync_watchlist, push: !!settings.mdblist_push_watchlist }] : []),
+    ...(settings?.simkl_connected ? [{ name: "Simkl", sync: !!settings.simkl_sync_lists, push: false }] : []),
+  ];
+  hasOldWatchlists = otherLists.some((l) => l.name.endsWith(" (old)"));
+}
+const syncMode = (s: WatchlistService) =>
+  s.sync && s.push ? "both ways" : s.sync ? "pull only" : s.push ? "push only" : "off";
+const activeServices = watchlistServices.filter((s) => s.sync || s.push);
+
 Astro.response.headers.set("Cache-Control", "no-store");
 
 const origin = Astro.url.origin;
@@ -94,6 +119,38 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
             <p class="text-xs font-bold text-zinc-400 uppercase tracking-widest mt-3">
               {list.item_count} {list.item_count === 1 ? "item" : "items"}
             </p>
+            {list.is_watchlist && list.is_owner && (
+              <div id="watchlist-sync-info" class="mt-4 max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-sm text-zinc-400">
+                {activeServices.length > 0 ? (
+                  <>
+                    <p class="text-zinc-300 font-semibold mb-2">Synced with</p>
+                    <ul class="flex flex-wrap gap-2 mb-3">
+                      {activeServices.map((s) => (
+                        <li class="px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-xs text-zinc-300">
+                          {s.name} <span class="text-zinc-500">· {syncMode(s)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p class="text-xs text-zinc-500">
+                      Titles added or removed here are pushed to the services that push, and changes on a service come back here on its next sync. A service set to pull only never removes titles that came from somewhere else.
+                    </p>
+                  </>
+                ) : (
+                  <p>
+                    No service is syncing with your Watchlist yet. Turn on <span class="text-zinc-300">Watchlist</span> sync for Plex, Trakt, MDBList or Simkl in
+                    <a href="/connections" class="text-blue-400 hover:underline">Connections</a>.
+                  </p>
+                )}
+                {activeServices.length > 0 && (
+                  <p class="text-xs mt-2"><a href="/connections" class="text-blue-400 hover:underline">Change in Connections</a></p>
+                )}
+                {hasOldWatchlists && (
+                  <p class="text-xs text-zinc-500 mt-2">
+                    Your old per-service watchlists were merged into this one. The originals are kept on the Lists page as "… (old)" and no longer sync. Delete them once you've checked this list.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div class="flex gap-2 shrink-0">
