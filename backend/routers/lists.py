@@ -18,7 +18,7 @@ from models.media import Media
 from models.base import MediaType, PrivacyLevel
 from models.show import Show as ShowModel
 from models.users import UserSettings
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
+from dependencies import ANON_USER_ID, get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
 from models.users import User
 from models.follows import Follow
 from models.global_settings import GlobalSettings
@@ -948,7 +948,8 @@ async def get_list(
     # do - list items were the one place translations never reached (#221).
     # Movies/episodes translate via MediaTranslation on their own media id;
     # series (and season) items translate via ShowTranslation on the Show row.
-    lang = await get_user_metadata_language(db, current_user.id) if current_user else None
+    # Anonymous viewers of a public list get the browser's language (#538).
+    lang = await get_user_metadata_language(db, current_user.id if current_user else ANON_USER_ID)
     if lang:
         translations = await get_media_translations(
             db, [m["id"] for m in media_dicts if m.get("id")], lang

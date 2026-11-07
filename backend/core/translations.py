@@ -8,9 +8,13 @@ from models.media_translation import MediaTranslation
 from models.show_translation import ShowTranslation
 from models.profile import UserProfileData
 from core.timeutil import utcnow
+from core.accept_language import negotiate_metadata_language, request_accept_language
 
 
 async def get_user_metadata_language(db: AsyncSession, user_id: int) -> str | None:
+    """The viewer's Metadata Language: the profile setting when there is one,
+    otherwise the best supported match for the request's Accept-Language
+    header (#538), otherwise None (= English, TMDB's default)."""
     cache_key = f"metadata_lang_{user_id}"
     if cache_key not in db.info:
         result = await db.execute(
@@ -18,7 +22,7 @@ async def get_user_metadata_language(db: AsyncSession, user_id: int) -> str | No
         )
         row = result.first()
         db.info[cache_key] = row[0] if row else None
-    return db.info[cache_key]
+    return db.info[cache_key] or negotiate_metadata_language(request_accept_language.get())
 
 
 async def get_media_translations(

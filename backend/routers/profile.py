@@ -21,7 +21,7 @@ from core.translations import (
     upsert_show_translation,
 )
 
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
+from dependencies import ANON_USER_ID, get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
 from models.users import User
 from models.profile import UserProfileData, PrivacyLevel
 from models.events import WatchEvent
@@ -132,10 +132,11 @@ async def _apply_viewer_language(db: AsyncSession, viewer, rows: list[tuple[dict
     """Translate titles in profile listings into the viewer's Metadata Language
     (#460). Movies and episodes translate via MediaTranslation on their own
     media id; a show (or the show name beside an episode) via ShowTranslation.
-    Anonymous viewers have no language, so they see the stored titles."""
-    if not viewer or not rows:
+    Anonymous viewers have no profile, so their language comes from the
+    browser's Accept-Language header, if any (#538)."""
+    if not rows:
         return
-    lang = await get_user_metadata_language(db, viewer.id)
+    lang = await get_user_metadata_language(db, viewer.id if viewer else ANON_USER_ID)
     if not lang:
         return
     media_ids = [m.id for item, m, _s in rows if item["media_type"] != "series"]
