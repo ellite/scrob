@@ -119,38 +119,6 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
             <p class="text-xs font-bold text-zinc-400 uppercase tracking-widest mt-3">
               {list.item_count} {list.item_count === 1 ? "item" : "items"}
             </p>
-            {list.is_watchlist && list.is_owner && (
-              <div id="watchlist-sync-info" class="mt-4 max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-sm text-zinc-400">
-                {activeServices.length > 0 ? (
-                  <>
-                    <p class="text-zinc-300 font-semibold mb-2">Synced with</p>
-                    <ul class="flex flex-wrap gap-2 mb-3">
-                      {activeServices.map((s) => (
-                        <li class="px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-xs text-zinc-300">
-                          {s.name} <span class="text-zinc-500">· {syncMode(s)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    <p class="text-xs text-zinc-500">
-                      Titles added or removed here are pushed to the services that push, and changes on a service come back here on its next sync. A service set to pull only never removes titles that came from somewhere else.
-                    </p>
-                  </>
-                ) : (
-                  <p>
-                    No service is syncing with your Watchlist yet. Turn on <span class="text-zinc-300">Watchlist</span> sync for Plex, Trakt, MDBList or Simkl in
-                    <a href="/connections" class="text-blue-400 hover:underline">Connections</a>.
-                  </p>
-                )}
-                {activeServices.length > 0 && (
-                  <p class="text-xs mt-2"><a href="/connections" class="text-blue-400 hover:underline">Change in Connections</a></p>
-                )}
-                {hasOldWatchlists && (
-                  <p class="text-xs text-zinc-500 mt-2">
-                    Your old per-service watchlists were merged into this one. The originals are kept on the Lists page as "… (old)" and no longer sync. Delete them once you've checked this list.
-                  </p>
-                )}
-              </div>
-            )}
           </div>
 
           <div class="flex gap-2 shrink-0">
@@ -425,6 +393,40 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
         <p id="items-filter-empty" class="hidden text-sm text-zinc-500 text-center py-10">No items match this filter.</p>
         {list.items.length === 0 && <div id="items-grid" class="hidden grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6"></div>}
       </div>
+
+      <!-- Watchlist sync info (owner only) -->
+      {list.is_watchlist && list.is_owner && (
+        <div id="watchlist-sync-info" class="mt-10 w-full rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-sm text-zinc-400">
+          {activeServices.length > 0 ? (
+            <>
+              <p class="text-zinc-300 font-semibold mb-2">Synced with</p>
+              <ul class="flex flex-wrap gap-2 mb-3">
+                {activeServices.map((s) => (
+                  <li class="px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-xs text-zinc-300">
+                    {s.name} <span class="text-zinc-500">· {syncMode(s)}</span>
+                  </li>
+                ))}
+              </ul>
+              <p class="text-xs text-zinc-500">
+                Titles added or removed here are pushed to the services that push, and changes on a service come back here on its next sync. A service set to pull only never removes titles that came from somewhere else.
+              </p>
+            </>
+          ) : (
+            <p>
+              No service is syncing with your Watchlist yet. Turn on <span class="text-zinc-300">Watchlist</span> sync for Plex, Trakt, MDBList or Simkl in
+              <a href="/connections" class="text-blue-400 hover:underline">Connections</a>.
+            </p>
+          )}
+          {activeServices.length > 0 && (
+            <p class="text-xs mt-2"><a href="/connections" class="text-blue-400 hover:underline">Change in Connections</a></p>
+          )}
+          {hasOldWatchlists && (
+            <p class="text-xs text-zinc-500 mt-2">
+              Your old per-service watchlists were merged into this one. The originals are kept on the Lists page as "… (old)" and no longer sync. Delete them once you've checked this list.
+            </p>
+          )}
+        </div>
+      )}
 
       <!-- Other Lists -->
       {otherLists.length > 0 && (
