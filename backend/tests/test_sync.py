@@ -1261,6 +1261,38 @@ class SyncRowCountMatchesProcessedTests(_PartialWatchDB):
             await db.refresh(job)
             self.assertEqual((job.processed_items, job.total_items), (4, 4))
 
+    async def test_sync_items_leaves_the_jobs_running_total_alone(self):
+        """The pull sizes total_items across every library and step, and
+        processed_items accumulates across sync_items calls, so one call must
+        not overwrite the total with its own row count (it ended at 10 / 4)."""
+        from models.collection import CollectionSource
+        from models.media import MediaType
+        from models.sync import SyncJob
+
+        items = [
+            {"Id": "file-1", "SeriesId": "s-1", "ParentIndexNumber": 1, "IndexNumber": 1, "IndexNumberEnd": 3},
+            {"Id": "file-2", "SeriesId": "s-1", "ParentIndexNumber": 1, "IndexNumber": 4},
+        ]
+        async with self.Session() as db:
+            # 6 movies already processed; 6 + 4 episode rows planned in total.
+            job = SyncJob(user_id=1, source=CollectionSource.jellyfin, total_items=10, processed_items=6)
+            db.add(job)
+            await db.commit()
+
+            await sync.sync_items(
+                items=items,
+                media_type=MediaType.episode,
+                source=CollectionSource.jellyfin,
+                db=db,
+                stats={"movies": 0, "episodes": 0, "skipped": 0, "errors": 0},
+                user_id=1,
+                job_id=job.id,
+                connection_id=7,
+            )
+
+            await db.refresh(job)
+            self.assertEqual((job.processed_items, job.total_items), (10, 10))
+
 
 class PushWatchedBackToSourceTests(_PartialWatchDB):
     def _conn(self, type_="jellyfin", push_watched=True):

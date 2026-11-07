@@ -2131,15 +2131,9 @@ async def sync_items(
     items = _expand_multi_episode_items(items, media_type, source)
     print(f"  Syncing {len(items)} {media_type.value}s from {source.value}...")
 
-    # Fix #497: multi-episode files have been expanded; update total_items to match
-    # the actual count sync_items will process, so the progress counter ends at 100%.
-    if job_id and source in (CollectionSource.jellyfin, CollectionSource.emby):
-        await db.execute(
-            update(SyncJob)
-            .where(SyncJob.id == job_id)
-            .values(total_items=len(items))
-        )
-        await db.commit()
+    # The caller sizes the job's total_items (see _sync_row_count for combined
+    # Jellyfin/Emby files, #497); processed_items accumulates across calls, so
+    # this must not overwrite the total with this call's row count.
 
     # ── Phase 1: Pre-load existing data (replaces all N+1 queries) ────────────
 
