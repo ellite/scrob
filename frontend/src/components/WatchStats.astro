@@ -1,0 +1,41 @@
+---
+import { formatWatchedDate } from "../lib/media-format";
+
+interface Props {
+  plays?: number;
+  watchTimeMinutes?: number;
+  lastWatchedAt?: string | null;
+  timeZone?: string;
+}
+
+const { plays = 0, watchTimeMinutes = 0, lastWatchedAt, timeZone } = Astro.props;
+const lastWatchedDate = formatWatchedDate(lastWatchedAt, timeZone);
+function formatMinutes(mins: number) {
+  const h = Math.round(mins / 60);
+  return h >= 48 ? `${(mins / 60 / 24).toFixed(1)}d` : `${h}h`;
+}
+
+const watchTimeLabel = watchTimeMinutes > 0 && watchTimeMinutes < 30
+  ? "<1h"
+  : formatMinutes(watchTimeMinutes);
+---
+
+{(plays > 0 || watchTimeMinutes > 0 || lastWatchedDate) && (
+  <div class="mb-6 flex flex-wrap items-center gap-2" role="group" aria-label="Your watch stats">
+    {plays > 0 && (
+      <span class="inline-flex items-center px-3 py-1.5 bg-zinc-900/70 border border-zinc-800 text-zinc-300 text-xs rounded-lg font-bold">
+        {plays} {plays === 1 ? "play" : "plays"}
+      </span>
+    )}
+    {watchTimeMinutes > 0 && (
+      <span class="inline-flex items-center px-3 py-1.5 bg-zinc-900/70 border border-zinc-800 text-zinc-300 text-xs rounded-lg font-bold">
+        {watchTimeLabel} watched
+      </span>
+    )}
+    {lastWatchedDate && (
+      <span class="inline-flex items-center px-3 py-1.5 bg-zinc-900/70 border border-zinc-800 text-zinc-300 text-xs rounded-lg font-bold">
+        Last watched {lastWatchedDate}
+      </span>
+    )}
+  </div>
+)}
