@@ -1017,6 +1017,14 @@ async def update_list(
     if not lst:
         raise HTTPException(status_code=404, detail="List not found")
 
+    if lst.is_watchlist:
+        # The watchlist keeps its name and stays private: it is the hub the
+        # services sync with, not a list to share or label.
+        if body.name is not None and body.name != lst.name:
+            raise HTTPException(status_code=400, detail="The watchlist can't be renamed")
+        if body.privacy_level is not None and body.privacy_level != lst.privacy_level:
+            raise HTTPException(status_code=400, detail="The watchlist is always private")
+
     if body.name is not None:
         lst.name = body.name
     if body.description is not None:

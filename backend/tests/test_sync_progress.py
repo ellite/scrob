@@ -152,11 +152,12 @@ class SyncItemsBatchBoundarySkipTests(_TestDB):
 
 
 class SyncItemsMultiEpisodeProgressTests(_TestDB):
-    """Regression test for #497: multi-episode files are expanded after total_items
-    is set, causing processed_items to exceed total_items and finish above 100%."""
+    """Regression test for #497: multi-episode files expand into one row each, so
+    the pull sizes total_items with _sync_row_count (not len(items)) and sync_items
+    leaves that total alone. Otherwise processed_items exceeds it above 100%."""
 
     async def test_multi_episode_expansion_updates_total_items(self):
-        """After expanding multi-episode files, total_items should be updated."""
+        """A job sized by _sync_row_count ends at exactly its total."""
         async with self.Session() as db:
             # Create a show
             show = Show(tmdb_id=1396, title="Breaking Bad")
@@ -164,10 +165,10 @@ class SyncItemsMultiEpisodeProgressTests(_TestDB):
             await db.commit()
             show_id = show.id
 
-            # Create a sync job with initial count of 1 (the unexpanded file)
+            # The pull sizes the job by the expanded row count: 3, not 1 file.
             job = SyncJob(
                 user_id=1, source=CollectionSource.jellyfin, status=SyncStatus.running,
-                processed_items=0, total_items=1
+                processed_items=0, total_items=3
             )
             db.add(job)
             await db.commit()
@@ -204,9 +205,9 @@ class SyncItemsMultiEpisodeProgressTests(_TestDB):
 
             await db.refresh(job)
 
-            # total_items should have been updated from 1 to 3 after expansion
+            # sync_items must leave the total the pull set alone
             self.assertEqual(job.total_items, 3,
-                "total_items should be updated after multi-episode expansion")
+                "total_items should stay at the expanded row count")
             # All 3 expanded episodes should be processed
             self.assertEqual(job.processed_items, 3,
                 "processed_items should count all expanded episodes")

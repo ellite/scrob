@@ -642,5 +642,53 @@ class ClearAllListsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tables, ["lists", "user_settings", "media_server_connections"])
 
 
+class UpdateWatchlistTests(unittest.IsolatedAsyncioTestCase):
+    def _db(self, lst):
+        found = SimpleNamespace(scalar_one_or_none=lambda: lst, scalar_one=lambda: lst)
+        return SimpleNamespace(execute=AsyncMock(return_value=found), commit=AsyncMock())
+
+    def _watchlist(self):
+        return SimpleNamespace(
+            id=3, user_id=7, name="Watchlist", description=None, privacy_level="private",
+            is_watchlist=True, items=[], trakt_slug=None, mdblist_slug=None,
+        )
+
+    async def test_watchlist_cannot_be_renamed(self) -> None:
+        from fastapi import HTTPException
+        from routers.lists import ListUpdate
+
+        lst = self._watchlist()
+        with self.assertRaises(HTTPException) as ctx:
+            await lists.update_list(3, ListUpdate(name="Mine"), db=self._db(lst), current_user=SimpleNamespace(id=7))
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(lst.name, "Watchlist")
+
+    async def test_watchlist_cannot_be_made_public(self) -> None:
+        from fastapi import HTTPException
+        from routers.lists import ListUpdate
+
+        lst = self._watchlist()
+        with self.assertRaises(HTTPException) as ctx:
+            await lists.update_list(3, ListUpdate(privacy_level="public"), db=self._db(lst), current_user=SimpleNamespace(id=7))
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(lst.privacy_level, "private")
+
+    async def test_watchlist_accepts_unchanged_values_and_a_description(self) -> None:
+        from routers.lists import ListUpdate
+
+        lst = self._watchlist()
+        db = self._db(lst)
+        with patch.object(lists, "_format_list", return_value={}):
+            await lists.update_list(
+                3, ListUpdate(name="Watchlist", privacy_level="private", description="Things to watch"),
+                db=db, current_user=SimpleNamespace(id=7),
+            )
+
+        self.assertEqual(lst.description, "Things to watch")
+        db.commit.assert_awaited_once()
+
+
 if __name__ == "__main__":
     unittest.main()
