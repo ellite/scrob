@@ -1,5 +1,5 @@
 import { defineMiddleware } from "astro:middleware";
-import { api } from "./lib/api";
+import { api, requestContext } from "./lib/api";
 import { paraglideMiddleware } from "./paraglide/server.js";
 import { cookieMaxAge, cookieName, isLocale } from "./paraglide/runtime.js";
 import { setAccountLocale, withRequestRegion } from "./lib/ui-locale";
@@ -70,7 +70,16 @@ const SECURITY_HEADERS: Record<string, string> = {
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 };
 
-export const onRequest = defineMiddleware(async (context, next) => {
+export const onRequest = defineMiddleware((context, next) =>
+  // Every backend call made while rendering this request (api.ts) forwards
+  // the browser's Accept-Language, see requestContext in lib/api.ts (#538).
+  requestContext.run(
+    { acceptLanguage: context.request.headers.get("accept-language") },
+    () => handleRequest(context, next),
+  ),
+);
+
+const handleRequest: Parameters<typeof defineMiddleware>[0] = async (context, next) => {
   const token = context.cookies.get("token")?.value;
   const { pathname } = context.url;
 
@@ -230,7 +239,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // cookie strategy never triggers), so declare it here: a shared cache in front
   // of Scrob - nginx, a CDN - would otherwise serve one user's language to the
   // next. Merged rather than overwritten so an upstream Vary survives.
-  // HTML only: the proxy's JSON and images don't depend on either. Vary: Cookie
+  // HTML only: the proxy's images don't depend on either, and its JSON adds its
+  // own Vary: Accept-Language (api/proxy/[...path].ts, #538). Vary: Cookie
   // on a poster served `immutable` ties its cache entry to every cookie the
   // browser sends (session token, viewer_tz, ...): the browser refetches it
   // whenever one of them changes, and a shared cache keeps a copy per session.
@@ -241,4 +251,4 @@ export const onRequest = defineMiddleware(async (context, next) => {
     response.headers.set("Vary", [...vary].join(", "));
   }
   return response;
-});
+};
