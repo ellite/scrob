@@ -2,6 +2,7 @@
 import Base from "../layouts/Base.astro";
 import { api } from "../lib/api";
 import type { TotpBackupCode, OidcIdentity } from "../lib/api";
+import { connectionIconHtml } from "../lib/connectionIcons";
 
 const { token } = Astro.locals;
 const [settings, me] = await Promise.all([
@@ -44,172 +45,169 @@ try {
           <h2 class="section-headline">General</h2>
         </div>
         <form id="settings-form" class="space-y-6">
-          <div class="space-y-6 max-w-xl">
-          <!-- TMDB Read Access Token -->
-          <div class="space-y-2">
-            <label for="tmdb_api_key" class="block text-sm font-medium text-zinc-400">TMDB Read Access Token</label>
-            <div class="flex gap-2">
-              <div class="relative flex-1 group/field">
-                <input
-                  type="password"
-                  name="tmdb_api_key"
-                  id="tmdb_api_key"
-                  value={settings.tmdb_api_key || ""}
-                  class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                />
-                <button
-                  type="button"
-                  class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
-                  aria-label="Toggle password visibility"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-                  </svg>
-                </button>
+          <div class="space-y-3">
+          <!-- TMDB -->
+          <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+            <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="tmdb-body">
+              <div class="flex items-center gap-4 pointer-events-none">
+                <Fragment set:html={connectionIconHtml("themoviedatabase")} />
+                <div class="flex flex-col gap-0.5">
+                  <span class="font-medium text-zinc-200">TMDB</span>
+                  <span id="tmdb-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
+                </div>
               </div>
-              <button
-                type="button"
-                data-action="test_tmdb"
-                title="Test TMDB token"
-                class="js-action-btn px-3 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
+              <div class="flex items-center gap-2">
+                <div onclick="event.stopPropagation()">
+                  <button type="button" data-action="test_tmdb" title="Test TMDB token" class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">Test</button>
+                </div>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                 </svg>
-              </button>
+              </div>
             </div>
-            {settings.has_global_tmdb_key && !settings.tmdb_api_key ? (
-              <p class="text-xs text-blue-400">A server-wide TMDB token is configured by your admin. You can leave this blank to use it, or enter your own token to override it.</p>
-            ) : settings.has_global_tmdb_key && settings.tmdb_api_key ? (
-              <p class="text-xs text-blue-400">A server-wide TMDB token is configured, but you are using your own token. Clear this field to fall back to the server token.</p>
-            ) : (
-              <p class="text-xs text-zinc-500">Paste the API Read Access Token (v4) from TMDB Settings → API. Required for metadata and posters; validated before saving.</p>
-            )}
+            <div id="tmdb-body" class="border-t border-zinc-800 hidden">
+              <div class="px-6 py-6">
+                <div class="space-y-2 max-w-md">
+                <label for="tmdb_api_key" class="block text-sm font-medium text-zinc-400">Read Access Token</label>
+                <div class="relative group/field">
+                  <input
+                    type="password"
+                    name="tmdb_api_key"
+                    id="tmdb_api_key"
+                    value={settings.tmdb_api_key || ""}
+                    class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                  />
+                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle password visibility">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+                  </button>
+                </div>
+              {settings.has_global_tmdb_key && !settings.tmdb_api_key ? (
+                <p class="text-xs text-blue-400">A server-wide TMDB token is configured by your admin. You can leave this blank to use it, or enter your own token to override it.</p>
+              ) : settings.has_global_tmdb_key && settings.tmdb_api_key ? (
+                <p class="text-xs text-blue-400">A server-wide TMDB token is configured, but you are using your own token. Clear this field to fall back to the server token.</p>
+              ) : (
+                <p class="text-xs text-zinc-500">Paste the API Read Access Token (v4) from TMDB Settings → API. Required for metadata and posters; validated before saving.</p>
+              )}
+                </div>
+              </div>
+            </div>
           </div>
 
-          <!-- TVDB API Key -->
-          <div class="space-y-2">
-            <label for="tvdb_api_key" class="block text-sm font-medium text-zinc-400">TVDB API Key</label>
-            <div class="flex gap-2">
-              <div class="relative flex-1 group/field">
-                <input
-                  type="password"
-                  name="tvdb_api_key"
-                  id="tvdb_api_key"
-                  value={settings.tvdb_api_key || ""}
-                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                />
-                <button
-                  type="button"
-                  class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
-                  aria-label="Toggle password visibility"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-                  </svg>
-                </button>
+          <!-- TVDB -->
+          <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+            <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="tvdb-body">
+              <div class="flex items-center gap-4 pointer-events-none">
+                <Fragment set:html={connectionIconHtml("tvdb")} />
+                <div class="flex flex-col gap-0.5">
+                  <span class="font-medium text-zinc-200">TVDB</span>
+                  <span id="tvdb-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
+                </div>
               </div>
-              <button
-                type="button"
-                data-action="test_tvdb"
-                title="Test TVDB key"
-                class="js-action-btn px-3 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
+              <div class="flex items-center gap-2">
+                <div onclick="event.stopPropagation()">
+                  <button type="button" data-action="test_tvdb" title="Test TVDB key" class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">Test</button>
+                </div>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                 </svg>
-              </button>
+              </div>
             </div>
-            {settings.has_global_tvdb_key && !settings.tvdb_api_key ? (
-              <p class="text-xs text-blue-400">A server-wide TVDB key is configured by your admin.</p>
-            ) : settings.has_global_tvdb_key && settings.tvdb_api_key ? (
-              <p class="text-xs text-blue-400">A server-wide TVDB key is configured, but you are using your own key.</p>
-            ) : null}
+            <div id="tvdb-body" class="border-t border-zinc-800 hidden">
+              <div class="px-6 py-6">
+                <div class="space-y-2 max-w-md">
+                <label for="tvdb_api_key" class="block text-sm font-medium text-zinc-400">API Key</label>
+                <div class="relative group/field">
+                  <input
+                    type="password"
+                    name="tvdb_api_key"
+                    id="tvdb_api_key"
+                    value={settings.tvdb_api_key || ""}
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                  />
+                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle password visibility">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+                  </button>
+                </div>
+              {settings.has_global_tvdb_key && !settings.tvdb_api_key ? (
+                <p class="text-xs text-blue-400">A server-wide TVDB key is configured by your admin.</p>
+              ) : settings.has_global_tvdb_key && settings.tvdb_api_key ? (
+                <p class="text-xs text-blue-400">A server-wide TVDB key is configured, but you are using your own key.</p>
+              ) : null}
 
-            <label for="tvdb_subscriber_pin" class="block text-sm font-medium text-zinc-400 pt-2">TVDB Subscriber PIN <span class="text-zinc-600">(optional)</span></label>
-            <div class="relative group/field">
-              <input
-                type="password"
-                name="tvdb_subscriber_pin"
-                id="tvdb_subscriber_pin"
-                value={settings.tvdb_subscriber_pin || ""}
-                placeholder="Only for a subscriber-supported key"
-                class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-              />
-              <button
-                type="button"
-                class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
-                aria-label="Toggle password visibility"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-                </svg>
-              </button>
-            </div>
-
-            <div class="text-xs text-zinc-500 space-y-1 pt-1">
-              <p>Powers shows and episodes not on TMDB, TVDB-ordered (absolute / anime) episode mapping, and matching unmatched local episodes. Without a key those fall back to TMDB only.</p>
-              <p>
-                Create a free <span class="text-zinc-400">project</span> key at
-                <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">thetvdb.com/api-information</a>
-                (key only, no PIN; requires attribution, which Scrob shows on TVDB pages). A <span class="text-zinc-400">subscriber-supported</span> key also needs your account's subscriber PIN above.
-              </p>
+                <label for="tvdb_subscriber_pin" class="block text-sm font-medium text-zinc-400 pt-3">Subscriber PIN <span class="text-zinc-600">(optional)</span></label>
+                <div class="relative group/field">
+                  <input
+                    type="password"
+                    name="tvdb_subscriber_pin"
+                    id="tvdb_subscriber_pin"
+                    value={settings.tvdb_subscriber_pin || ""}
+                    placeholder="Only for a subscriber-supported key"
+                    class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                  />
+                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle password visibility">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+                  </button>
+                </div>
+              <div class="text-xs text-zinc-500 space-y-1 pt-1">
+                <p>Powers shows and episodes not on TMDB, TVDB-ordered (absolute / anime) episode mapping, and matching unmatched local episodes. Without a key those fall back to TMDB only.</p>
+                <p>
+                  Create a free <span class="text-zinc-400">project</span> key at
+                  <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">thetvdb.com/api-information</a>
+                  (key only, no PIN; requires attribution, which Scrob shows on TVDB pages). A <span class="text-zinc-400">subscriber-supported</span> key also needs your account's subscriber PIN above.
+                </p>
+              </div>
+                </div>
+              </div>
             </div>
           </div>
-          <!-- RPDB API Key -->
-          <div class="space-y-2">
-            <label for="rpdb_api_key" class="block text-sm font-medium text-zinc-400">RPDB API Key</label>
-            <div class="flex gap-2">
-              <div class="relative flex-1 group/field">
-                <input
-                  type="password"
-                  name="rpdb_api_key"
-                  id="rpdb_api_key"
-                  value={settings.rpdb_api_key || ""}
-                  maxlength="255"
-                  class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                />
-                <button
-                  type="button"
-                  class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
-                  aria-label="Toggle password visibility"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-                  </svg>
-                </button>
+
+          <!-- RPDB -->
+          <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+            <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target="rpdb-body">
+              <div class="flex items-center gap-4 pointer-events-none">
+                <Fragment set:html={connectionIconHtml("rpdb")} />
+                <div class="flex flex-col gap-0.5">
+                  <span class="font-medium text-zinc-200">RPDB</span>
+                  <span id="rpdb-conn-status" class="hidden text-xs font-normal px-1.5 py-0.5 rounded self-start pointer-events-auto"></span>
+                </div>
               </div>
-              <button
-                type="button"
-                data-action="test_rpdb"
-                title="Test RPDB key"
-                class="js-action-btn px-3 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
+              <div class="flex items-center gap-2">
+                <div onclick="event.stopPropagation()">
+                  <button type="button" data-action="test_rpdb" title="Test RPDB key" class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50">Test</button>
+                </div>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="collapsible-chevron w-4 h-4 text-zinc-500 transition-transform pointer-events-none ml-1 shrink-0">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                 </svg>
-              </button>
+              </div>
             </div>
-            <div class="text-xs text-zinc-500 space-y-1">
-              <p>Optional personal key for rating posters. Leave blank to disable and use original artwork. Scrob fetches the posters from RPDB server-side, so your key is never exposed in the page.</p>
-              <p>Choose poster style and ratings in the <a href="https://manager.ratingposterdb.com/" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">RPDB manager</a>. Feature availability for your current plan is managed by RPDB.</p>
+            <div id="rpdb-body" class="border-t border-zinc-800 hidden">
+              <div class="px-6 py-6">
+                <div class="space-y-2 max-w-md">
+                <label for="rpdb_api_key" class="block text-sm font-medium text-zinc-400">API Key</label>
+                <div class="relative group/field">
+                  <input
+                    type="password"
+                    name="rpdb_api_key"
+                    id="rpdb_api_key"
+                    value={settings.rpdb_api_key || ""}
+                    maxlength="255"
+                    class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                  />
+                  <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle password visibility">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+                  </button>
+                </div>
+              <div class="text-xs text-zinc-500 space-y-1">
+                <p>Optional personal key for rating posters. Leave blank to disable and use original artwork. Scrob fetches the posters from RPDB server-side, so your key is never exposed in the page.</p>
+                <p>Choose poster style and ratings in the <a href="https://manager.ratingposterdb.com/" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">RPDB manager</a>. Feature availability for your current plan is managed by RPDB.</p>
+              </div>
+                </div>
+              </div>
             </div>
           </div>
           </div>
@@ -1354,7 +1352,34 @@ try {
     });
   }
 
+  function setConnStatus(id: string, state: 'checking' | 'connected' | 'disconnected') {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('hidden');
+    if (state === 'checking') {
+      el.textContent = 'Checking…';
+      el.className = 'text-xs font-normal px-1.5 py-0.5 rounded self-start bg-zinc-700 text-zinc-400';
+    } else if (state === 'connected') {
+      el.textContent = '● Connected';
+      el.className = 'text-xs font-normal px-1.5 py-0.5 rounded self-start bg-green-500/15 text-green-400';
+    } else {
+      el.textContent = '● Disconnected';
+      el.className = 'text-xs font-normal px-1.5 py-0.5 rounded self-start bg-red-500/15 text-red-400';
+    }
+  }
+
   function setupActions() {
+    document.querySelectorAll('.collapsible-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const targetId = header.getAttribute('data-target');
+        const body = targetId ? document.getElementById(targetId) : null;
+        if (!body) return;
+        const isOpen = !body.classList.contains('hidden');
+        body.classList.toggle('hidden', isOpen);
+        header.querySelector('.collapsible-chevron')?.classList.toggle('rotate-180', !isOpen);
+      });
+    });
+
     const btns = document.querySelectorAll('.js-action-btn');
     btns.forEach(btn => {
       // Clean up previous listeners if any (important for Astro View Transitions)
@@ -1368,6 +1393,8 @@ try {
         newBtn.disabled = true;
         const originalHTML = newBtn.innerHTML;
         newBtn.textContent = '...';
+        const statusId = action?.startsWith('test_') ? `${action.slice(5)}-conn-status` : '';
+        if (statusId) setConnStatus(statusId, 'checking');
 
         try {
           let url = '';
@@ -1403,11 +1430,13 @@ try {
           }
 
           if (res.ok) {
+            if (statusId) setConnStatus(statusId, 'connected');
             showMessage(data.message || 'Action successful!');
           } else {
             throw new Error(data.detail || 'Action failed');
           }
         } catch (e) {
+          if (statusId) setConnStatus(statusId, 'disconnected');
           showMessage(e.message, 'error');
         } finally {
           newBtn.disabled = false;
