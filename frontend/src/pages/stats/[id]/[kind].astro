@@ -1,0 +1,110 @@
+---
+import Base from "../../../layouts/Base.astro";
+import { tmdbImageUrl } from "../../../lib/api";
+
+export const prerender = false;
+
+const { id, kind } = Astro.params;
+const { token } = Astro.locals;
+Astro.response.headers.set("Cache-Control", "no-store");
+
+if (kind !== "shows" && kind !== "movies") return Astro.redirect(`/stats/${id}`);
+
+interface MostPlayedItem {
+  title: string | null;
+  poster_path: string | null;
+  tmdb_id: number | null;
+  plays: number;
+  minutes: number;
+}
+
+const since = Astro.url.searchParams.get("since");
+const until = Astro.url.searchParams.get("until");
+const periodQuery = new URLSearchParams();
+if (since) periodQuery.set("since", since);
+if (until) periodQuery.set("until", until);
+const periodQs = periodQuery.toString();
+
+const apiUrl = new URL(`http://localhost:${import.meta.env.BACKEND_PORT ?? "7331"}/profile/${id}/most-played`);
+apiUrl.searchParams.set("kind", kind);
+if (since) apiUrl.searchParams.set("since", since);
+if (until) apiUrl.searchParams.set("until", until);
+
+let accessError = "";
+let items: MostPlayedItem[] = [];
+
+try {
+  const res = await fetch(apiUrl, token ? { headers: { Authorization: `Bearer ${token}` } } : {});
+  if (res.status === 404) accessError = "User not found.";
+  else if (res.status === 403) accessError = "This profile is private.";
+  else if (!res.ok) accessError = "Failed to load this list.";
+  else items = await res.json();
+} catch {
+  accessError = "Failed to load this list.";
+}
+
+const title = kind === "shows" ? "Most Played Shows" : "Most Played Movies";
+const periodLabel = since || until ? `${since ?? "start"} – ${until ?? "today"}` : "All time";
+
+function fmtMinutes(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+}
+
+function itemHref(item: MostPlayedItem): string {
+  return kind === "shows" ? `/show/${item.tmdb_id}` : `/media/movie/${item.tmdb_id}`;
+}
+---
+
+<Base title={title}>
+  {accessError ? (
+    <div class="max-w-md mx-auto mt-20 text-center">
+      <div class="bg-zinc-900/50 border border-zinc-800 p-10 rounded-3xl">
+        <div class="w-20 h-20 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-6">
+          <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-zinc-500"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <h2 class="text-2xl font-black text-zinc-100 mb-2">Access Restricted</h2>
+        <p class="text-zinc-400 font-medium mb-8">{accessError}</p>
+        <a href="/" class="px-6 py-3 bg-sky-600 hover:bg-sky-500 text-white font-black rounded-xl transition-all inline-block">
+          Return Home
+        </a>
+      </div>
+    </div>
+  ) : (
+    <div class="max-w-5xl mx-auto py-8 space-y-8">
+      <div>
+        <a href={`/stats/${id}${periodQs ? "?" + periodQs : ""}`} class="text-xs font-bold text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition flex items-center gap-1.5 mb-3">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+          Statistics
+        </a>
+        <h1 class="page-title">{title}</h1>
+        <p class="text-sm text-zinc-500 mt-2">{periodLabel} · {items.length} {kind === "shows" ? (items.length === 1 ? "show" : "shows") : (items.length === 1 ? "movie" : "movies")}</p>
+      </div>
+
+      {items.length === 0 ? (
+        <p class="text-zinc-500 font-medium">No plays in this period.</p>
+      ) : (
+        <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4">
+          {items.map((item, i) => {
+            const poster = tmdbImageUrl(item.poster_path, "w342");
+            return (
+              <a href={itemHref(item)} class="group block">
+                <div class="relative aspect-[2/3] rounded-xl overflow-hidden bg-zinc-800">
+                  {poster ? (
+                    <img src={poster} alt={item.title ?? ""} loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                  ) : (
+                    <div class="w-full h-full flex items-center justify-center p-2 text-center text-xs text-zinc-400">{item.title}</div>
+                  )}
+                  <span class="absolute top-2 left-2 text-[11px] font-black text-white bg-black/60 rounded-md px-1.5 py-0.5">{i + 1}</span>
+                </div>
+                <div class="text-xs text-zinc-300 font-semibold mt-1.5 truncate">{item.title}</div>
+                <div class="text-[11px] text-zinc-500">{item.plays} play{item.plays === 1 ? "" : "s"} · {fmtMinutes(item.minutes)}</div>
+              </a>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  )}
+</Base>

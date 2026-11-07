@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from routers import profile
+from routers.profile import common as profile
 
 
 @pytest.mark.asyncio
