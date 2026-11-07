@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func, Enum as SQLEnum
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, text, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, PrivacyLevel
@@ -23,6 +23,9 @@ class List(Base):
     tmdb_list_id : Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Same idea, for a list imported from TheTVDB (#442 follow-up).
     tvdb_list_id : Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Scrob's own watchlist: one per user, can't be deleted. Every service's
+    # watchlist syncs with it (core/native_watchlist.py).
+    is_watchlist : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     # IMDb list ids have an ``ls`` prefix and are therefore stored as text.
     imdb_list_id : Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     # WeTrakr's own numeric list id — links a local List to the remote one it
@@ -35,6 +38,13 @@ class List(Base):
 
     user  : Mapped["User"]         = relationship(back_populates="lists")
     items : Mapped[list["ListItem"]] = relationship(back_populates="list", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index(
+            "uq_lists_user_watchlist", "user_id", unique=True,
+            postgresql_where=text("is_watchlist"), sqlite_where=text("is_watchlist"),
+        ),
+    )
 
 
 class ListItem(Base):
