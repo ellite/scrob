@@ -126,6 +126,36 @@ class CircuitBreakerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(tmdb._breaker_blocked())
 
 
+class SharedClientTests(unittest.IsolatedAsyncioTestCase):
+    """Inside the app lifespan every call reuses one pooled client (and its
+    keep-alive connections); after shutdown _get falls back to a client per call."""
+
+    async def asyncTearDown(self) -> None:
+        await tmdb.close_client()
+
+    async def test_calls_share_the_lifespan_client_then_fall_back_after_close(self) -> None:
+        requests: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(1)
+            return httpx.Response(200, json={"id": 1})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            tmdb.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
+        ) as client_cls:
+            tmdb.init_client()
+            await tmdb.get_show(1, api_key="k", cache_ttl=None)
+            await tmdb.get_show(2, api_key="k", cache_ttl=None)
+            self.assertEqual(client_cls.call_count, 1)
+
+            await tmdb.close_client()
+            await tmdb.get_show(3, api_key="k", cache_ttl=None)
+            self.assertEqual(client_cls.call_count, 2)
+
+        self.assertEqual(len(requests), 3)
+
+
 class DiscoverGenreIdsTests(unittest.IsolatedAsyncioTestCase):
     """Regression tests for multi-genre selection on Explore Movies/Shows:
     TMDB's discover endpoints OR multiple genres together via a "|"-joined

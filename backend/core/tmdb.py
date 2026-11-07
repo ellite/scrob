@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import time
 import httpx
 from core.config import settings
@@ -89,6 +90,29 @@ class _TTLCache:
 
 _cache = _TTLCache()
 
+# One pooled client for the whole process, opened and closed by main.lifespan:
+# a client per call rebuilt its TLS context (blocking the event loop) and paid
+# DNS + TCP + TLS on every request. keepalive_expiry must stay below TMDB's
+# edge idle timeout (~3 min). No connection cap, as before: a pool wait would
+# count against _HTTP_TIMEOUT and could trip the breaker.
+_client: httpx.AsyncClient | None = None
+
+
+def init_client() -> None:
+    global _client
+    _client = httpx.AsyncClient(
+        timeout=httpx.Timeout(_HTTP_TIMEOUT),
+        limits=httpx.Limits(max_connections=None, keepalive_expiry=120.0),
+    )
+
+
+async def close_client() -> None:
+    global _client
+    # Cleared first: a call racing shutdown falls back instead of using a closed client.
+    client, _client = _client, None
+    if client is not None:
+        await client.aclose()
+
 
 def get_headers(api_key: str = None) -> dict:
     key = api_key or getattr(settings, 'tmdb_api_key', None)
@@ -132,7 +156,9 @@ async def _get(
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(_HTTP_TIMEOUT)) as client:
+            # No shared client outside the app lifespan (unit tests, scripts).
+            async with (contextlib.nullcontext(_client) if _client is not None
+                        else httpx.AsyncClient(timeout=httpx.Timeout(_HTTP_TIMEOUT))) as client:
                 r = await client.get(url, headers=headers or {}, params=params)
                 if r.status_code == 429:
                     wait = int(r.headers.get("Retry-After", 2 ** (attempt + 1)))
