@@ -1,4 +1,3 @@
-from collections import defaultdict
 from datetime import date as DateType, timedelta as TimeDelta
 from typing import Literal, Optional
 
@@ -8,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_db
 from dependencies import get_optional_user_or_api_key
+from models.base import MediaType
 from models.events import WatchEvent
 from models.media import Media
 from models.show import Show as ShowModel
@@ -38,61 +38,68 @@ def _watch_date_filters(since: Optional[DateType], until: Optional[DateType]) ->
     return date_filters
 
 
-def _rank_top_media(top_rows, show_meta: dict[int, dict]) -> tuple[list[dict], list[dict]]:
-    per_show: dict[int, dict] = defaultdict(lambda: {"plays": 0, "minutes": 0, "episodes": set()})
-    per_movie: dict[int, dict] = {}
-    for media_type, mid, m_title, m_poster, m_tmdb_id, show_id, runtime in top_rows:
-        minutes = runtime or 0
-        if media_type == "episode" and show_id:
-            s = per_show[show_id]
-            s["plays"] += 1
-            s["minutes"] += minutes
-            s["episodes"].add(mid)
-        elif media_type == "movie":
-            m = per_movie.setdefault(mid, {
-                "title": m_title, "poster_path": m_poster, "tmdb_id": m_tmdb_id,
-                "plays": 0, "minutes": 0,
-            })
-            m["plays"] += 1
-            m["minutes"] += minutes
+async def _top_media(
+    db: AsyncSession, user_id: int, date_filters: list, limit: Optional[int] = None,
+) -> tuple[list[dict], list[dict]]:
+    """Most played shows and movies, ranked by plays then minutes. Each watch
+    event is one play, so rewatches add up. The counting happens in the
+    database (one row per title comes back, not one per play), and `limit`
+    keeps only the top N of each."""
+    plays = func.count(WatchEvent.id)
+    minutes = func.coalesce(func.sum(_effective_runtime()), 0)
 
-    top_shows = sorted(
-        ({**show_meta.get(sid, {"title": None, "poster_path": None, "tmdb_id": None, "tvdb_id": None}),
-          "plays": s["plays"], "minutes": s["minutes"], "episodes": len(s["episodes"])}
-         for sid, s in per_show.items()),
-        key=lambda x: (x["plays"], x["minutes"]), reverse=True,
+    movies_query = (
+        select(Media.id, Media.title, Media.poster_path, Media.tmdb_id, plays.label("plays"), minutes.label("minutes"))
+        .join(WatchEvent, WatchEvent.media_id == Media.id)
+        .where(WatchEvent.user_id == user_id, Media.media_type == MediaType.movie, *date_filters)
+        .group_by(Media.id)
+        .order_by(plays.desc(), minutes.desc(), Media.id)
     )
-    top_movies = sorted(per_movie.values(), key=lambda x: (x["plays"], x["minutes"]), reverse=True)
-    return top_shows, top_movies
-
-
-async def _top_media(db: AsyncSession, user_id: int, date_filters: list) -> tuple[list[dict], list[dict]]:
-    effective_runtime = _effective_runtime()
-    top_rows = (await db.execute(
+    shows_query = (
         select(
-            Media.media_type, Media.id, Media.title, Media.poster_path,
-            Media.tmdb_id, Media.show_id, effective_runtime.label("runtime"),
+            Media.show_id, plays.label("plays"), minutes.label("minutes"),
+            func.count(func.distinct(Media.id)).label("episodes"),
         )
         .join(WatchEvent, WatchEvent.media_id == Media.id)
         .where(
             WatchEvent.user_id == user_id,
-            Media.media_type.in_(["movie", "episode"]),
+            Media.media_type == MediaType.episode,
+            Media.show_id.isnot(None),
             *date_filters,
         )
-    )).all()
+        .group_by(Media.show_id)
+        .order_by(plays.desc(), minutes.desc(), Media.show_id)
+    )
+    if limit:
+        movies_query = movies_query.limit(limit)
+        shows_query = shows_query.limit(limit)
 
-    show_ids = {show_id for media_type, _, _, _, _, show_id, _ in top_rows if media_type == "episode" and show_id}
+    movie_rows = (await db.execute(movies_query)).all()
+    show_rows = (await db.execute(shows_query)).all()
+
     show_meta: dict[int, dict] = {}
-    if show_ids:
-        top_show_rows = (await db.execute(
-            select(ShowModel).where(ShowModel.id.in_(show_ids))
+    if show_rows:
+        shows = (await db.execute(
+            select(ShowModel).where(ShowModel.id.in_([row.show_id for row in show_rows]))
         )).scalars().all()
-        for sh in top_show_rows:
+        for sh in shows:
             show_meta[sh.id] = {
                 "title": sh.title, "poster_path": sh.poster_path,
                 "tmdb_id": sh.tmdb_id, "tvdb_id": sh.tvdb_id,
             }
-    return _rank_top_media(top_rows, show_meta)
+
+    empty_show = {"title": None, "poster_path": None, "tmdb_id": None, "tvdb_id": None}
+    top_shows = [
+        {**show_meta.get(row.show_id, empty_show),
+         "plays": row.plays, "minutes": int(row.minutes), "episodes": row.episodes}
+        for row in show_rows
+    ]
+    top_movies = [
+        {"title": row.title, "poster_path": row.poster_path, "tmdb_id": row.tmdb_id,
+         "plays": row.plays, "minutes": int(row.minutes)}
+        for row in movie_rows
+    ]
+    return top_shows, top_movies
 
 
 @router.get("/{user_id}/most-played")

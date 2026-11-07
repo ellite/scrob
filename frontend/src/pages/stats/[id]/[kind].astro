@@ -14,6 +14,7 @@ interface MostPlayedItem {
   title: string | null;
   poster_path: string | null;
   tmdb_id: number | null;
+  tvdb_id?: number | null;
   plays: number;
   minutes: number;
 }
@@ -53,7 +54,10 @@ function fmtMinutes(min: number): string {
 }
 
 function itemHref(item: MostPlayedItem): string {
-  return kind === "shows" ? `/show/${item.tmdb_id}` : `/media/movie/${item.tmdb_id}`;
+  if (kind === "movies") return item.tmdb_id ? `/media/movie/${item.tmdb_id}` : "#";
+  // A TVDB-only show has no TMDB id; it lives under /show/tvdb/<id>.
+  if (item.tmdb_id) return `/show/${item.tmdb_id}`;
+  return item.tvdb_id ? `/show/tvdb/${item.tvdb_id}` : "#";
 }
 ---
 

@@ -305,7 +305,7 @@ async def get_user_stats(
     if current_user and current_user.id == user_id:
         await maybe_backfill_credits(db, user_id)
 
-    top_shows, top_movies = await _top_media(db, user_id, date_filters)
+    top_shows, top_movies = await _top_media(db, user_id, date_filters, limit=12)
     # Networks come from the same instance-wide TMDB credits cache as the people
     # stats below (core/credits.py) - it already fetches a full show response per
     # watched title, so this reuses that instead of relying on Show.tmdb_data
@@ -339,8 +339,8 @@ async def get_user_stats(
         "shows_watched_collected": shows_watched_collected,
         "shows_unwatched_collected": max(shows_collected - shows_watched_collected, 0),
         # Top titles & people (#124)
-        "top_shows": top_shows[:12],
-        "top_movies": top_movies[:12],
+        "top_shows": top_shows,
+        "top_movies": top_movies,
         "top_networks": top_networks,
         "top_people": top_people,
     }
