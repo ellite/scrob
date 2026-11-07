@@ -9,7 +9,12 @@ TMDB_BASE_V4 = "https://api.themoviedb.org/4"
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
 
 # Errors that are worth retrying (transient). 404/4xx are permanent — don't retry.
-_RETRYABLE = (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError)
+# ReadError/WriteError cover a kept-alive connection that went stale (reset by
+# TMDB's edge or a NAT/proxy in between): the retry opens a fresh one.
+_RETRYABLE = (
+    httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError,
+    httpx.ReadError, httpx.WriteError,
+)
 
 DEFAULT_CACHE_TTL = 1800  # 30 minutes — TMDB metadata/discovery results don't need to be fresher than this
 

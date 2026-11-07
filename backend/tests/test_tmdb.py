@@ -126,6 +126,36 @@ class CircuitBreakerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(tmdb._breaker_blocked())
 
 
+class StaleConnectionRetryTests(unittest.IsolatedAsyncioTestCase):
+    """A reused keep-alive connection can be reset under us; that must be
+    retried on a fresh connection, not surface as an error."""
+
+    def setUp(self) -> None:
+        tmdb._cache._store.clear()
+        tmdb._breaker_fail_count = 0
+        tmdb._breaker_open_until = 0.0
+
+    tearDown = setUp
+
+    async def test_a_reset_connection_is_retried_and_then_succeeds(self) -> None:
+        calls: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            if len(calls) == 1:
+                raise httpx.ReadError("connection reset by peer", request=request)
+            return httpx.Response(200, json={"id": 1})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            tmdb.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
+        ), patch.object(tmdb.asyncio, "sleep", new_callable=AsyncMock):
+            result = await tmdb.get_show(1, api_key="k", cache_ttl=None)
+
+        self.assertEqual(result, {"id": 1})
+        self.assertEqual(len(calls), 2)
+
+
 class SharedClientTests(unittest.IsolatedAsyncioTestCase):
     """Inside the app lifespan every call reuses one pooled client (and its
     keep-alive connections); after shutdown _get falls back to a client per call."""
