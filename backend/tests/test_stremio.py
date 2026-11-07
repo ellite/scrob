@@ -128,6 +128,40 @@ class StremioBitfieldTests(unittest.TestCase):
         self.assertEqual(watched, {"tt1234567:1:1", "tt1234567:1:2"})
 
 
+class StremioPendingRetryTests(unittest.TestCase):
+    def test_first_failure_is_counted_and_retried(self) -> None:
+        from routers.sync import _stremio_next_pending
+
+        pending, expired = _stremio_next_pending({"tt1"}, {})
+
+        self.assertEqual(pending, {"tt1": 1})
+        self.assertEqual(expired, set())
+
+    def test_attempts_accumulate_until_the_limit_then_expire(self) -> None:
+        from routers.sync import STREMIO_MAX_PULL_ATTEMPTS, _stremio_next_pending
+
+        previous = {"tt1": STREMIO_MAX_PULL_ATTEMPTS - 2, "tt2": STREMIO_MAX_PULL_ATTEMPTS - 1}
+
+        pending, expired = _stremio_next_pending({"tt1", "tt2"}, previous)
+
+        self.assertEqual(pending, {"tt1": STREMIO_MAX_PULL_ATTEMPTS - 1})
+        self.assertEqual(expired, {"tt2"})
+
+    def test_an_id_that_resolved_drops_out(self) -> None:
+        from routers.sync import _stremio_next_pending
+
+        pending, expired = _stremio_next_pending(set(), {"tt1": 3})
+
+        self.assertEqual((pending, expired), ({}, set()))
+
+    def test_stored_shapes_are_read_leniently(self) -> None:
+        from routers.sync import _stremio_pending_attempts
+
+        self.assertEqual(_stremio_pending_attempts(None), {})
+        self.assertEqual(_stremio_pending_attempts(["tt1", "tt2"]), {"tt1": 1, "tt2": 1})
+        self.assertEqual(_stremio_pending_attempts({"tt1": 3, "tt2": "x"}), {"tt1": 3, "tt2": 1})
+
+
 class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_incremental_pull_consumes_datastore_meta_tuples(self) -> None:
         cursor = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -189,6 +223,23 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         # Assert
         self.assertEqual(items, [{"_id": "tt-failed"}])
         self.assertFalse(complete_snapshot)
+        datastore_get.assert_awaited_once_with("auth-key", ids=["tt-failed"])
+
+    async def test_incremental_pull_refetches_pending_ids_stored_with_attempt_counts(self) -> None:
+        cursor = datetime.now(timezone.utc).replace(tzinfo=None)
+        connection = SimpleNamespace(
+            token="auth-key",
+            stremio_full_sync_done=True,
+            stremio_pull_cursor_at=cursor,
+            stremio_pending_pull_ids={"tt-failed": 2},
+        )
+
+        with (
+            patch.object(stremio, "datastore_meta", AsyncMock(return_value=[])),
+            patch.object(stremio, "datastore_get", AsyncMock(return_value=[])) as datastore_get,
+        ):
+            await _pull_stremio_items(connection, full_resync=False)
+
         datastore_get.assert_awaited_once_with("auth-key", ids=["tt-failed"])
 
     async def test_series_whose_cinemeta_lookup_fails_is_reported_for_retry(self) -> None:

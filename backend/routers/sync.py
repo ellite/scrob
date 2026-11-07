@@ -5121,6 +5121,46 @@ def _stremio_series_imdb_id(item: dict) -> str | None:
     return None
 
 
+# An item Stremio synced that Scrob can't match (no IMDb id, a show TMDB doesn't
+# know) is retried on the next syncs in case it was a transient failure; after
+# this many failed attempts it is left alone until Stremio modifies it again.
+STREMIO_MAX_PULL_ATTEMPTS = 5
+
+
+def _stremio_pending_attempts(stored) -> dict[str, int]:
+    """Failed-attempt count per content id, from the stored column. A bare list
+    (the first shape this column had) counts as one failed attempt each."""
+    if isinstance(stored, dict):
+        attempts: dict[str, int] = {}
+        for content_id, count in stored.items():
+            try:
+                attempts[str(content_id)] = int(count)
+            except (TypeError, ValueError):
+                attempts[str(content_id)] = 1
+        return attempts
+    if isinstance(stored, list):
+        return {str(content_id): 1 for content_id in stored}
+    return {}
+
+
+def _stremio_next_pending(
+    failed_ids: set[str],
+    previous: dict[str, int],
+) -> tuple[dict[str, int], set[str]]:
+    """Carry the attempt counts forward: (ids to retry next sync, ids that just
+    ran out of attempts). Ids that resolved this time are simply not in
+    failed_ids, so they drop out."""
+    pending: dict[str, int] = {}
+    expired: set[str] = set()
+    for content_id in failed_ids:
+        attempts = previous.get(content_id, 0) + 1
+        if attempts >= STREMIO_MAX_PULL_ATTEMPTS:
+            expired.add(content_id)
+        else:
+            pending[content_id] = attempts
+    return pending, expired
+
+
 def _stremio_unresolved_ids(
     records: list[dict],
     tmdb_ids: dict[str, int],
@@ -5345,7 +5385,7 @@ async def _pull_stremio_items(
         modified_at = _nuvio_datetime(_stremio_epoch_ms(row[1]))
         if item_id and modified_at is not None and modified_at >= cutoff:
             changed_ids.append(item_id)
-    pending_ids = list(conn.stremio_pending_pull_ids or [])
+    pending_ids = list(_stremio_pending_attempts(conn.stremio_pending_pull_ids))
     if pending_ids:
         logger.info("Retrying %d Stremio items that failed in the previous sync", len(pending_ids))
     changed_ids = list(dict.fromkeys([*changed_ids, *pending_ids]))
@@ -5485,13 +5525,25 @@ async def _run_stremio_sync(
                 if series_tmdb_map
                 else ({}, {})
             )
-            pending_ids = lookup_failures | _stremio_unresolved_ids(all_records, tmdb_ids, show_map)
+            pending_ids, expired_ids = _stremio_next_pending(
+                lookup_failures | _stremio_unresolved_ids(all_records, tmdb_ids, show_map),
+                _stremio_pending_attempts(conn.stremio_pending_pull_ids),
+            )
             if pending_ids:
                 logger.warning(
                     "Stremio sync job %s: %d items could not be matched and will be retried next sync: %s",
                     job_id,
                     len(pending_ids),
                     ", ".join(sorted(pending_ids)[:20]),
+                )
+            if expired_ids:
+                logger.warning(
+                    "Stremio sync job %s: giving up on %d items after %d failed attempts "
+                    "(they are retried again if Stremio modifies them): %s",
+                    job_id,
+                    len(expired_ids),
+                    STREMIO_MAX_PULL_ATTEMPTS,
+                    ", ".join(sorted(expired_ids)[:20]),
                 )
             all_entries = [*normalized_library, *normalized_watched, *normalized_progress]
             await db.execute(
@@ -5572,7 +5624,7 @@ async def _run_stremio_sync(
             # other connections; users push explicitly per-service (the "Push" buttons).
             conn.stremio_pull_cursor_at = pull_started_at
             conn.stremio_full_sync_done = True
-            conn.stremio_pending_pull_ids = sorted(pending_ids)
+            conn.stremio_pending_pull_ids = pending_ids
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
             await db.execute(
                 update(SyncJob)
@@ -6412,7 +6464,8 @@ def _stremio_default_state() -> dict:
 
 
 def _stremio_videos(meta: dict) -> list[dict]:
-    # Watched bitfields index Cinemeta's array order, which lists specials last.
+    # Watched bitfields index the videos in the order Cinemeta delivers them, which
+    # differs per show (specials can come first, in the middle or last): never sort.
     return [
         video
         for video in (meta.get("videos") or [])
