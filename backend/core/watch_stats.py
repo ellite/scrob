@@ -39,7 +39,10 @@ async def get_watch_stats(
     )
     last_watched_at = func.max(case((WatchEvent.completed == True, WatchEvent.watched_at)))
     query = (
-        select(func.count(WatchEvent.id), watch_time, last_watched_at)
+        # A play is a completed watch: in-progress rows (a Jellyfin/Emby pull
+        # stores them with completed=False) are not plays, the same as for
+        # watch time and the last watched date.
+        select(func.count(case((WatchEvent.completed == True, WatchEvent.id))), watch_time, last_watched_at)
         .select_from(Media)
         .join(WatchEvent, WatchEvent.media_id == Media.id)
         .where(WatchEvent.user_id == user_id)
