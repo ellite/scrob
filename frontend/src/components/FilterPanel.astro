@@ -12,6 +12,8 @@ interface FilterSection {
   dynamic?: boolean; // if true, options are fetched client-side on load
   endpoint?: string; // proxy API path to fetch { years: number[] } from — required when dynamic
   multi?: boolean; // false renders radios (single-select) instead of checkboxes; default true
+  tristate?: boolean; // checkboxes cycle include (check) -> exclude (cross) -> off; excluded values go in `exclude_<key>`
+  excluded?: string[]; // currently excluded values for a tristate section
 }
 
 interface Props {
@@ -23,7 +25,7 @@ interface Props {
 }
 
 const { id, basePath, currentSort, sections, extraParams } = Astro.props;
-const activeCount = sections.reduce((sum, s) => sum + s.selected.length, 0);
+const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.excluded?.length ?? 0), 0);
 ---
 
 <div class="relative inline-flex items-stretch bg-zinc-900 border border-zinc-700 rounded-lg hover:border-zinc-600 transition" id={id} data-filter-panel-root data-base-path={basePath} data-current-sort={currentSort ?? ""} data-extra-params={JSON.stringify(extraParams ?? {})}>
@@ -70,15 +72,28 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length, 0);
       </div>
 
       <div class="filter-panel-scroll overflow-y-auto flex-1 divide-y divide-zinc-800">
+        <div data-role="saved-section" class="hidden">
+          <button type="button" data-role="accordion-toggle" class="w-full flex items-center justify-between p-4 text-left text-sm font-medium text-zinc-200 cursor-pointer">
+            <span>Saved filters <span data-role="saved-count" class="text-blue-500 font-normal"></span></span>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="chevron w-4 h-4 transition-transform text-zinc-500">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+          </button>
+          <div data-role="accordion-content" class="hidden pb-2">
+            <p class="px-4 pt-1 pb-2 text-xs text-zinc-500">Tap one to select its filters, then Apply.</p>
+            <div data-role="saved-list"></div>
+          </div>
+        </div>
         {sections.map((section) => (
           <div data-dynamic-section={section.dynamic ? "true" : undefined} data-key={section.key} data-endpoint={section.endpoint} data-selected={section.selected.join(",")}>
             <button type="button" data-role="accordion-toggle" class="w-full flex items-center justify-between p-4 text-left text-sm font-medium text-zinc-200 cursor-pointer">
-              <span>{section.label}{section.selected.length > 0 && <span class="text-blue-500 font-normal"> ({section.selected.length})</span>}</span>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class:list={["chevron w-4 h-4 transition-transform text-zinc-500", { "rotate-180": section.selected.length > 0 }]}>
+              <span>{section.label}{section.selected.length + (section.excluded?.length ?? 0) > 0 && <span class="text-blue-500 font-normal"> ({section.selected.length + (section.excluded?.length ?? 0)})</span>}</span>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class:list={["chevron w-4 h-4 transition-transform text-zinc-500", { "rotate-180": section.selected.length + (section.excluded?.length ?? 0) > 0 }]}>
                 <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
               </svg>
             </button>
-            <div data-role="accordion-content" class:list={["pb-2", { hidden: section.selected.length === 0 }]}>
+            <div data-role="accordion-content" class:list={["pb-2", { hidden: section.selected.length + (section.excluded?.length ?? 0) === 0 }]}>
+              {section.tristate && <p class="px-4 pt-1 pb-2 text-xs text-zinc-500">Click once to include, again to exclude.</p>}
               {section.dynamic ? (
                 <div class="px-4 py-3 text-sm text-zinc-500">Loading…</div>
               ) : (section.options ?? []).map((opt) => (
@@ -89,12 +104,19 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length, 0);
                     value={opt.value}
                     checked={section.selected.includes(opt.value)}
                     data-filter-key={section.key}
+                    data-tristate={section.tristate ? "true" : undefined}
+                    data-excluded={section.tristate && section.excluded?.includes(opt.value) ? "true" : undefined}
                     class="peer sr-only"
                   />
-                  <span class="flex-1">{opt.label}</span>
+                  <span class="flex-1 label-text">{opt.label}</span>
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-5 h-5 flex-shrink-0 text-blue-500 opacity-0 peer-checked:opacity-100 transition-opacity">
                     <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
                   </svg>
+                  {section.tristate && (
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="exclude-icon w-5 h-5 flex-shrink-0 text-red-500 opacity-0 transition-opacity -ml-8">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                    </svg>
+                  )}
                 </label>
               ))}
             </div>
@@ -104,7 +126,42 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length, 0);
 
       <div class="flex items-center gap-3 p-4 border-t border-zinc-800 flex-shrink-0">
         <button type="button" data-role="clear" class="text-sm text-zinc-500 hover:text-zinc-300 transition cursor-pointer">Clear all</button>
-        <button type="button" data-role="apply" class="ml-auto px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition cursor-pointer active:scale-95">Apply Filters</button>
+        <button type="button" data-role="save-open" aria-label="Save these filters" title="Save these filters" class="hidden ml-auto p-2 text-zinc-400 hover:text-zinc-100 border border-zinc-700 hover:border-zinc-600 rounded-lg transition cursor-pointer">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+          </svg>
+        </button>
+        <button type="button" data-role="apply" class="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition cursor-pointer active:scale-95">Apply Filters</button>
+      </div>
+    </div>
+  </div>
+
+  <div data-role="save-overlay" class="fixed inset-0 z-[60] hidden flex items-end sm:items-center justify-center">
+    <div data-role="save-backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer"></div>
+    <div data-role="save-panel" class="relative w-full sm:w-96 max-h-[85vh] sm:max-h-[80vh] bg-zinc-900 border border-zinc-800 rounded-t-2xl sm:rounded-2xl flex flex-col max-sm:translate-y-full sm:scale-95 sm:opacity-0 transition-all duration-300">
+      <div class="flex items-center justify-between p-4 border-b border-zinc-800 flex-shrink-0">
+        <h2 class="font-semibold text-zinc-100">Save filters</h2>
+        <button type="button" data-role="save-close" class="p-1 text-zinc-500 hover:text-zinc-200 transition cursor-pointer" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="filter-panel-scroll overflow-y-auto flex-1 p-4 space-y-4">
+        <p data-role="save-summary" class="text-xs text-zinc-500"></p>
+        <div>
+          <label class="block text-xs text-zinc-500 mb-1" for={`${id}__save-name`}>Name</label>
+          <input id={`${id}__save-name`} data-role="save-name" type="text" maxlength="64" autocomplete="off" placeholder="e.g. No horror, English only" class="w-full bg-zinc-950 border border-zinc-700 focus:border-blue-500 rounded-lg px-3 py-2 text-sm text-zinc-100 outline-none" />
+        </div>
+        <div data-role="save-existing-wrap" class="hidden">
+          <p class="text-xs text-zinc-500 mb-1">Or overwrite a saved filter</p>
+          <div data-role="save-existing" class="rounded-lg border border-zinc-800 divide-y divide-zinc-800 overflow-hidden"></div>
+        </div>
+        <p data-role="save-error" class="hidden text-sm text-red-400"></p>
+      </div>
+      <div class="flex items-center gap-3 p-4 border-t border-zinc-800 flex-shrink-0">
+        <button type="button" data-role="save-cancel" class="text-sm text-zinc-500 hover:text-zinc-300 transition cursor-pointer">Cancel</button>
+        <button type="button" data-role="save-confirm" class="ml-auto px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition cursor-pointer active:scale-95">Save</button>
       </div>
     </div>
   </div>
@@ -212,21 +269,257 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length, 0);
       });
     });
 
-    clearBtn?.addEventListener("click", () => {
-      root.querySelectorAll<HTMLInputElement>('input[type="checkbox"], input[type="radio"]').forEach((cb) => (cb.checked = false));
+    // Tristate checkboxes (e.g. Language): none -> included (check) ->
+    // excluded (cross) -> none. The native toggle has already flipped
+    // `checked` by the time this runs, so work out where we came from.
+    root.querySelectorAll<HTMLInputElement>('input[data-tristate="true"]').forEach((cb) => {
+      cb.addEventListener("click", () => {
+        if (cb.dataset.excluded === "true") {
+          delete cb.dataset.excluded;
+          cb.checked = false;
+        } else if (!cb.checked) {
+          cb.dataset.excluded = "true";
+        }
+      });
     });
+
+    clearBtn?.addEventListener("click", () => {
+      root.querySelectorAll<HTMLInputElement>('input[type="checkbox"], input[type="radio"]').forEach((cb) => {
+        cb.checked = false;
+        delete cb.dataset.excluded;
+      });
+    });
+
+    // Current selection as { key: [values], exclude_key: [values] }.
+    function collectSelection(): Record<string, string[]> {
+      const out: Record<string, string[]> = {};
+      const add = (k: string, v: string) => { (out[k] ??= []).push(v); };
+      root!.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked, input[type="radio"]:checked').forEach((cb) => {
+        const key = cb.dataset.filterKey;
+        if (key) add(key, cb.value);
+      });
+      root!.querySelectorAll<HTMLInputElement>('input[data-excluded="true"]').forEach((cb) => {
+        const key = cb.dataset.filterKey;
+        if (key) add(`exclude_${key}`, cb.value);
+      });
+      return out;
+    }
 
     applyBtn?.addEventListener("click", () => {
       const params = new URLSearchParams();
       if (currentSort) params.set("sort", currentSort);
       Object.entries(extraParams).forEach(([k, v]) => { if (v) params.set(k, v); });
-      root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked, input[type="radio"]:checked').forEach((cb) => {
-        const key = cb.dataset.filterKey;
-        if (key) params.append(key, cb.value);
-      });
+      Object.entries(collectSelection()).forEach(([k, vs]) => vs.forEach((v) => params.append(k, v)));
       window.location.href = `${basePath}?${params.toString()}`;
     });
 
+    // ---- Saved filters ----------------------------------------------------
+    // Each page kind has its own filter sections, so filters are saved per
+    // page (numeric ids in the path, e.g. /network/12, share one scope).
+    const scope = basePath.replace(/\/\d+(?=\/|$)/g, "/:id");
+    const SAVED_URL = "/api/proxy/saved-filters";
+    type Saved = { id: number; scope: string; name: string; params: Record<string, string[]> };
+    let saved: Saved[] = [];
+
+    const savedSection = root.querySelector<HTMLElement>('[data-role="saved-section"]');
+    const savedList = root.querySelector<HTMLElement>('[data-role="saved-list"]');
+    const savedCount = root.querySelector<HTMLElement>('[data-role="saved-count"]');
+    const saveOpenBtn = root.querySelector<HTMLElement>('[data-role="save-open"]');
+    const saveOverlay = root.querySelector<HTMLElement>('[data-role="save-overlay"]');
+    const savePanel = root.querySelector<HTMLElement>('[data-role="save-panel"]');
+    const saveName = root.querySelector<HTMLInputElement>('[data-role="save-name"]');
+    const saveSummary = root.querySelector<HTMLElement>('[data-role="save-summary"]');
+    const saveExistingWrap = root.querySelector<HTMLElement>('[data-role="save-existing-wrap"]');
+    const saveExisting = root.querySelector<HTMLElement>('[data-role="save-existing"]');
+    const saveError = root.querySelector<HTMLElement>('[data-role="save-error"]');
+    const saveConfirm = root.querySelector<HTMLButtonElement>('[data-role="save-confirm"]');
+    let overwriteId: number | null = null;
+
+    function labelFor(key: string, value: string): string {
+      const input = Array.from(root!.querySelectorAll<HTMLInputElement>(`input[data-filter-key="${key}"]`)).find((i) => i.value === value);
+      return input?.closest("label")?.querySelector(".label-text, span")?.textContent?.trim() || value;
+    }
+
+    function describe(params: Record<string, string[]>): string {
+      return Object.entries(params).map(([k, vs]) => {
+        const excluded = k.startsWith("exclude_");
+        const key = excluded ? k.slice(8) : k;
+        return vs.map((v) => (excluded ? "not " : "") + labelFor(key, v)).join(", ");
+      }).join(" · ");
+    }
+
+    function expandActiveSections() {
+      root!.querySelectorAll<HTMLElement>("[data-key]").forEach((section) => {
+        const any = section.querySelector('input:checked, input[data-excluded="true"]');
+        if (!any) return;
+        section.querySelector('[data-role="accordion-content"]')?.classList.remove("hidden");
+        section.querySelector(".chevron")?.classList.add("rotate-180");
+      });
+    }
+
+    function applySaved(f: Saved) {
+      root!.querySelectorAll<HTMLInputElement>('input[type="checkbox"], input[type="radio"]').forEach((cb) => {
+        cb.checked = false;
+        delete cb.dataset.excluded;
+      });
+      for (const [k, vs] of Object.entries(f.params)) {
+        const excluded = k.startsWith("exclude_");
+        const key = excluded ? k.slice(8) : k;
+        // Dynamic sections (year) may not have rendered yet; remember the
+        // choice so it is checked when they do.
+        const sec = root!.querySelector<HTMLElement>(`[data-dynamic-section][data-key="${key}"]`);
+        if (sec && !excluded) sec.dataset.selected = vs.join(",");
+        for (const v of vs) {
+          const input = Array.from(root!.querySelectorAll<HTMLInputElement>(`input[data-filter-key="${key}"]`)).find((i) => i.value === v);
+          if (!input) continue;
+          if (excluded) { if (input.dataset.tristate === "true") input.dataset.excluded = "true"; }
+          else input.checked = true;
+        }
+      }
+      expandActiveSections();
+    }
+
+    function renderSaved() {
+      if (!savedSection || !savedList) return;
+      savedSection.classList.toggle("hidden", saved.length === 0);
+      if (savedCount) savedCount.textContent = saved.length ? `(${saved.length})` : "";
+      savedList.replaceChildren(...saved.map((f) => {
+        const row = document.createElement("div");
+        row.className = "flex items-stretch hover:bg-zinc-800/60 transition-colors";
+        const pick = document.createElement("button");
+        pick.type = "button";
+        pick.className = "flex-1 min-w-0 text-left px-4 py-3 cursor-pointer";
+        const n = document.createElement("div");
+        n.className = "text-sm text-zinc-200 truncate";
+        n.textContent = f.name;
+        const d = document.createElement("div");
+        d.className = "text-xs text-zinc-500 truncate";
+        d.textContent = describe(f.params);
+        pick.append(n, d);
+        pick.addEventListener("click", () => applySaved(f));
+        const del = document.createElement("button");
+        del.type = "button";
+        del.setAttribute("aria-label", `Delete ${f.name}`);
+        del.className = "px-4 text-zinc-600 hover:text-red-400 transition cursor-pointer";
+        del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>';
+        del.addEventListener("click", async () => {
+          const ok = await (window as any).showConfirm(`Delete "${f.name}"?`, "This removes the saved filter. This cannot be undone.");
+          if (!ok) return;
+          const res = await fetch(`${SAVED_URL}/${f.id}`, { method: "DELETE" });
+          if (res.ok) { saved = saved.filter((s) => s.id !== f.id); renderSaved(); }
+        });
+        row.append(pick, del);
+        return row;
+      }));
+    }
+
+    async function loadSaved() {
+      try {
+        const res = await fetch(`${SAVED_URL}?scope=${encodeURIComponent(scope)}`);
+        if (!res.ok) return; // anonymous or backend unavailable: no saving
+        saved = await res.json();
+        saveOpenBtn?.classList.remove("hidden");
+        renderSaved();
+      } catch (e) { /* saving is optional */ }
+    }
+
+    function syncSaveForm() {
+      const typed = (saveName?.value || "").trim().toLowerCase();
+      const match = saved.find((s) => s.name.toLowerCase() === typed);
+      // Typing an existing name is the same as picking it to overwrite.
+      const target = saved.find((s) => s.id === overwriteId) ?? match;
+      if (saveConfirm) {
+        saveConfirm.textContent = target ? "Overwrite" : "Save";
+        saveConfirm.disabled = !typed || Object.keys(collectSelection()).length === 0;
+      }
+      saveExisting?.querySelectorAll<HTMLElement>("[data-id]").forEach((el) => {
+        const on = Number(el.dataset.id) === target?.id;
+        el.classList.toggle("bg-zinc-800", on);
+        el.querySelector(".check")?.classList.toggle("opacity-0", !on);
+      });
+    }
+
+    function openSave() {
+      const sel = collectSelection();
+      overwriteId = null;
+      if (saveName) saveName.value = "";
+      saveError?.classList.add("hidden");
+      if (saveSummary) saveSummary.textContent = Object.keys(sel).length ? describe(sel) : "Select some filters first, then save them.";
+      if (saveExistingWrap && saveExisting) {
+        saveExistingWrap.classList.toggle("hidden", saved.length === 0);
+        saveExisting.replaceChildren(...saved.map((f) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.dataset.id = String(f.id);
+          b.className = "w-full flex items-center gap-3 px-3 py-2.5 text-left text-sm text-zinc-300 hover:bg-zinc-800/60 transition-colors cursor-pointer";
+          const t = document.createElement("span");
+          t.className = "flex-1 truncate";
+          t.textContent = f.name;
+          b.append(t);
+          b.insertAdjacentHTML("beforeend", '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="check w-4 h-4 text-blue-500 opacity-0"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>');
+          b.addEventListener("click", () => {
+            overwriteId = f.id;
+            if (saveName) saveName.value = f.name;
+            syncSaveForm();
+          });
+          return b;
+        }));
+      }
+      syncSaveForm();
+      saveOverlay?.classList.remove("hidden");
+      requestAnimationFrame(() => savePanel?.classList.remove("max-sm:translate-y-full", "sm:scale-95", "sm:opacity-0"));
+    }
+    function closeSave() {
+      savePanel?.classList.add("max-sm:translate-y-full", "sm:scale-95", "sm:opacity-0");
+      setTimeout(() => saveOverlay?.classList.add("hidden"), 300);
+    }
+
+    saveOpenBtn?.addEventListener("click", openSave);
+    root.querySelector('[data-role="save-close"]')?.addEventListener("click", closeSave);
+    root.querySelector('[data-role="save-cancel"]')?.addEventListener("click", closeSave);
+    root.querySelector('[data-role="save-backdrop"]')?.addEventListener("click", closeSave);
+    saveName?.addEventListener("input", () => {
+      // Typing a different name detaches from a picked entry (a new save);
+      // typing an existing name still overwrites it via the name match.
+      const picked = saved.find((s) => s.id === overwriteId);
+      if (picked && picked.name !== saveName.value) overwriteId = null;
+      syncSaveForm();
+    });
+    saveName?.addEventListener("keydown", (e) => { if (e.key === "Enter") saveConfirm?.click(); });
+
+    saveConfirm?.addEventListener("click", async () => {
+      const name = (saveName?.value || "").trim();
+      const params = collectSelection();
+      if (!name || Object.keys(params).length === 0) return;
+      const typed = name.toLowerCase();
+      const target = saved.find((s) => s.id === overwriteId) ?? saved.find((s) => s.name.toLowerCase() === typed);
+      saveConfirm.disabled = true;
+      try {
+        const res = target
+          ? await fetch(`${SAVED_URL}/${target.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ params, name }) })
+          : await fetch(SAVED_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope, name, params }) });
+        if (!res.ok) {
+          let msg = "Could not save";
+          try {
+            const d = await res.json();
+            msg = typeof d.detail === "string" ? d.detail : (d.detail?.[0]?.msg ?? msg);
+          } catch (e) { /* keep default */ }
+          if (saveError) { saveError.textContent = msg; saveError.classList.remove("hidden"); }
+          return;
+        }
+        const f: Saved = await res.json();
+        saved = target ? saved.map((s) => (s.id === f.id ? f : s)) : [...saved, f];
+        saved.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+        renderSaved();
+        closeSave();
+      } catch (e) {
+        if (saveError) { saveError.textContent = "Could not save"; saveError.classList.remove("hidden"); }
+      } finally {
+        syncSaveForm();
+      }
+    });
+
+    loadSaved();
     loadDynamicSections(root);
   }
 
@@ -234,6 +527,14 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length, 0);
 </script>
 
 <style>
+  /* Excluded value: red cross instead of the blue check, struck-through label. */
+  input[data-excluded="true"] ~ .exclude-icon {
+    opacity: 1;
+  }
+  input[data-excluded="true"] ~ .label-text {
+    color: rgb(113 113 122);
+    text-decoration: line-through;
+  }
   .filter-panel-scroll {
     scrollbar-width: none;
     -ms-overflow-style: none;

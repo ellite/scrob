@@ -21,6 +21,33 @@ def _jsonb_as_json_on_sqlite(type_, compiler, **kw):
     return "JSON"
 
 
+
+def _run_imports_inline(case, session_maker) -> None:
+    """List imports run as background jobs. Make them finish before the
+    endpoint call returns (so the surrounding mocks are still active) and
+    refresh the returned payload's item_count from the DB."""
+    import asyncio
+    from sqlalchemy import func, select
+
+    real_begin = lists._begin_import
+
+    async def settled(db, user, lst, *args, **kwargs):
+        out = await real_begin(db, user, lst, *args, **kwargs)
+        await asyncio.gather(*list(lists._IMPORT_TASKS))
+        out["import"] = lists._public_import_job(lists._IMPORT_JOBS[out["import"]["id"]])
+        async with session_maker() as check:
+            out["item_count"] = (await check.execute(
+                select(func.count()).select_from(ListItem).where(ListItem.list_id == lst.id)
+            )).scalar_one()
+        return out
+
+    for target, new in (("_begin_import", settled), ("_import_session", session_maker)):
+        patcher = patch.object(lists, target, new)
+        patcher.start()
+        case.addCleanup(patcher.stop)
+    case.addCleanup(lists._IMPORT_JOBS.clear)
+
+
 class ParseTmdbListIdTests(unittest.TestCase):
     def test_bare_digits(self) -> None:
         self.assertEqual(lists._parse_tmdb_list_id("1"), 1)
@@ -64,6 +91,7 @@ class ImportTmdbListTests(unittest.IsolatedAsyncioTestCase):
             await conn.run_sync(Base.metadata.create_all)
         self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
         self.addAsyncCleanup(self.engine.dispose)
+        _run_imports_inline(self, self.Session)
 
         from models.users import User
         async with self.Session() as db:
@@ -160,6 +188,52 @@ class ImportTmdbListTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second["item_count"], 2)
 
 
+    async def test_item_cap_is_configurable_and_truncation_reported(self) -> None:
+        from models.media import Media
+        from models.base import MediaType
+
+        async def fake_movie(db, tmdb_id, title, api_key):
+            m = Media(tmdb_id=tmdb_id, media_type=MediaType.movie, title=title)
+            db.add(m)
+            await db.flush()
+            return m
+
+        page = self._page("Big", [
+            {"id": n, "title": f"Movie {n}", "media_type": "movie"} for n in (1, 2, 3)
+        ])
+        page["total_results"] = 3
+
+        async with self.Session() as db:
+            with patch.dict("os.environ", {"LIST_IMPORT_MAX_ITEMS": "2"}), \
+                 patch("core.tmdb.get_list", AsyncMock(return_value=page)), \
+                 patch("routers.trakt._get_or_create_movie_media", AsyncMock(side_effect=fake_movie)), \
+                 patch("routers.media.get_user_tmdb_key", AsyncMock(return_value="fake-key")):
+                result = await lists.import_tmdb_list(
+                    lists.TmdbListImport(list_id_or_url="1"), db=db, current_user=SimpleNamespace(id=1),
+                )
+
+        self.assertEqual(result["item_count"], 2)
+        self.assertTrue(result["import"]["truncated"])
+        self.assertEqual(result["import"]["limit"], 2)
+        self.assertEqual(result["import"]["status"], "completed")
+
+    async def test_job_status_is_private_to_its_owner(self) -> None:
+        page = self._page("L", [])
+        async with self.Session() as db:
+            with patch("core.tmdb.get_list", AsyncMock(return_value=page)), \
+                 patch("routers.media.get_user_tmdb_key", AsyncMock(return_value="fake-key")):
+                result = await lists.import_tmdb_list(
+                    lists.TmdbListImport(list_id_or_url="1"), db=db, current_user=SimpleNamespace(id=1),
+                )
+        job_id = result["import"]["id"]
+        mine = await lists.get_import_job(job_id, current_user=SimpleNamespace(id=1))
+        self.assertEqual(mine["status"], "completed")
+        self.assertFalse(mine["truncated"])
+        with self.assertRaises(Exception) as ctx:
+            await lists.get_import_job(job_id, current_user=SimpleNamespace(id=2))
+        self.assertEqual(getattr(ctx.exception, "status_code", None), 404)
+
+
 class ParseTvdbListRefTests(unittest.TestCase):
     def test_bare_digits(self) -> None:
         self.assertEqual(lists._parse_tvdb_list_ref("13131"), "13131")
@@ -200,6 +274,7 @@ class ImportTvdbListTests(unittest.IsolatedAsyncioTestCase):
             await conn.run_sync(Base.metadata.create_all)
         self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
         self.addAsyncCleanup(self.engine.dispose)
+        _run_imports_inline(self, self.Session)
 
         from models.users import User
         async with self.Session() as db:
@@ -349,6 +424,7 @@ class ImportImdbListTests(unittest.IsolatedAsyncioTestCase):
             await conn.run_sync(Base.metadata.create_all)
         self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
         self.addAsyncCleanup(self.engine.dispose)
+        _run_imports_inline(self, self.Session)
 
         from models.users import User
         async with self.Session() as db:
@@ -475,6 +551,7 @@ class ImportMdblistListTests(unittest.IsolatedAsyncioTestCase):
             await conn.run_sync(Base.metadata.create_all)
         self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
         self.addAsyncCleanup(self.engine.dispose)
+        _run_imports_inline(self, self.Session)
 
         from models.global_settings import GlobalSettings
         from models.users import User, UserSettings
@@ -528,7 +605,7 @@ class ImportMdblistListTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["item_count"], 2)
         get_list.assert_awaited_once_with("global-mdb-key", "alice/mixed-favourites")
         get_items.assert_awaited_once_with(
-            "global-mdb-key", "alice/mixed-favourites", max_items=500
+            "global-mdb-key", "alice/mixed-favourites", max_items=10001
         )
 
         async with self.Session() as db:

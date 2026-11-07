@@ -1,10 +1,11 @@
 import json
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 import httpx
 
-from core import jellyfin
+from core import emby, jellyfin
 
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
@@ -450,6 +451,61 @@ class JellyfinItemsBatchTests(unittest.IsolatedAsyncioTestCase):
             item = await jellyfin.find_episode_by_ids("http://jellyfin.local", "token", 1399, 1, 1)
 
         self.assertIsNone(item)
+
+
+class MarkWatchedDatePlayedTests(unittest.IsolatedAsyncioTestCase):
+    """#530: Emby 4.x answers a 500 to an ISO DatePlayed, so every watch with a
+    known date failed to push to Emby while Jellyfin accepted it."""
+
+    async def _mark(self, mark_watched, handler):
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            jellyfin.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            return await mark_watched(
+                "http://server.local", "token", "user-id", "item-id",
+                played_at=datetime(2026, 10, 30, 9, 5, 7),
+            )
+
+    async def test_jellyfin_sends_iso_date_played(self) -> None:
+        seen: list[str | None] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.params.get("DatePlayed"))
+            return httpx.Response(200, json={})
+
+        self.assertTrue(await self._mark(jellyfin.mark_watched, handler))
+        self.assertEqual(seen, ["2026-10-30T09:05:07Z"])
+
+    async def test_emby_sends_compact_date_played(self) -> None:
+        seen: list[str | None] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.params.get("DatePlayed"))
+            return httpx.Response(200, json={})
+
+        self.assertTrue(await self._mark(emby.mark_watched, handler))
+        self.assertEqual(seen, ["20261030090507"])
+
+    async def test_retries_without_date_when_server_rejects_it(self) -> None:
+        seen: list[str | None] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.params.get("DatePlayed"))
+            if request.url.params.get("DatePlayed"):
+                return httpx.Response(500, text="not a valid DateTime")
+            return httpx.Response(200, json={})
+
+        self.assertTrue(await self._mark(jellyfin.mark_watched, handler))
+        self.assertEqual(seen, ["2026-10-30T09:05:07Z", None])
+
+    async def test_reports_failure_when_server_rejects_both_requests(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401)
+
+        self.assertFalse(await self._mark(jellyfin.mark_watched, handler))
 
 
 if __name__ == "__main__":

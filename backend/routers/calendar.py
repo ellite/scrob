@@ -155,6 +155,34 @@ async def _resolve_watch_status(db: AsyncSession, user_id: int, entries: list[di
         e["watched"] = media_id in watched_ids if media_id else False
 
 
+def _seasons_to_scan(detail: dict, window_start: date) -> set[int]:
+    """Season numbers worth fetching for one show's calendar entries.
+
+    next_episode_to_air names the season still to come. Right after an episode
+    airs TMDB often has no dated next episode at all (the rest of the season is
+    undated), so that pointer is null and the episode that aired today or
+    yesterday would vanish from the calendar even though it is well inside the
+    lookback window - so the season of last_episode_to_air is scanned too
+    whenever that episode aired inside the window (#518)."""
+    season_numbers: set[int] = set()
+    next_ep = detail.get("next_episode_to_air")
+    if next_ep and next_ep.get("season_number") is not None:
+        season_numbers.add(next_ep["season_number"])
+    last_ep = detail.get("last_episode_to_air")
+    if (
+        last_ep
+        and last_ep.get("season_number") is not None
+        and (last_ep.get("air_date") or "") >= window_start.isoformat()
+    ):
+        season_numbers.add(last_ep["season_number"])
+    # Specials (season 0) never surface as next_episode_to_air, so pull
+    # that season explicitly whenever the show has one and scan it for
+    # anything landing in the window too (#333).
+    if any((s or {}).get("season_number") == 0 for s in detail.get("seasons") or []):
+        season_numbers.add(0)
+    return season_numbers
+
+
 async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
     from core import tmdb as tmdb_client
     from core import tvdb as tvdb_client
@@ -224,15 +252,7 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
                 detail = await tmdb_client.get_show_light(show.tmdb_id, api_key=api_key, language=language)
             except Exception:
                 return []
-            season_numbers: set[int] = set()
-            next_ep = detail.get("next_episode_to_air")
-            if next_ep and next_ep.get("season_number") is not None:
-                season_numbers.add(next_ep["season_number"])
-            # Specials (season 0) never surface as next_episode_to_air, so pull
-            # that season explicitly whenever the show has one and scan it for
-            # anything landing in the window too (#333).
-            if any((s or {}).get("season_number") == 0 for s in detail.get("seasons") or []):
-                season_numbers.add(0)
+            season_numbers = _seasons_to_scan(detail, window_start)
             if not season_numbers:
                 return []
             seasons: list[dict] = []

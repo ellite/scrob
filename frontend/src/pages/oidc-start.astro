@@ -1,5 +1,6 @@
 ---
 import { api } from "../lib/api";
+import { isSecureRequest } from "../lib/secureCookie";
 
 // Builds the IdP auth URL on the backend, then stashes state/PKCE verifier/
 // nonce as HttpOnly cookies for the callback to send back on /exchange.
@@ -20,7 +21,7 @@ try {
   const cookieOpts = {
     path: "/",
     httpOnly: true,
-    secure: import.meta.env.PROD,
+    secure: isSecureRequest(Astro.url, Astro.request),
     sameSite: "lax" as const,
     maxAge: 600, // 10 minutes
   };

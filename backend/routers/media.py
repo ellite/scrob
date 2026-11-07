@@ -2287,6 +2287,16 @@ def _apply_local_filters(
     return items
 
 
+def _expand_excluded_languages(codes: list[str]) -> set[str]:
+    """Lower-cased set of original-language codes to hide. TMDB files
+    Cantonese-language titles under "cn" rather than "zh", so excluding
+    Chinese has to cover both or those titles keep showing up."""
+    excluded = {c.strip().lower() for c in codes if c and c.strip()}
+    if "zh" in excluded:
+        excluded.add("cn")
+    return excluded
+
+
 def _paginate_matches(matched: list[dict], page: int, page_size: int) -> tuple[list[dict], int]:
     """Slice a full scanned-and-filtered match list into one fixed-size page.
 
@@ -2313,6 +2323,14 @@ async def get_tmdb_list(
     min_rating: float | None = Query(None),
     status: str | None = Query(None),
     original_language: str | None = Query(None),
+    # Original languages to leave out. TMDB's discover has no "without"
+    # counterpart to with_original_language, so these are dropped locally
+    # from each scanned page, like the collection/watch filters below.
+    exclude_language: list[str] = Query(default=[]),
+    # Genres to leave out. Unlike language, TMDB discover supports this
+    # natively (without_genres), so it is pushed upstream rather than
+    # filtered locally.
+    exclude_genre: list[str] = Query(default=[]),
     # Restrict discover to one TV network (with_networks, TV only) or one
     # production company (with_companies, movie or TV). Powers the
     # /network/{id} and /studio/{id} browse pages.
@@ -2361,7 +2379,7 @@ async def get_tmdb_list(
         # A network/company constraint always goes through discover (there's no
         # "popular titles on network X" list endpoint).
         by_studio = network is not None or company is not None
-        has_filters = bool(genre or min_rating or status or original_language) or by_studio
+        has_filters = bool(genre or exclude_genre or min_rating or status or original_language) or by_studio
 
         # Explore cards render straight from these TMDB responses, so ask TMDB
         # for the user's Metadata Language directly - detail pages and list
@@ -2379,8 +2397,10 @@ async def get_tmdb_list(
                 studio_vote_min = 0 if by_studio else None
                 if type == MediaType.movie:
                     genre_ids = [MOVIE_GENRE_IDS[g] for g in genre if g in MOVIE_GENRE_IDS]
+                    without_ids = [MOVIE_GENRE_IDS[g] for g in exclude_genre if g in MOVIE_GENRE_IDS]
                     return await tmdb.discover_movies(
                         page=fetch_page, genre_ids=genre_ids or None,
+                        without_genre_ids=without_ids or None,
                         min_rating=min_rating, sort_by=sort_by,
                         vote_count_min=studio_vote_min,
                         with_original_language=original_language,
@@ -2388,9 +2408,11 @@ async def get_tmdb_list(
                         language=metadata_lang,
                     )
                 genre_ids = [TV_GENRE_IDS[g] for g in genre if g in TV_GENRE_IDS]
+                without_ids = [TV_GENRE_IDS[g] for g in exclude_genre if g in TV_GENRE_IDS]
                 status_id = TV_STATUS_IDS.get(status) if status else None
                 return await tmdb.discover_shows(
                     page=fetch_page, genre_ids=genre_ids or None,
+                    without_genre_ids=without_ids or None,
                     min_rating=min_rating, sort_by=sort_by,
                     vote_count_min=studio_vote_min,
                     status=status_id, with_original_language=original_language,
@@ -2463,7 +2485,9 @@ async def get_tmdb_list(
                 await enrich_with_state(db, current_user.id, enriched)
             return enriched
 
-        if not (collection or watch or arr or year or in_list):
+        excluded_languages = _expand_excluded_languages(exclude_language)
+
+        if not (collection or watch or arr or year or in_list or excluded_languages):
             data = await _fetch_tmdb_page(page)
             enriched = await _build_enriched(data.get("results", []))
             return {
@@ -2500,6 +2524,11 @@ async def get_tmdb_list(
                     if res["id"] not in seen_ids:
                         seen_ids.add(res["id"])
                         batch_results.append(res)
+            if excluded_languages:
+                batch_results = [
+                    r for r in batch_results
+                    if (r.get("original_language") or "").lower() not in excluded_languages
+                ]
             if batch_results:
                 enriched = await _build_enriched(batch_results)
                 matched.extend(_apply_local_filters(enriched, collection, watch, arr, year, in_list))

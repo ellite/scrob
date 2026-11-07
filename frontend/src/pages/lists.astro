@@ -456,6 +456,9 @@ try {
     importModal?.classList.add('hidden');
     importForm?.reset();
     importError?.classList.add('hidden');
+    openListUrl = null;
+    importSubmitLabel.textContent = 'Import';
+    importSubmitBtn.disabled = false;
   }
 
   document.querySelectorAll('.open-import-modal-btn').forEach((btn) => {
@@ -467,8 +470,26 @@ try {
   importCancelBtn?.addEventListener('click', closeImportModal);
   document.getElementById('import-modal-backdrop')?.addEventListener('click', closeImportModal);
 
+  // Imports run as a background job on the server; poll it until it finishes,
+  // showing progress on the button.
+  async function waitForImport(job) {
+    while (job && job.status === 'running') {
+      importSubmitLabel.innerHTML = `${SPINNER_SVG} Importing… ${job.processed}${job.total ? ` / ${job.total}` : ''}`;
+      await new Promise((r) => setTimeout(r, 1500));
+      const res = await fetch(`/api/proxy/lists/import/jobs/${job.id}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Lost track of the import job (the server may have restarted). Check the list, then import again to top it up.');
+      job = await res.json();
+    }
+    return job;
+  }
+
+  let openListUrl = null;
+
   importForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (openListUrl) { window.location.href = openListUrl; return; }
     const listIdOrUrl = listIdInput.value.trim();
     const provider = importModal?.dataset.provider;
     const cfg = PROVIDERS[provider];
@@ -494,6 +515,20 @@ try {
       }
 
       const list = await res.json();
+      const job = await waitForImport(list.import);
+      if (job.status === 'failed') throw new Error(job.error || 'Import failed');
+      if (job.truncated || job.warning) {
+        // Don't redirect over a partial result without saying so (#508).
+        const notes = [];
+        if (job.truncated) notes.push(`The source list is longer than the import limit, so only the first ${job.limit} items were imported.`);
+        if (job.warning) notes.push(job.warning);
+        importError.textContent = `Imported ${job.added} new items. ${notes.join(' ')}`;
+        importError.classList.remove('hidden');
+        importSubmitBtn.disabled = false;
+        importSubmitLabel.textContent = 'Open list';
+        openListUrl = `/list/${list.id}`;
+        return;
+      }
       closeImportModal();
       window.location.href = `/list/${list.id}`;
     } catch (err) {

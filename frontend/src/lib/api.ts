@@ -362,6 +362,7 @@ export interface GlobalSettings {
   sonarr_season_folder: boolean;
   radarr_require_approval: boolean;
   sonarr_require_approval: boolean;
+  default_episode_order: string | null;
   image_cache_enabled: boolean;
   image_cache_limit_gb: number | null;
   enable_logged_out_navigation: boolean;
@@ -551,6 +552,10 @@ export interface UserSettings {
   rate_prompt_episodes: boolean;
   duplicate_watch_window_minutes: number | null;
   condense_history_by_show: boolean;
+  /** Order key, or null to inherit server_episode_order. */
+  default_episode_order: string | null;
+  /** What default_episode_order = null resolves to (admin-configured). */
+  server_episode_order: string;
 }
 
 export interface MediaServerConnection {
@@ -1428,7 +1433,7 @@ export const api = {
     getCompany: (companyId: number, token?: string) =>
       get<StudioHeader>(`/media/company/${companyId}`, undefined, token),
 
-    tmdbList: (params: { type: string; category?: string; page?: number; genre?: string[]; year?: number[]; min_rating?: number; status?: string; collection?: string[]; watch?: string[]; arr?: string[]; original_language?: string; in_list?: string[]; network?: number; company?: number }, token?: string) =>
+    tmdbList: (params: { type: string; category?: string; page?: number; genre?: string[]; exclude_genre?: string[]; year?: number[]; min_rating?: number; status?: string; collection?: string[]; watch?: string[]; arr?: string[]; original_language?: string; exclude_language?: string[]; in_list?: string[]; network?: number; company?: number }, token?: string) =>
       get<{ results: MediaItem[]; page: number; total_pages: number; total_results: number }>("/media/tmdb/list", params, token),
 
     search: (q: string, type?: string, page: number = 1, year?: number, token?: string, inLibrary?: boolean) =>
@@ -1533,6 +1538,22 @@ export const api = {
         { episode_order: orderKey, order_label: opts?.label ?? null, force_refresh: opts?.forceRefresh ?? false },
         token,
       ),
+
+    applyDefaultEpisodeOrder: (episodeOrder: "tmdb" | "tvdb", token: string) =>
+      post<{
+        status: "started" | "noop";
+        job_id?: number;
+        shows: number;
+        episode_order: "tmdb" | "tvdb";
+      }>(`/shows/episode-order/apply-default`, { order: episodeOrder }, token),
+
+    getEpisodeOrderJob: (jobId: number, token: string) =>
+      get<{
+        status: string;
+        total_items: number | null;
+        processed_items: number | null;
+        stats: { episode_order?: string; switched?: number; failed?: number } | null;
+      }>(`/shows/episode-order/jobs/${jobId}`, undefined, token),
 
     getTvdb: (tvdbId: number, token?: string) =>
       get<TvdbShow>(`/shows/tvdb/${tvdbId}`, undefined, token),

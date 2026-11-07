@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import { api } from "../lib/api";
+import { isSecureRequest } from "../lib/secureCookie";
 
 // Provider redirects the browser here with ?code=&state=. We check state,
 // then post the code + PKCE verifier + nonce back to /auth/oidc/exchange.
@@ -43,7 +44,7 @@ if (!error) {
       Astro.cookies.set("token", access_token, {
         path: "/",
         httpOnly: true,
-        secure: import.meta.env.PROD,
+        secure: isSecureRequest(Astro.url, Astro.request),
         sameSite: "lax",
         maxAge: expires_in ?? 60 * 60 * 24 * 7,
       });

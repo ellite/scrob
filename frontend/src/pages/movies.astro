@@ -9,12 +9,14 @@ export const prerender = false;
 
 const category = Astro.url.searchParams.get("category") ?? "popular";
 const genre = Astro.url.searchParams.getAll("genre");
+const excludedGenres = Astro.url.searchParams.getAll("exclude_genre");
 const year = Astro.url.searchParams.getAll("year").map(Number);
 const minRating = Astro.url.searchParams.get("min_rating") ? Number(Astro.url.searchParams.get("min_rating")) : undefined;
 const collection = Astro.url.searchParams.getAll("collection");
 const watch = Astro.url.searchParams.getAll("watch");
 const arr = Astro.url.searchParams.getAll("arr");
 const langs = Astro.url.searchParams.getAll("lang");
+const excludedLangs = Astro.url.searchParams.getAll("exclude_lang");
 const inList = Astro.url.searchParams.getAll("in_list");
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token, user } = Astro.locals;
@@ -41,12 +43,14 @@ if (hasTmdbKey) {
       category,
       page,
       ...(genre.length ? { genre } : {}),
+      ...(excludedGenres.length ? { exclude_genre: excludedGenres } : {}),
       ...(year.length ? { year } : {}),
       ...(minRating ? { min_rating: minRating } : {}),
       ...(collection.length ? { collection } : {}),
       ...(watch.length ? { watch } : {}),
       ...(hasRadarr && arr.length ? { arr } : {}),
       ...(langs.length ? { original_language: langs.join("|") } : {}),
+      ...(excludedLangs.length ? { exclude_language: excludedLangs } : {}),
       ...(inList.length ? { in_list: inList } : {}),
     }, token);
   } catch (e) {
@@ -68,7 +72,16 @@ const LANGUAGES = [
   { value: "ko", label: "Korean" }, { value: "zh", label: "Chinese" },
   { value: "sv", label: "Swedish" }, { value: "da", label: "Danish" },
   { value: "no", label: "Norwegian" }, { value: "tr", label: "Turkish" },
-  { value: "hi", label: "Hindi" },
+  { value: "hi", label: "Hindi" }, { value: "ar", label: "Arabic" },
+  { value: "he", label: "Hebrew" }, { value: "ta", label: "Tamil" },
+  { value: "ru", label: "Russian" }, { value: "pl", label: "Polish" },
+  { value: "th", label: "Thai" }, { value: "te", label: "Telugu" },
+  { value: "ml", label: "Malayalam" }, { value: "fi", label: "Finnish" },
+  { value: "cs", label: "Czech" }, { value: "fa", label: "Persian" },
+  { value: "hu", label: "Hungarian" }, { value: "ro", label: "Romanian" },
+  { value: "id", label: "Indonesian" }, { value: "el", label: "Greek" },
+  { value: "uk", label: "Ukrainian" }, { value: "is", label: "Icelandic" },
+  { value: "cn", label: "Cantonese" },
 ];
 
 const currentYear = new Date().getFullYear();
@@ -78,12 +91,14 @@ const years = Array.from({ length: currentYear - 1899 }, (_, i) => currentYear -
 const baseParams = new URLSearchParams();
 baseParams.set("category", category);
 genre.forEach((v) => baseParams.append("genre", v));
+excludedGenres.forEach((v) => baseParams.append("exclude_genre", v));
 year.forEach((v) => baseParams.append("year", String(v)));
 if (minRating) baseParams.set("min_rating", String(minRating));
 collection.forEach((v) => baseParams.append("collection", v));
 watch.forEach((v) => baseParams.append("watch", v));
 if (hasRadarr) arr.forEach((v) => baseParams.append("arr", v));
 langs.forEach((l) => baseParams.append("lang", l));
+excludedLangs.forEach((l) => baseParams.append("exclude_lang", l));
 inList.forEach((v) => baseParams.append("in_list", v));
 const baseUrl = `/movies?${baseParams.toString()}`;
 ---
@@ -120,7 +135,7 @@ const baseUrl = `/movies?${baseParams.toString()}`;
           basePath="/movies"
           extraParams={{ category }}
           sections={[
-            { key: "genre", label: "Genre", options: MOVIE_GENRES.map((g) => ({ value: g, label: g })), selected: genre },
+            { key: "genre", label: "Genre", options: MOVIE_GENRES.map((g) => ({ value: g, label: g })), selected: genre, excluded: excludedGenres, tristate: true },
             { key: "year", label: "Year", options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },
             { key: "min_rating", label: "Rating", options: [9, 8, 7, 6, 5].map((r) => ({ value: String(r), label: `${r}+ Stars` })), selected: minRating ? [String(minRating)] : [], multi: false },
             ...(user ? [
@@ -128,7 +143,7 @@ const baseUrl = `/movies?${baseParams.toString()}`;
               { key: "watch", label: "Watched", options: [{ value: "watched", label: "Watched" }, { value: "unwatched", label: "Unwatched" }], selected: watch },
             ] : []),
             ...(hasRadarr ? [{ key: "arr", label: "Radarr", options: [{ value: "added", label: "In Radarr" }, { value: "notadded", label: "Not In Radarr" }], selected: arr }] : []),
-            { key: "lang", label: "Language", options: LANGUAGES, selected: langs },
+            { key: "lang", label: "Language", options: LANGUAGES, selected: langs, excluded: excludedLangs, tristate: true },
             { key: "in_list", label: "Lists", options: [{ value: "in", label: "In a List" }, { value: "out", label: "Not In a List" }], selected: inList },
           ]}
         />
