@@ -23,6 +23,7 @@ const langs = Astro.url.searchParams.getAll("lang");
 const excludedLangs = Astro.url.searchParams.getAll("exclude_lang");
 const inList = Astro.url.searchParams.getAll("in_list");
 const myRating = parseMyRating(Astro.url);
+const dropped = Astro.url.searchParams.getAll("dropped");
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -58,6 +59,7 @@ if (hasTmdbKey) {
       ...(excludedLangs.length ? { exclude_language: excludedLangs } : {}),
       ...(inList.length ? { in_list: inList } : {}),
       ...(myRating.length ? { my_rating: myRating } : {}),
+      ...(dropped.length ? { dropped } : {}),
     }, token);
   } catch (e) {
     console.error("Failed to fetch TMDB movie list:", e);
@@ -89,6 +91,7 @@ langs.forEach((l) => baseParams.append("lang", l));
 excludedLangs.forEach((l) => baseParams.append("exclude_lang", l));
 inList.forEach((v) => baseParams.append("in_list", v));
 myRating.forEach((rating) => baseParams.append("my_rating", String(rating)));
+dropped.forEach((value) => baseParams.append("dropped", value));
 const baseUrl = `/movies?${baseParams.toString()}`;
 ---
 
@@ -131,6 +134,7 @@ const baseUrl = `/movies?${baseParams.toString()}`;
               { key: "collection", label: m.filter_collection(), options: [{ value: "in", label: m.filter_in_my_collection() }, { value: "out", label: m.filter_not_in_my_collection() }], selected: collection },
               { key: "watch", label: m.filter_watched(), options: [{ value: "watched", label: m.filter_watched_option() }, { value: "unwatched", label: m.filter_unwatched_option() }], selected: watch },
               { key: "my_rating", label: m.filter_my_rating(), options: MY_RATING_OPTIONS, selected: myRating.map(String) },
+              { key: "dropped", label: m.filter_dropped(), options: [{ value: "dropped", label: m.filter_dropped_option() }, { value: "notdropped", label: m.filter_not_dropped_option() }], selected: dropped },
             ] : []),
             ...(hasRadarr ? [{ key: "arr", label: "Radarr", options: [{ value: "added", label: m.filter_in_radarr() }, { value: "notadded", label: m.filter_not_in_radarr() }], selected: arr }] : []),
             { key: "lang", label: m.filter_language(), options: LANGUAGES, selected: langs, excluded: excludedLangs, tristate: true },
