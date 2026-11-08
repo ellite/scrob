@@ -1882,6 +1882,7 @@
   "conn_select_profile": "Choisir un profil",
   "conn_ratings": "Notes",
   "conn_lists": "Listes",
+  "conn_mdblist_lists_hint": "Vos listes MDBList, statiques et dynamiques, et les listes importées depuis MDBList sont conservées en copies en lecture seule qui suivent MDBList : les éléments ajoutés ou retirés là-bas le sont aussi ici, et la copie d'une liste supprimée sur MDBList est supprimée. S'exécute à chaque récupération et synchronisation automatique.",
   "conn_comments": "Commentaires",
   "conn_trakt_community_comments": "Commentaires de la communauté",
   "conn_trakt_community_comments_hint": "Afficher les commentaires publics de Trakt (pas les vôtres) sur les pages des films, séries, saisons et épisodes.",

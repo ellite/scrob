@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, text, Enum as SQLEnum
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, PrivacyLevel
@@ -28,6 +29,13 @@ class List(Base):
     is_watchlist : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     # IMDb list ids have an ``ls`` prefix and are therefore stored as text.
     imdb_list_id : Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # MDBList list mirror (routers/mdblist.py _sync_lists): the list's keys as
+    # MDBList last returned them (None = not mirrored, so editable), whether
+    # the MDBList list is static rather than dynamic, and whether the
+    # connected MDBList account owns it (its copy is deleted with it).
+    mdblist_synced_keys : Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    mdblist_static      : Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    mdblist_owned       : Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     # WeTrakr's own numeric list id — links a local List to the remote one it
     # mirrors, set on either a pull (imported from) or a push (created on).
     # BigInteger for the same reason as Comment.wetrakr_comment_id: WeTrakr's

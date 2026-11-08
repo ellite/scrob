@@ -54,7 +54,7 @@ _CONNECTIONS_SETTINGS_FIELDS = (
     "simkl_push_watched", "simkl_push_ratings", "simkl_push_dropped", "simkl_scrobble",
     "simkl_auto_sync_interval", "simkl_auto_push_interval",
     "mdblist_api_key", "mdblist_sync_watched", "mdblist_sync_ratings", "mdblist_sync_watchlist",
-    "mdblist_push_watched", "mdblist_push_ratings", "mdblist_push_watchlist", "mdblist_push_collection", "mdblist_scrobble",
+    "mdblist_push_watched", "mdblist_push_ratings", "mdblist_push_watchlist", "mdblist_sync_lists", "mdblist_push_collection", "mdblist_scrobble",
     "mdblist_auto_sync_interval", "mdblist_auto_push_interval",
 )
 
@@ -79,7 +79,7 @@ _SAFE_SETTINGS_FIELDS = (
     "simkl_push_watched", "simkl_push_ratings", "simkl_push_dropped", "simkl_scrobble",
     "simkl_auto_sync_interval", "simkl_auto_push_interval",
     "mdblist_sync_watched", "mdblist_sync_ratings", "mdblist_sync_watchlist",
-    "mdblist_push_watched", "mdblist_push_ratings", "mdblist_push_watchlist", "mdblist_push_collection", "mdblist_scrobble",
+    "mdblist_push_watched", "mdblist_push_ratings", "mdblist_push_watchlist", "mdblist_sync_lists", "mdblist_push_collection", "mdblist_scrobble",
     "mdblist_auto_sync_interval", "mdblist_auto_push_interval",
 )
 
