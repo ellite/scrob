@@ -1275,6 +1275,21 @@ async def _push_watchlist_item_to_mdblist(
         )
 
 
+async def _refuse_edit_of_mdblist_mirror(db: AsyncSession, lst: ListModel) -> None:
+    """A list mirrored from MDBList (routers/mdblist.py _sync_lists) takes its
+    items from MDBList only, so the next sync would undo an edit made here.
+    Refuse it while the mirror is on; once it's off the list is ordinary."""
+    if lst.mdblist_synced_keys is None or not (lst.mdblist_slug or "").startswith("list:"):
+        return
+    settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == lst.user_id))
+    settings = settings_result.scalar_one_or_none()
+    if settings and settings.mdblist_sync_lists and settings.mdblist_api_key:
+        raise HTTPException(
+            status_code=409,
+            detail="This list is a copy of an MDBList list and follows it. Edit the list on MDBList.",
+        )
+
+
 async def _push_watchlist_item(
     db: AsyncSession,
     user_id: int,
@@ -1303,6 +1318,7 @@ async def add_list_item(
     lst = list_result.scalar_one_or_none()
     if not lst:
         raise HTTPException(status_code=404, detail="List not found")
+    await _refuse_edit_of_mdblist_mirror(db, lst)
 
     if body.season_number is not None and body.media_type != MediaType.series:
         raise HTTPException(status_code=400, detail="season_number is only valid for media_type=series")
@@ -1445,6 +1461,8 @@ async def remove_list_item(
         select(ListModel).where(ListModel.id == list_id)
     )
     lst = list_result.scalar_one_or_none()
+    if lst:
+        await _refuse_edit_of_mdblist_mirror(db, lst)
     media = item.media
     season_number = item.season_number
 
