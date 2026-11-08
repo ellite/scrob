@@ -5,6 +5,7 @@ import ListCard from "../../components/ListCard.astro";
 import SortButton from "../../components/SortButton.astro";
 import { api, type ListDetail, type UserList, type PublicList, type MediaItem } from "../../lib/api";
 import { m } from "../../paraglide/messages.js";
+import { requestOrigin } from "../../lib/secureCookie";
 export const prerender = false;
 
 const { id } = Astro.params;
@@ -69,7 +70,7 @@ const activeServices = watchlistServices.filter((s) => s.sync || s.push);
 
 Astro.response.headers.set("Cache-Control", "no-store");
 
-const origin = Astro.url.origin;
+const origin = requestOrigin(Astro.url, Astro.request);
 const hasMovies = list ? list.items.some(i => i.media.type === "movie") : false;
 const hasShows = list ? list.items.some(i => i.media.type === "series") : false;
 // Radarr/Sonarr treat this as the Base URL and append /api/v3/movie or

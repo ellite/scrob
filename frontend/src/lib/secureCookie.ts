@@ -13,3 +13,18 @@ export function isSecureRequest(url: URL, request: Request): boolean {
   if (forwarded) return forwarded === "https";
   return url.protocol === "https:";
 }
+
+/**
+ * Browser-visible origin for links another service must call back into.
+ *
+ * Astro's server-side URL can point at the internal frontend listener
+ * (for example localhost inside Docker). Prefer the original proxy host,
+ * then the request Host header, while reusing the forwarded-proto handling
+ * above so copied URLs keep the scheme the browser actually used. #534
+ */
+export function requestOrigin(url: URL, request: Request): string {
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const host = forwardedHost || request.headers.get("host")?.trim();
+  if (!host) return url.origin;
+  return `${isSecureRequest(url, request) ? "https" : "http"}://${host}`;
+}
