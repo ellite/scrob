@@ -146,7 +146,7 @@ const viewerTz = getViewerTimeZone(Astro.cookies);
             <div class="flex flex-wrap justify-center md:justify-start items-center gap-4 text-zinc-400 text-sm mb-8 bg-zinc-900/40 p-3 rounded-xl border border-zinc-800/50 backdrop-blur-sm inline-flex">
               <span class="font-bold text-zinc-300">{m.show_episode_count_label({ count: season.episodes?.length || 0 })}</span>
               {season.tmdb_rating != null && season.tmdb_rating > 0 && (
-                <span class="flex items-center gap-1.5 text-yellow-400 font-black">
+                <span class="flex items-center gap-1.5 rounded-md border border-yellow-400/40 bg-black/90 px-2 py-1 text-yellow-300 font-black shadow-md">
                   <span class="text-base leading-none">★</span> {formatRating(season.tmdb_rating)}
                 </span>
               )}
