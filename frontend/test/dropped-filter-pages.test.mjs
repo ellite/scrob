@@ -14,7 +14,7 @@ for (const page of ["movies.astro", "shows.astro"]) {
   test(`${page} keeps the Dropped filter in the Explore request and pagination URL`, async () => {
     const source = await pageSource(page);
     assert.match(source, /getAll\("dropped"\)/);
-    assert.match(source, /dropped:\s*dropped/);
+    assert.match(source, /\.\.\.\(dropped\.length \? \{ dropped \} : \{\}\)/);
     assert.match(source, /append\("dropped", value\)/);
     assert.match(source, /key:\s*"dropped", label:\s*m\.filter_dropped\(\)/);
     assert.match(source, /value:\s*"notdropped", label:\s*m\.filter_not_dropped_option\(\)/);
