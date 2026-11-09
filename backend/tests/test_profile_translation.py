@@ -30,7 +30,8 @@ async def test_profile_listings_use_the_viewers_metadata_language():
 
 
 @pytest.mark.asyncio
-async def test_anonymous_viewer_sees_stored_titles():
+async def test_anonymous_viewer_without_a_browser_language_sees_stored_titles():
     rows = [({"media_type": "movie", "title": "Bugonia"}, SimpleNamespace(id=1), None)]
-    await profile._apply_viewer_language(AsyncMock(), None, rows)
+    with patch.object(profile, "get_user_metadata_language", AsyncMock(return_value=None)):
+        await profile._apply_viewer_language(AsyncMock(), None, rows)
     assert rows[0][0]["title"] == "Bugonia"

@@ -98,8 +98,8 @@ _TVDB_LANG: dict[str, str] = {
 def tvdb_language(metadata_language: str | None) -> str | None:
     """Convert a BCP 47 metadata_language code to the ISO 639-3 code TVDB expects.
 
-    An unset preference defaults to English: the settings UI shows an empty
-    metadata_language as "-- English (default) --", but TVDB's own default
+    An unset preference (no browser-language fallback either, see
+    core.accept_language) defaults to English, but TVDB's own default
     when no language is requested is the show's original/native language
     (e.g. Japanese for anime) — unlike TMDB, which implicitly defaults to
     en-US. Passing None straight through here would silently break that
