@@ -244,7 +244,10 @@ try {
             </select>
           </div>
           <label class="flex flex-wrap items-center justify-between gap-4 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
-            <span class="text-sm font-semibold text-zinc-100">{m.pagination_default_page_size()}</span>
+            <span>
+              <span class="block text-sm font-semibold text-zinc-100">{m.pagination_default_page_size()}</span>
+              <span class="block text-xs text-zinc-400 mt-1">{m.pagination_page_size_limits()}</span>
+            </span>
             <select id="default-page-size" class="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:ring-2 focus:ring-blue-500" data-saved={settings.page_size ?? ''}>
               <option value="" selected={settings.page_size == null}>{m.pagination_page_default()}</option>
               {PAGE_SIZES.map(size => <option value={size} selected={settings.page_size === size}>{size}</option>)}

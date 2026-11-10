@@ -1,6 +1,8 @@
 ---
 import Base from "../layouts/Base.astro";
 import MediaCard from "../components/MediaCard.astro";
+import PageSizeSelect from "../components/PageSizeSelect.astro";
+import { resolvePageSize } from "../lib/page-size.js";
 import Pagination from "../components/Pagination.astro";
 import FilterPanel from "../components/FilterPanel.astro";
 import SortButton from "../components/SortButton.astro";
@@ -23,6 +25,7 @@ const langs = Astro.url.searchParams.getAll("lang");
 const excludedLangs = Astro.url.searchParams.getAll("exclude_lang");
 const inList = Astro.url.searchParams.getAll("in_list");
 const myRating = parseMyRating(Astro.url);
+const pageSize = resolvePageSize(Astro.url.searchParams.get("page_size"), Astro.locals.settings?.page_size ?? 20, 50);
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -47,6 +50,7 @@ if (hasTmdbKey) {
       type: "movie",
       category,
       page,
+      page_size: pageSize,
       ...(genre.length ? { genre } : {}),
       ...(excludedGenres.length ? { exclude_genre: excludedGenres } : {}),
       ...(year.length ? { year } : {}),
@@ -78,6 +82,7 @@ const years = Array.from({ length: currentYear - 1899 }, (_, i) => currentYear -
 // Build base URL preserving active filters (without page)
 const baseParams = new URLSearchParams();
 baseParams.set("category", category);
+baseParams.set("page_size", String(pageSize));
 genre.forEach((v) => baseParams.append("genre", v));
 excludedGenres.forEach((v) => baseParams.append("exclude_genre", v));
 year.forEach((v) => baseParams.append("year", String(v)));
@@ -103,7 +108,8 @@ const baseUrl = `/movies?${baseParams.toString()}`;
     <h1 class="page-title">{m.explore_movies_title()}</h1>
 
     {hasTmdbKey && (
-      <div class="flex items-center gap-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <PageSizeSelect value={pageSize} maximum={50} />
         <SortButton
           id="explore-movie-category"
           current={category}
@@ -122,7 +128,7 @@ const baseUrl = `/movies?${baseParams.toString()}`;
         <FilterPanel
           id="explore-movie-filters"
           basePath="/movies"
-          extraParams={{ category }}
+          extraParams={{ category, page_size: String(pageSize) }}
           sections={[
             { key: "genre", label: m.filter_genre(), options: sortByLabel(MOVIE_GENRES.map((g) => ({ value: g, label: genreLabel(g) }))), selected: genre, excluded: excludedGenres, tristate: true },
             { key: "year", label: m.filter_year(), options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },

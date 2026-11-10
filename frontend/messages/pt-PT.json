@@ -2377,7 +2377,8 @@
   "settings_episode_order_saved_tvdb": "As novas séries usarão a ordem do TVDB. Use «Aplicar a todas as séries existentes» para as que já tem.",
   "settings_episode_order_saved_tmdb": "As novas séries usarão a ordem do TMDB.",
   "pagination_items_per_page": "Items per page",
-  "pagination_default_page_size": "Default items per page (Collection and History)",
+  "pagination_default_page_size": "Default items per page",
+  "pagination_page_size_limits": "Explore uses up to 50 items; Collection and History use up to 100. Larger account defaults are capped at 50 in Explore.",
   "pagination_page_default": "Use page default",
   "pagination_page_size_error": "Could not save the page size. Please try again."
 }

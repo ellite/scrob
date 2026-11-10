@@ -1,8 +1,8 @@
 export const PAGE_SIZES = [20, 30, 40, 50, 100];
 
-export function resolvePageSize(requested, fallback) {
+export function resolvePageSize(requested, fallback, maximum = 100) {
   const size = Number(requested);
-  return PAGE_SIZES.includes(size) ? size : fallback;
+  return Math.min(PAGE_SIZES.includes(size) ? size : fallback, maximum);
 }
 
 export function pageSizeUrl(currentUrl, size) {

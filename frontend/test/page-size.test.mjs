@@ -20,11 +20,27 @@ test("changing size resets pagination and preserves repeated filters", () => {
   assert.equal(url.searchParams.get("sort"), "title");
 });
 
-for (const page of ["collection/movies.astro", "collection/shows.astro", "history.astro"]) {
+test("Explore caps explicit and account sizes at fifty", () => {
+  assert.equal(resolvePageSize("100", 20, 50), 50);
+  assert.equal(resolvePageSize(null, 100, 50), 50);
+  assert.equal(resolvePageSize(null, 20, 50), 20);
+  assert.equal(resolvePageSize("40", 100, 50), 40);
+});
+
+for (const page of ["movies.astro", "shows.astro", "collection/movies.astro", "collection/shows.astro", "history.astro"]) {
   test(`${page} sends and preserves the selected page size`, async () => {
     const source = await readFile(new URL(`../src/pages/${page}`, import.meta.url), "utf8");
     assert.match(source, /page_size: pageSize/);
     assert.match(source, /<PageSizeSelect value=\{pageSize\}/);
     assert.match(source, /page_size/);
+  });
+}
+
+for (const page of ["movies.astro", "shows.astro"]) {
+  test(`${page} limits the selector and preserves size with filter parameters`, async () => {
+    const source = await readFile(new URL(`../src/pages/${page}`, import.meta.url), "utf8");
+    assert.match(source, /maximum=\{50\}/);
+    assert.match(source, /extraParams=\{\{ category, page_size: String\(pageSize\) \}\}/);
+    assert.match(source, /baseParams.set\("page_size", String\(pageSize\)\)/);
   });
 }

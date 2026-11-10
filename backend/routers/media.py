@@ -2364,6 +2364,7 @@ async def get_tmdb_list(
     type: MediaType = Query(...),
     category: str = Query("popular"),
     page: int = Query(1, ge=1),
+    page_size: Annotated[int, Query(ge=1, le=50)] = 20,
     genre: list[str] = Query(default=[]),  # OR'd together via TMDB's own with_genres "|" syntax
     # year can't be OR'd in a single TMDB discover request (no multi-value
     # param for it) - applied as a local filter alongside collection/watch/arr
@@ -2538,21 +2539,40 @@ async def get_tmdb_list(
         excluded_languages = _expand_excluded_languages(exclude_language)
 
         if not (collection or watch or arr or year or in_list or excluded_languages or my_rating):
-            data = await _fetch_tmdb_page(page)
-            enriched = await _build_enriched(data.get("results", []))
+            # TMDB supplies twenty results per source page. Display pages
+            # may start or end inside one, so slice a contiguous source window.
+            source_size = 20
+            source_limit = 500
+            offset = (page - 1) * page_size
+            first_source = offset // source_size + 1
+            metadata_page = first_source if first_source <= source_limit else 1
+            data = await _fetch_tmdb_page(metadata_page)
+            source_pages = min(data.get("total_pages", 1), source_limit)
+            total = min(data.get("total_results", 0), source_pages * source_size)
+            total_pages = max(1, math.ceil(total / page_size))
+            results = []
+            if offset < total and first_source <= source_pages:
+                last_source = min((offset + page_size - 1) // source_size + 1, source_pages)
+                rest = await asyncio.gather(*(
+                    _fetch_tmdb_page(p) for p in range(first_source + 1, last_source + 1)
+                ))
+                for block in [data, *rest]:
+                    results.extend(block.get("results", []))
+                start = offset % source_size
+                results = results[start:start + page_size]
             return {
-                "page": data.get("page", 1),
-                "total_pages": data.get("total_pages", 1),
-                "total_results": data.get("total_results", 0),
-                "results": enriched,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "total_results": total,
+                "results": await _build_enriched(results),
             }
 
         # The local filters drop an unpredictable share of each TMDB page, so
         # scan pages forward and rebuild fixed-size pages of matches.
-        PAGE_SIZE = 20
         MAX_SCAN_PAGES = 30
         SCAN_BATCH = 5
-        needed = page * PAGE_SIZE
+        needed = page * page_size
         matched: list[dict] = []
         seen_ids: set[int] = set()
         scan_page = 1
@@ -2586,9 +2606,10 @@ async def get_tmdb_list(
             if total_tmdb_pages is not None and scan_page > total_tmdb_pages:
                 break
 
-        page_items, total_pages = _paginate_matches(matched, page, PAGE_SIZE)
+        page_items, total_pages = _paginate_matches(matched, page, page_size)
         return {
             "page": page,
+            "page_size": page_size,
             "total_pages": total_pages,
             "total_results": len(matched),
             "results": page_items,
