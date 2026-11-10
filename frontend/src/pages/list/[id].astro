@@ -166,6 +166,12 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
                 class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
               />
             </div>
+            {!list.is_watchlist && (
+              <label class="flex items-start gap-3 text-sm text-zinc-300">
+                <input id="edit-auto-remove" type="checkbox" checked={list.auto_remove_watched} class="mt-1 accent-blue-500" />
+                <span>{m.list_auto_remove_watched()}<span class="block text-xs text-zinc-400 mt-1">{m.list_auto_remove_watched_help()}</span></span>
+              </label>
+            )}
             <div>
               <label for="edit-desc" class="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">{m.common_description()}</label>
               <textarea
@@ -531,7 +537,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       const res = await fetch(`/api/proxy/lists/${listId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ name, description, privacy_level: privacyLevel }),
+        body: JSON.stringify({ name, description, privacy_level: privacyLevel, auto_remove_watched: document.getElementById("edit-auto-remove")?.checked ?? false }),
       });
       if (!res.ok) {
         const err = await res.json();

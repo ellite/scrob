@@ -79,6 +79,7 @@ class ListCreate(BaseModel):
 
 
 class ListUpdate(BaseModel):
+    auto_remove_watched: Optional[bool] = None
     name: Optional[str] = None
     description: Optional[str] = None
     privacy_level: Optional[PrivacyLevel] = None
@@ -114,6 +115,7 @@ def _format_list(lst: ListModel) -> dict:
         "description": lst.description,
         "privacy_level": lst.privacy_level,
         "is_watchlist": lst.is_watchlist,
+        "auto_remove_watched": lst.auto_remove_watched,
         "item_count": len(lst.items),
         "created_at": lst.created_at.isoformat(),
         "updated_at": lst.updated_at.isoformat(),
@@ -1016,6 +1018,12 @@ async def update_list(
     lst = result.scalar_one_or_none()
     if not lst:
         raise HTTPException(status_code=404, detail="List not found")
+
+    if lst.is_watchlist and body.auto_remove_watched:
+        raise HTTPException(status_code=400, detail="Automatic removal is not available for the synced watchlist")
+
+    if body.auto_remove_watched is not None:
+        lst.auto_remove_watched = body.auto_remove_watched
 
     if lst.is_watchlist:
         # The watchlist keeps its name and stays private: it is the hub the

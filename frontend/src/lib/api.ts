@@ -292,6 +292,7 @@ export interface ShowSeasonOverride {
 }
 
 export interface UserList {
+  auto_remove_watched: boolean;
   id: number;
   name: string;
   description: string | null;
