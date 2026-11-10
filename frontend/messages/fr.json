@@ -2375,5 +2375,9 @@
   "stats_no_plays_period": "Aucune lecture sur cette période.",
   "lists_import_job_lost": "Le suivi de l’importation a été perdu (le serveur a peut-être redémarré). Vérifiez la liste, puis relancez l’importation pour la compléter.",
   "settings_episode_order_saved_tvdb": "Les nouvelles séries utiliseront l’ordre TVDB. Utilisez « Appliquer à toutes les séries existantes » pour celles que vous avez déjà.",
-  "settings_episode_order_saved_tmdb": "Les nouvelles séries utiliseront l’ordre TMDB."
+  "settings_episode_order_saved_tmdb": "Les nouvelles séries utiliseront l’ordre TMDB.",
+  "pagination_items_per_page": "Items per page",
+  "pagination_default_page_size": "Default items per page (Collection and History)",
+  "pagination_page_default": "Use page default",
+  "pagination_page_size_error": "Could not save the page size. Please try again."
 }

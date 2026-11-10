@@ -556,6 +556,7 @@ export interface UserSettings {
   ui_language: string | null;
   use_hls_player: boolean;
   show_play_button: boolean;
+  page_size: number | null;
   shuffle_next_up: boolean;
   minimalist_next_up: boolean;
   next_up_by_recent_watch: boolean;
@@ -1422,7 +1423,7 @@ export const api = {
   },
 
   media: {
-    list: (params?: { type?: string; sort?: string; page?: number; genre?: string[]; year?: number[]; watched?: string[]; in_list?: string; my_rating?: number[] }, token?: string) =>
+    list: (params?: { type?: string; sort?: string; page?: number; page_size?: number; genre?: string[]; year?: number[]; watched?: string[]; in_list?: string; my_rating?: number[] }, token?: string) =>
       get<{ page: number; page_size: number; total_pages: number; total_results: number; results: MediaItem[] }>("/media", params, token),
 
     years: (type: string, token?: string) =>

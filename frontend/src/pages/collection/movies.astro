@@ -1,6 +1,8 @@
 ---
 import Base from "../../layouts/Base.astro";
 import MediaCard from "../../components/MediaCard.astro";
+import PageSizeSelect from "../../components/PageSizeSelect.astro";
+import { resolvePageSize } from "../../lib/page-size.js";
 import Pagination from "../../components/Pagination.astro";
 import FilterPanel from "../../components/FilterPanel.astro";
 import SortButton from "../../components/SortButton.astro";
@@ -25,6 +27,7 @@ const years = Astro.url.searchParams.getAll("year").map(Number).filter((n) => !N
 const watched = Astro.url.searchParams.getAll("watched");
 const inList = Astro.url.searchParams.get("in_list") ?? "";
 const myRating = parseMyRating(Astro.url);
+const pageSize = resolvePageSize(Astro.url.searchParams.get("page_size"), Astro.locals.settings?.page_size ?? 30);
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -33,6 +36,7 @@ const data = await api.media.list({
   type: "movie",
   sort,
   page,
+  page_size: pageSize,
   genre: genres,
   year: years,
   watched,
@@ -51,6 +55,7 @@ const hasFilters = genres.length > 0 || years.length > 0 || watched.length > 0 |
 // Build base URL preserving active filters (without page)
 const baseParams = new URLSearchParams();
 baseParams.set("sort", sort);
+baseParams.set("page_size", String(pageSize));
 genres.forEach((g) => baseParams.append("genre", g));
 years.forEach((y) => baseParams.append("year", String(y)));
 watched.forEach((w) => baseParams.append("watched", w));
@@ -71,7 +76,8 @@ const baseUrl = `/collection/movies?${baseParams.toString()}`;
     </div>
 
     <!-- Sort & filter controls -->
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
+      <PageSizeSelect value={pageSize} />
       <SortButton
         id="movie-sort"
         current={sort}
@@ -88,6 +94,7 @@ const baseUrl = `/collection/movies?${baseParams.toString()}`;
         id="movie-filters"
         basePath="/collection/movies"
         currentSort={sort}
+        extraParams={{ page_size: String(pageSize) }}
         sections={[
           { key: "genre", label: m.filter_genre(), options: sortByLabel(MOVIE_GENRES.map((g) => ({ value: g, label: genreLabel(g) }))), selected: genres },
           { key: "year", label: m.filter_year(), selected: years.map(String), dynamic: true, endpoint: "/api/proxy/media/years?type=movie" },
