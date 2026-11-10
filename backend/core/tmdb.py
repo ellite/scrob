@@ -100,12 +100,16 @@ _cache = _TTLCache()
 # DNS + TCP + TLS on every request. keepalive_expiry must stay below TMDB's
 # edge idle timeout (~3 min). No connection cap, as before: a pool wait would
 # count against _HTTP_TIMEOUT and could trip the breaker.
+# http2: over HTTP/1.1 each concurrent request needs its own connection, so a
+# fan-out of N requests after the pool went idle opened N connections and did
+# N DNS lookups. HTTP/2 multiplexes the whole burst over one connection.
 _client: httpx.AsyncClient | None = None
 
 
 def init_client() -> None:
     global _client
     _client = httpx.AsyncClient(
+        http2=True,
         timeout=httpx.Timeout(_HTTP_TIMEOUT),
         limits=httpx.Limits(max_connections=None, keepalive_expiry=120.0),
     )

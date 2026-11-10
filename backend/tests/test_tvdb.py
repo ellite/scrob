@@ -243,5 +243,64 @@ class SearchSeriesYearFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0]["image_url"], "https://artworks.thetvdb.com/banners/series/6/posters/abc.jpg")
 
 
+class SharedClientTests(unittest.IsolatedAsyncioTestCase):
+    """Inside the app lifespan every TVDB call (login included) reuses one
+    pooled client and its keep-alive connections; a client per call paid
+    DNS + TCP + TLS on every request. After shutdown, calls fall back to a
+    client per call."""
+
+    def setUp(self) -> None:
+        tvdb._cache._store.clear()
+        tvdb._token_cache.clear()
+
+    async def asyncTearDown(self) -> None:
+        await tvdb.close_client()
+
+    def _handler(self, calls: list[str], reset_first_get: bool = False):
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.url.path)
+            if request.url.path.endswith("/login"):
+                return httpx.Response(200, json={"data": {"token": "tok"}})
+            if reset_first_get and calls.count(request.url.path) == 1:
+                raise httpx.ReadError("connection reset by peer", request=request)
+            return httpx.Response(200, json={"data": {"id": 1, "name": "Show"}})
+        return handler
+
+    async def test_calls_share_the_lifespan_client_then_fall_back_after_close(self) -> None:
+        calls: list[str] = []
+        transport = httpx.MockTransport(self._handler(calls))
+        with patch.object(
+            tvdb.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
+        ) as client_cls:
+            tvdb.init_client()
+            await tvdb.get_series(1, "key", cache_ttl=None)  # login + series
+            await tvdb.get_series(2, "key", cache_ttl=None)
+            self.assertEqual(client_cls.call_count, 1)
+
+            await tvdb.close_client()
+            await tvdb.get_series(3, "key", cache_ttl=None)
+            self.assertEqual(client_cls.call_count, 2)
+
+        self.assertEqual(len(calls), 4)
+
+    async def test_a_reset_keep_alive_connection_is_retried_once(self) -> None:
+        calls: list[str] = []
+        transport = httpx.MockTransport(self._handler(calls, reset_first_get=True))
+        with patch.object(
+            tvdb.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
+        ):
+            tvdb.init_client()
+            result = await tvdb.get_series(1, "key", cache_ttl=None)
+
+        self.assertEqual(result["id"], 1)
+        self.assertEqual([p for p in calls if not p.endswith("/login")], ["/v4/series/1/extended"] * 2)
+
+    async def test_lifespan_client_negotiates_http2(self) -> None:
+        # Built for real (no mock) so a missing h2 package fails here instead
+        # of at app startup.
+        tvdb.init_client()
+        self.assertTrue(tvdb._client._transport._pool._http2)
+
+
 if __name__ == "__main__":
     unittest.main()
