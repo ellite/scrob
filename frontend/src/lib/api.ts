@@ -293,6 +293,7 @@ export interface ShowSeasonOverride {
 
 export interface UserList {
   auto_remove_watched: boolean;
+  auto_remove_include_earlier: boolean;
   id: number;
   name: string;
   description: string | null;
@@ -1642,6 +1643,9 @@ export const api = {
   lists: {
     getAll: (token: string) =>
       get<{ lists: UserList[] }>("/lists", undefined, token),
+    getSummary: (token: string) =>
+      get<{ lists: Pick<UserList, "id" | "name" | "is_watchlist" | "auto_remove_watched" | "auto_remove_include_earlier">[] }>(
+        "/lists", { summary: "true" }, token),
     getPublic: (token?: string) =>
       get<{ lists: PublicList[] }>("/lists/public", undefined, token),
     create: (body: { name: string; description?: string; privacy_level?: PrivacyLevel }, token: string) =>

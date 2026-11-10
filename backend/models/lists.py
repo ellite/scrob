@@ -34,6 +34,10 @@ class List(Base):
     # own ids for some object types run past Postgres INTEGER's 32-bit range.
     wetrakr_list_id : Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     auto_remove_watched : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Watches before this moment (when auto-removal was turned on) never remove
+    # an item, unless the list opts into watches since each item was added.
+    auto_remove_since : Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    auto_remove_include_earlier : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at    : Mapped[datetime]      = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at    : Mapped[datetime]      = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

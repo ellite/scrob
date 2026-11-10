@@ -12,7 +12,7 @@ const { token } = Astro.locals;
 const [settings, me, ownedLists] = await Promise.all([
   Astro.locals.settings ?? api.auth.getSettings(token!),
   api.auth.me(token!),
-  api.lists.getAll(token!).then(result => result.lists ?? null).catch(() => null),
+  api.lists.getSummary(token!).then(result => result.lists ?? null).catch(() => null),
 ]);
 const hasTmdbKey = settings.has_effective_tmdb_key;
 const hasTvdbKey = settings.has_effective_tvdb_key;
@@ -44,17 +44,6 @@ try {
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
     <div class="space-y-12">
-      <section>
-        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">{m.list_auto_remove_watched()}</h2>
-        <p class="mb-3 text-sm text-zinc-400">{m.list_auto_remove_watched_help()}</p>
-        {ownedLists === null ? <p role="alert" class="text-sm text-red-400">{m.list_auto_remove_load_error()}</p> :
-          ownedLists.map(list => (
-            <label class="flex items-center gap-2 py-1 text-sm">
-              <input type="checkbox" data-auto-remove-list={list.id} checked={list.auto_remove_watched} class="accent-blue-500" />
-              {list.name}
-            </label>
-          ))}
-      </section>
       <!-- General Settings -->
       <section>
         <div class="flex items-center justify-between mb-4 border-b border-zinc-800 pb-2">
@@ -494,6 +483,25 @@ try {
             </div>
           </div>
         </div>
+      </section>
+
+      <!-- Lists: automatic removal of watched items (#338) -->
+      <section>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">{m.list_auto_remove_watched()}</h2>
+        <p class="mb-3 text-sm text-zinc-400">{m.list_auto_remove_watched_help()}</p>
+        {ownedLists === null ? <p role="alert" class="text-sm text-red-400">{m.list_auto_remove_load_error()}</p> :
+          ownedLists.map(list => (
+            <div class="py-1">
+              <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" data-auto-remove-list={list.id} data-field="auto_remove_watched" checked={list.auto_remove_watched} class="accent-blue-500" />
+                {list.name}
+              </label>
+              <label class:list={["ml-6 mt-1 flex items-start gap-2 text-xs text-zinc-400", !list.auto_remove_watched && "hidden"]} data-include-earlier-row={list.id}>
+                <input type="checkbox" data-auto-remove-list={list.id} data-field="auto_remove_include_earlier" checked={list.auto_remove_include_earlier} class="mt-0.5 accent-blue-500" />
+                <span>{m.list_auto_remove_include_earlier()}<span class="block text-zinc-500">{m.list_auto_remove_include_earlier_help()}</span></span>
+              </label>
+            </div>
+          ))}
       </section>
 
       <!-- Experimental Features -->
@@ -1190,14 +1198,18 @@ try {
   document.querySelectorAll<HTMLInputElement>('[data-auto-remove-list]').forEach(input => {
     input.addEventListener('change', async () => {
       const checked = input.checked;
+      const field = input.dataset.field!;
       input.disabled = true;
       try {
         const response = await fetch('/api/proxy/lists/' + input.dataset.autoRemoveList, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ auto_remove_watched: checked }),
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ [field]: checked }),
         });
         if (!response.ok) throw new Error('List update failed');
+        if (field === 'auto_remove_watched') {
+          document.querySelector(`[data-include-earlier-row="${input.dataset.autoRemoveList}"]`)?.classList.toggle('hidden', !checked);
+        }
         showMessage(m.common_action_successful(), 'success', { scroll: false });
       } catch {
         input.checked = !checked;

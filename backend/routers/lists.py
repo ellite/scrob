@@ -5,7 +5,7 @@ import os
 import re
 import time
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -26,6 +26,7 @@ from routers.media import enrich_with_state, require_anon_nav_allowed
 from core.enrichment import is_unmapped_tvdb_episode, create_media_safely, get_or_create_tvdb_series_media
 from core.identity import find_media, find_show
 from core.native_watchlist import get_or_create_watchlist, reset_watchlist_baselines
+from core.timeutil import utcnow
 from core.translations import (
     apply_media_translations,
     get_media_translations,
@@ -80,6 +81,7 @@ class ListCreate(BaseModel):
 
 class ListUpdate(BaseModel):
     auto_remove_watched: Optional[bool] = None
+    auto_remove_include_earlier: Optional[bool] = None
     name: Optional[str] = None
     description: Optional[str] = None
     privacy_level: Optional[PrivacyLevel] = None
@@ -116,6 +118,7 @@ def _format_list(lst: ListModel) -> dict:
         "privacy_level": lst.privacy_level,
         "is_watchlist": lst.is_watchlist,
         "auto_remove_watched": lst.auto_remove_watched,
+        "auto_remove_include_earlier": lst.auto_remove_include_earlier,
         "item_count": len(lst.items),
         "created_at": lst.created_at.isoformat(),
         "updated_at": lst.updated_at.isoformat(),
@@ -237,12 +240,20 @@ async def get_public_lists(
 
 @router.get("")
 async def get_lists(
+    summary: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     # The watchlist always shows, even before any service has synced into it.
     await get_or_create_watchlist(db, current_user.id)
     await db.commit()
+    if summary:
+        # Names and auto-removal flags only (Settings), without loading items.
+        rows = (await db.execute(select(ListModel).where(ListModel.user_id == current_user.id)
+            .order_by(ListModel.is_watchlist.desc(), ListModel.updated_at.desc()))).scalars().all()
+        return {"lists": [{"id": lst.id, "name": lst.name, "is_watchlist": lst.is_watchlist,
+                           "auto_remove_watched": lst.auto_remove_watched,
+                           "auto_remove_include_earlier": lst.auto_remove_include_earlier} for lst in rows]}
     result = await db.execute(
         select(ListModel)
         .options(selectinload(ListModel.items).selectinload(ListItem.media).selectinload(Media.show))
@@ -1019,8 +1030,12 @@ async def update_list(
     if not lst:
         raise HTTPException(status_code=404, detail="List not found")
 
-    if body.auto_remove_watched is not None:
+    if body.auto_remove_watched is not None and body.auto_remove_watched != lst.auto_remove_watched:
         lst.auto_remove_watched = body.auto_remove_watched
+        # Only watches after this moment count (unless include_earlier).
+        lst.auto_remove_since = utcnow() if body.auto_remove_watched else None
+    if body.auto_remove_include_earlier is not None:
+        lst.auto_remove_include_earlier = body.auto_remove_include_earlier
 
     if lst.is_watchlist:
         # The watchlist keeps its name and stays private: it is the hub the

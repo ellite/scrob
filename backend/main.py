@@ -124,10 +124,16 @@ async def _auto_sync_scheduler():
                     await prune_watched_list_items(db, pending_list_pushes)
                     await db.commit()
                     for user_id, slug, media, season in pending_list_pushes:
-                        if slug is None:
-                            await lists._push_watchlist_item(db, user_id, media, season_number=season, remove=True)
-                        else:
-                            await lists._push_list_item_to_trakt(db, user_id, slug, media, season_number=season, remove=True)
+                        # One failed push must not skip the others: the local
+                        # removals are already committed.
+                        try:
+                            if slug is None:
+                                await lists._push_watchlist_item(db, user_id, media, season_number=season, remove=True)
+                            else:
+                                await lists._push_list_item_to_trakt(db, user_id, slug, media, season_number=season, remove=True)
+                        except Exception:
+                            log.exception("List auto-removal push failed")
+                            await db.rollback()
                 except Exception:
                     log.exception("List auto-removal failed")
                     await db.rollback()
