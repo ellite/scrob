@@ -8,3 +8,7 @@ export function reconcileOrder(current, available) {
 export function initialItemSort(items) {
   return items.some(item => item.sort_order < 0) ? "saved_order" : "added_at";
 }
+
+export function dropBefore(target, pointerY, bounds) {
+  return pointerY < bounds.top + bounds.height / 2 ? target : target.nextElementSibling;
+}

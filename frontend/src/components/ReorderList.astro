@@ -7,8 +7,9 @@ const { items, endpoint, source, kind } = Astro.props;
     <summary class="cursor-pointer text-sm font-semibold text-zinc-300">{m.list_reorder()}</summary>
     <ol class="mt-4 max-h-96 overflow-y-auto space-y-2" data-order-items>
       {items.map(item => (
-        <li data-order-id={item.id} class="flex items-center justify-between gap-3 text-sm text-zinc-300">
-          <span data-order-label class="min-w-0 break-words">{item.label}</span>
+        <li data-order-id={item.id} class="flex items-center gap-3 text-sm text-zinc-300 data-[dragging]:opacity-50 data-[drop-target]:bg-zinc-800">
+          <span aria-hidden="true" draggable="true" data-drag-handle class="cursor-grab select-none px-2 text-zinc-500">&#8942;&#8942;</span>
+        <span data-order-label class="grow min-w-0 break-words">{item.label}</span>
           <span class="flex shrink-0 gap-2">
             <button type="button" data-move="up" aria-label={m.list_move_up_named({ name: item.label })} class="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-500">{m.list_move_up()}</button>
             <button type="button" data-move="down" aria-label={m.list_move_down_named({ name: item.label })} class="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-500">{m.list_move_down()}</button>
@@ -17,8 +18,9 @@ const { items, endpoint, source, kind } = Astro.props;
       ))}
     </ol>
     <template data-order-template>
-      <li data-order-id class="flex items-center justify-between gap-3 text-sm text-zinc-300">
-        <span data-order-label class="min-w-0 break-words"></span>
+      <li data-order-id class="flex items-center gap-3 text-sm text-zinc-300 data-[dragging]:opacity-50 data-[drop-target]:bg-zinc-800">
+        <span aria-hidden="true" draggable="true" data-drag-handle class="cursor-grab select-none px-2 text-zinc-500">&#8942;&#8942;</span>
+        <span data-order-label class="grow min-w-0 break-words"></span>
         <span class="flex shrink-0 gap-2">
           <button type="button" data-move="up" class="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-500">{m.list_move_up()}</button>
           <button type="button" data-move="down" class="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-500">{m.list_move_down()}</button>
@@ -29,7 +31,7 @@ const { items, endpoint, source, kind } = Astro.props;
     <button type="button" data-save-order class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50">{m.list_save_order()}</button>
   </details>
 <script>
-  import { reconcileOrder } from "../lib/list-order.js";
+  import { dropBefore, reconcileOrder } from "../lib/list-order.js";
   import { m } from "../paraglide/messages.js";
   document.querySelectorAll<HTMLElement>('[data-reorder-root]').forEach(root => {
     const items = root.querySelector<HTMLOListElement>('[data-order-items]')!;
@@ -43,6 +45,49 @@ const { items, endpoint, source, kind } = Astro.props;
         items.insertBefore(row.nextElementSibling, row);
       }
       button.focus();
+    });
+    let dragged: HTMLLIElement | null = null;
+    let target: HTMLLIElement | null = null;
+    function clearTarget() {
+      target?.removeAttribute('data-drop-target');
+      target = null;
+    }
+    items.addEventListener('dragstart', event => {
+      const handle = (event.target as Element).closest('[data-drag-handle]');
+      if (!handle || !event.dataTransfer || save.disabled) {
+        event.preventDefault();
+        return;
+      }
+      dragged = handle.closest<HTMLLIElement>('[data-order-id]');
+      if (!dragged) return;
+      event.dataTransfer.setData('text/plain', dragged.dataset.orderId!);
+      event.dataTransfer.effectAllowed = 'move';
+      dragged.dataset.dragging = '';
+    });
+    items.addEventListener('dragover', event => {
+      if (!dragged || !event.dataTransfer || save.disabled) return;
+      const row = (event.target as Element).closest<HTMLLIElement>('[data-order-id]');
+      clearTarget();
+      if (!row || row === dragged) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      target = row;
+      row.dataset.dropTarget = '';
+    });
+    items.addEventListener('dragleave', event => {
+      if (!(event.relatedTarget instanceof Node) || !items.contains(event.relatedTarget)) clearTarget();
+    });
+    items.addEventListener('drop', event => {
+      const row = (event.target as Element).closest<HTMLLIElement>('[data-order-id]');
+      if (!dragged || !items.contains(dragged) || !row || row === dragged || save.disabled) return;
+      event.preventDefault();
+      items.insertBefore(dragged, dropBefore(row, event.clientY, row.getBoundingClientRect()));
+      clearTarget();
+    });
+    items.addEventListener('dragend', () => {
+      dragged?.removeAttribute('data-dragging');
+      dragged = null;
+      clearTarget();
     });
     const source = document.querySelector(root.dataset.source!);
     const template = root.querySelector<HTMLTemplateElement>('[data-order-template]')!;
