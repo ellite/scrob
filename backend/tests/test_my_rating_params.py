@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException
 
 from db import get_db
 from dependencies import get_current_user_or_api_key, get_optional_user_or_api_key
-from routers import media, shows
+from routers import history, media, shows
 
 
 class _Result:
@@ -36,6 +36,7 @@ class MyRatingParamTests(unittest.IsolatedAsyncioTestCase):
         app = FastAPI()
         app.include_router(media.router, prefix="/media")
         app.include_router(shows.router, prefix="/shows")
+        app.include_router(history.router, prefix="/history")
 
         async def _override_db():
             yield SimpleNamespace(execute=AsyncMock(return_value=_Result()))
@@ -81,6 +82,18 @@ class MyRatingParamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(accepted.status_code, 418, accepted.text)
         self.assertEqual(rejected.status_code, 422, rejected.text)
         self.assertIn("my_rating", rejected.text)
+
+    async def test_history_accepts_and_validates_ratings(self):
+        # #316: History has no translations to patch when it returns no events.
+        for url in ("/history", "/history?my_rating=10", "/history?my_rating=9&my_rating=10&type=movie"):
+            with self.subTest(url=url):
+                res = await self.client.get(url)
+                self.assertEqual(res.status_code, 200, res.text)
+        for url in ("/history?my_rating=0", "/history?my_rating=11"):
+            with self.subTest(url=url):
+                res = await self.client.get(url)
+                self.assertEqual(res.status_code, 422, res.text)
+                self.assertIn("my_rating", res.text)
 
 
 if __name__ == "__main__":

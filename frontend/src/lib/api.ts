@@ -1590,7 +1590,7 @@ export const api = {
   },
 
   history: {
-    list: (params?: { page?: number; page_size?: number; type?: string; q?: string }, token?: string) =>
+    list: (params?: { page?: number; page_size?: number; type?: string; q?: string; my_rating?: number[] }, token?: string) =>
       get<{ page: number; page_size: number; total_pages: number; total_results: number; results: WatchEvent[] }>("/history", params, token),
 
     markAsWatched: (body: { tmdb_id: number; media_type: string; watched_at?: string | null; completed?: boolean }, token: string) =>

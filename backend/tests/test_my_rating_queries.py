@@ -11,6 +11,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from models.base import MediaType
 from models.media import Media
 from models.show import Show
+from routers.history import get_history
 from routers.media import list_media
 from routers.shows import list_shows
 
@@ -113,6 +114,40 @@ class MyRatingQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("+ 0.5) IN (9)", count_query)
         self.assertIn("DESC NULLS LAST", page_query)
         self.assertIn("shows.id DESC", page_query)
+
+    async def test_history_filter_matches_the_watched_movie_or_episode_rating(self):
+        # #316: "only my 10/10 movies" in History. Episode ratings live on the
+        # episode's own media row, so the same per-media filter covers both.
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            _Result(count=0), _Result(items=[]),
+        ]))
+
+        response = await get_history(
+            page=1, page_size=40, type=None, q=None, my_rating=[9, 10],
+            db=db, current_user=SimpleNamespace(id=42),
+        )
+
+        self.assertEqual(response["total_results"], 0)
+        count_query = _sql(db.execute.await_args_list[0].args[0])
+        page_query = _sql(db.execute.await_args_list[1].args[0])
+        for query in (count_query, page_query):
+            self.assertIn("ratings.user_id = 42", query)
+            self.assertIn("ratings.season_number IS NULL", query)
+            self.assertIn("floor(ratings.rating + 0.5) IN (9, 10)", query)
+            self.assertIn("media.id IN (SELECT ratings.media_id", query)
+
+    async def test_history_without_my_rating_does_not_touch_ratings(self):
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            _Result(count=0), _Result(items=[]),
+        ]))
+
+        await get_history(
+            page=1, page_size=40, type=None, q=None, my_rating=[],
+            db=db, current_user=SimpleNamespace(id=42),
+        )
+
+        for call in db.execute.await_args_list:
+            self.assertNotIn("ratings", _sql(call.args[0]))
 
 
 if __name__ == "__main__":
