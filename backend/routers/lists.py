@@ -8,6 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+from urllib.parse import unquote
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, delete, func, and_, or_
 from sqlalchemy.orm import selectinload, aliased
@@ -792,17 +793,19 @@ class MdblistListImport(BaseModel):
 
 def _parse_mdblist_list_ref(raw: str) -> Optional[str]:
     """Accept a numeric list id, username/slug, or mdblist.com list URL."""
-    raw = raw.strip()
+    # Slugs keep accented list names (#550) and browsers often copy them
+    # percent-encoded; \w matches Unicode letters, the HTTP client re-encodes.
+    raw = unquote(raw.strip())
     if raw.isdigit():
         return raw
     match = re.search(
-        r"(?:https?://)?(?:www\.)?mdblist\.com/lists/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)(?:[/?#]|$)",
+        r"(?:https?://)?(?:www\.)?mdblist\.com/lists/([\w-]+)/([\w-]+)(?:[/?#]|$)",
         raw,
         flags=re.IGNORECASE,
     )
     if match:
         return f"{match.group(1).lower()}/{match.group(2).lower()}"
-    if re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_-]+", raw):
+    if re.fullmatch(r"[\w-]+/[\w-]+", raw):
         return raw.lower()
     return None
 

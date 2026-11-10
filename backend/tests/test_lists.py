@@ -534,9 +534,29 @@ class ParseMdblistListRefTests(unittest.TestCase):
             "alice/my-favourites",
         )
 
+    def test_non_ascii_slugs(self) -> None:
+        # Regression (#550): MDBList keeps accented list names in the slug.
+        self.assertEqual(
+            lists._parse_mdblist_list_ref("https://mdblist.com/lists/gautardos/Préférés"),
+            "gautardos/préférés",
+        )
+        # Browsers often copy the percent-encoded form.
+        self.assertEqual(
+            lists._parse_mdblist_list_ref(
+                "https://mdblist.com/lists/gautardos/pr%C3%A9f%C3%A9r%C3%A9s?sort=rank"
+            ),
+            "gautardos/préférés",
+        )
+        self.assertEqual(
+            lists._parse_mdblist_list_ref("jürgen/meine-lieblingsfilme-ä"),
+            "jürgen/meine-lieblingsfilme-ä",
+        )
+
     def test_garbage_is_rejected(self) -> None:
         self.assertIsNone(lists._parse_mdblist_list_ref("just-a-slug"))
         self.assertIsNone(lists._parse_mdblist_list_ref("https://mdblist.com/search"))
+        self.assertIsNone(lists._parse_mdblist_list_ref("mdblist.com/search"))
+        self.assertIsNone(lists._parse_mdblist_list_ref("alice/my list"))
 
 
 class ImportMdblistListTests(unittest.IsolatedAsyncioTestCase):
