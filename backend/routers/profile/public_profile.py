@@ -15,6 +15,7 @@ from models.show import Show as ShowModel
 from models.comments import Comment as CommentModel
 from models.lists import List as ListModel, ListItem
 from models.follows import Follow
+from core.list_order import arranged
 import schemas
 
 from .common import _apply_viewer_language, _check_profile_access, _latest_episode_per_show_subquery
@@ -309,6 +310,8 @@ async def get_public_profile(
             ListModel.description,
             ListModel.privacy_level,
             ListModel.updated_at,
+            ListModel.sort_order,
+            ListModel.created_at,
             func.count(ListModel.items).label("item_count"),
         )
         .outerjoin(ListModel.items)
@@ -324,7 +327,8 @@ async def get_public_profile(
         lists_query = lists_query.where(ListModel.privacy_level.in_(visible))
 
     lists_result = await db.execute(lists_query)
-    lists_rows = lists_result.all()
+    # The owner's own arrangement (#165) also orders the profile.
+    lists_rows = arranged(lists_result.all())
     list_ids = [row.id for row in lists_rows]
 
     # Fetch up to 3 preview posters per list using ROW_NUMBER

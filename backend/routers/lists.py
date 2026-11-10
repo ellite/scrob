@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy import select, delete, func, and_, or_
+from sqlalchemy import select, delete, func, and_, or_, update
 from sqlalchemy.orm import selectinload, aliased
 
 from db import get_db, engine
@@ -25,6 +25,7 @@ from models.global_settings import GlobalSettings
 from routers.media import enrich_with_state, require_anon_nav_allowed
 from core.enrichment import is_unmapped_tvdb_episode, create_media_safely, get_or_create_tvdb_series_media
 from core.identity import find_media, find_show
+from core.list_order import arranged
 from core.native_watchlist import get_or_create_watchlist, reset_watchlist_baselines
 from core.translations import (
     apply_media_translations,
@@ -97,7 +98,7 @@ class ListItemAdd(BaseModel):
 
 def _format_list(lst: ListModel) -> dict:
     preview_posters: list[dict] = []
-    for item in sorted(lst.items, key=lambda x: (x.sort_order, x.added_at)):
+    for item in sorted(lst.items, key=lambda x: (x.sort_order, x.added_at, x.id)):
         if len(preview_posters) >= 3:
             break
         try:
@@ -245,10 +246,64 @@ async def get_lists(
         select(ListModel)
         .options(selectinload(ListModel.items).selectinload(ListItem.media).selectinload(Media.show))
         .where(ListModel.user_id == current_user.id)
-        .order_by(ListModel.is_watchlist.desc(), ListModel.updated_at.desc())
+        .order_by(ListModel.is_watchlist.desc(), ListModel.updated_at.desc(), ListModel.id)
     )
     lists = result.scalars().all()
+    pinned = [lst for lst in lists if lst.is_watchlist]
+    lists = pinned + arranged([lst for lst in lists if not lst.is_watchlist])
     return {"lists": [_format_list(lst) for lst in lists]}
+
+
+class ListOrder(BaseModel):
+    ids: list[int]
+
+
+def _positions(rows, ids):
+    if len(ids) != len(set(ids)) or set(ids) != {row.id for row in rows}:
+        raise HTTPException(status_code=400, detail="Order must include every current item exactly once; reload and try again")
+    return {row_id: position - len(ids) for position, row_id in enumerate(ids)}
+
+
+def _apply_order(rows, ids):
+    by_id = {row.id: row for row in rows}
+    for row_id, position in _positions(rows, ids).items():
+        by_id[row_id].sort_order = position
+
+
+@router.put("/order")
+async def reorder_lists(
+    body: ListOrder,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    rows = (await db.execute(select(ListModel).where(
+        ListModel.user_id == current_user.id, ListModel.is_watchlist == False,
+    ).order_by(ListModel.id).with_for_update())).scalars().all()
+    # Core UPDATE that keeps updated_at: moving a list is no content change,
+    # and public listings sort by updated_at (onupdate would bump it).
+    for row_id, position in _positions(rows, body.ids).items():
+        await db.execute(update(ListModel).where(ListModel.id == row_id)
+            .values(sort_order=position, updated_at=ListModel.updated_at))
+    await db.commit()
+    return {"message": "Order saved"}
+
+
+@router.put("/{list_id}/items/order")
+async def reorder_list_items(
+    list_id: int,
+    body: ListOrder,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    lst = (await db.execute(select(ListModel).where(
+        ListModel.id == list_id, ListModel.user_id == current_user.id,
+    ).with_for_update())).scalar_one_or_none()
+    if not lst:
+        raise HTTPException(status_code=404, detail="List not found")
+    rows = (await db.execute(select(ListItem).where(ListItem.list_id == list_id))).scalars().all()
+    _apply_order(rows, body.ids)
+    await db.commit()
+    return {"message": "Order saved"}
 
 
 @router.get("/watchlist")
@@ -912,7 +967,7 @@ async def get_list(
         raise HTTPException(status_code=404, detail="List not found")
     await _check_list_access(lst, current_user, db)
 
-    items_sorted = sorted(lst.items, key=lambda x: (x.sort_order, x.added_at))
+    items_sorted = sorted(lst.items, key=lambda x: (x.sort_order, x.added_at, x.id))
     formatted_items = [_format_item(i) for i in items_sorted]
 
     # Fill in missing poster/release_date for series items from the Show table,
