@@ -219,10 +219,13 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
     const applyBtn = root.querySelector<HTMLElement>('[data-role="apply"]');
     const basePath = root.dataset.basePath || "";
     const currentSort = root.dataset.currentSort || "";
-    let extraParams: Record<string, string> = {};
-    try {
-      extraParams = JSON.parse(root.dataset.extraParams || "{}");
-    } catch (e) { /* ignore malformed data */ }
+    // Read on use, not once: a page may update data-extra-params in place
+    // (e.g. History's live search changes q without a reload).
+    function readExtraParams(): Record<string, string> {
+      try {
+        return JSON.parse(root!.dataset.extraParams || "{}");
+      } catch (e) { return {}; /* ignore malformed data */ }
+    }
 
     function open() {
       overlay?.classList.remove("hidden");
@@ -245,7 +248,7 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
       e.stopPropagation();
       const params = new URLSearchParams();
       if (currentSort) params.set("sort", currentSort);
-      Object.entries(extraParams).forEach(([k, v]) => { if (v) params.set(k, v); });
+      Object.entries(readExtraParams()).forEach(([k, v]) => { if (v) params.set(k, v); });
       window.location.href = `${basePath}?${params.toString()}`;
     });
 
@@ -312,7 +315,7 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length + (s.exc
     applyBtn?.addEventListener("click", () => {
       const params = new URLSearchParams();
       if (currentSort) params.set("sort", currentSort);
-      Object.entries(extraParams).forEach(([k, v]) => { if (v) params.set(k, v); });
+      Object.entries(readExtraParams()).forEach(([k, v]) => { if (v) params.set(k, v); });
       Object.entries(collectSelection()).forEach(([k, vs]) => vs.forEach((v) => params.append(k, v)));
       window.location.href = `${basePath}?${params.toString()}`;
     });

@@ -22,7 +22,7 @@ from models.connections import MediaServerConnection
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.rewatch import ShowRewatch, RewatchProgress
 from models.ratings import Rating
-from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, _attach_episode_order_fields
+from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, _attach_episode_order_fields, MyRatingValue, my_rating_value_sql
 from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, resolve_display_to_canonical, normalize_order_key, is_aired_order
 from core.scrobble_threshold import DEFAULT_SCROBBLE_PERCENT
 from core.translations import get_user_metadata_language, get_media_translations, upsert_media_translation, apply_media_translations, get_show_translations
@@ -405,6 +405,7 @@ async def get_history(
     page_size: int = Query(20, ge=1, le=100),
     type: str | None = Query(None),
     q: str | None = Query(None),
+    my_rating: list[MyRatingValue] = Query(default=[]),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
@@ -424,6 +425,17 @@ async def get_history(
     # rely on downstream, not just Media.title.
     search_term = q.strip() if q else None
 
+    # #316: filter by the user's own rating of the watched movie or episode.
+    # Episode ratings sit on the episode's own media row, so one per-media
+    # subquery covers both; season ratings share the table and are excluded.
+    rated_media_ids = None
+    if my_rating:
+        rated_media_ids = select(Rating.media_id).where(
+            Rating.user_id == current_user.id,
+            Rating.season_number.is_(None),
+            my_rating_value_sql(Rating.rating).in_(my_rating),
+        )
+
     base_query = (
         select(func.count())
         .select_from(WatchEvent)
@@ -437,6 +449,8 @@ async def get_history(
         base_query = base_query.where(
             or_(Media.title.ilike(f"%{search_term}%"), Show.title.ilike(f"%{search_term}%"))
         )
+    if rated_media_ids is not None:
+        base_query = base_query.where(Media.id.in_(rated_media_ids))
 
     total_result = await db.execute(base_query)
     total_count = total_result.scalar_one()
@@ -456,6 +470,8 @@ async def get_history(
         query = query.where(
             or_(Media.title.ilike(f"%{search_term}%"), Show.title.ilike(f"%{search_term}%"))
         )
+    if rated_media_ids is not None:
+        query = query.where(Media.id.in_(rated_media_ids))
 
     query = query.offset(offset).limit(page_size)
 
