@@ -2375,5 +2375,10 @@
   "stats_no_plays_period": "No plays in this period.",
   "lists_import_job_lost": "Lost track of the import job (the server may have restarted). Check the list, then import again to top it up.",
   "settings_episode_order_saved_tvdb": "New shows will use TVDB ordering. Use \"Apply to all existing shows\" for the ones you already have.",
-  "settings_episode_order_saved_tmdb": "New shows will use TMDB ordering."
+  "settings_episode_order_saved_tmdb": "New shows will use TMDB ordering.",
+  "pagination_items_per_page": "Items per page",
+  "pagination_default_page_size": "Default items per page",
+  "pagination_page_size_limits": "Explore uses up to 50 items; Collection and History use up to 100. Larger account defaults are capped at 50 in Explore.",
+  "pagination_page_default": "Use page default",
+  "pagination_page_size_error": "Could not save the page size. Please try again."
 }

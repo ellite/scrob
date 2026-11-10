@@ -1,6 +1,8 @@
 ---
 import Base from "../../layouts/Base.astro";
 import MediaCard from "../../components/MediaCard.astro";
+import PageSizeSelect from "../../components/PageSizeSelect.astro";
+import { resolvePageSize } from "../../lib/page-size.js";
 import Pagination from "../../components/Pagination.astro";
 import FilterPanel from "../../components/FilterPanel.astro";
 import SortButton from "../../components/SortButton.astro";
@@ -26,6 +28,7 @@ const statuses = Astro.url.searchParams.getAll("status");
 const watched = Astro.url.searchParams.getAll("watched");
 const inList = Astro.url.searchParams.get("in_list") ?? "";
 const myRating = parseMyRating(Astro.url);
+const pageSize = resolvePageSize(Astro.url.searchParams.get("page_size"), Astro.locals.settings?.page_size ?? 30);
 const page = Number(Astro.url.searchParams.get("page") ?? 1);
 const { token } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -33,6 +36,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
 const data = await api.shows.list({
   sort,
   page,
+  page_size: pageSize,
   genre: genres,
   year: years,
   status: statuses,
@@ -54,6 +58,7 @@ const hasFilters = genres.length > 0 || years.length > 0 || statuses.length > 0 
 // Build base URL preserving active filters (without page)
 const baseParams = new URLSearchParams();
 baseParams.set("sort", sort);
+baseParams.set("page_size", String(pageSize));
 genres.forEach((g) => baseParams.append("genre", g));
 years.forEach((y) => baseParams.append("year", String(y)));
 statuses.forEach((s) => baseParams.append("status", s));
@@ -75,7 +80,8 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
     </div>
 
     <!-- Sort & filter controls -->
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
+      <PageSizeSelect value={pageSize} />
       <SortButton
         id="show-sort"
         current={sort}
@@ -92,6 +98,7 @@ const baseUrl = `/collection/shows?${baseParams.toString()}`;
         id="show-filters"
         basePath="/collection/shows"
         currentSort={sort}
+        extraParams={{ page_size: String(pageSize) }}
         sections={[
           { key: "genre", label: m.filter_genre(), options: sortByLabel(TV_GENRES.map((g) => ({ value: g, label: genreLabel(g) }))), selected: genres },
           { key: "year", label: m.filter_year(), selected: years.map(String), dynamic: true, endpoint: "/api/proxy/shows/years" },
