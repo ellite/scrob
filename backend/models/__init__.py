@@ -12,7 +12,7 @@ from .media import Media
 from .collection import Collection, CollectionFile
 from .events import WatchEvent
 from .ratings import Rating
-from .lists import List, ListItem
+from .lists import List, ListItem, ListItemRemoval
 from .sync import SyncJob, SyncStatus
 from .library_selections import JellyfinLibrarySelection, EmbyLibrarySelection, PlexLibrarySelection
 from .playback_session import PlaybackSession
@@ -49,7 +49,7 @@ __all__ = [
     "Collection", "CollectionFile",
     "WatchEvent",
     "Rating",
-    "List", "ListItem",
+    "List", "ListItem", "ListItemRemoval",
     "SyncJob", "SyncStatus",
     "JellyfinLibrarySelection", "EmbyLibrarySelection", "PlexLibrarySelection",
     "PlaybackSession",

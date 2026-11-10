@@ -13,12 +13,16 @@ from unittest.mock import patch
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("SECRET_KEY", "synthetic-test-key-32-characters-long")
 
-from core.list_cleanup import prune_watched_list_items, _required_episode_ids
-from routers.lists import ListUpdate, update_list
+from fastapi import HTTPException
+
+from core.list_cleanup import RETENTION, prune_watched_list_items, _required_episode_ids
+from core.timeutil import utcnow
+from routers.lists import (ListUpdate, RemovalBatchRestore, get_list_removals, restore_list_removal,
+                           restore_list_removal_batch, update_list)
 from models.base import Base, MediaType
 from models.users import User
 from models.media import Media
-from models.lists import List, ListItem
+from models.lists import List, ListItem, ListItemRemoval
 from models.events import WatchEvent
 from models.show import Show
 
@@ -230,6 +234,171 @@ class ListAutoRemoveTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await prune_watched_list_items(db, pending), 1)
             self.assertEqual([(user, slug, media.id, season) for user, slug, media, season in pending],
                              [(1, "queue", 1, None)])
+
+
+class ListRemovalTrashTests(unittest.IsolatedAsyncioTestCase):
+    """Restore trash for automatic removal (#338)."""
+
+    # Same fixture (user 1's list 1 with movie 1), without rerunning those tests.
+    asyncSetUp = ListAutoRemoveTests.asyncSetUp
+
+    async def _remove(self):
+        async with self.Session() as db:
+            db.add(WatchEvent(user_id=1, media_id=1, completed=True, watched_at=self.added + timedelta(days=1)))
+            await db.commit()
+            removed = await prune_watched_list_items(db)
+            await db.commit()
+            return removed
+
+    async def _entries(self):
+        async with self.Session() as db:
+            return (await db.execute(select(ListItemRemoval))).scalars().all()
+
+    async def _items(self):
+        async with self.Session() as db:
+            return (await db.execute(select(ListItem))).scalars().all()
+
+    async def _restore_one(self, removal_id, user_id=1):
+        async with self.Session() as db:
+            with patch("routers.lists._push_watchlist_item") as watchlist_push, \
+                 patch("routers.lists._push_list_item_to_trakt") as trakt_push:
+                result = await restore_list_removal(removal_id, db=db, current_user=SimpleNamespace(id=user_id))
+            return result, watchlist_push, trakt_push
+
+    async def test_removal_is_recorded_with_the_item_details(self):
+        async with self.Session() as db:
+            item = await db.get(ListItem, 1)
+            item.sort_order, item.notes = 4, "note"
+            await db.commit()
+        self.assertEqual(await self._remove(), 1)
+        [entry] = await self._entries()
+        self.assertEqual((entry.user_id, entry.list_id, entry.media_id, entry.season_number,
+                          entry.added_at, entry.sort_order, entry.notes),
+                         (1, 1, 1, None, self.added, 4, "note"))
+
+    async def test_one_run_shares_removed_at(self):
+        async with self.Session() as db:
+            db.add_all([Media(id=2, media_type=MediaType.movie, title="Other"),
+                        List(id=2, user_id=1, name="Second", auto_remove_watched=True,
+                             auto_remove_since=self.added)])
+            await db.flush()
+            db.add(ListItem(id=2, list_id=2, media_id=2, added_at=self.added))
+            db.add(WatchEvent(user_id=1, media_id=2, completed=True, watched_at=self.added + timedelta(days=1)))
+            await db.commit()
+        self.assertEqual(await self._remove(), 2)
+        entries = await self._entries()
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(len({e.removed_at for e in entries}), 1)
+
+    async def test_entries_older_than_retention_are_purged(self):
+        now = utcnow()
+        async with self.Session() as db:
+            db.add_all([ListItemRemoval(user_id=1, list_id=1, media_id=1, added_at=self.added,
+                                        removed_at=now - RETENTION - timedelta(minutes=1)),
+                        ListItemRemoval(user_id=1, list_id=1, media_id=1, added_at=self.added,
+                                        removed_at=now - RETENTION + timedelta(hours=1))])
+            await db.commit()
+            await prune_watched_list_items(db)
+            await db.commit()
+        entries = await self._entries()
+        self.assertEqual(len(entries), 1)
+        self.assertGreater(entries[0].removed_at, now - RETENTION)
+
+    async def test_restore_one_puts_the_item_back_and_pushes_the_add(self):
+        async with self.Session() as db:
+            (await db.get(List, 1)).trakt_slug = "queue"
+            await db.commit()
+        await self._remove()
+        [entry] = await self._entries()
+        result, _watchlist_push, trakt_push = await self._restore_one(entry.id)
+        self.assertEqual(result, {"restored": 1, "skipped": 0})
+        self.assertEqual(await self._entries(), [])
+        [item] = await self._items()
+        self.assertEqual((item.list_id, item.media_id), (1, 1))
+        trakt_push.assert_awaited_once()
+        self.assertEqual(trakt_push.await_args.args[2], "queue")
+        self.assertFalse(trakt_push.await_args.kwargs["remove"])
+
+    async def test_restore_batch_restores_the_newest_run_only(self):
+        async with self.Session() as db:
+            db.add_all([Media(id=2, media_type=MediaType.movie, title="Other"),
+                        Media(id=3, media_type=MediaType.movie, title="Older")])
+            await db.flush()
+            db.add(ListItem(id=2, list_id=1, media_id=2, added_at=self.added))
+            db.add(ListItemRemoval(user_id=1, list_id=1, media_id=3, added_at=self.added,
+                                   removed_at=utcnow() - timedelta(days=1)))
+            db.add(WatchEvent(user_id=1, media_id=2, completed=True, watched_at=self.added + timedelta(days=1)))
+            await db.commit()
+        self.assertEqual(await self._remove(), 2)
+        async with self.Session() as db:
+            result = await restore_list_removal_batch(RemovalBatchRestore(), db=db, current_user=SimpleNamespace(id=1))
+        self.assertEqual(result, {"restored": 2, "skipped": 0})
+        self.assertEqual([e.media_id for e in await self._entries()], [3])
+        self.assertEqual(sorted(i.media_id for i in await self._items()), [1, 2])
+
+    async def test_restore_batch_by_the_shown_removed_at(self):
+        await self._remove()
+        [entry] = await self._entries()
+        async with self.Session() as db:
+            body = RemovalBatchRestore(removed_at=entry.removed_at.isoformat() + "Z")
+            result = await restore_list_removal_batch(body, db=db, current_user=SimpleNamespace(id=1))
+        self.assertEqual(result, {"restored": 1, "skipped": 0})
+
+    async def test_restore_when_item_is_already_back_creates_no_duplicate(self):
+        await self._remove()
+        [entry] = await self._entries()
+        async with self.Session() as db:
+            db.add(ListItem(list_id=1, media_id=1, added_at=self.added))
+            await db.commit()
+        result, watchlist_push, trakt_push = await self._restore_one(entry.id)
+        self.assertEqual(result, {"restored": 0, "skipped": 1})
+        watchlist_push.assert_not_awaited()
+        trakt_push.assert_not_awaited()
+        self.assertEqual(len(await self._items()), 1)
+        self.assertEqual(await self._entries(), [])
+
+    async def test_restore_into_a_deleted_list_is_skipped(self):
+        await self._remove()
+        [entry] = await self._entries()
+        async with self.Session() as db:
+            await db.delete(await db.get(List, 1))
+            await db.commit()
+        result, _watchlist_push, _trakt_push = await self._restore_one(entry.id)
+        self.assertEqual(result, {"restored": 0, "skipped": 1})
+        self.assertEqual(await self._items(), [])
+
+    async def test_restored_item_is_not_removed_again_by_the_old_watch(self):
+        async with self.Session() as db:
+            # Worst case: the cutoff is the item's own added_at.
+            (await db.get(List, 1)).auto_remove_include_earlier = True
+            await db.commit()
+        await self._remove()
+        [entry] = await self._entries()
+        await self._restore_one(entry.id)
+        async with self.Session() as db:
+            self.assertEqual(await prune_watched_list_items(db), 0)
+            await db.commit()
+        self.assertEqual(len(await self._items()), 1)
+
+    async def test_other_users_entry_is_not_found(self):
+        await self._remove()
+        [entry] = await self._entries()
+        with self.assertRaises(HTTPException) as caught:
+            await self._restore_one(entry.id, user_id=2)
+        self.assertEqual(caught.exception.status_code, 404)
+        async with self.Session() as db:
+            with self.assertRaises(HTTPException):
+                await restore_list_removal_batch(RemovalBatchRestore(), db=db, current_user=SimpleNamespace(id=2))
+            listed = await get_list_removals(db=db, current_user=SimpleNamespace(id=2))
+        self.assertEqual(listed, {"removals": []})
+        self.assertEqual(len(await self._entries()), 1)
+
+    async def test_listing_shows_media_and_list_name(self):
+        await self._remove()
+        async with self.Session() as db:
+            listed = await get_list_removals(db=db, current_user=SimpleNamespace(id=1))
+        [row] = listed["removals"]
+        self.assertEqual((row["list_name"], row["media"]["title"]), ("Queue", "Movie"))
 
 
 class SeriesMetadataSafetyTests(unittest.TestCase):

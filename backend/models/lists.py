@@ -67,3 +67,25 @@ class ListItem(Base):
 
     list  : Mapped["List"]  = relationship(back_populates="items")
     media : Mapped["Media"] = relationship(back_populates="list_items")
+
+
+class ListItemRemoval(Base):
+    """An item that automatic removal took off a list, kept for a few days so
+    it can be restored (#338). All removals of one run share removed_at."""
+    __tablename__ = "list_item_removals"
+
+    id            : Mapped[int]           = mapped_column(Integer, primary_key=True)
+    user_id       : Mapped[int]           = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    list_id       : Mapped[int]           = mapped_column(ForeignKey("lists.id", ondelete="CASCADE"), nullable=False)
+    media_id      : Mapped[int]           = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
+    season_number : Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    added_at      : Mapped[datetime]      = mapped_column(DateTime, nullable=False)
+    sort_order    : Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
+    notes         : Mapped[Optional[str]] = mapped_column(Text)
+    removed_at    : Mapped[datetime]      = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (Index("ix_list_item_removals_user_removed", "user_id", "removed_at"),)
+
+    # One-way: the database cascades on list/media deletion.
+    list  : Mapped["List"]  = relationship()
+    media : Mapped["Media"] = relationship()

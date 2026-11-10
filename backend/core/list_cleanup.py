@@ -6,22 +6,27 @@ watches - the moment the item was added. Movies need one such watch; a
 series or season needs every released episode watched, the newest watch
 past the cutoff. Each list is processed on its own and every IN-list is
 chunked, so a large watchlist never exceeds the database parameter limit.
+
+Every removal is recorded in list_item_removals for RETENTION, so it can be
+restored; all removals of one run share removed_at and form a batch.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
-from sqlalchemy import select, func, or_
+from sqlalchemy import delete, select, func, or_
 from sqlalchemy.orm import selectinload
 
 from core.timeutil import utcnow
 from models.base import MediaType
 from models.events import WatchEvent
-from models.lists import List, ListItem
+from models.lists import List, ListItem, ListItemRemoval
 from models.media import Media
 from models.show import Show
 
 # Well below asyncpg's 32,767 bind parameters per statement.
 CHUNK = 1000
+# How long automatically removed items stay restorable.
+RETENTION = timedelta(days=7)
 
 
 def _chunks(values):
@@ -62,7 +67,7 @@ def _cutoff(lst, item):
     return max(item.added_at, lst.auto_remove_since)
 
 
-async def _prune_list(db, lst, pending_pushes):
+async def _prune_list(db, lst, pending_pushes, removed_at):
     if lst.auto_remove_since is None:
         # Enabled without a start time (e.g. set directly in the database):
         # start counting now instead of judging the whole history.
@@ -115,6 +120,9 @@ async def _prune_list(db, lst, pending_pushes):
         if pending_pushes is not None and (lst.is_watchlist or lst.trakt_slug):
             slug = None if lst.is_watchlist else lst.trakt_slug
             pending_pushes.append((lst.user_id, slug, item.media, item.season_number))
+        db.add(ListItemRemoval(user_id=lst.user_id, list_id=lst.id, media_id=item.media_id,
+                               season_number=item.season_number, added_at=item.added_at,
+                               sort_order=item.sort_order, notes=item.notes, removed_at=removed_at))
         await db.delete(item)
         lst.updated_at = utcnow()
         removed += 1
@@ -122,10 +130,45 @@ async def _prune_list(db, lst, pending_pushes):
 
 
 async def prune_watched_list_items(db, pending_pushes=None):
+    run_at = utcnow()
+    await db.execute(delete(ListItemRemoval).where(ListItemRemoval.removed_at < run_at - RETENTION))
     lists = (await db.execute(select(List).where(
         List.auto_remove_watched == True,
     ).with_for_update(skip_locked=True))).scalars().all()
     removed = 0
     for lst in lists:
-        removed += await _prune_list(db, lst, pending_pushes)
+        removed += await _prune_list(db, lst, pending_pushes, run_at)
     return removed
+
+
+async def restore_removals(db, entries):
+    """Put trashed items back on their lists and drop the trash entries.
+
+    Returns (restored, skipped, pushes); the caller commits and then sends
+    each push (user_id, slug or None for the watchlist, media, season) with
+    remove=False, like a normal add. An entry whose list is gone or whose item
+    is already back on the list is only dropped.
+    """
+    restored, skipped, pushes = 0, 0, []
+    now = utcnow()
+    for entry in entries:
+        lst = await db.get(List, entry.list_id)
+        exists = lst is not None and (await db.execute(select(ListItem.id).where(
+            ListItem.list_id == entry.list_id, ListItem.media_id == entry.media_id,
+            func.coalesce(ListItem.season_number, -1) == (entry.season_number if entry.season_number is not None else -1),
+        ))).first() is not None
+        if lst is None or exists:
+            skipped += 1
+        else:
+            # added_at is the restore time, not the original: the cutoff is
+            # max(added_at, auto_remove_since), so the watch that removed the
+            # item would otherwise remove it again on the next run.
+            db.add(ListItem(list_id=lst.id, media_id=entry.media_id, season_number=entry.season_number,
+                            added_at=now, sort_order=entry.sort_order, notes=entry.notes))
+            lst.updated_at = now
+            restored += 1
+            if lst.is_watchlist or lst.trakt_slug:
+                pushes.append((lst.user_id, None if lst.is_watchlist else lst.trakt_slug,
+                               entry.media, entry.season_number))
+        await db.delete(entry)
+    return restored, skipped, pushes
