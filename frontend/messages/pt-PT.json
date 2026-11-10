@@ -2375,8 +2375,5 @@
   "stats_no_plays_period": "Sem visualizações neste período.",
   "lists_import_job_lost": "Perdeu-se o rasto da tarefa de importação (o servidor pode ter reiniciado). Verifique a lista e importe novamente para a completar.",
   "settings_episode_order_saved_tvdb": "As novas séries usarão a ordem do TVDB. Use «Aplicar a todas as séries existentes» para as que já tem.",
-  "settings_episode_order_saved_tmdb": "As novas séries usarão a ordem do TMDB.",
-  "settings_default_collection_tab": "Open My Collection by default",
-  "settings_default_collection_tab_help": "Movies and Shows navigation opens My Collection. You can still switch to Explore.",
-  "settings_default_collection_tab_error": "Could not save the default tab. Please try again."
+  "settings_episode_order_saved_tmdb": "As novas séries usarão a ordem do TMDB."
 }

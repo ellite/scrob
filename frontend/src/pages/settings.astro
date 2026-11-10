@@ -1172,6 +1172,7 @@ try {
 </Base>
 <script>
   import { m } from '../paraglide/messages.js';
+  import { mediaNavHref } from '../lib/media-navigation.js';
   import { cookieName as localeCookieName, cookieMaxAge as localeCookieMaxAge } from '../paraglide/runtime.js';
 
   const appData = document.getElementById('app-data');
@@ -2209,7 +2210,7 @@ try {
         });
         if (!response.ok) throw new Error('settings update failed');
         document.querySelectorAll<HTMLAnchorElement>('[data-media-nav]').forEach(link => {
-          link.href = `${defaultCollectionTabToggle.checked ? '/collection' : ''}/${link.dataset.mediaNav}`;
+          link.href = mediaNavHref(link.dataset.mediaNav!, defaultCollectionTabToggle.checked);
         });
       } catch {
         defaultCollectionTabToggle.checked = !defaultCollectionTabToggle.checked;
