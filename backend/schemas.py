@@ -231,6 +231,7 @@ class UserSettings(BaseModel):
     time_format_24h: Optional[bool] = None
     use_hls_player: Optional[bool] = None
     show_play_button: Optional[bool] = None
+    default_collection_tab: Optional[bool] = None
     shuffle_next_up: Optional[bool] = None
     minimalist_next_up: Optional[bool] = None
     next_up_by_recent_watch: Optional[bool] = None
