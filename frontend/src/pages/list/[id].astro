@@ -1,4 +1,5 @@
 ---
+import ReorderList from "../../components/ReorderList.astro";
 import Base from "../../layouts/Base.astro";
 import MediaCard from "../../components/MediaCard.astro";
 import ListCard from "../../components/ListCard.astro";
@@ -315,6 +316,8 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       </details>
       )}
 
+      {list.is_owner && <ReorderList items={list.items.map(entry => ({ id: entry.id, label: `${entry.media.title}${entry.media.season_number != null ? ` - ${m.media_season_number({ number: entry.media.season_number })}` : ''}` }))} endpoint={`/api/proxy/lists/${list.id}/items/order`} source="#items-grid" kind="item" />}
+
       <!-- Items Grid -->
       <div>
         <div class="flex items-center justify-between gap-4 mb-6 flex-wrap">
@@ -323,9 +326,10 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
             <div class="flex items-center gap-3 flex-wrap">
               <SortButton
                 id="list-items-sort"
-                current="added_at"
+                current="saved_order"
                 navigate={false}
                 options={[
+                  { value: "saved_order", label: m.list_saved_order() },
                   { value: "title", label: m.sort_az() },
                   { value: "rating", label: m.sort_top() },
                   { value: "release_date", label: m.sort_newest() },
@@ -363,10 +367,12 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
           </div>
         ) : (
           <div id="items-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
-            {list.items.map((entry) => (
+            {list.items.map((entry, index) => (
               <div
+                data-saved-order={index}
                 data-item-id={entry.id}
                 data-type={entry.media.type}
+                data-order-title={entry.media.title}
                 data-title={entry.media.title}
                 data-rating={entry.media.tmdb_rating ?? ""}
                 data-release-date={entry.media.release_date ?? ""}
@@ -676,6 +682,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
     const cards = Array.from(grid.querySelectorAll(':scope > [data-item-id]'));
 
     const getters = {
+      saved_order: (card) => card.getAttribute("data-saved-order") ?? "",
       title: (card) => card.getAttribute('data-title') ?? '',
       rating: (card) => card.getAttribute('data-rating') ?? '',
       release_date: (card) => card.getAttribute('data-release-date') ?? '',
@@ -684,8 +691,8 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
     const get = getters[sortKey];
     if (!get) return;
 
-    const numeric = sortKey === 'rating';
-    const descending = sortKey !== 'title';
+    const numeric = sortKey === 'rating' || sortKey === 'saved_order';
+    const descending = sortKey !== 'title' && sortKey !== 'saved_order';
 
     cards.sort((a, b) => {
       const av = get(a);
@@ -719,13 +726,8 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
     applyItemsSort(e.detail.value);
   });
 
-  // The server's own default order is (sort_order, added_at) - sort_order is
-  // never actually set anywhere in the app, so in practice that's just
-  // added_at ascending (oldest-added first). "Recently Added" is pre-checked
-  // in the sort button above to match, so apply it for real here rather than
-  // just labeling it - otherwise the button would claim an order the grid
-  // isn't actually in.
-  applyItemsSort('added_at');
+  // Keep the saved server order until another display sort is selected.
+  applyItemsSort('saved_order');
 
   // --- Search & Add ---
   const searchInput = document.getElementById('search-input');
@@ -1034,6 +1036,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
       const wrapper = document.createElement('div');
       wrapper.setAttribute('data-item-id', String(entry.id));
       wrapper.setAttribute('data-type', entry.media.type);
+      wrapper.setAttribute('data-order-title', cardMedia.title ?? entry.media.title);
       wrapper.innerHTML = buildCard(cardMedia, entry.id);
       // Hide newly added item if it doesn't match the active filter
       if (activeItemsFilter !== 'all' && entry.media.type !== activeItemsFilter) {

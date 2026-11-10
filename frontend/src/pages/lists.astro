@@ -1,5 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
+import ReorderList from "../components/ReorderList.astro";
 import ListCard from "../components/ListCard.astro";
 import { api, type UserList, type PublicList } from "../lib/api";
 import { m } from "../paraglide/messages.js";
@@ -49,6 +50,8 @@ try {
 <Base title={m.nav_lists()}>
   <div>
     <h1 class="page-title mb-10">{m.nav_lists()}</h1>
+
+    {user && <ReorderList items={lists.filter(list => !list.is_watchlist).map(list => ({ id: list.id, label: list.name }))} endpoint="/api/proxy/lists/order" source="#lists-grid" kind="list" />}
 
     {user && (
       <div class="flex items-center justify-between mb-6">
@@ -306,7 +309,7 @@ try {
     ) : (
       <div id="lists-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {lists.map((list) => (
-          <div class="group relative" data-list-id={list.id}>
+          <div class="group relative" data-list-id={list.id} data-order-title={list.name} data-reorder-pinned={list.is_watchlist ? "true" : undefined}>
             <ListCard
               id={list.id}
               name={list.name}

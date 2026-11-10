@@ -2375,5 +2375,13 @@
   "stats_no_plays_period": "Sem visualizações neste período.",
   "lists_import_job_lost": "Perdeu-se o rasto da tarefa de importação (o servidor pode ter reiniciado). Verifique a lista e importe novamente para a completar.",
   "settings_episode_order_saved_tvdb": "As novas séries usarão a ordem do TVDB. Use «Aplicar a todas as séries existentes» para as que já tem.",
-  "settings_episode_order_saved_tmdb": "As novas séries usarão a ordem do TMDB."
+  "settings_episode_order_saved_tmdb": "As novas séries usarão a ordem do TMDB.",
+  "list_saved_order": "Saved order",
+  "list_reorder": "Reorder",
+  "list_move_up": "Up",
+  "list_move_down": "Down",
+  "list_move_up_named": "Move {name} up",
+  "list_move_down_named": "Move {name} down",
+  "list_save_order": "Save order",
+  "list_reorder_error": "Could not save the order. If the list changed elsewhere, reload and try again."
 }

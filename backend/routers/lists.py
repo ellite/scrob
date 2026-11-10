@@ -97,7 +97,7 @@ class ListItemAdd(BaseModel):
 
 def _format_list(lst: ListModel) -> dict:
     preview_posters: list[dict] = []
-    for item in sorted(lst.items, key=lambda x: (x.sort_order, x.added_at)):
+    for item in sorted(lst.items, key=lambda x: (x.sort_order, x.added_at, x.id)):
         if len(preview_posters) >= 3:
             break
         try:
@@ -245,10 +245,54 @@ async def get_lists(
         select(ListModel)
         .options(selectinload(ListModel.items).selectinload(ListItem.media).selectinload(Media.show))
         .where(ListModel.user_id == current_user.id)
-        .order_by(ListModel.is_watchlist.desc(), ListModel.updated_at.desc())
+        .order_by(ListModel.is_watchlist.desc(), ListModel.sort_order.asc().nulls_last(), ListModel.updated_at.desc(), ListModel.id)
     )
     lists = result.scalars().all()
     return {"lists": [_format_list(lst) for lst in lists]}
+
+
+class ListOrder(BaseModel):
+    ids: list[int]
+
+
+def _apply_order(rows, ids):
+    if len(ids) != len(set(ids)) or set(ids) != {row.id for row in rows}:
+        raise HTTPException(status_code=400, detail="Order must include every current item exactly once; reload and try again")
+    by_id = {row.id: row for row in rows}
+    for position, row_id in enumerate(ids):
+        by_id[row_id].sort_order = position - len(ids)
+
+
+@router.put("/order")
+async def reorder_lists(
+    body: ListOrder,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    rows = (await db.execute(select(ListModel).where(
+        ListModel.user_id == current_user.id, ListModel.is_watchlist == False,
+    ).order_by(ListModel.id).with_for_update())).scalars().all()
+    _apply_order(rows, body.ids)
+    await db.commit()
+    return {"message": "Order saved"}
+
+
+@router.put("/{list_id}/items/order")
+async def reorder_list_items(
+    list_id: int,
+    body: ListOrder,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    lst = (await db.execute(select(ListModel).where(
+        ListModel.id == list_id, ListModel.user_id == current_user.id,
+    ).with_for_update())).scalar_one_or_none()
+    if not lst:
+        raise HTTPException(status_code=404, detail="List not found")
+    rows = (await db.execute(select(ListItem).where(ListItem.list_id == list_id))).scalars().all()
+    _apply_order(rows, body.ids)
+    await db.commit()
+    return {"message": "Order saved"}
 
 
 @router.get("/watchlist")
@@ -912,7 +956,7 @@ async def get_list(
         raise HTTPException(status_code=404, detail="List not found")
     await _check_list_access(lst, current_user, db)
 
-    items_sorted = sorted(lst.items, key=lambda x: (x.sort_order, x.added_at))
+    items_sorted = sorted(lst.items, key=lambda x: (x.sort_order, x.added_at, x.id))
     formatted_items = [_format_item(i) for i in items_sorted]
 
     # Fill in missing poster/release_date for series items from the Show table,
