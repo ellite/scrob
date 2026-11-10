@@ -2556,8 +2556,14 @@ async def get_tmdb_list(
                 rest = await asyncio.gather(*(
                     _fetch_tmdb_page(p) for p in range(first_source + 1, last_source + 1)
                 ))
+                seen_ids: set[int] = set()
                 for block in [data, *rest]:
-                    results.extend(block.get("results", []))
+                    for res in block.get("results", []):
+                        # popular/trending ordering can shift between the
+                        # parallel fetches; keep the first occurrence only
+                        if res["id"] not in seen_ids:
+                            seen_ids.add(res["id"])
+                            results.append(res)
                 start = offset % source_size
                 results = results[start:start + page_size]
             return {

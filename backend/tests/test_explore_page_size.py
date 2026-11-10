@@ -21,12 +21,16 @@ class _Result:
 
 
 class ExplorePageSizeTests(unittest.IsolatedAsyncioTestCase):
-    async def _call(self, page=1, size=50, total=123, kind=MediaType.movie, category="popular", **filters):
+    async def _call(self, page=1, size=50, total=123, kind=MediaType.movie, category="popular",
+                    shift=0, **filters):
         async def remote(*, page, **kwargs):
             self.assertLessEqual(page, 500)
+            # shift > 0 simulates TMDB reordering between parallel fetches:
+            # later source pages repeat the last ids of the page before.
+            first = (page - 1) * 20 + 1 - (shift if page > 1 else 0)
             rows = [{"id": n, "title": str(n), "name": str(n),
                      "release_date": "2020-01-01" if n % 2 == 0 else "2019-01-01"}
-                    for n in range((page - 1) * 20 + 1, min(page * 20, total) + 1)]
+                    for n in range(first, min(first + 19, total) + 1)]
             return {"page": page, "total_pages": (total + 19) // 20,
                     "total_results": total, "results": rows}
 
@@ -65,6 +69,11 @@ class ExplorePageSizeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([r["tmdb_id"] for r in result["results"]], list(range(1, 51)))
         self.assertEqual(pages, [1, 2, 3])
         self.assertEqual(result["total_pages"], 3)
+
+    async def test_shifted_source_pages_do_not_repeat_a_title(self):
+        result, _ = await self._call(shift=2)
+        ids = [r["tmdb_id"] for r in result["results"]]
+        self.assertEqual(len(ids), len(set(ids)))
 
     async def test_adjacent_pages_have_no_gaps_or_overlap(self):
         first, _ = await self._call(page=1)
