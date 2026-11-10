@@ -1,5 +1,7 @@
 """Remove newly watched items from opted-in personal lists (#338)."""
 
+from datetime import date
+
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 
@@ -37,7 +39,7 @@ def _required_episode_ids(item, shows, episodes):
 
 async def prune_watched_list_items(db, pending_pushes=None):
     lists = (await db.execute(select(List).where(
-        List.auto_remove_watched == True, List.is_watchlist == False,
+        List.auto_remove_watched == True,
     ).with_for_update(skip_locked=True))).scalars().all()
     if not lists:
         return 0
@@ -59,21 +61,51 @@ async def prune_watched_list_items(db, pending_pushes=None):
         rows = (await db.execute(select(Media).where(Media.show_id.in_(show_ids), Media.media_type == MediaType.episode))).scalars().all()
         for episode in rows:
             episodes.setdefault(episode.show_id, []).append(episode)
+    release_dates = {}
+    for show_episodes in episodes.values():
+        for episode in show_episodes:
+            if episode.release_date:
+                try:
+                    release_dates[episode.id] = date.fromisoformat(episode.release_date)
+                except ValueError:
+                    pass
     required = {i.id: _required_episode_ids(i, shows, episodes) for i in items}
     media_ids = {media_id for ids in required.values() for media_id in ids}
-    watched = (await db.execute(select(WatchEvent.user_id, WatchEvent.media_id, func.max(WatchEvent.watched_at)).where(
+    watched = (await db.execute(select(
+        WatchEvent.user_id, WatchEvent.media_id,
+        func.min(func.coalesce(WatchEvent.watched_at, WatchEvent.created_at)),
+        func.max(WatchEvent.watched_at),
+    ).where(
         WatchEvent.user_id.in_({lst.user_id for lst in lists}),
         WatchEvent.media_id.in_(media_ids), WatchEvent.completed == True,
-        WatchEvent.watched_at > min(i.added_at for i in items), WatchEvent.watched_at <= utcnow(),
+        or_(WatchEvent.watched_at.is_(None), WatchEvent.watched_at <= utcnow()),
     ).group_by(WatchEvent.user_id, WatchEvent.media_id))).all()
-    last_watch = {(user_id, media_id): when for user_id, media_id, when in watched}
+    watch_dates = {(user_id, media_id): (first, last) for user_id, media_id, first, last in watched}
     removed = 0
     for item in items:
         lst = by_id[item.list_id]
         ids = required[item.id]
-        if ids and all(last_watch.get((lst.user_id, media_id), item.added_at) > item.added_at for media_id in ids):
-            if lst.trakt_slug and pending_pushes is not None:
-                pending_pushes.append((lst.user_id, lst.trakt_slug, item.media, item.season_number))
+        dates = [watch_dates.get((lst.user_id, media_id), (None, None)) for media_id in ids]
+        if not dates:
+            continue
+        seen_at_add = [first is not None and first <= item.added_at for first, _ in dates]
+        watched_since = [last is not None and last > item.added_at for _, last in dates]
+        added_date = item.added_at.date()
+        available_at_add = [
+            seen for media_id, seen in zip(ids, seen_at_add)
+            if release_dates.get(media_id, added_date) <= added_date
+        ]
+        # Episodes released later do not change whether this was a rewatch.
+        if available_at_add and all(available_at_add):
+            should_remove = all(watched_since)
+        else:
+            should_remove = any(watched_since) and all(
+                before or after for before, after in zip(seen_at_add, watched_since)
+            )
+        if should_remove:
+            if pending_pushes is not None and (lst.is_watchlist or lst.trakt_slug):
+                slug = None if lst.is_watchlist else lst.trakt_slug
+                pending_pushes.append((lst.user_id, slug, item.media, item.season_number))
             await db.delete(item)
             lst.updated_at = utcnow()
             removed += 1

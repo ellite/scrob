@@ -1019,9 +1019,6 @@ async def update_list(
     if not lst:
         raise HTTPException(status_code=404, detail="List not found")
 
-    if lst.is_watchlist and body.auto_remove_watched:
-        raise HTTPException(status_code=400, detail="Automatic removal is not available for the synced watchlist")
-
     if body.auto_remove_watched is not None:
         lst.auto_remove_watched = body.auto_remove_watched
 

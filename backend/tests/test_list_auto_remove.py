@@ -78,7 +78,7 @@ class ListAutoRemoveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(removed, 0)
         self.assertEqual(len(remaining), 1)
 
-    async def _series(self, expected=2, *, season=None, tvdb_only=False, old_first=False):
+    async def _series(self, expected=2, *, season=None, tvdb_only=False, old_first=False, previously_seen=False, rewatch_all=False, new_episode=False):
         async with self.Session() as db:
             media = await db.get(Media, 1)
             media.media_type = MediaType.series
@@ -89,9 +89,15 @@ class ListAutoRemoveTests(unittest.IsolatedAsyncioTestCase):
             (await db.get(ListItem, 1)).season_number = season
             for number in (1, 2):
                 db.add(Media(id=number + 1, media_type=MediaType.episode, title=str(number),
-                             show_id=1, season_number=1, episode_number=number))
-                db.add(WatchEvent(user_id=1, media_id=number + 1, completed=True,
-                                 watched_at=self.added + timedelta(days=-1 if old_first and number == 1 else 1)))
+                             show_id=1, season_number=1, episode_number=number,
+                             release_date=(self.added + timedelta(days=1)).date().isoformat()
+                             if new_episode and number == 2 else None))
+                if previously_seen or (old_first and number == 1):
+                    db.add(WatchEvent(user_id=1, media_id=number + 1, completed=True,
+                                      watched_at=self.added - timedelta(days=1)))
+                if rewatch_all or number == 2 or not (old_first or previously_seen):
+                    db.add(WatchEvent(user_id=1, media_id=number + 1, completed=True,
+                                      watched_at=self.added + timedelta(days=1)))
             await db.commit()
             result = await prune_watched_list_items(db)
             await db.commit()
@@ -103,8 +109,17 @@ class ListAutoRemoveTests(unittest.IsolatedAsyncioTestCase):
     async def test_incomplete_metadata_does_not_remove_series(self):
         self.assertEqual(await self._series(expected=3), 0)
 
-    async def test_every_episode_must_be_watched_after_adding_series(self):
-        self.assertEqual(await self._series(old_first=True), 0)
+    async def test_finishing_partially_watched_series_removes_it(self):
+        self.assertEqual(await self._series(old_first=True), 1)
+
+    async def test_partial_rewatch_keeps_previously_completed_series(self):
+        self.assertEqual(await self._series(previously_seen=True), 0)
+
+    async def test_complete_rewatch_removes_previously_completed_series(self):
+        self.assertEqual(await self._series(previously_seen=True, rewatch_all=True), 1)
+
+    async def test_new_episode_does_not_replace_a_rewatch(self):
+        self.assertEqual(await self._series(old_first=True, new_episode=True), 0)
 
     async def test_complete_season_is_removed(self):
         self.assertEqual(await self._series(season=1), 1)
@@ -112,13 +127,23 @@ class ListAutoRemoveTests(unittest.IsolatedAsyncioTestCase):
     async def test_tvdb_only_series_is_supported(self):
         self.assertEqual(await self._series(tvdb_only=True), 1)
 
-    async def test_native_watchlist_is_never_pruned(self):
+    async def test_disabled_native_watchlist_is_not_pruned(self):
         async with self.Session() as db:
             (await db.get(List, 1)).is_watchlist = True
             await db.commit()
-        removed, remaining = await self._run(watched_at=self.added + timedelta(days=1))
+        removed, remaining = await self._run(enabled=False, watched_at=self.added + timedelta(days=1))
         self.assertEqual(removed, 0)
         self.assertEqual(len(remaining), 1)
+
+    async def test_enabled_native_watchlist_queues_removal(self):
+        async with self.Session() as db:
+            (await db.get(List, 1)).is_watchlist = True
+            db.add(WatchEvent(user_id=1, media_id=1, completed=True, watched_at=self.added + timedelta(days=1)))
+            await db.commit()
+            pending = []
+            self.assertEqual(await prune_watched_list_items(db, pending), 1)
+            self.assertEqual([(user, slug, media.id, season) for user, slug, media, season in pending],
+                             [(1, None, 1, None)])
 
     async def test_linked_list_queues_the_existing_removal_push(self):
         async with self.Session() as db:

@@ -1,4 +1,6 @@
 {
+  "list_auto_remove_save_error": "Could not save the list setting.",
+  "list_auto_remove_load_error": "Could not load your lists.",
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "settings_ui_language_title": "Idioma da interface",
   "settings_ui_language_description": "Idioma dos menus, botões e mensagens. Os títulos e sinopses seguem o idioma dos metadados definido no seu perfil.",
@@ -2377,5 +2379,5 @@
   "settings_episode_order_saved_tvdb": "As novas séries usarão a ordem do TVDB. Use «Aplicar a todas as séries existentes» para as que já tem.",
   "settings_episode_order_saved_tmdb": "As novas séries usarão a ordem do TMDB.",
   "list_auto_remove_watched": "Automatically remove newly watched items",
-  "list_auto_remove_watched_help": "Checks every five minutes. Only watches dated after an item was added count, including rewatches. Seasons and shows need complete episode metadata and every episode watched again."
+  "list_auto_remove_watched_help": "Only new completed watches trigger removal. Finish every episode of a series, or rewatch every episode if it was already watched when added. Removals can sync to connected services."
 }
