@@ -1,4 +1,5 @@
 {
+  "calendar_copy_subscription": "Copy calendar subscription link",
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "settings_ui_language_title": "Interface language",
   "settings_ui_language_description": "Language of menus, buttons, and messages. Titles and overviews follow the metadata language set in your profile.",

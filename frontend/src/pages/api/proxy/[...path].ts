@@ -68,8 +68,8 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
       // instead of crashing the SSR request.
       redirect: "manual",
     });
-  } catch (e) {
-    console.error(`Proxy request to ${backendUrl} failed:`, e);
+  } catch {
+    console.error(`Proxy request to /${path} failed`);
     return new Response(null, { status: 502 });
   }
 
