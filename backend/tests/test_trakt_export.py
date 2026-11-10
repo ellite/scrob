@@ -108,6 +108,39 @@ class ParseTraktExportTests(unittest.TestCase):
         self.assertIn("ended-shows", data.list_items)
         self.assertEqual(len(data.list_items["ended-shows"]), 1)
 
+    def test_concatenates_paginated_list_items_in_numeric_order(self) -> None:
+        # Regression (#547): Trakt pages lists with more than 250 items into
+        # "lists-list-<id>-<slug>-1.json", "-2.json", ... Only one page per
+        # list id was kept, so all other items were silently dropped.
+        content = _make_zip({
+            "watched-history-1.json": [_MOVIE_PLAY],
+            "lists-lists.json": [{"name": "Good", "ids": {"trakt": 24571523, "slug": "good"}}],
+            "lists-list-24571523-good-2.json": [{"type": "movie", "movie": {"ids": {"tmdb": 2}}}],
+            "lists-list-24571523-good-10.json": [{"type": "movie", "movie": {"ids": {"tmdb": 10}}}],
+            "lists-list-24571523-good-1.json": [{"type": "movie", "movie": {"ids": {"tmdb": 1}}}],
+        })
+        data = parse_trakt_export(content)
+        self.assertEqual([i["movie"]["ids"]["tmdb"] for i in data.list_items["good"]], [1, 2, 10])
+
+    def test_single_list_file_with_numeric_slug_suffix_is_loaded(self) -> None:
+        # A single unpaged file whose slug ends in "-<number>" must still load.
+        content = _make_zip({
+            "watched-history-1.json": [_MOVIE_PLAY],
+            "lists-lists.json": [{"name": "Top 10", "ids": {"trakt": 7, "slug": "top-10"}}],
+            "lists-list-7-top-10.json": [{"type": "movie", "movie": {"ids": {"tmdb": 1}}}],
+        })
+        data = parse_trakt_export(content)
+        self.assertEqual(len(data.list_items["top-10"]), 1)
+
+    def test_loads_paginated_watchlist_files(self) -> None:
+        content = _make_zip({
+            "watched-history-1.json": [_MOVIE_PLAY],
+            "lists-watchlist-2.json": [{"type": "movie", "movie": {"ids": {"tmdb": 2}}}],
+            "lists-watchlist-1.json": [{"type": "movie", "movie": {"ids": {"tmdb": 1}}}],
+        })
+        data = parse_trakt_export(content)
+        self.assertEqual([i["movie"]["ids"]["tmdb"] for i in data.watchlist], [1, 2])
+
     def test_rejects_bad_zip(self) -> None:
         with self.assertRaises(ValueError):
             parse_trakt_export(b"not a zip file")

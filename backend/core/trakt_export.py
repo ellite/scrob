@@ -125,22 +125,32 @@ def parse_trakt_export(content: bytes) -> TraktExportData:
         "episodes": _load_prefixed("comments-episodes"),
     }
 
-    watchlist = _load("lists-watchlist.json")
+    watchlist = _load_prefixed("lists-watchlist")
     lists_meta = _load("lists-lists.json")
 
-    id_to_filename: dict[int, str] = {}
+    # Lists with more than 250 items are paged into
+    # "lists-list-<id>-<slug>-1.json", "-2.json", ... Keep every file per id.
+    id_to_filenames: dict[int, list[str]] = {}
     for n in names:
         m = _LIST_ITEMS_RE.match(n)
         if m:
-            id_to_filename[int(m.group(1))] = n
+            id_to_filenames.setdefault(int(m.group(1)), []).append(n)
+
+    def _page(n: str) -> int:
+        m = re.search(r"-(\d+)\.json$", n)
+        return int(m.group(1)) if m else 0
 
     list_items: dict[str, list[dict]] = {}
     for lst in lists_meta:
         trakt_id = lst.get("ids", {}).get("trakt")
         slug = lst.get("ids", {}).get("slug")
-        fname = id_to_filename.get(trakt_id)
-        if slug and fname:
-            list_items[slug] = _load(fname)
+        files = id_to_filenames.get(trakt_id)
+        if slug and files:
+            # Only sort when paged, so a single file whose slug ends in
+            # "-<number>" isn't misread as a page number.
+            if len(files) > 1:
+                files = sorted(files, key=_page)
+            list_items[slug] = [item for f in files for item in _load(f)]
 
     return TraktExportData(
         history_movies=history_movies,
