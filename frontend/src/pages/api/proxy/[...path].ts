@@ -68,8 +68,10 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
       // instead of crashing the SSR request.
       redirect: "manual",
     });
-  } catch {
-    console.error(`Proxy request to /${path} failed`);
+  } catch (e) {
+    // Path and error code only: the query may carry an api_key (ICS feed).
+    const error = e as { name?: string; cause?: { code?: string } };
+    console.error(`Proxy request to /${path} failed: ${error?.cause?.code ?? error?.name ?? "unknown error"}`);
     return new Response(null, { status: 502 });
   }
 

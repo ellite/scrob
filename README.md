@@ -108,7 +108,8 @@ refreshes; event identifiers stay stable when they do. `sonarr_only=true` and
 behavior when Sonarr is unavailable. Radarr movie releases are not part of this feed.
 
 The subscription URL contains your existing API key, which grants broader API access.
-Keep it private and use HTTPS. Regenerating the API key invalidates the old subscription;
+Keep it private and use HTTPS. A reverse proxy that logs full request URLs records the key as
+well. Regenerating the API key invalidates the old subscription;
 update the URL in your calendar app. No additional calendar token is created.
 
 ## Screenshots
