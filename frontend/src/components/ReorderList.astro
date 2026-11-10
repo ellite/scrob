@@ -9,7 +9,7 @@ const { items, endpoint, source, kind } = Astro.props;
       {items.map(item => (
         <li data-order-id={item.id} class="flex items-center gap-3 text-sm text-zinc-300 data-[dragging]:opacity-50 data-[drop-target]:bg-zinc-800">
           <span aria-hidden="true" draggable="true" data-drag-handle class="cursor-grab select-none px-2 text-zinc-500">&#8942;&#8942;</span>
-        <span data-order-label class="grow min-w-0 break-words">{item.label}</span>
+          <span data-order-label class="grow min-w-0 break-words">{item.label}</span>
           <span class="flex shrink-0 gap-2">
             <button type="button" data-move="up" aria-label={m.list_move_up_named({ name: item.label })} class="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-500">{m.list_move_up()}</button>
             <button type="button" data-move="down" aria-label={m.list_move_down_named({ name: item.label })} class="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-500">{m.list_move_down()}</button>
@@ -35,6 +35,10 @@ const { items, endpoint, source, kind } = Astro.props;
   import { m } from "../paraglide/messages.js";
   document.querySelectorAll<HTMLElement>('[data-reorder-root]').forEach(root => {
     const items = root.querySelector<HTMLOListElement>('[data-order-items]')!;
+    const save = root.querySelector<HTMLButtonElement>('[data-save-order]')!;
+    // Dragging selected label text makes the event target a text node.
+    const elementOf = (target: EventTarget | null) =>
+      target instanceof Element ? target : (target as Node | null)?.parentElement ?? null;
     root.addEventListener('click', event => {
       const button = (event.target as Element).closest<HTMLButtonElement>('[data-move]');
       if (!button || button.disabled) return;
@@ -53,7 +57,7 @@ const { items, endpoint, source, kind } = Astro.props;
       target = null;
     }
     items.addEventListener('dragstart', event => {
-      const handle = (event.target as Element).closest('[data-drag-handle]');
+      const handle = elementOf(event.target)?.closest('[data-drag-handle]');
       if (!handle || !event.dataTransfer || save.disabled) {
         event.preventDefault();
         return;
@@ -66,7 +70,7 @@ const { items, endpoint, source, kind } = Astro.props;
     });
     items.addEventListener('dragover', event => {
       if (!dragged || !event.dataTransfer || save.disabled) return;
-      const row = (event.target as Element).closest<HTMLLIElement>('[data-order-id]');
+      const row = elementOf(event.target)?.closest<HTMLLIElement>('[data-order-id]');
       clearTarget();
       if (!row || row === dragged) return;
       event.preventDefault();
@@ -78,7 +82,7 @@ const { items, endpoint, source, kind } = Astro.props;
       if (!(event.relatedTarget instanceof Node) || !items.contains(event.relatedTarget)) clearTarget();
     });
     items.addEventListener('drop', event => {
-      const row = (event.target as Element).closest<HTMLLIElement>('[data-order-id]');
+      const row = elementOf(event.target)?.closest<HTMLLIElement>('[data-order-id]');
       if (!dragged || !items.contains(dragged) || !row || row === dragged || save.disabled) return;
       event.preventDefault();
       items.insertBefore(dragged, dropBefore(row, event.clientY, row.getBoundingClientRect()));
@@ -115,7 +119,6 @@ const { items, endpoint, source, kind } = Astro.props;
     }
     syncItems();
     if (source) new MutationObserver(syncItems).observe(source, { childList: true });
-    const save = root.querySelector<HTMLButtonElement>('[data-save-order]')!;
     save.addEventListener('click', async () => {
       const buttons = root.querySelectorAll<HTMLButtonElement>('button');
       buttons.forEach(button => { button.disabled = true; });
