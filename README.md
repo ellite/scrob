@@ -93,6 +93,25 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **A
 - **Single container**: Frontend and backend ship as one image on one port. No separate services to manage.
 - **API documentation**: Full interactive OpenAPI docs at `/docs` (Swagger UI) and `/redoc` (ReDoc), useful if you're scripting against Scrob directly.
 
+### Subscribe to the episode calendar
+
+Calendar apps can subscribe to `/api/proxy/calendar/feed.ics?api_key=YOUR_SCROB_API_KEY`
+on your Scrob instance, without a login cookie or Authorization header. Use your existing
+Scrob API key from Connections → API Key; this is the same authentication used by other API clients.
+For direct backend access the route is `/calendar/feed.ics`.
+
+Add `&days=90` for a longer window (1-90 days, default 14). The feed reuses the episode
+calendar cache and its collected/watched-show scope. Events are all-day entries because
+that calendar stores air dates, not broadcast times. Dates and titles may change on later
+refreshes; event identifiers stay stable when they do. `sonarr_only=true` and
+`sonarr_monitored=true` use the existing calendar's Sonarr filters, including its fallback
+behavior when Sonarr is unavailable. Radarr movie releases are not part of this feed.
+
+The subscription URL contains your existing API key, which grants broader API access.
+Keep it private and use HTTPS. A reverse proxy that logs full request URLs records the key as
+well. Regenerating the API key invalidates the old subscription;
+update the URL in your calendar app. No additional calendar token is created.
+
 ## Screenshots
 
 <img src="docs/screenshots/scrobss.png" alt="Scrob" width="800">

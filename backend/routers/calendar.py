@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -486,6 +487,26 @@ async def get_calendar(
         )
     result = _trim_window(await _load_or_compute(db, current_user.id, force=False), days)
     return await _apply_sonarr(db, current_user.id, result, sonarr_only, sonarr_monitored)
+
+
+@router.get("/feed.ics")
+async def get_calendar_feed(
+    days: int = Query(CALENDAR_DEFAULT_DAYS, ge=1, le=CALENDAR_WINDOW_DAYS),
+    sonarr_only: bool = Query(False),
+    sonarr_monitored: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_or_api_key),
+):
+    from core.calendar_ics import render_calendar
+
+    result = _trim_window(await _load_or_compute(db, current_user.id, force=False), days)
+    if sonarr_only or sonarr_monitored:
+        result = await _apply_sonarr(db, current_user.id, result, sonarr_only, sonarr_monitored)
+    return Response(
+        render_calendar(result.get("calendar", {}).get("entries", []), utcnow()),
+        media_type="text/calendar; charset=utf-8",
+        headers={"Cache-Control": "private, no-store", "Content-Disposition": 'inline; filename="scrob-calendar.ics"'},
+    )
 
 
 @router.post("/refresh")
