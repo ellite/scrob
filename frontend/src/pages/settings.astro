@@ -9,10 +9,13 @@ import { formatDateTime } from "../lib/format";
 import { getViewerTimeZone } from "../lib/viewerTimeZone";
 
 const { token } = Astro.locals;
-const [settings, me] = await Promise.all([
+const [settings, me, ownedLists, listRemovals] = await Promise.all([
   Astro.locals.settings ?? api.auth.getSettings(token!),
   api.auth.me(token!),
+  api.lists.getSummary(token!).then(result => result.lists ?? null).catch(() => null),
+  api.lists.getRemovals(token!).then(result => result.removals ?? null).catch(() => null),
 ]);
+const viewerTimeZone = getViewerTimeZone(Astro.cookies);
 const hasTmdbKey = settings.has_effective_tmdb_key;
 const hasTvdbKey = settings.has_effective_tvdb_key;
 const defaultEpisodeOrder = settings.default_episode_order ?? '';
@@ -481,6 +484,50 @@ try {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- Lists: automatic removal of watched items (#338) -->
+      <section>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">{m.list_auto_remove_watched()}</h2>
+        <p class="mb-3 text-sm text-zinc-400">{m.list_auto_remove_watched_help()}</p>
+        {ownedLists === null ? <p role="alert" class="text-sm text-red-400">{m.list_auto_remove_load_error()}</p> :
+          ownedLists.map(list => (
+            <div class="py-1">
+              <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" data-auto-remove-list={list.id} data-field="auto_remove_watched" checked={list.auto_remove_watched} class="accent-blue-500" />
+                {list.name}
+              </label>
+              <label class:list={["ml-6 mt-1 flex items-start gap-2 text-xs text-zinc-400", !list.auto_remove_watched && "hidden"]} data-include-earlier-row={list.id}>
+                <input type="checkbox" data-auto-remove-list={list.id} data-field="auto_remove_include_earlier" checked={list.auto_remove_include_earlier} class="mt-0.5 accent-blue-500" />
+                <span>{m.list_auto_remove_include_earlier()}<span class="block text-zinc-500">{m.list_auto_remove_include_earlier_help()}</span></span>
+              </label>
+            </div>
+          ))}
+        <div class="mt-4" id="list-removals">
+          <div class="mb-2 flex items-center justify-between gap-3">
+            <h3 class="text-sm font-semibold text-zinc-200">{m.list_auto_remove_trash_title()}</h3>
+            {listRemovals && listRemovals.length > 0 && (
+              <button type="button" data-restore-batch={listRemovals[0].removed_at} class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50">{m.list_auto_remove_restore_last_run()}</button>
+            )}
+          </div>
+          {listRemovals === null ? <p role="alert" class="text-sm text-red-400">{m.list_auto_remove_trash_load_error()}</p> : (
+            <>
+              <p data-removals-empty class:list={["text-sm text-zinc-500", listRemovals.length > 0 && "hidden"]}>{m.list_auto_remove_trash_empty()}</p>
+              <ul class="divide-y divide-zinc-800">
+                {listRemovals.map(entry => (
+                  <li class="flex items-center justify-between gap-3 py-1.5 text-sm" data-removal={entry.id} data-removed-at={entry.removed_at}>
+                    <span class="min-w-0 truncate">
+                      {entry.media.title}{entry.media.year && <span class="text-zinc-500"> ({entry.media.year})</span>}
+                      {entry.season_number != null && <span class="text-zinc-400"> · {m.media_season_number({ number: entry.season_number })}</span>}
+                      <span class="block text-xs text-zinc-500">{entry.list_name} · {formatDateTime(entry.removed_at + "Z", { timeZone: viewerTimeZone, dateStyle: "medium", timeStyle: "short" })}</span>
+                    </span>
+                    <button type="button" data-restore-removal={entry.id} class="shrink-0 text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50">{m.list_auto_remove_restore()}</button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       </section>
 
@@ -1174,6 +1221,72 @@ try {
     const navBottom = nav ? nav.getBoundingClientRect().bottom : 0;
     msg.style.top = `max(16px, calc(env(safe-area-inset-top, 0px) + 8px), ${navBottom + 12}px)`;
   }
+
+  document.querySelectorAll<HTMLInputElement>('[data-auto-remove-list]').forEach(input => {
+    input.addEventListener('change', async () => {
+      const checked = input.checked;
+      const field = input.dataset.field!;
+      input.disabled = true;
+      try {
+        const response = await fetch('/api/proxy/lists/' + input.dataset.autoRemoveList, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ [field]: checked }),
+        });
+        if (!response.ok) throw new Error('List update failed');
+        if (field === 'auto_remove_watched') {
+          document.querySelector(`[data-include-earlier-row="${input.dataset.autoRemoveList}"]`)?.classList.toggle('hidden', !checked);
+        }
+        showMessage(m.common_action_successful(), 'success', { scroll: false });
+      } catch {
+        input.checked = !checked;
+        showMessage(m.list_auto_remove_save_error(), 'error', { scroll: false });
+      } finally {
+        input.disabled = false;
+      }
+    });
+  });
+
+  // Restore trash for automatic removal (#338).
+  async function restoreRemovals(button: HTMLButtonElement, path: string, body: object | undefined, rows: () => Element[]) {
+    button.disabled = true;
+    try {
+      const response = await fetch('/api/proxy/lists/removals/' + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!response.ok) throw new Error('Restore failed');
+      const result = await response.json();
+      rows().forEach(row => row.remove());
+      const batchButton = document.querySelector<HTMLButtonElement>('[data-restore-batch]');
+      const newest = document.querySelector<HTMLElement>('[data-removal]');
+      if (batchButton) {
+        if (newest) batchButton.dataset.restoreBatch = newest.dataset.removedAt;
+        else batchButton.remove();
+      }
+      document.querySelector('[data-removals-empty]')?.classList.toggle('hidden', !!newest);
+      if (result.skipped) showMessage(m.list_auto_remove_restore_skipped(), 'error', { scroll: false });
+      else showMessage(m.common_action_successful(), 'success', { scroll: false });
+    } catch {
+      showMessage(m.list_auto_remove_restore_error(), 'error', { scroll: false });
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  document.getElementById('list-removals')?.addEventListener('click', event => {
+    const button = (event.target as Element).closest<HTMLButtonElement>('button');
+    if (!button || button.disabled) return;
+    if (button.dataset.restoreRemoval) {
+      const id = button.dataset.restoreRemoval;
+      restoreRemovals(button, `${id}/restore`, undefined, () => [...document.querySelectorAll(`[data-removal="${id}"]`)]);
+    } else if (button.dataset.restoreBatch) {
+      const removedAt = button.dataset.restoreBatch;
+      restoreRemovals(button, 'restore', { removed_at: removedAt },
+        () => [...document.querySelectorAll<HTMLElement>('[data-removal]')].filter(row => row.dataset.removedAt === removedAt));
+    }
+  });
 
   function showMessage(text, type = 'success', opts: { scroll?: boolean } = {}) {
     const msg = document.getElementById('js-message');

@@ -33,6 +33,11 @@ class List(Base):
     # BigInteger for the same reason as Comment.wetrakr_comment_id: WeTrakr's
     # own ids for some object types run past Postgres INTEGER's 32-bit range.
     wetrakr_list_id : Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    auto_remove_watched : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Watches before this moment (when auto-removal was turned on) never remove
+    # an item, unless the list opts into watches since each item was added.
+    auto_remove_since : Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    auto_remove_include_earlier : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at    : Mapped[datetime]      = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at    : Mapped[datetime]      = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -62,3 +67,25 @@ class ListItem(Base):
 
     list  : Mapped["List"]  = relationship(back_populates="items")
     media : Mapped["Media"] = relationship(back_populates="list_items")
+
+
+class ListItemRemoval(Base):
+    """An item that automatic removal took off a list, kept for a few days so
+    it can be restored (#338). All removals of one run share removed_at."""
+    __tablename__ = "list_item_removals"
+
+    id            : Mapped[int]           = mapped_column(Integer, primary_key=True)
+    user_id       : Mapped[int]           = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    list_id       : Mapped[int]           = mapped_column(ForeignKey("lists.id", ondelete="CASCADE"), nullable=False)
+    media_id      : Mapped[int]           = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
+    season_number : Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    added_at      : Mapped[datetime]      = mapped_column(DateTime, nullable=False)
+    sort_order    : Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
+    notes         : Mapped[Optional[str]] = mapped_column(Text)
+    removed_at    : Mapped[datetime]      = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (Index("ix_list_item_removals_user_removed", "user_id", "removed_at"),)
+
+    # One-way: the database cascades on list/media deletion.
+    list  : Mapped["List"]  = relationship()
+    media : Mapped["Media"] = relationship()

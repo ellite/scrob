@@ -2375,5 +2375,18 @@
   "stats_no_plays_period": "No plays in this period.",
   "lists_import_job_lost": "Lost track of the import job (the server may have restarted). Check the list, then import again to top it up.",
   "settings_episode_order_saved_tvdb": "New shows will use TVDB ordering. Use \"Apply to all existing shows\" for the ones you already have.",
-  "settings_episode_order_saved_tmdb": "New shows will use TMDB ordering."
+  "settings_episode_order_saved_tmdb": "New shows will use TMDB ordering.",
+  "list_auto_remove_watched": "Automatically remove newly watched items",
+  "list_auto_remove_watched_help": "An item is removed after a completed watch that happens after you turn this on. Series and seasons go once every released episode is watched. Removals sync to connected services.",
+  "list_auto_remove_save_error": "Could not save the list setting.",
+  "list_auto_remove_load_error": "Could not load your lists.",
+  "list_auto_remove_include_earlier": "Also count watches since each item was added",
+  "list_auto_remove_include_earlier_help": "Applies within five minutes and also removes items you watched before turning automatic removal on.",
+  "list_auto_remove_trash_title": "Recently removed (7 days)",
+  "list_auto_remove_trash_empty": "Nothing was removed automatically in the last 7 days.",
+  "list_auto_remove_trash_load_error": "Could not load recently removed items.",
+  "list_auto_remove_restore": "Restore",
+  "list_auto_remove_restore_last_run": "Restore all from last run",
+  "list_auto_remove_restore_error": "Could not restore.",
+  "list_auto_remove_restore_skipped": "Some items were already on their list or the list no longer exists."
 }

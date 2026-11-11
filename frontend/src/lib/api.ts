@@ -291,7 +291,19 @@ export interface ShowSeasonOverride {
   target_show_title: string | null;
 }
 
+// An item automatic removal took off a list, restorable for seven days (#338).
+export interface ListRemoval {
+  id: number;
+  list_id: number;
+  list_name: string | null;
+  season_number: number | null;
+  removed_at: string;
+  media: { id: number; title: string; media_type: string; year: string | null; poster_path: string | null };
+}
+
 export interface UserList {
+  auto_remove_watched: boolean;
+  auto_remove_include_earlier: boolean;
   id: number;
   name: string;
   description: string | null;
@@ -1641,6 +1653,11 @@ export const api = {
   lists: {
     getAll: (token: string) =>
       get<{ lists: UserList[] }>("/lists", undefined, token),
+    getSummary: (token: string) =>
+      get<{ lists: Pick<UserList, "id" | "name" | "is_watchlist" | "auto_remove_watched" | "auto_remove_include_earlier">[] }>(
+        "/lists", { summary: "true" }, token),
+    getRemovals: (token: string) =>
+      get<{ removals: ListRemoval[] }>("/lists/removals", undefined, token),
     getPublic: (token?: string) =>
       get<{ lists: PublicList[] }>("/lists/public", undefined, token),
     create: (body: { name: string; description?: string; privacy_level?: PrivacyLevel }, token: string) =>

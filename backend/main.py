@@ -118,6 +118,25 @@ async def _auto_sync_scheduler():
         try:
             async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
             async with async_session() as db:
+                try:
+                    from core.list_cleanup import prune_watched_list_items
+                    pending_list_pushes = []
+                    await prune_watched_list_items(db, pending_list_pushes)
+                    await db.commit()
+                    for user_id, slug, media, season in pending_list_pushes:
+                        # One failed push must not skip the others: the local
+                        # removals are already committed.
+                        try:
+                            if slug is None:
+                                await lists._push_watchlist_item(db, user_id, media, season_number=season, remove=True)
+                            else:
+                                await lists._push_list_item_to_trakt(db, user_id, slug, media, season_number=season, remove=True)
+                        except Exception:
+                            log.exception("List auto-removal push failed")
+                            await db.rollback()
+                except Exception:
+                    log.exception("List auto-removal failed")
+                    await db.rollback()
                 if datetime.now(timezone.utc).replace(tzinfo=None) - last_prune >= timedelta(hours=1):
                     last_prune = datetime.now(timezone.utc).replace(tzinfo=None)
                     try:
