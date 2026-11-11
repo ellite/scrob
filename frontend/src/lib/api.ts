@@ -1264,6 +1264,10 @@ export interface TraktCommentsResponse {
 }
 
 export interface CalendarEntry {
+  // Missing on episode entries; "movie" for Radarr releases (#501).
+  entry_type?: "movie";
+  release_type?: "cinema" | "digital" | "physical";
+  movie_tmdb_id?: number | null;
   air_date: string;
   show_tmdb_id?: number | null;
   show_tvdb_id?: number | null;
@@ -1286,6 +1290,7 @@ export interface CalendarPayload {
 
 export interface CalendarResponse {
   sonarr_configured?: boolean;
+  radarr_configured?: boolean;
   computed_at: string | null;
   cached: boolean;
   calendar: CalendarPayload;
@@ -1728,8 +1733,8 @@ export const api = {
   },
 
   calendar: {
-    get: (token?: string, cachedOnly?: boolean, days?: number, sonarrOnly?: boolean, sonarrMonitored?: boolean) =>
-      get<CalendarResponse>("/calendar", { ...(cachedOnly ? { cached_only: true } : {}), ...(days ? { days } : {}), ...(sonarrOnly ? { sonarr_only: true } : {}), ...(sonarrMonitored ? { sonarr_monitored: true } : {}) }, token),
+    get: (token?: string, cachedOnly?: boolean, days?: number, sonarrOnly?: boolean, sonarrMonitored?: boolean, radarrOnly?: boolean, radarrMonitored?: boolean) =>
+      get<CalendarResponse>("/calendar", { ...(cachedOnly ? { cached_only: true } : {}), ...(days ? { days } : {}), ...(sonarrOnly ? { sonarr_only: true } : {}), ...(sonarrMonitored ? { sonarr_monitored: true } : {}), ...(radarrOnly ? { radarr_only: true } : {}), ...(radarrMonitored ? { radarr_monitored: true } : {}) }, token),
     refresh: (token?: string) =>
       post<CalendarResponse>("/calendar/refresh", undefined, token),
   },

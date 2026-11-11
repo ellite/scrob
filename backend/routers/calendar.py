@@ -14,9 +14,14 @@ the computed payload is cached whole in user_calendar_cache and recomputed at
 most once per TTL or on explicit refresh. cached_only=true (used by pages
 that must render instantly) never waits on TMDB: it serves whatever cache
 exists and warms it in the background otherwise.
+
+When Radarr is configured, its own release calendar (in cinemas / digital /
+physical) is merged in as movie entries (#501) - one extra request per
+compute, and nothing changes for users without Radarr.
 """
 
 import asyncio
+import re
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -40,7 +45,7 @@ from core.timeutil import utcnow
 router = APIRouter()
 
 CALENDAR_TTL = timedelta(hours=24)
-CALENDAR_SCHEMA = 8
+CALENDAR_SCHEMA = 9
 # The cached payload always covers the longest horizon a user can pick (#467);
 # GET /calendar trims it down to the requested number of days.
 CALENDAR_WINDOW_DAYS = 90
@@ -121,19 +126,26 @@ async def _resolve_watch_status(db: AsyncSession, user_id: int, entries: list[di
     only, no TMDB calls, so it's cheap enough to run on every request
     (cache hit or not). An episode with no local Media row at all just
     hasn't been scanned/aired into the library yet, which is the normal
-    case for anything upcoming."""
+    case for anything upcoming. Radarr movie entries are matched by their
+    TMDB id the same way."""
     show_ids = {e["show_id"] for e in entries if e.get("show_id") is not None}
-    if not show_ids:
-        for e in entries:
-            e["collected"] = False
-            e["watched"] = False
-        return
-    media_rows = (await db.execute(
-        select(Media.show_id, Media.season_number, Media.episode_number, Media.id)
-        .where(Media.show_id.in_(show_ids), Media.media_type == MediaType.episode)
-    )).all()
-    media_by_key = {(sid, sn, en): mid for sid, sn, en, mid in media_rows}
-    media_ids = list(media_by_key.values())
+    movie_tmdb_ids = {
+        e["movie_tmdb_id"] for e in entries if e.get("entry_type") == "movie" and e.get("movie_tmdb_id")
+    }
+    media_by_key: dict[tuple, int] = {}
+    if show_ids:
+        media_rows = (await db.execute(
+            select(Media.show_id, Media.season_number, Media.episode_number, Media.id)
+            .where(Media.show_id.in_(show_ids), Media.media_type == MediaType.episode)
+        )).all()
+        media_by_key = {(sid, sn, en): mid for sid, sn, en, mid in media_rows}
+    movie_by_tmdb: dict[int, int] = {}
+    if movie_tmdb_ids:
+        movie_by_tmdb = dict((await db.execute(
+            select(Media.tmdb_id, Media.id)
+            .where(Media.tmdb_id.in_(movie_tmdb_ids), Media.media_type == MediaType.movie)
+        )).all())
+    media_ids = [*media_by_key.values(), *movie_by_tmdb.values()]
     collected_ids: set[int] = set()
     watched_ids: set[int] = set()
     if media_ids:
@@ -150,9 +162,71 @@ async def _resolve_watch_status(db: AsyncSession, user_id: int, entries: list[di
             )).all()
         }
     for e in entries:
-        media_id = media_by_key.get((e.get("show_id"), e["season_number"], e["episode_number"]))
+        if e.get("entry_type") == "movie":
+            media_id = movie_by_tmdb.get(e.get("movie_tmdb_id"))
+        else:
+            media_id = media_by_key.get((e.get("show_id"), e["season_number"], e["episode_number"]))
         e["collected"] = media_id in collected_ids if media_id else False
         e["watched"] = media_id in watched_ids if media_id else False
+
+
+# Radarr's three release kinds, in the order a movie normally reaches them.
+_RADARR_RELEASES = (
+    ("inCinemas", "cinema"),
+    ("digitalRelease", "digital"),
+    ("physicalRelease", "physical"),
+)
+_TMDB_IMAGE = re.compile(r"^https?://image\.tmdb\.org/t/p/[^/]+(/.+)$")
+
+
+def _radarr_poster(images: object) -> str | None:
+    """Poster from Radarr's image list. A TMDB URL is reduced to its path so
+    the frontend serves it through the usual proxy at a small size; Radarr's
+    own /MediaCover paths aren't reachable from the browser and are skipped."""
+    if not isinstance(images, list):
+        return None
+    for image in images:
+        if not isinstance(image, dict) or image.get("coverType") != "poster":
+            continue
+        url = image.get("remoteUrl")
+        if not isinstance(url, str):
+            continue
+        tmdb = _TMDB_IMAGE.match(url)
+        if tmdb:
+            return tmdb.group(1)
+        if url.startswith(("http://", "https://")):
+            return url
+    return None
+
+
+def _radarr_calendar_entries(rows: list[dict], start: date, end: date) -> list[dict]:
+    """One movie entry per Radarr release date that falls inside the window."""
+    out = []
+    for movie in rows:
+        for field, release_type in _RADARR_RELEASES:
+            value = movie.get(field)
+            air_date = value[:10] if isinstance(value, str) else None
+            try:
+                day = date.fromisoformat(air_date) if air_date else None
+            except ValueError:
+                day = None
+            if not day or not (start <= day <= end):
+                continue
+            out.append({
+                "entry_type": "movie",
+                "release_type": release_type,
+                "air_date": air_date,
+                "movie_tmdb_id": movie.get("tmdbId"),
+                "show_id": None,
+                "show_tmdb_id": None,
+                "show_tvdb_id": None,
+                "show_title": movie.get("title") or movie.get("originalTitle"),
+                "poster_path": _radarr_poster(movie.get("images")),
+                "season_number": None,
+                "episode_number": None,
+                "episode_name": None,
+            })
+    return out
 
 
 def _seasons_to_scan(detail: dict, window_start: date) -> set[int]:
@@ -186,6 +260,7 @@ def _seasons_to_scan(detail: dict, window_start: date) -> set[int]:
 async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
     from core import tmdb as tmdb_client
     from core import tvdb as tvdb_client
+    from core import radarr as radarr_client
     from core.translations import get_user_metadata_language
     from routers.media import check_tmdb_key, get_user_tmdb_key
     from routers.shows import get_user_tvdb_key
@@ -196,6 +271,7 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
     today = _server_today()
 
     candidates = await _candidate_shows(db, user_id)
+    radarr_cfg, _sonarr_cfg = await _arr_configs(db, user_id)
 
     api_key = await get_user_tmdb_key(db, user_id)
     tvdb_api_key = await get_user_tvdb_key(db, user_id)
@@ -206,7 +282,7 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
         s for s in candidates
         if (tvdb_api_key if _is_tvdb_show(s) else (tmdb_ok and s.tmdb_id))
     ]
-    if not candidates:
+    if not candidates and not radarr_cfg:
         return {
             "schema": CALENDAR_SCHEMA, "generated_at": utcnow().isoformat(),
             "today": today.isoformat(), "shows_checked": 0, "entries": [],
@@ -286,7 +362,20 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
                 })
         return out
 
-    fetched = await asyncio.gather(*(_fetch(s) for s in candidates))
+    async def _fetch_radarr() -> list[dict]:
+        if not radarr_cfg:
+            return []
+        # Radarr reads end as midnight, so ask one day past the window and
+        # let _radarr_calendar_entries trim to the exact range.
+        rows = await radarr_client.get_calendar(
+            radarr_cfg.radarr_url, radarr_cfg.radarr_token,
+            window_start.isoformat(), (window_end + timedelta(days=1)).isoformat(),
+        )
+        return _radarr_calendar_entries(rows, window_start, window_end)
+
+    fetched, movies = await asyncio.gather(
+        asyncio.gather(*(_fetch(s) for s in candidates)), _fetch_radarr()
+    )
     entries = [e for group in fetched for e in group]
 
     # collected/watched are deliberately NOT resolved here - this payload
@@ -322,6 +411,7 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
                 e["display_season_number"] = pos.display_season
                 e["display_episode_number"] = pos.display_episode
 
+    entries.extend(movies)
     entries.sort(key=lambda e: (
         e["air_date"], e["show_title"] or "",
         e["season_number"] if e["season_number"] is not None else 0,
@@ -416,39 +506,56 @@ def _trim_window(result: dict, days: int) -> dict:
     return {**result, "calendar": {**calendar, "entries": [e for e in entries if e["air_date"] <= last]}}
 
 
-async def _sonarr_config(db: AsyncSession, user_id: int):
-    from routers.media import _effective_sonarr, _get_global_settings
+async def _arr_configs(db: AsyncSession, user_id: int):
+    """(radarr, sonarr) effective settings for the user, each None when unset."""
+    from routers.media import _effective_radarr, _effective_sonarr, _get_global_settings
 
     user_settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
-    return _effective_sonarr(user_settings, await _get_global_settings(db))
+    global_settings = await _get_global_settings(db)
+    return _effective_radarr(user_settings, global_settings), _effective_sonarr(user_settings, global_settings)
 
 
-async def _apply_sonarr(
-    db: AsyncSession, user_id: int, result: dict, sonarr_only: bool, sonarr_monitored: bool
+async def _apply_arr(
+    db: AsyncSession, user_id: int, result: dict,
+    sonarr_only: bool, sonarr_monitored: bool,
+    radarr_only: bool = False, radarr_monitored: bool = False,
 ) -> dict:
-    """Adds sonarr_configured and applies the optional Sonarr filters (#501):
-    sonarr_only keeps shows present in Sonarr, sonarr_monitored keeps shows
-    Sonarr has flagged monitored. Applied per request on top of the cached
-    payload, like the watch flags. Entries are left unfiltered when Sonarr
-    can't be reached, so a flaky Sonarr doesn't read as an empty calendar."""
+    """Adds sonarr_configured/radarr_configured and applies the optional *arr
+    filters (#501): the Sonarr pair keeps episodes of shows present in /
+    monitored by Sonarr, the Radarr pair does the same for movies. Each pair
+    only touches its own media type, so "In Sonarr" never hides a movie.
+    Applied per request on top of the cached payload, like the watch flags.
+    A side is left unfiltered when its server can't be reached, so a flaky
+    Sonarr/Radarr doesn't read as an empty calendar."""
+    from core import radarr as radarr_client
     from core import sonarr as sonarr_client
 
-    cfg = await _sonarr_config(db, user_id)
-    result = {**result, "sonarr_configured": cfg is not None}
+    radarr_cfg, sonarr_cfg = await _arr_configs(db, user_id)
+    result = {**result, "sonarr_configured": sonarr_cfg is not None, "radarr_configured": radarr_cfg is not None}
     calendar = result.get("calendar") or {}
     entries = calendar.get("entries")
-    if not cfg or not entries or not (sonarr_only or sonarr_monitored):
+    if not entries:
         return result
-    fetch = sonarr_client.get_monitored_series_ids if sonarr_monitored else sonarr_client.get_all_series_ids
-    ids = await fetch(cfg.sonarr_url, cfg.sonarr_token)
-    if not ids:
+    sonarr_ids = None
+    if sonarr_cfg and (sonarr_only or sonarr_monitored):
+        fetch = sonarr_client.get_monitored_series_ids if sonarr_monitored else sonarr_client.get_all_series_ids
+        sonarr_ids = await fetch(sonarr_cfg.sonarr_url, sonarr_cfg.sonarr_token)
+    radarr_ids = None
+    if radarr_cfg and (radarr_only or radarr_monitored):
+        fetch = radarr_client.get_monitored_movie_tmdb_ids if radarr_monitored else radarr_client.get_all_movie_tmdb_ids
+        radarr_ids = await fetch(radarr_cfg.radarr_url, radarr_cfg.radarr_token)
+    if sonarr_ids is None and radarr_ids is None:
         return result
-    sonarr_tmdb, sonarr_tvdb = ids
-    kept = [
-        e for e in entries
-        if (e.get("show_tmdb_id") in sonarr_tmdb) or (e.get("show_tvdb_id") in sonarr_tvdb)
-    ]
-    return {**result, "calendar": {**calendar, "entries": kept}}
+
+    def keep(e: dict) -> bool:
+        if e.get("entry_type") == "movie":
+            return radarr_ids is None or e.get("movie_tmdb_id") in radarr_ids
+        if sonarr_ids is None:
+            return True
+        sonarr_tmdb, sonarr_tvdb = sonarr_ids
+        return (e.get("show_tmdb_id") in sonarr_tmdb) or (e.get("show_tvdb_id") in sonarr_tvdb)
+
+    return {**result, "calendar": {**calendar, "entries": [e for e in entries if keep(e)]}}
 
 
 @router.get("")
@@ -456,6 +563,8 @@ async def get_calendar(
     cached_only: bool = Query(False),
     sonarr_only: bool = Query(False),
     sonarr_monitored: bool = Query(False),
+    radarr_only: bool = Query(False),
+    radarr_monitored: bool = Query(False),
     days: int = Query(CALENDAR_DEFAULT_DAYS, ge=1, le=CALENDAR_WINDOW_DAYS),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
@@ -479,13 +588,17 @@ async def get_calendar(
             result = _trim_window(
                 {"computed_at": row.computed_at.isoformat(), "cached": True, "calendar": row.payload}, days
             )
-            return await _apply_sonarr(db, current_user.id, result, sonarr_only, sonarr_monitored)
+            return await _apply_arr(
+                db, current_user.id, result, sonarr_only, sonarr_monitored, radarr_only, radarr_monitored
+            )
         asyncio.create_task(_background_compute(current_user.id))
-        return await _apply_sonarr(
+        return await _apply_arr(
             db, current_user.id, {"computed_at": None, "cached": False, "calendar": {"entries": []}}, False, False
         )
     result = _trim_window(await _load_or_compute(db, current_user.id, force=False), days)
-    return await _apply_sonarr(db, current_user.id, result, sonarr_only, sonarr_monitored)
+    return await _apply_arr(
+        db, current_user.id, result, sonarr_only, sonarr_monitored, radarr_only, radarr_monitored
+    )
 
 
 @router.post("/refresh")

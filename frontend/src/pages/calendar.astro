@@ -23,19 +23,23 @@ const CALENDAR_DAY_CHOICES = [14, 30, 60, 90];
 const savedDays = Number(Astro.cookies.get("calendar_days")?.value);
 const lookaheadDays = CALENDAR_DAY_CHOICES.includes(savedDays) ? savedDays : 14;
 
-// Filters live in the URL like the other pages' FilterPanel. The Sonarr ones
-// are applied by the backend; Collected/Watched are applied below since each
-// entry already carries those flags.
+// Filters live in the URL like the other pages' FilterPanel. The Sonarr and
+// Radarr ones are applied by the backend, each only to its own media type;
+// Collected/Watched are applied below since each entry already carries those
+// flags.
 const arr = Astro.url.searchParams.getAll("arr");
+const radarr = Astro.url.searchParams.getAll("radarr");
 const collection = Astro.url.searchParams.get("collection") ?? "";
 const watch = Astro.url.searchParams.get("watch") ?? "";
 const sonarrOnly = arr.includes("in");
 const sonarrMonitored = arr.includes("monitored");
+const radarrOnly = radarr.includes("in");
+const radarrMonitored = radarr.includes("monitored");
 
 let calendarData: Awaited<ReturnType<typeof api.calendar.get>> | null = null;
 let loadError = "";
 try {
-  calendarData = await api.calendar.get(token, true, lookaheadDays, sonarrOnly, sonarrMonitored);
+  calendarData = await api.calendar.get(token, true, lookaheadDays, sonarrOnly, sonarrMonitored, radarrOnly, radarrMonitored);
 } catch (e: any) {
   loadError = e.message;
 }
@@ -43,12 +47,13 @@ try {
 // Only actually "needs" a client-side wait when there's no load error to
 // show instead - an error should never trigger the poll-and-reload loop.
 const sonarrConfigured = calendarData?.sonarr_configured ?? false;
+const radarrConfigured = calendarData?.radarr_configured ?? false;
 const needsCompute = !loadError && !calendarData?.cached;
 const entries = (calendarData?.calendar?.entries ?? []).filter((e) =>
   (collection === "in" ? e.collected : collection === "out" ? !e.collected : true) &&
   (watch === "watched" ? e.watched : watch === "unwatched" ? !e.watched : true)
 );
-const hasFilters = !!(arr.length || collection || watch);
+const hasFilters = !!(arr.length || radarr.length || collection || watch);
 const todayIso = calendarData?.calendar?.today ?? new Date().toISOString().slice(0, 10);
 
 function dayLabel(iso: string, today: string): string {
@@ -62,9 +67,16 @@ function dayLabel(iso: string, today: string): string {
 }
 
 function entryHref(e: CalendarEntry): string {
+  if (e.entry_type === 'movie') return e.movie_tmdb_id ? `/media/movie/${e.movie_tmdb_id}` : '#';
   if (e.show_tmdb_id) return `/show/${e.show_tmdb_id}/season/${e.season_number}/${e.episode_number}`;
   if (e.show_tvdb_id) return `/show/tvdb/${e.show_tvdb_id}/season/${e.season_number}/${e.episode_number}`;
   return '#';
+}
+
+function releaseLabel(kind: CalendarEntry["release_type"]): string {
+  if (kind === 'digital') return m.calendar_release_digital();
+  if (kind === 'physical') return m.calendar_release_physical();
+  return m.calendar_release_cinema();
 }
 
 // Entries arrive pre-sorted by air_date (then title, season, episode) from
@@ -98,6 +110,10 @@ const days = Object.keys(byDay);
           key: "arr", label: "Sonarr", selected: arr,
           options: [{ value: "in", label: m.filter_in_sonarr() }, { value: "monitored", label: m.filter_monitored() }],
         }] : []),
+        ...(radarrConfigured ? [{
+          key: "radarr", label: "Radarr", selected: radarr,
+          options: [{ value: "in", label: m.filter_in_radarr() }, { value: "monitored", label: m.filter_monitored() }],
+        }] : []),
         { key: "collection", label: m.filter_collection(), multi: false, selected: collection ? [collection] : [],
           options: [{ value: "in", label: m.filter_collected_option() }, { value: "out", label: m.filter_not_collected_option() }] },
         { key: "watch", label: m.filter_watched(), multi: false, selected: watch ? [watch] : [],
@@ -128,14 +144,18 @@ const days = Object.keys(byDay);
       {days.map((day) => (
         <section>
           <h2 class="group-label mb-3">{dayLabel(day, todayIso)} <span class="text-zinc-600 normal-case tracking-normal font-medium">· {day}</span></h2>
-          <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {byDay[day].map((e) => {
-              const sxe = e.season_number != null && e.episode_number != null
+              const isMovie = e.entry_type === 'movie';
+              const sxe = !isMovie && e.season_number != null && e.episode_number != null
                 ? `S${String(e.season_number).padStart(2, '0')}E${String(e.episode_number).padStart(2, '0')}`
                 : '';
+              const subtitle = isMovie ? releaseLabel(e.release_type) : (e.episode_name || m.common_tba());
               const poster = ratingPosterUrl(
                 tmdbImageUrl(e.poster_path, "w185"),
-                { type: "series", tmdb_id: e.show_tmdb_id ?? null, tvdb_id: e.show_tvdb_id ?? null },
+                isMovie
+                  ? { type: "movie", tmdb_id: e.movie_tmdb_id ?? null }
+                  : { type: "series", tmdb_id: e.show_tmdb_id ?? null, tvdb_id: e.show_tvdb_id ?? null },
                 Astro.locals.hasRpdbKey,
               );
               return (
@@ -153,7 +173,7 @@ const days = Object.keys(byDay);
                       {e.collected && <span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400">{m.calendar_badge_collected()}</span>}
                       {e.watched && <span class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">{m.calendar_badge_watched()}</span>}
                     </div>
-                    <div class="text-sm text-zinc-500 truncate">{sxe && <span class="font-bold text-blue-400">{sxe}</span>} {sxe && '· '}{e.episode_name || m.common_tba()}</div>
+                    <div class="text-sm text-zinc-500 truncate">{sxe && <span class="font-bold text-blue-400">{sxe}</span>} {sxe && '· '}{subtitle}</div>
                   </div>
                 </a>
               );
@@ -164,7 +184,7 @@ const days = Object.keys(byDay);
     </div>
   )}
 
-  <p class="text-zinc-500 mt-8">{m.calendar_footer_days({ days: lookaheadDays })}</p>
+  <p class="text-zinc-500 mt-8">{radarrConfigured ? m.calendar_footer_days_radarr({ days: lookaheadDays }) : m.calendar_footer_days({ days: lookaheadDays })}</p>
 </Base>
 
 <script define:vars={{ token, needsCompute }}>

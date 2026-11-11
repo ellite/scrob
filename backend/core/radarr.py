@@ -1,7 +1,7 @@
 import httpx
 import logging
 import time
-from typing import Optional, List, Dict, Any, Set
+from typing import Optional, List, Dict, Any, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +14,19 @@ _LIBRARY_FAILURE_TTL = 60.0
 
 async def get_all_movie_tmdb_ids(url: str, token: str) -> Optional[Set[int]]:
     """TMDB ids of every movie in Radarr, cached per server; None on failure."""
+    lib = await _get_library(url, token)
+    return lib[0] if lib else None
+
+
+async def get_monitored_movie_tmdb_ids(url: str, token: str) -> Optional[Set[int]]:
+    """TMDB ids of movies Radarr has flagged monitored; None on failure."""
+    lib = await _get_library(url, token)
+    return lib[1] if lib else None
+
+
+async def _get_library(url: str, token: str) -> Optional[Tuple[Set[int], Set[int]]]:
+    """(tmdb ids, monitored tmdb ids) of every movie in Radarr, cached per
+    server; None on failure."""
     key = f"{url.rstrip('/')}|{token}"
     cached = _LIBRARY_CACHE.get(key)
     if cached:
@@ -28,7 +41,11 @@ async def get_all_movie_tmdb_ids(url: str, token: str) -> Optional[Set[int]]:
                 headers={"X-Api-Key": token}
             )
             response.raise_for_status()
-            ids = {m["tmdbId"] for m in response.json() if m.get("tmdbId")}
+            movies = [m for m in response.json() if m.get("tmdbId")]
+            ids = (
+                {m["tmdbId"] for m in movies},
+                {m["tmdbId"] for m in movies if m.get("monitored")},
+            )
         _LIBRARY_CACHE[key] = (time.monotonic(), ids)
         return ids
     except Exception as e:
@@ -93,6 +110,24 @@ async def get_tags(url: str, token: str) -> List[Dict[str, Any]]:
             return response.json()
     except Exception as e:
         logger.error(f"Failed to fetch Radarr tags: {e}")
+        return []
+
+async def get_calendar(url: str, token: str, start: str, end: str) -> List[Dict[str, Any]]:
+    """Fetch Radarr's release calendar (in cinemas / digital / physical) for
+    an ISO-date window, unmonitored movies included so the calendar's
+    Monitored filter has something to narrow."""
+    try:
+        url = url.rstrip("/")
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            response = await client.get(
+                f"{url}/api/v3/calendar",
+                headers={"X-Api-Key": token},
+                params={"start": start, "end": end, "unmonitored": "true"},
+            )
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        logger.error(f"Failed to fetch Radarr calendar: {e}")
         return []
 
 async def add_movie(

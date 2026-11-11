@@ -1907,7 +1907,8 @@ async def airing_today_collected(
             "release_date": e.get("air_date"),
         }
         for e in calendar.get("entries", [])
-        if e.get("air_date") == today
+        # Radarr movie releases (#501) share the calendar payload but aren't episodes.
+        if e.get("air_date") == today and e.get("entry_type") != "movie"
     ]
     await enrich_with_state(db, effective_user_id, results)
     return {"results": results}
