@@ -138,7 +138,7 @@ class ArrCalendarFilterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self._ids(result), [1, 2, 10, 3])
 
     async def test_sonarr_only_matches_tmdb_or_tvdb(self) -> None:
-        result = await self._apply((None, self.sonarr), sonarr_only=True)
+        result = await self._apply((self.radarr, self.sonarr), sonarr_only=True)
         self.assertEqual(self._ids(result), [1, 2, 10, 20, 30, 3])
 
     async def test_both_filters_combine(self) -> None:
@@ -150,28 +150,95 @@ class ArrCalendarFilterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["calendar"]["entries"]), 7)
         self.assertFalse(result["sonarr_configured"])
 
+    async def test_cached_movies_disappear_once_radarr_is_removed(self) -> None:
+        # The cached payload still holds movies from when Radarr was configured.
+        result = await self._apply((None, self.sonarr))
+        self.assertEqual(self._ids(result), [10, 20, 30, 40])
+        self.assertFalse(result["radarr_configured"])
+
     async def test_radarr_flag_without_radarr_configured_is_ignored(self) -> None:
-        result = await self._apply((None, self.sonarr), radarr_only=True)
-        self.assertEqual(len(result["calendar"]["entries"]), 7)
+        result = await self._apply((None, self.sonarr), radarr_only=True, sonarr_only=True)
+        self.assertEqual(self._ids(result), [10, 20, 30])
         self.assertFalse(result["radarr_configured"])
 
 
 class ComputeCalendarRadarrTests(unittest.IsolatedAsyncioTestCase):
     """Movies are opt-in by configuration: no Radarr, no movie entries."""
 
-    async def _compute(self, radarr_cfg, calendar_rows):
+    RADARR = SimpleNamespace(radarr_url="http://radarr.invalid", radarr_token="synthetic")
+    SHOW = SimpleNamespace(id=5, tmdb_id=500, tvdb_id=None, canonical_source="tmdb",
+                           title="Show", poster_path="/show.jpg")
+
+    async def _compute(self, radarr_cfg, calendar_rows, shows=(), order_keys=None, positions=None):
         from routers import calendar
 
         get_calendar = AsyncMock(return_value=calendar_rows)
-        with patch.object(calendar, "_candidate_shows", new=AsyncMock(return_value=[])), \
+        detail = {"name": "Show", "next_episode_to_air": {"season_number": 2}}
+        season = {"episodes": [
+            {"air_date": "2026-10-20", "season_number": 2, "episode_number": 1, "name": "One"},
+            {"air_date": "2026-10-19", "season_number": 2, "episode_number": 0, "name": "Zero"},
+        ]}
+        with patch.object(calendar, "_candidate_shows", new=AsyncMock(return_value=list(shows))), \
              patch.object(calendar, "_arr_configs", new=AsyncMock(return_value=(radarr_cfg, None))), \
              patch.object(calendar, "_server_today", return_value=date(2026, 10, 19)), \
-             patch("routers.media.get_user_tmdb_key", new=AsyncMock(return_value=None)), \
+             patch.object(calendar, "get_order_keys_for_series", new=AsyncMock(return_value=order_keys or {})), \
+             patch.object(calendar, "get_positions_for_series", new=AsyncMock(return_value=positions or {})), \
+             patch("routers.media.get_user_tmdb_key", new=AsyncMock(return_value="key")), \
+             patch("routers.media.check_tmdb_key", return_value=True), \
              patch("routers.shows.get_user_tvdb_key", new=AsyncMock(return_value=None)), \
              patch("core.translations.get_user_metadata_language", new=AsyncMock(return_value=None)), \
+             patch("core.tmdb.get_show_light", new=AsyncMock(return_value=detail)), \
+             patch("core.tmdb.get_season", new=AsyncMock(return_value=season)), \
              patch("core.radarr.get_calendar", new=get_calendar):
             payload = await calendar.compute_calendar(None, 1)
         return payload, get_calendar
+
+    def _rows(self, payload):
+        return [(e["air_date"], e.get("entry_type", "episode"), e["show_title"]) for e in payload["entries"]]
+
+    async def test_mixed_shows_and_movies_sort_by_day_and_only_episodes_get_ordering(self) -> None:
+        payload, _ = await self._compute(
+            self.RADARR,
+            [{"title": "Film", "tmdbId": 99, "inCinemas": "2026-10-19T00:00:00Z"}],
+            shows=[self.SHOW],
+            order_keys={500: "dvd"},
+            positions={(500, "dvd"): {(2, 1): SimpleNamespace(display_season=1, display_episode=7)}},
+        )
+        self.assertEqual(self._rows(payload), [
+            ("2026-10-19", "movie", "Film"),
+            ("2026-10-19", "episode", "Show"),
+            ("2026-10-20", "episode", "Show"),
+        ])
+        movie, zero, one = payload["entries"]
+        self.assertNotIn("show_episode_order", movie)
+        self.assertEqual(zero["show_episode_order"], "dvd")
+        self.assertEqual((one["display_season_number"], one["display_episode_number"]), (1, 7))
+
+    async def test_broken_radarr_answers_keep_the_episode_calendar(self) -> None:
+        from core import radarr
+
+        def client_answering(payload=None, error=None):
+            client = AsyncMock()
+            if error:
+                client.get.side_effect = error
+            else:
+                response = MagicMock()
+                response.json.return_value = payload
+                client.get.return_value = response
+            return client
+
+        cases = {
+            "unreachable": client_answering(error=RuntimeError("down")),
+            "dict instead of list": client_answering({"error": "not radarr"}),
+            "non-dict rows": client_answering(["junk", 7, None]),
+        }
+        for name, client in cases.items():
+            with self.subTest(name):
+                with patch.object(radarr.httpx, "AsyncClient") as factory:
+                    factory.return_value.__aenter__.return_value = client
+                    rows = await radarr.get_calendar("http://radarr.invalid", "synthetic", "a", "b")
+                payload, _ = await self._compute(self.RADARR, rows, shows=[self.SHOW])
+                self.assertEqual([r[1] for r in self._rows(payload)], ["episode", "episode"])
 
     async def test_without_radarr_nothing_is_fetched(self) -> None:
         payload, get_calendar = await self._compute(None, [])

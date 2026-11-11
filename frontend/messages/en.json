@@ -2243,6 +2243,7 @@
   "calendar_next_days": "Next {days} days",
   "calendar_empty_days": "No episodes found for your shows in the last 7 or next {days} days.",
   "calendar_footer_days": "The last 7 days and next {days} days for shows you're collecting or watching",
+  "calendar_empty_days_radarr": "No episodes or movie releases found in the last 7 or next {days} days.",
   "calendar_footer_days_radarr": "The last 7 days and next {days} days for shows you're collecting or watching and movies in Radarr",
   "calendar_release_cinema": "In cinemas",
   "calendar_release_digital": "Digital release",

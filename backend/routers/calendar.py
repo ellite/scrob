@@ -203,6 +203,8 @@ def _radarr_calendar_entries(rows: list[dict], start: date, end: date) -> list[d
     """One movie entry per Radarr release date that falls inside the window."""
     out = []
     for movie in rows:
+        if not isinstance(movie, dict):
+            continue
         for field, release_type in _RADARR_RELEASES:
             value = movie.get(field)
             air_date = value[:10] if isinstance(value, str) else None
@@ -526,7 +528,9 @@ async def _apply_arr(
     only touches its own media type, so "In Sonarr" never hides a movie.
     Applied per request on top of the cached payload, like the watch flags.
     A side is left unfiltered when its server can't be reached, so a flaky
-    Sonarr/Radarr doesn't read as an empty calendar."""
+    Sonarr/Radarr doesn't read as an empty calendar. Movie entries are
+    dropped once Radarr is no longer configured, so removing it takes effect
+    without waiting for the cached payload to be recomputed."""
     from core import radarr as radarr_client
     from core import sonarr as sonarr_client
 
@@ -544,11 +548,13 @@ async def _apply_arr(
     if radarr_cfg and (radarr_only or radarr_monitored):
         fetch = radarr_client.get_monitored_movie_tmdb_ids if radarr_monitored else radarr_client.get_all_movie_tmdb_ids
         radarr_ids = await fetch(radarr_cfg.radarr_url, radarr_cfg.radarr_token)
-    if sonarr_ids is None and radarr_ids is None:
+    if sonarr_ids is None and radarr_ids is None and radarr_cfg:
         return result
 
     def keep(e: dict) -> bool:
         if e.get("entry_type") == "movie":
+            if not radarr_cfg:
+                return False
             return radarr_ids is None or e.get("movie_tmdb_id") in radarr_ids
         if sonarr_ids is None:
             return True

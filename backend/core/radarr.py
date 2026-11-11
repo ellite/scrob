@@ -125,7 +125,12 @@ async def get_calendar(url: str, token: str, start: str, end: str) -> List[Dict[
                 params={"start": start, "end": end, "unmonitored": "true"},
             )
             response.raise_for_status()
-            return response.json()
+            rows = response.json()
+        if not isinstance(rows, list):
+            # Not Radarr's calendar (e.g. a proxy or another service answering).
+            logger.warning("Radarr calendar returned %s instead of a list; ignoring it", type(rows).__name__)
+            return []
+        return rows
     except Exception as e:
         logger.error(f"Failed to fetch Radarr calendar: {e}")
         return []

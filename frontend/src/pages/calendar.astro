@@ -138,7 +138,7 @@ const days = Object.keys(byDay);
   ) : needsCompute ? (
     <div id="cal-pending" class="py-20 text-center text-zinc-500">{m.calendar_loading()}</div>
   ) : days.length === 0 ? (
-    <p class="text-zinc-500 text-center py-10">{hasFilters ? m.calendar_no_filter_match() : m.calendar_empty_days({ days: lookaheadDays })}</p>
+    <p class="text-zinc-500 text-center py-10">{hasFilters ? m.calendar_no_filter_match() : radarrConfigured ? m.calendar_empty_days_radarr({ days: lookaheadDays }) : m.calendar_empty_days({ days: lookaheadDays })}</p>
   ) : (
     <div class="space-y-8">
       {days.map((day) => (
