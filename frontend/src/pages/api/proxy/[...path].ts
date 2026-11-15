@@ -48,6 +48,11 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
   const apiKey = request.headers.get("X-Api-Key");
   if (apiKey) forwardHeaders.set("X-Api-Key", apiKey);
 
+  // Forward the browser's language: the backend falls back to it for the
+  // Metadata Language when the viewer has no explicit setting (#538)
+  const acceptLanguage = request.headers.get("Accept-Language");
+  if (acceptLanguage) forwardHeaders.set("Accept-Language", acceptLanguage);
+
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const body = hasBody ? await request.arrayBuffer() : undefined;
 
@@ -105,6 +110,12 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
   for (const h of ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Disposition", "Cache-Control", "ETag", "Last-Modified", "X-Accel-Buffering"]) {
     const v = res.headers.get(h);
     if (v) responseHeaders.set(h, v);
+  }
+
+  // JSON may carry titles in the browser's language (#538): a shared cache in
+  // front of Scrob must not serve one viewer's language to the next.
+  if (resCt?.toLowerCase().includes("application/json")) {
+    responseHeaders.set("Vary", "Accept-Language");
   }
 
   return new Response(res.body, { status: res.status, headers: responseHeaders });

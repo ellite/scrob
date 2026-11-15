@@ -1,5 +1,13 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 const BACKEND_PORT = (import.meta.env.BACKEND_PORT as string | undefined) ?? "7331";
 const BASE = `http://localhost:${BACKEND_PORT}`;
+
+// Per-request context the middleware opens around every page render, so the
+// server-side api.* calls below can forward the browser's Accept-Language to
+// the backend - its Metadata Language fallback for viewers with no explicit
+// setting (anonymous visitors of a public list, new users) depends on it (#538).
+export const requestContext = new AsyncLocalStorage<{ acceptLanguage: string | null }>();
 
 type ParamValue = string | number | boolean | undefined;
 
@@ -25,6 +33,10 @@ async function request<T>(
   const headers: Record<string, string> = {};
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
+  }
+  const acceptLanguage = requestContext.getStore()?.acceptLanguage;
+  if (acceptLanguage) {
+    headers["Accept-Language"] = acceptLanguage;
   }
 
   let finalBody: BodyInit | undefined;
