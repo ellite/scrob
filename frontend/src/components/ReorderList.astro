@@ -1,0 +1,139 @@
+---
+import { m } from "../paraglide/messages.js";
+interface Props { items: { id: number; label: string }[]; endpoint: string; source: string; kind: string }
+const { items, endpoint, source, kind } = Astro.props;
+---
+  <details class="mb-6 rounded-xl border border-zinc-800 p-4" data-reorder-root hidden={items.length < 2} data-endpoint={endpoint} data-source={source} data-kind={kind}>
+    <summary class="cursor-pointer text-sm font-semibold text-zinc-300">{m.list_reorder()}</summary>
+    <ol class="mt-4 max-h-96 overflow-y-auto space-y-2" data-order-items>
+      {items.map(item => (
+        <li data-order-id={item.id} class="flex items-center gap-3 text-sm text-zinc-300 data-[dragging]:opacity-50 data-[drop-target]:bg-zinc-800">
+          <span aria-hidden="true" draggable="true" data-drag-handle class="cursor-grab select-none px-2 text-zinc-500">&#8942;&#8942;</span>
+          <span data-order-label class="grow min-w-0 break-words">{item.label}</span>
+          <span class="flex shrink-0 gap-2">
+            <button type="button" data-move="up" aria-label={m.list_move_up_named({ name: item.label })} class="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-500">{m.list_move_up()}</button>
+            <button type="button" data-move="down" aria-label={m.list_move_down_named({ name: item.label })} class="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-500">{m.list_move_down()}</button>
+          </span>
+        </li>
+      ))}
+    </ol>
+    <template data-order-template>
+      <li data-order-id class="flex items-center gap-3 text-sm text-zinc-300 data-[dragging]:opacity-50 data-[drop-target]:bg-zinc-800">
+        <span aria-hidden="true" draggable="true" data-drag-handle class="cursor-grab select-none px-2 text-zinc-500">&#8942;&#8942;</span>
+        <span data-order-label class="grow min-w-0 break-words"></span>
+        <span class="flex shrink-0 gap-2">
+          <button type="button" data-move="up" class="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-500">{m.list_move_up()}</button>
+          <button type="button" data-move="down" class="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-500">{m.list_move_down()}</button>
+        </span>
+      </li>
+    </template>
+    <p data-reorder-error role="alert" class="hidden text-sm text-red-400 mt-3">{m.list_reorder_error()}</p>
+    <button type="button" data-save-order class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50">{m.list_save_order()}</button>
+  </details>
+<script>
+  import { dropBefore, reconcileOrder } from "../lib/list-order.js";
+  import { m } from "../paraglide/messages.js";
+  document.querySelectorAll<HTMLElement>('[data-reorder-root]').forEach(root => {
+    const items = root.querySelector<HTMLOListElement>('[data-order-items]')!;
+    const save = root.querySelector<HTMLButtonElement>('[data-save-order]')!;
+    // Dragging selected label text makes the event target a text node.
+    const elementOf = (target: EventTarget | null) =>
+      target instanceof Element ? target : (target as Node | null)?.parentElement ?? null;
+    root.addEventListener('click', event => {
+      const button = (event.target as Element).closest<HTMLButtonElement>('[data-move]');
+      if (!button || button.disabled) return;
+      const row = button.closest<HTMLLIElement>('[data-order-id]')!;
+      if (button.dataset.move === 'up' && row.previousElementSibling) {
+        items.insertBefore(row, row.previousElementSibling);
+      } else if (button.dataset.move === 'down' && row.nextElementSibling) {
+        items.insertBefore(row.nextElementSibling, row);
+      }
+      button.focus();
+    });
+    let dragged: HTMLLIElement | null = null;
+    let target: HTMLLIElement | null = null;
+    function clearTarget() {
+      target?.removeAttribute('data-drop-target');
+      target = null;
+    }
+    items.addEventListener('dragstart', event => {
+      const handle = elementOf(event.target)?.closest('[data-drag-handle]');
+      if (!handle || !event.dataTransfer || save.disabled) {
+        event.preventDefault();
+        return;
+      }
+      dragged = handle.closest<HTMLLIElement>('[data-order-id]');
+      if (!dragged) return;
+      event.dataTransfer.setData('text/plain', dragged.dataset.orderId!);
+      event.dataTransfer.effectAllowed = 'move';
+      dragged.dataset.dragging = '';
+    });
+    items.addEventListener('dragover', event => {
+      if (!dragged || !event.dataTransfer || save.disabled) return;
+      const row = elementOf(event.target)?.closest<HTMLLIElement>('[data-order-id]');
+      clearTarget();
+      if (!row || row === dragged) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      target = row;
+      row.dataset.dropTarget = '';
+    });
+    items.addEventListener('dragleave', event => {
+      if (!(event.relatedTarget instanceof Node) || !items.contains(event.relatedTarget)) clearTarget();
+    });
+    items.addEventListener('drop', event => {
+      const row = elementOf(event.target)?.closest<HTMLLIElement>('[data-order-id]');
+      if (!dragged || !items.contains(dragged) || !row || row === dragged || save.disabled) return;
+      event.preventDefault();
+      items.insertBefore(dragged, dropBefore(row, event.clientY, row.getBoundingClientRect()));
+      clearTarget();
+    });
+    items.addEventListener('dragend', () => {
+      dragged?.removeAttribute('data-dragging');
+      dragged = null;
+      clearTarget();
+    });
+    const source = document.querySelector(root.dataset.source!);
+    const template = root.querySelector<HTMLTemplateElement>('[data-order-template]')!;
+    function syncItems() {
+      if (!source) return;
+      const attribute = `data-${root.dataset.kind}-id`;
+      const cards = Array.from(source.querySelectorAll<HTMLElement>(`:scope > [${attribute}]`))
+        .filter(card => card.dataset.reorderPinned !== 'true');
+      const available = cards.map(card => card.getAttribute(attribute)!);
+      const current = Array.from(items.children, row => (row as HTMLElement).dataset.orderId!);
+      const order = reconcileOrder(current, available);
+      const names = new Map(cards.map(card => [card.getAttribute(attribute)!, card.dataset.orderTitle ?? '']));
+      const rows = new Map(Array.from(items.children, row => [(row as HTMLElement).dataset.orderId!, row]));
+      items.replaceChildren(...order.map(id => {
+        if (rows.has(id)) return rows.get(id)!;
+        const row = template.content.firstElementChild!.cloneNode(true) as HTMLElement;
+        row.dataset.orderId = id;
+        const name = names.get(id) ?? '';
+        row.querySelector('[data-order-label]')!.textContent = name;
+        row.querySelector('[data-move="up"]')!.setAttribute('aria-label', m.list_move_up_named({ name }));
+        row.querySelector('[data-move="down"]')!.setAttribute('aria-label', m.list_move_down_named({ name }));
+        return row;
+      }));
+      root.hidden = order.length < 2;
+    }
+    syncItems();
+    if (source) new MutationObserver(syncItems).observe(source, { childList: true });
+    save.addEventListener('click', async () => {
+      const buttons = root.querySelectorAll<HTMLButtonElement>('button');
+      buttons.forEach(button => { button.disabled = true; });
+      root.querySelector('[data-reorder-error]')?.classList.add('hidden');
+      try {
+        const response = await fetch(root.dataset.endpoint!, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: Array.from(items.children, row => Number((row as HTMLElement).dataset.orderId)) }),
+        });
+        if (!response.ok) throw new Error('order update failed');
+        window.location.reload();
+      } catch {
+        root.querySelector('[data-reorder-error]')?.classList.remove('hidden');
+        buttons.forEach(button => { button.disabled = false; });
+      }
+    });
+  });
+</script>

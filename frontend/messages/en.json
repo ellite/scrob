@@ -2375,5 +2375,13 @@
   "stats_no_plays_period": "No plays in this period.",
   "lists_import_job_lost": "Lost track of the import job (the server may have restarted). Check the list, then import again to top it up.",
   "settings_episode_order_saved_tvdb": "New shows will use TVDB ordering. Use \"Apply to all existing shows\" for the ones you already have.",
-  "settings_episode_order_saved_tmdb": "New shows will use TMDB ordering."
+  "settings_episode_order_saved_tmdb": "New shows will use TMDB ordering.",
+  "list_saved_order": "Saved order",
+  "list_reorder": "Reorder",
+  "list_move_up": "Up",
+  "list_move_down": "Down",
+  "list_move_up_named": "Move {name} up",
+  "list_move_down_named": "Move {name} down",
+  "list_save_order": "Save order",
+  "list_reorder_error": "Could not save the order. If the list changed elsewhere, reload and try again."
 }
