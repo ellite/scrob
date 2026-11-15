@@ -5,6 +5,11 @@ from datetime import datetime
 from typing import Optional, List, Dict
 
 TIMEOUT = httpx.Timeout(120.0)  # 120 second timeout
+# A page of a large library can take Jellyfin longer than the timeout to build
+# (episodes with MediaStreams especially), and one lost page used to fail the
+# whole pull (#533). Pages are kept small and a timed-out page is retried.
+PAGE_SIZE = 100
+TIMEOUT_RETRIES = 2
 
 _TMDB_PROVIDER_PATH_RE = re.compile(r"/(?:movie|tv)/(\d+)")
 
@@ -41,12 +46,18 @@ def _auth_headers(token: str) -> Dict[str, str]:
 
 
 async def _get(url: str, token: str, path: str, params: Optional[Dict] = None) -> Dict:
-    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
-        headers = _auth_headers(token)
-        full_url = f"{url.rstrip('/')}/{path.lstrip('/')}"
-        r = await client.get(full_url, headers=headers, params=params)
-        r.raise_for_status()
-        return r.json()
+    headers = _auth_headers(token)
+    full_url = f"{url.rstrip('/')}/{path.lstrip('/')}"
+    for attempt in range(TIMEOUT_RETRIES + 1):
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
+                r = await client.get(full_url, headers=headers, params=params)
+            r.raise_for_status()
+            return r.json()
+        except httpx.TimeoutException:
+            if attempt == TIMEOUT_RETRIES:
+                raise
+            await asyncio.sleep(2 * (attempt + 1))
 
 async def get_item(url: str, token: str, item_id: str, user_id: Optional[str] = None) -> Optional[Dict]:
     """Fetch full metadata for a single item by ID, including MediaStreams."""
@@ -160,7 +171,7 @@ async def get_libraries(url: str, token: str, user_id: str) -> list:
 async def get_movies(library_id: str, url: str, token: str, user_id: str) -> list:
     all_items = []
     start = 0
-    page_size = 500
+    page_size = PAGE_SIZE
 
     while True:
         data = await _get(url, token, f"Users/{user_id}/Items", params={
@@ -184,7 +195,7 @@ async def get_movies(library_id: str, url: str, token: str, user_id: str) -> lis
 async def get_shows(library_id: str, url: str, token: str, user_id: str) -> list:
     all_items = []
     start = 0
-    page_size = 500
+    page_size = PAGE_SIZE
 
     while True:
         data = await _get(url, token, f"Users/{user_id}/Items", params={
@@ -208,7 +219,7 @@ async def get_shows(library_id: str, url: str, token: str, user_id: str) -> list
 async def get_episodes(library_id: str, url: str, token: str, user_id: str) -> list:
     all_items = []
     start = 0
-    page_size = 500
+    page_size = PAGE_SIZE
 
     while True:
         data = await _get(url, token, f"Users/{user_id}/Items", params={

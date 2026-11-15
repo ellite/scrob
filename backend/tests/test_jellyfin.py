@@ -1,7 +1,7 @@
 import json
 import unittest
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -77,7 +77,7 @@ class JellyfinShowQueryTests(unittest.IsolatedAsyncioTestCase):
             params = dict(request.url.params)
             requests.append(params)
             start = int(params["StartIndex"])
-            page = [{"Id": f"show-{start + i}"} for i in range(min(500, total - start))]
+            page = [{"Id": f"show-{start + i}"} for i in range(min(jellyfin.PAGE_SIZE, total - start))]
             return httpx.Response(200, json={"Items": page, "TotalRecordCount": total})
 
         transport = httpx.MockTransport(handler)
@@ -91,9 +91,42 @@ class JellyfinShowQueryTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(shows), 1200)
-        self.assertEqual(len(requests), 3)
-        self.assertEqual([r["StartIndex"] for r in requests], ["0", "500", "1000"])
+        step = jellyfin.PAGE_SIZE
+        self.assertEqual([r["StartIndex"] for r in requests], [str(i) for i in range(0, total, step)])
         self.assertEqual(requests[0]["IncludeItemTypes"], "Series")
+
+
+class JellyfinTimeoutRetryTests(unittest.IsolatedAsyncioTestCase):
+    """#533: one slow page used to abort the whole pull with a ReadTimeout."""
+
+    async def _run(self, fail_times: int):
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] <= fail_times:
+                raise httpx.ReadTimeout("slow page", request=request)
+            return httpx.Response(200, json={"Items": [{"Id": "e1"}], "TotalRecordCount": 1})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            jellyfin.httpx, "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ), patch.object(jellyfin.asyncio, "sleep", AsyncMock()):
+            try:
+                return await jellyfin.get_episodes("lib", "http://jellyfin.local", "t", "u"), calls["n"]
+            except httpx.TimeoutException:
+                return None, calls["n"]
+
+    async def test_a_timed_out_page_is_retried(self) -> None:
+        items, calls = await self._run(fail_times=2)
+        self.assertEqual(items, [{"Id": "e1"}])
+        self.assertEqual(calls, 3)
+
+    async def test_gives_up_after_the_retries_are_used_up(self) -> None:
+        items, calls = await self._run(fail_times=99)
+        self.assertIsNone(items)
+        self.assertEqual(calls, jellyfin.TIMEOUT_RETRIES + 1)
 
 
 class JellyfinSetRatingTests(unittest.IsolatedAsyncioTestCase):
