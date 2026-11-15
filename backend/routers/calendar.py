@@ -40,6 +40,9 @@ from core.timeutil import utcnow
 router = APIRouter()
 
 CALENDAR_TTL = timedelta(hours=24)
+# How long a calendar computed with failed provider calls is trusted.
+INCOMPLETE_RETRY = timedelta(minutes=5)
+INCOMPLETE_MIN_RATIO = 0.05
 CALENDAR_SCHEMA = 8
 # The cached payload always covers the longest horizon a user can pick (#467);
 # GET /calendar trims it down to the requested number of days.
@@ -216,14 +219,20 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
     window_start = today - timedelta(days=CALENDAR_LOOKBACK_DAYS)
     window_end = today + timedelta(days=CALENDAR_WINDOW_DAYS - 1)
     sem = asyncio.Semaphore(FETCH_CONCURRENCY)
+    # Provider calls that failed (TMDB/TheTVDB down or rate limited). A failed
+    # show is skipped, so the payload is incomplete and must not be trusted for
+    # the rest of the day - see _is_cache_fresh.
+    failures = 0
 
     async def _fetch_tvdb(show: Show) -> list[dict]:
+        nonlocal failures
         async with sem:
             try:
                 raw_eps = await tvdb_client.get_series_episodes(
                     show.tvdb_id, None, tvdb_api_key, language=tvdb_client.tvdb_language(language)
                 )
             except Exception:
+                failures += 1
                 return []
         out = []
         for raw in raw_eps:
@@ -245,12 +254,14 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
         return out
 
     async def _fetch(show: Show) -> list[dict]:
+        nonlocal failures
         if _is_tvdb_show(show):
             return await _fetch_tvdb(show)
         async with sem:
             try:
                 detail = await tmdb_client.get_show_light(show.tmdb_id, api_key=api_key, language=language)
             except Exception:
+                failures += 1
                 return []
             season_numbers = _seasons_to_scan(detail, window_start)
             if not season_numbers:
@@ -260,6 +271,7 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
                 try:
                     seasons.append(await tmdb_client.get_season(show.tmdb_id, sn, api_key=api_key, language=language))
                 except Exception:
+                    failures += 1
                     continue
 
         out = []
@@ -332,8 +344,17 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
         "generated_at": utcnow().isoformat(),
         "today": today.isoformat(),
         "shows_checked": len(candidates),
+        "failed_fetches": failures,
         "entries": entries,
     }
+
+
+def _is_incomplete(payload: dict) -> bool:
+    """Did enough provider calls fail that shows are likely missing? A single
+    show that always errors (bad id) must not force a full recompute every
+    few minutes, so small failure counts are tolerated."""
+    failed = payload.get("failed_fetches") or 0
+    return failed > 0 and failed >= INCOMPLETE_MIN_RATIO * max(payload.get("shows_checked") or 0, 1)
 
 
 def _is_cache_fresh(row: UserCalendarCache | None) -> bool:
@@ -341,6 +362,11 @@ def _is_cache_fresh(row: UserCalendarCache | None) -> bool:
         return False
     payload = row.payload or {}
     if payload.get("schema") != CALENDAR_SCHEMA:
+        return False
+    # Computed while TMDB/TheTVDB was failing for some shows: those shows are
+    # missing, so retry soon instead of serving a near-empty calendar (and an
+    # empty airing-today widget) until midnight.
+    if _is_incomplete(payload) and (utcnow() - row.computed_at) >= INCOMPLETE_RETRY:
         return False
     # A cache built before local midnight is stale the instant the calendar
     # day rolls over, even if it's still within the raw TTL - 24h is a
