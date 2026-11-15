@@ -108,6 +108,39 @@ class ParseTraktExportTests(unittest.TestCase):
         self.assertIn("ended-shows", data.list_items)
         self.assertEqual(len(data.list_items["ended-shows"]), 1)
 
+    def test_concatenates_paged_list_items_files(self) -> None:
+        # Trakt splits lists of more than 250 items into -1.json, -2.json, ...
+        def item(n: int) -> dict:
+            return {"type": "movie", "movie": {"ids": {"tmdb": n}}}
+
+        content = _make_zip({
+            "watched-history-1.json": [_MOVIE_PLAY],
+            "lists-lists.json": [{"name": "Good", "ids": {"trakt": 24571523, "slug": "good"}}],
+            "lists-list-24571523-good-2.json": [item(251)],
+            "lists-list-24571523-good-1.json": [item(n) for n in range(1, 251)],
+        })
+        data = parse_trakt_export(content)
+        ids = [i["movie"]["ids"]["tmdb"] for i in data.list_items["good"]]
+        self.assertEqual(ids, list(range(1, 252)))
+
+    def test_slug_ending_in_digits_is_not_read_as_a_page_number(self) -> None:
+        def item(n: int) -> dict:
+            return {"type": "movie", "movie": {"ids": {"tmdb": n}}}
+
+        content = _make_zip({
+            "watched-history-1.json": [_MOVIE_PLAY],
+            "lists-lists.json": [
+                {"name": "Top 10", "ids": {"trakt": 5, "slug": "top-10"}},
+                {"name": "Top", "ids": {"trakt": 6, "slug": "top"}},
+            ],
+            "lists-list-5-top-10.json": [item(1)],
+            "lists-list-6-top-1.json": [item(2)],
+            "lists-list-6-top-2.json": [item(3)],
+        })
+        data = parse_trakt_export(content)
+        self.assertEqual(len(data.list_items["top-10"]), 1)
+        self.assertEqual([i["movie"]["ids"]["tmdb"] for i in data.list_items["top"]], [2, 3])
+
     def test_rejects_bad_zip(self) -> None:
         with self.assertRaises(ValueError):
             parse_trakt_export(b"not a zip file")

@@ -128,19 +128,45 @@ def parse_trakt_export(content: bytes) -> TraktExportData:
     watchlist = _load("lists-watchlist.json")
     lists_meta = _load("lists-lists.json")
 
-    id_to_filename: dict[int, str] = {}
+    # Trakt pages list items over several files once a list passes 250 items:
+    # "lists-list-<id>-<slug>.json" (small list) or
+    # "lists-list-<id>-<slug>-1.json", "-2.json", ... (paged). Collect every
+    # page for a list, in page order, instead of keeping just one of them.
+    id_to_filenames: dict[int, list[str]] = {}
     for n in names:
         m = _LIST_ITEMS_RE.match(n)
         if m:
-            id_to_filename[int(m.group(1))] = n
+            id_to_filenames.setdefault(int(m.group(1)), []).append(n)
+
+    def _list_files(trakt_id: int, slug: str) -> list[tuple[int, str]]:
+        # Match against the known slug first so a slug that itself ends in
+        # digits ("top-10") is not mistaken for page 10 of list "top".
+        pattern = re.compile(
+            rf"^lists-list-{trakt_id}-{re.escape(slug)}(?:-(\d+))?\.json$"
+        )
+        found = [
+            (int(pattern.match(n).group(1) or 0), n)
+            for n in id_to_filenames.get(trakt_id, [])
+            if pattern.match(n)
+        ]
+        if not found:
+            # The slug in the filename can differ from the metadata (renamed
+            # list); fall back to every file for this id, in name order.
+            found = [(0, n) for n in sorted(id_to_filenames.get(trakt_id, []))]
+        return sorted(found)
 
     list_items: dict[str, list[dict]] = {}
     for lst in lists_meta:
         trakt_id = lst.get("ids", {}).get("trakt")
         slug = lst.get("ids", {}).get("slug")
-        fname = id_to_filename.get(trakt_id)
-        if slug and fname:
-            list_items[slug] = _load(fname)
+        if not slug or trakt_id is None:
+            continue
+        files = _list_files(int(trakt_id), slug)
+        if files:
+            items: list[dict] = []
+            for _page, fname in files:
+                items.extend(_load(fname))
+            list_items[slug] = items
 
     return TraktExportData(
         history_movies=history_movies,
