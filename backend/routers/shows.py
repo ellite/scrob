@@ -37,6 +37,7 @@ from core.episode_order import (
     series_tmdb_ids_with_preference,
     user_series_tmdb_ids,
     validate_episode_order,
+    season_rating_order_values,
     ORDER_AIRED,
     normalize_order_key,
     is_aired_order,
@@ -1353,7 +1354,14 @@ async def get_show(
                     Rating.media_id == show_media.id,
                     Rating.user_id == effective_user_id,
                     Rating.season_number.isnot(None),
-                    Rating.episode_order.is_(None),
+                    # Season ratings are stored under the ordering they were made
+                    # in (NULL = aired), so read the ones for the order on screen
+                    # - otherwise a rating made under DVD/TVDB order vanishes (#563).
+                    (
+                        Rating.episode_order.in_(season_rating_order_values(selected_episode_order))
+                        if season_rating_order_values(selected_episode_order)
+                        else Rating.episode_order.is_(None)
+                    ),
                 )
                 .group_by(Rating.season_number)
             )
@@ -1396,7 +1404,7 @@ async def get_show(
                     "watched": watched >= total if total > 0 else False,
                     "watch_pct": min(100, int((watched / total) * 100)) if total > 0 else 0,
                     "watch_started": watched > 0,
-                    "user_rating": None,
+                    "user_rating": season_ratings.get(ds),
                     "in_lists": [],
                 }
         else:

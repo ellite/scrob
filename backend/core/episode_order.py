@@ -95,6 +95,19 @@ def normalize_order_key(value: str | None) -> str:
     return value
 
 
+def season_rating_order_values(key: str | None) -> list[str]:
+    """Non-NULL `Rating.episode_order` values a season rating made under `key`
+    may be stored with. Aired order is stored as NULL, which callers match with
+    IS NULL, so it yields an empty list. The pre-#174 `"tvdb"` spelling still
+    exists in old rows and means `"tvdb:official"`."""
+    normalized = normalize_order_key(key)
+    if normalized == ORDER_AIRED:
+        return []
+    if normalized == "tvdb:official":
+        return ["tvdb:official", "tvdb"]
+    return [normalized]
+
+
 def is_aired_order(key: str | None) -> bool:
     return normalize_order_key(key) == ORDER_AIRED
 
