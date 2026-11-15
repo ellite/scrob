@@ -24,8 +24,12 @@ async def get_watch_stats(
     show_id: int | None = None,
 ) -> WatchStats:
     runtime = effective_runtime_expression()
+    # A pull from Jellyfin/Plex/Emby stores a title's whole play count on one
+    # event (play_count=3 for three plays), so a play is not always one row
+    # (#567). Every other source writes 1.
+    plays_per_event = case((WatchEvent.play_count > 1, WatchEvent.play_count), else_=1)
     watch_time = func.coalesce(
-        func.sum(case((WatchEvent.completed == True, runtime), else_=0)),
+        func.sum(case((WatchEvent.completed == True, runtime * plays_per_event), else_=0)),
         0,
     )
     last_watched_at = func.max(case((WatchEvent.completed == True, WatchEvent.watched_at)))
@@ -33,7 +37,7 @@ async def get_watch_stats(
         # A play is a completed watch: in-progress rows (a Jellyfin/Emby pull
         # stores them with completed=False) are not plays, the same as for
         # watch time and the last watched date.
-        select(func.count(case((WatchEvent.completed == True, WatchEvent.id))), watch_time, last_watched_at)
+        select(func.coalesce(func.sum(case((WatchEvent.completed == True, plays_per_event), else_=0)), 0), watch_time, last_watched_at)
         .select_from(Media)
         .join(WatchEvent, WatchEvent.media_id == Media.id)
         .where(WatchEvent.user_id == user_id)

@@ -114,3 +114,23 @@ class WatchStatsOnRealRowsTests(unittest.IsolatedAsyncioTestCase):
         # Two completed plays of E1 only: the in-progress E2 and the other user's play do not count.
         self.assertEqual(stats, WatchStats(2, 80, "2026-02-01T00:00:00"))
 
+    async def test_a_pulled_play_count_counts_as_that_many_plays(self):
+        # #567: Jellyfin reports PlayCount 3; the pull stores one event with play_count=3.
+        from models.events import WatchEvent
+        from models.media import Media, MediaType
+
+        async with self.Session() as db:
+            db.add(Media(id=1, tmdb_id=11, media_type=MediaType.episode, title="E1", show_id=7, season_number=1, episode_number=1, runtime=40))
+            await db.commit()
+            db.add_all([
+                WatchEvent(user_id=1, media_id=1, watched_at=datetime(2026, 1, 1), completed=True, play_count=3),
+                WatchEvent(user_id=1, media_id=1, watched_at=datetime(2026, 2, 1), completed=True, play_count=1),
+                WatchEvent(user_id=1, media_id=1, watched_at=datetime(2026, 3, 1), completed=False, play_count=5),
+                WatchEvent(user_id=1, media_id=1, watched_at=datetime(2026, 4, 1), completed=True, play_count=0),
+            ])
+            await db.commit()
+
+            stats = await get_watch_stats(db, 1, show_id=7)
+
+        # 3 + 1 + max(0, 1) completed plays; the in-progress row is ignored.
+        self.assertEqual(stats, WatchStats(5, 200, "2026-04-01T00:00:00"))
