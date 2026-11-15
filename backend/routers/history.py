@@ -867,6 +867,36 @@ def _compute_next_episode(seasons: list[dict], season: int, episode: int) -> tup
     return None
 
 
+def _next_up_gap_show_ids(
+    next_per_show: dict[int, "Media"],
+    last_per_show: dict[int, tuple[int, int]],
+    skip_show_ids: set[int],
+) -> set[int]:
+    """Shows whose locally stored "next" episode is not the real next one.
+
+    The candidate query returns the first episode row that exists after the last
+    watched one. When only some episodes are collected (S02E01-E03 missing, S02E04
+    present), that row sits *past* the actual next episode, so Next Up skipped
+    straight over the unwatched ones (#564). Compare it with the position the
+    show's season metadata says should come next and report the shows where the
+    stored row is strictly later, so the caller can create the true next episode.
+    A show without season metadata, or a row at or before the expected position
+    (stale episode counts), is left alone.
+    """
+    gaps: set[int] = set()
+    for show_id, media in next_per_show.items():
+        if show_id in skip_show_ids or show_id not in last_per_show:
+            continue
+        show = getattr(media, "show", None)
+        seasons = (getattr(show, "tmdb_data", None) or {}).get("seasons")
+        if not seasons or media.season_number is None or media.episode_number is None:
+            continue
+        expected = _compute_next_episode(seasons, *last_per_show[show_id])
+        if expected is not None and (media.season_number, media.episode_number) > expected:
+            gaps.add(show_id)
+    return gaps
+
+
 def _group_last_watched(
     rows: list[tuple[int, int, int, datetime | None]],
     by_recent: bool = False,
@@ -1361,6 +1391,9 @@ async def get_next_up(
     # synced next-episode row still surfaces fine under "Show hidden" below;
     # only the on-demand computation is skipped for it.
     missing_show_ids = set(last_per_show) - set(next_per_show) - dropped_show_ids
+    # Shows whose stored next row skips unwatched episodes are handled by the
+    # same on-demand creation below; if that fails the stored row stays.
+    missing_show_ids |= _next_up_gap_show_ids(next_per_show, last_per_show, dropped_show_ids)
     if missing_show_ids:
         api_key = await get_user_tmdb_key(db, current_user.id)
         if check_tmdb_key(api_key):

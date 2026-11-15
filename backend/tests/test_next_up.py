@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from routers.history import _refresh_next_episode_air_dates, _attach_show_last_watched, _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _next_up_needs_live_fetch, _progress_percentages, _remaining_episode_stats, _stream_next_up_refresh, _next_episode_candidates_stmt, _last_watched_per_show_stmt
+from routers.history import _refresh_next_episode_air_dates, _attach_show_last_watched, _compute_next_episode, _group_last_watched, _has_aired, _has_confirmed_air_date, _next_up_needs_live_fetch, _progress_percentages, _remaining_episode_stats, _stream_next_up_refresh, _next_episode_candidates_stmt, _last_watched_per_show_stmt, _next_up_gap_show_ids
 from core.rewatch import capped_season_episode_counts
 
 
@@ -110,6 +110,41 @@ class NextEpisodeCandidatesStmtTests(unittest.TestCase):
     def test_the_next_episode_is_strictly_after_the_last_watched_one(self):
         sql, _ = self.compiled(1)
         self.assertIn("(media.season_number, media.episode_number) > (pos.season, pos.episode)", sql)
+
+
+class NextUpGapShowIdsTests(unittest.TestCase):
+    """#564: the first locally stored episode after the last watched one can be
+    well past the real next episode when only part of a season is collected."""
+
+    SEASONS = [{"season_number": 1, "episode_count": 10}, {"season_number": 2, "episode_count": 10}]
+
+    def _media(self, season, episode, seasons=SEASONS):
+        show = SimpleNamespace(tmdb_data={"seasons": seasons})
+        return SimpleNamespace(season_number=season, episode_number=episode, show=show)
+
+    def test_stored_row_past_the_real_next_episode_is_a_gap(self):
+        # Finished S01 (10 episodes); S02E01-E03 not collected, S02E04 is.
+        gaps = _next_up_gap_show_ids({7: self._media(2, 4)}, {7: (1, 10)}, set())
+        self.assertEqual(gaps, {7})
+
+    def test_skipped_episode_within_a_season_is_a_gap(self):
+        gaps = _next_up_gap_show_ids({7: self._media(1, 8)}, {7: (1, 5)}, set())
+        self.assertEqual(gaps, {7})
+
+    def test_the_real_next_episode_is_not_a_gap(self):
+        self.assertEqual(_next_up_gap_show_ids({7: self._media(2, 1)}, {7: (1, 10)}, set()), set())
+        self.assertEqual(_next_up_gap_show_ids({7: self._media(1, 6)}, {7: (1, 5)}, set()), set())
+
+    def test_stale_episode_count_does_not_flag_an_earlier_row(self):
+        # Metadata says S01 has 10 episodes but the user already has S01E11.
+        self.assertEqual(_next_up_gap_show_ids({7: self._media(1, 11)}, {7: (1, 10)}, set()), set())
+
+    def test_dropped_shows_and_shows_without_metadata_are_skipped(self):
+        self.assertEqual(_next_up_gap_show_ids({7: self._media(2, 4)}, {7: (1, 10)}, {7}), set())
+        self.assertEqual(_next_up_gap_show_ids({7: self._media(2, 4, seasons=[])}, {7: (1, 10)}, set()), set())
+
+    def test_end_of_known_seasons_is_not_a_gap(self):
+        self.assertEqual(_next_up_gap_show_ids({7: self._media(3, 1)}, {7: (2, 10)}, set()), set())
 
 
 class GroupLastWatchedTests(unittest.TestCase):
