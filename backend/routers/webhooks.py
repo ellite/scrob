@@ -3483,7 +3483,11 @@ async def find_or_create_media_kodi(
                 )
             return media
 
-    if data["media_type"] == "movie":
+    # A movie payload that carries a TMDB id is already identified: it was not
+    # in the DB above, so create it under that id. Falling back to a title
+    # search here picks the first hit, which is the wrong film whenever two
+    # share a title (Evolution 2001 vs Evolution 2026, #537).
+    if data["media_type"] == "movie" and not data.get("tmdb_id"):
         local_q = select(Media).where(Media.media_type == MediaType.movie, Media.title.ilike(data["title"]))
         if data.get("year"):
             local_q = local_q.where(Media.release_date.like(f"{data['year']}%"))

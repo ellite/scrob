@@ -2197,6 +2197,35 @@ class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
         create_mock.assert_not_awaited()
 
 
+class FindOrCreateMediaKodiMovieTests(IsolatedAsyncioTestCase):
+    """#537: a Kodi movie payload with a TMDB id must not fall back to a title
+    search when the movie is new - the first hit can be a different film that
+    shares the title (Evolution 2001 vs 2026)."""
+
+    def _data(self, **overrides):
+        data = {"media_type": "movie", "title": "Evolution", "year": 2026, "tmdb_id": "1234567"}
+        data.update(overrides)
+        return data
+
+    async def test_new_movie_with_tmdb_id_is_created_under_that_id(self):
+        created = SimpleNamespace(id=9, media_type=MediaType.movie)
+        db = _QueuedResultDB([None])
+        with patch("routers.webhooks.tmdb.search_movies", AsyncMock()) as search, \
+             patch("routers.webhooks.enrich_media", AsyncMock()), \
+             patch("routers.webhooks.create_media_safely",
+                   AsyncMock(return_value=(created, True))) as create_mock:
+            result = await find_or_create_media_kodi(self._data(), db)
+        self.assertIs(result, created)
+        search.assert_not_awaited()
+        self.assertEqual(create_mock.await_args.args[1], 1234567)
+
+    async def test_movie_without_tmdb_id_still_uses_title_search(self):
+        found = SimpleNamespace(id=3, media_type=MediaType.movie)
+        db = _QueuedResultDB([found])
+        result = await find_or_create_media_kodi(self._data(tmdb_id=None), db)
+        self.assertIs(result, found)
+
+
 if __name__ == "__main__":
     unittest.main()
 
