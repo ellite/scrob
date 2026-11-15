@@ -5,6 +5,7 @@ import os
 import re
 import time
 import uuid
+from urllib.parse import unquote
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -791,18 +792,22 @@ class MdblistListImport(BaseModel):
 
 
 def _parse_mdblist_list_ref(raw: str) -> Optional[str]:
-    """Accept a numeric list id, username/slug, or mdblist.com list URL."""
-    raw = raw.strip()
+    """Accept a numeric list id, username/slug, or mdblist.com list URL.
+
+    Slugs keep the list's original name, so they can contain non-ASCII letters
+    (and arrive percent-encoded when copied from a browser).
+    """
+    raw = unquote(raw.strip())
     if raw.isdigit():
         return raw
     match = re.search(
-        r"(?:https?://)?(?:www\.)?mdblist\.com/lists/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)(?:[/?#]|$)",
+        r"(?:https?://)?(?:www\.)?mdblist\.com/lists/([^/?#\s]+)/([^/?#\s]+)(?:[/?#]|$)",
         raw,
         flags=re.IGNORECASE,
     )
     if match:
         return f"{match.group(1).lower()}/{match.group(2).lower()}"
-    if re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_-]+", raw):
+    if re.fullmatch(r"[^/?#\s]+/[^/?#\s]+", raw):
         return raw.lower()
     return None
 

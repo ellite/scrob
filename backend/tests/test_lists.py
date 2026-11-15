@@ -534,6 +534,22 @@ class ParseMdblistListRefTests(unittest.TestCase):
             "alice/my-favourites",
         )
 
+    def test_non_ascii_and_percent_encoded_slugs(self) -> None:
+        self.assertEqual(
+            lists._parse_mdblist_list_ref("https://mdblist.com/lists/Alice/Pr\u00e9f\u00e9r\u00e9s"),
+            "alice/pr\u00e9f\u00e9r\u00e9s",
+        )
+        self.assertEqual(
+            lists._parse_mdblist_list_ref(
+                "https://mdblist.com/lists/alice/pr%C3%A9f%C3%A9r%C3%A9s/?x=1"
+            ),
+            "alice/pr\u00e9f\u00e9r\u00e9s",
+        )
+        self.assertEqual(
+            lists._parse_mdblist_list_ref("alice/pr\u00e9f\u00e9r\u00e9s"),
+            "alice/pr\u00e9f\u00e9r\u00e9s",
+        )
+
     def test_garbage_is_rejected(self) -> None:
         self.assertIsNone(lists._parse_mdblist_list_ref("just-a-slug"))
         self.assertIsNone(lists._parse_mdblist_list_ref("https://mdblist.com/search"))
