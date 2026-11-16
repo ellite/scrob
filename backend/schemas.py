@@ -1,7 +1,7 @@
 import re
 from pydantic import BaseModel, EmailStr, Field, SecretStr, field_validator, model_validator, ConfigDict
 import re
-from typing import Optional
+from typing import Optional, Literal
 from datetime import datetime
 from models.base import UserRole, MediaType, PrivacyLevel
 
@@ -231,6 +231,7 @@ class UserSettings(BaseModel):
     time_format_24h: Optional[bool] = None
     use_hls_player: Optional[bool] = None
     show_play_button: Optional[bool] = None
+    page_size: Optional[Literal[20, 30, 40, 50, 100]] = None
     shuffle_next_up: Optional[bool] = None
     minimalist_next_up: Optional[bool] = None
     next_up_by_recent_watch: Optional[bool] = None

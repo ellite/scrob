@@ -556,6 +556,7 @@ export interface UserSettings {
   ui_language: string | null;
   use_hls_player: boolean;
   show_play_button: boolean;
+  page_size: number | null;
   shuffle_next_up: boolean;
   minimalist_next_up: boolean;
   next_up_by_recent_watch: boolean;
@@ -1422,7 +1423,7 @@ export const api = {
   },
 
   media: {
-    list: (params?: { type?: string; sort?: string; page?: number; genre?: string[]; year?: number[]; watched?: string[]; in_list?: string; my_rating?: number[] }, token?: string) =>
+    list: (params?: { type?: string; sort?: string; page?: number; page_size?: number; genre?: string[]; year?: number[]; watched?: string[]; in_list?: string; my_rating?: number[] }, token?: string) =>
       get<{ page: number; page_size: number; total_pages: number; total_results: number; results: MediaItem[] }>("/media", params, token),
 
     years: (type: string, token?: string) =>
@@ -1457,7 +1458,7 @@ export const api = {
     getCompany: (companyId: number, token?: string) =>
       get<StudioHeader>(`/media/company/${companyId}`, undefined, token),
 
-    tmdbList: (params: { type: string; category?: string; page?: number; genre?: string[]; exclude_genre?: string[]; year?: number[]; min_rating?: number; status?: string; collection?: string[]; watch?: string[]; arr?: string[]; my_rating?: number[]; original_language?: string; exclude_language?: string[]; in_list?: string[]; network?: number; company?: number }, token?: string) =>
+    tmdbList: (params: { type: string; category?: string; page?: number; page_size?: number; genre?: string[]; exclude_genre?: string[]; year?: number[]; min_rating?: number; status?: string; collection?: string[]; watch?: string[]; arr?: string[]; my_rating?: number[]; original_language?: string; exclude_language?: string[]; in_list?: string[]; network?: number; company?: number }, token?: string) =>
       get<{ results: MediaItem[]; page: number; total_pages: number; total_results: number }>("/media/tmdb/list", params, token),
 
     search: (q: string, type?: string, page: number = 1, year?: number, token?: string, inLibrary?: boolean) =>
