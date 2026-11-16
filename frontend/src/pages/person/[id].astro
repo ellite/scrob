@@ -113,7 +113,7 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
       {person.biography && (
         <div class="mb-12">
           <h2 class="section-headline mb-4">{m.person_biography()}</h2>
-          <p class="text-zinc-400 leading-relaxed text-lg whitespace-pre-wrap">{person.biography}</p>
+          <p class="text-zinc-400 leading-relaxed text-lg whitespace-pre-wrap break-words">{person.biography}</p>
         </div>
       )}
 

@@ -128,7 +128,7 @@ const days = Object.keys(byDay);
       {days.map((day) => (
         <section>
           <h2 class="group-label mb-3">{dayLabel(day, todayIso)} <span class="text-zinc-600 normal-case tracking-normal font-medium">· {day}</span></h2>
-          <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {byDay[day].map((e) => {
               const sxe = e.season_number != null && e.episode_number != null
                 ? `S${String(e.season_number).padStart(2, '0')}E${String(e.episode_number).padStart(2, '0')}`
