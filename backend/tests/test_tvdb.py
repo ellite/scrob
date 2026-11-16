@@ -243,5 +243,28 @@ class SearchSeriesYearFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0]["image_url"], "https://artworks.thetvdb.com/banners/series/6/posters/abc.jpg")
 
 
+class NetworkNamesTests(unittest.TestCase):
+    """TVDB v4's extended series record names the network in originalNetwork /
+    latestNetwork; it has no "networks" list (swagger SeriesExtendedRecord)."""
+
+    def test_original_then_latest_network(self):
+        raw = {"originalNetwork": {"id": 1, "name": "NDR"}, "latestNetwork": {"id": 2, "name": "ARD"}}
+        self.assertEqual(tvdb.network_names(raw), ["NDR", "ARD"])
+
+    def test_same_network_listed_once(self):
+        raw = {"originalNetwork": {"name": "AMC"}, "latestNetwork": {"name": "AMC"}}
+        self.assertEqual(tvdb.network_names(raw), ["AMC"])
+
+    def test_legacy_networks_list_still_read(self):
+        self.assertEqual(tvdb.network_names({"networks": [{"name": "HBO"}, {"name": None}]}), ["HBO"])
+
+    def test_nothing_known(self):
+        self.assertEqual(tvdb.network_names({"originalNetwork": None}), [])
+
+    def test_format_series_uses_original_network(self):
+        raw = {"id": 363884, "name": "Hofgeschichten", "originalNetwork": {"name": "Norddeutscher Rundfunk (NDR)"}}
+        self.assertEqual(tvdb.format_series(raw)["network"], "Norddeutscher Rundfunk (NDR)")
+
+
 if __name__ == "__main__":
     unittest.main()

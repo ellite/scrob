@@ -378,6 +378,22 @@ async def get_series_episodes(
     return [e for e in episodes if e.get("seasonNumber") == season_number]
 
 
+def network_names(raw: dict) -> list[str]:
+    """Network names of a TVDB series, original first, each once.
+
+    TVDB v4's extended series record carries the network as originalNetwork and
+    latestNetwork (swagger SeriesExtendedRecord); it has no "networks" list, so
+    reading only that left TVDB-only shows without a network. The old list is
+    still read in case a cached or older payload has it."""
+    candidates = [raw.get("originalNetwork"), raw.get("latestNetwork"), *(raw.get("networks") or [])]
+    names: list[str] = []
+    for n in candidates:
+        name = n.get("name") if isinstance(n, dict) else None
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
 def format_series(raw: dict, language: str | None = None) -> dict:
     """Normalise TVDB extended series data into a frontend-friendly dict."""
     image = raw.get("image") or ""
@@ -429,10 +445,8 @@ def format_series(raw: dict, language: str | None = None) -> dict:
             })
     seasons.sort(key=lambda x: x["season_number"] or 0)
 
-    network = None
-    for n in raw.get("networks") or []:
-        if n.get("primaryLanguage") == "eng" or not network:
-            network = n.get("name")
+    names = network_names(raw)
+    network = names[0] if names else None
 
     age_rating = None
     for cr in raw.get("contentRatings") or []:
