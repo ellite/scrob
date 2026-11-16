@@ -325,11 +325,12 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
               <SortButton
                 id="list-items-sort"
                 current="added_at"
+                dir="desc"
                 navigate={false}
                 options={[
                   { value: "title", label: m.sort_az() },
                   { value: "rating", label: m.sort_top() },
-                  { value: "release_date", label: m.sort_newest() },
+                  { value: "release_date", label: m.sort_release_date() },
                   { value: "added_at", label: m.sort_recently_added() },
                 ]}
               />
@@ -470,6 +471,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
 <script>
   import { m } from '../../paraglide/messages.js';
   import { formatRating } from '../../lib/format';
+  import { effectiveDir } from '../../lib/sortDirection';
 
   const token = (window as any).__AUTH_TOKEN__ ?? '';
   const listId = document.getElementById('list-page')?.dataset.listId;
@@ -666,7 +668,9 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
   // existing cards, same idea as the type filter above rather than a
   // server round-trip. Missing values (e.g. a person entry has no rating or
   // release date) always sort to the end regardless of direction.
-  function applyItemsSort(sortKey) {
+  // `dir` flips the order (picking the active sort again in SortButton); a
+  // missing one is the sort's natural default (lib/sortDirection).
+  function applyItemsSort(sortKey, dir) {
     const grid = document.getElementById('items-grid');
     if (!grid) return;
     // :scope > ... - see the matching comment in applyItemsFilter above.
@@ -686,7 +690,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
     if (!get) return;
 
     const numeric = sortKey === 'rating';
-    const descending = sortKey !== 'title';
+    const descending = effectiveDir(sortKey, dir) === 'desc';
 
     cards.sort((a, b) => {
       const av = get(a);
@@ -717,7 +721,7 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
   }
 
   document.getElementById('list-items-sort')?.addEventListener('sortchange', (e) => {
-    applyItemsSort(e.detail.value);
+    applyItemsSort(e.detail.value, e.detail.dir);
   });
 
   // The server's own default order is (sort_order, added_at) - sort_order is
