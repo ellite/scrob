@@ -3,6 +3,7 @@ import contextlib
 import time
 import httpx
 from core.config import settings
+from core.credit_order import person_position, sort_roles
 
 TMDB_BASE = "https://api.themoviedb.org/3"
 TMDB_BASE_V4 = "https://api.themoviedb.org/4"
@@ -451,6 +452,40 @@ def notable_crew(credits: dict, limit: int = 12, profile_size: str = "w500") -> 
             "profile_path": entry["profile_path"],
         })
     return result
+
+
+def full_crew(credits: dict | None, profile_size: str = "w500") -> list[dict]:
+    """Every crew member of a title for the searchable "full crew" list, one
+    entry per person id with all of their jobs joined by ", " (like
+    notable_crew). Ordered by the person's best job following core.credit_order
+    (directing, story, camera, editing, music, the rest, production last),
+    then by name; the job text starts with that best job. Rows without a valid
+    id or name are skipped rather than guessed."""
+    people: dict[int, dict] = {}
+    for c in (credits or {}).get("crew") or []:
+        pid, name = c.get("id"), c.get("name")
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or not name:
+            continue
+        role = {"job": c.get("job") or c.get("department") or "Crew", "department": c.get("department") or ""}
+        person = people.setdefault(pid, {
+            "tmdb_id": pid,
+            "name": name,
+            "profile_path": poster_url(c.get("profile_path"), size=profile_size),
+            "roles": [],
+        })
+        if role not in person["roles"]:
+            person["roles"].append(role)
+    result = []
+    for person in people.values():
+        roles = sort_roles(person["roles"])
+        result.append((person_position(roles), {
+            "tmdb_id": person["tmdb_id"],
+            "name": person["name"],
+            "job": ", ".join(dict.fromkeys(r["job"] for r in roles)),
+            "profile_path": person["profile_path"],
+        }))
+    result.sort(key=lambda r: (r[0], r[1]["name"].casefold(), r[1]["tmdb_id"]))
+    return [r[1] for r in result]
 
 
 async def get_person(person_id: int, api_key: str = None) -> dict:

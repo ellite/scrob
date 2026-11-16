@@ -710,6 +710,7 @@ export interface MediaItem {
   genres?: string[];
   cast?: CastMember[];
   crew?: CrewMember[];
+  full_crew?: CrewMember[];
   tagline?: string | null;
   status?: string | null;
   original_language?: string | null;
@@ -1089,6 +1090,7 @@ export interface Show {
   season_states: Record<number, SeasonState>;
   cast: CastMember[];
   crew: CrewMember[];
+  full_crew?: CrewMember[];
   networks: Network[];
   recommendations: MediaItem[];
   tagline: string | null;

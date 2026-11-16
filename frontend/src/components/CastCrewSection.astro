@@ -1,5 +1,6 @@
 ---
 import PersonCard from "./PersonCard.astro";
+import CreditList from "./CreditList.astro";
 import { crewJobLabel } from "../lib/labels";
 import { m } from "../paraglide/messages.js";
 
@@ -15,10 +16,13 @@ interface Person {
 interface Props {
   cast?: Person[];
   crew?: Person[];
+  fullCrew?: Person[];
   guestStars?: Person[];
 }
 
-const { cast = [], crew = [], guestStars = [] } = Astro.props;
+const { cast = [], crew = [], fullCrew = [], guestStars = [] } = Astro.props;
+// The cards stay the overview; the searchable list is offered when it holds more people.
+const hasFullCrew = fullCrew.length > crew.length;
 const hasCast = cast.length > 0 || guestStars.length > 0;
 const hasGuestStars = guestStars.length > 0;
 const hasCrew = crew.length > 0;
@@ -54,8 +58,12 @@ const hasCrew = crew.length > 0;
   </div>
 
   {hasCrew && (
-    <div class="castcrew-panel hidden grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6" data-panel="crew">
-      {crew.map((person) => <PersonCard person={person} subtitle={person.job ? crewJobLabel(person.job) : person.job} />)}
+    <div class="castcrew-panel hidden" data-panel="crew">
+      <div data-crew-cards class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
+        {crew.map((person) => <PersonCard person={person} subtitle={person.job ? crewJobLabel(person.job) : person.job} />)}
+      </div>
+      {hasFullCrew && <button type="button" data-crew-more class="mt-6 rounded-full border border-zinc-600 bg-zinc-900 px-4 py-3 text-sm font-semibold text-white hover:bg-zinc-800">{m.castcrew_show_full_crew()}</button>}
+      {hasFullCrew && <CreditList people={fullCrew} />}
     </div>
   )}
 </div>
@@ -80,5 +88,25 @@ const hasCrew = crew.length > 0;
         });
       });
     });
+
+    // Crew panel: swap the cards for the full searchable list and back.
+    const crewPanel = container.querySelector<HTMLElement>('[data-panel="crew"]');
+    const cards = crewPanel?.querySelector<HTMLElement>('[data-crew-cards]');
+    const more = crewPanel?.querySelector<HTMLElement>('[data-crew-more]');
+    const list = crewPanel?.querySelector<HTMLElement>('[data-credit-list]');
+    if (cards && more && list) {
+      more.addEventListener('click', () => {
+        cards.classList.add("hidden");
+        more.hidden = true;
+        list.hidden = false;
+        list.querySelector<HTMLInputElement>('[data-credit-search]')?.focus();
+      });
+      list.querySelector('[data-credit-back]')?.addEventListener('click', () => {
+        list.hidden = true;
+        cards.classList.remove("hidden");
+        more.hidden = false;
+        more.focus();
+      });
+    }
   });
 </script>

@@ -1190,6 +1190,7 @@ async def get_show(
         recommendations = []
         cast = []
         crew = []
+        full_crew = []
         tmdb_extra: dict | None = None
         api_key = await get_user_tmdb_key(db, effective_user_id)
         metadata_lang = await get_user_metadata_language(db, effective_user_id)
@@ -1240,6 +1241,7 @@ async def get_show(
                     for c in tmdb_extra.get("credits", {}).get("cast", [])[:12]
                 ]
                 crew = tmdb.notable_crew(tmdb_extra.get("credits", {}))
+                full_crew = tmdb.full_crew(tmdb_extra.get("credits", {}))
                 if metadata_lang:
                     try:
                         await upsert_show_translation(
@@ -1517,6 +1519,7 @@ async def get_show(
             ],
             "cast": cast,
             "crew": crew,
+            "full_crew": full_crew,
             "networks": networks,
             "where_to_watch": where_to_watch,
         }
@@ -1551,6 +1554,7 @@ async def get_show(
         ]
 
         crew = tmdb.notable_crew(data.get("credits", {}))
+        full_crew = tmdb.full_crew(data.get("credits", {}))
 
         networks = [
             {
@@ -1644,6 +1648,7 @@ async def get_show(
             ],
             "cast": cast,
             "crew": crew,
+            "full_crew": full_crew,
             "networks": networks,
             "seasons_meta": [
                 {

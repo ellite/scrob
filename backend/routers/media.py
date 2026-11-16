@@ -5732,6 +5732,7 @@ async def get_media_details(
                 for c in data.get("credits", {}).get("cast", [])[:12]
             ],
             "crew": tmdb.notable_crew(data.get("credits", {})),
+            "full_crew": tmdb.full_crew(data.get("credits", {})),
             "where_to_watch": where_to_watch,
         }
     except Exception as e:
