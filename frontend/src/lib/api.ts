@@ -556,6 +556,7 @@ export interface UserSettings {
   ui_language: string | null;
   use_hls_player: boolean;
   show_play_button: boolean;
+  default_collection_tab: boolean;
   shuffle_next_up: boolean;
   minimalist_next_up: boolean;
   next_up_by_recent_watch: boolean;
