@@ -25,6 +25,7 @@
   "nav_dropped": "Dropped",
   "nav_profile_settings": "Profile Settings",
   "nav_connections": "Connections",
+  "nav_diagnostics": "Diagnostics",
   "nav_settings": "Settings",
   "nav_admin": "Admin",
   "nav_requests": "Requests",
@@ -2375,5 +2376,70 @@
   "stats_no_plays_period": "No plays in this period.",
   "lists_import_job_lost": "Lost track of the import job (the server may have restarted). Check the list, then import again to top it up.",
   "settings_episode_order_saved_tvdb": "New shows will use TVDB ordering. Use \"Apply to all existing shows\" for the ones you already have.",
-  "settings_episode_order_saved_tmdb": "New shows will use TMDB ordering."
+  "settings_episode_order_saved_tmdb": "New shows will use TMDB ordering.",
+  "diag_intro": "Your most recent sync jobs. The list updates every few seconds while a sync is running, and about once a minute otherwise. Warnings and errors stay visible here after a job has finished.",
+  "diag_empty": "No sync jobs yet.",
+  "diag_load_failed": "Could not load sync jobs ({error}).",
+  "diag_job_title": "{source} · {type}",
+  "diag_type_pull": "Pull",
+  "diag_type_push": "Push",
+  "diag_warnings_total": "{count} items in total",
+  "diag_type_import": "Import",
+  "diag_type_heal": "Metadata repair",
+  "diag_type_episode_order": "Episode order",
+  "diag_type_episode_order_bulk": "Episode order (bulk)",
+  "diag_status_pending": "Pending",
+  "diag_status_running": "Running",
+  "diag_status_completed": "Completed",
+  "diag_status_failed": "Failed",
+  "diag_status_cancelled": "Cancelled",
+  "diag_started": "Started {time}",
+  "diag_updated": "updated {time}",
+  "diag_errors": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} error",
+        "countPlural=other": "{count} errors",
+        "countPlural=*": "{count} errors"
+      }
+    }
+  ],
+  "diag_warnings_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} warning",
+        "countPlural=other": "{count} warnings",
+        "countPlural=*": "{count} warnings"
+      }
+    }
+  ],
+  "diag_progress": "{processed} / {total}",
+  "diag_warn_untitled": "Untitled",
+  "diag_warn_failed": "failed",
+  "diag_warn_season_not_on_tmdb": "{show}, season {season}: not on TMDB ({episodes})",
+  "diag_warn_not_on_server": "{head}: not on this server",
+  "diag_warn_reason_line": "{head}: {reason}",
+  "diag_warn_push_failed": "{head}: {reason}",
+  "diag_warn_push_failed_action": "{head} · {action}: {reason}",
+  "diag_warn_matched": "{head}: matched",
+  "diag_warn_matched_to": "{head}: matched to {show}",
+  "diag_warn_matched_to_tvdb": "{head}: matched to {show} (TVDB {tvdb})",
+  "diag_warn_matched_via_tvdb": "{head}: matched via TVDB {tvdb}",
+  "diag_warn_group_not_on_server": "{series}: {episodes} not on this server",
+  "diag_warn_group": "{series}: {episodes} · {reason}",
+  "diag_warn_group_action": "{series}: {episodes} · {action}: {reason}"
 }

@@ -25,6 +25,7 @@
   "nav_dropped": "Abandonnés",
   "nav_profile_settings": "Paramètres du profil",
   "nav_connections": "Connexions",
+  "nav_diagnostics": "Diagnostic",
   "nav_settings": "Paramètres",
   "nav_admin": "Administration",
   "nav_requests": "Demandes",
@@ -2375,5 +2376,70 @@
   "stats_no_plays_period": "Aucune lecture sur cette période.",
   "lists_import_job_lost": "Le suivi de l’importation a été perdu (le serveur a peut-être redémarré). Vérifiez la liste, puis relancez l’importation pour la compléter.",
   "settings_episode_order_saved_tvdb": "Les nouvelles séries utiliseront l’ordre TVDB. Utilisez « Appliquer à toutes les séries existantes » pour celles que vous avez déjà.",
-  "settings_episode_order_saved_tmdb": "Les nouvelles séries utiliseront l’ordre TMDB."
+  "settings_episode_order_saved_tmdb": "Les nouvelles séries utiliseront l’ordre TMDB.",
+  "diag_intro": "Vos tâches de synchronisation les plus récentes. La liste est actualisée toutes les quelques secondes pendant une synchronisation, sinon environ une fois par minute. Les avertissements et les erreurs restent visibles ici une fois la tâche terminée.",
+  "diag_empty": "Aucune tâche de synchronisation pour le moment.",
+  "diag_load_failed": "Impossible de charger les tâches de synchronisation ({error}).",
+  "diag_job_title": "{source} · {type}",
+  "diag_type_pull": "Récupération",
+  "diag_type_push": "Envoi",
+  "diag_warnings_total": "{count} éléments au total",
+  "diag_type_import": "Importation",
+  "diag_type_heal": "Réparation des métadonnées",
+  "diag_type_episode_order": "Ordre des épisodes",
+  "diag_type_episode_order_bulk": "Ordre des épisodes (en masse)",
+  "diag_status_pending": "En attente",
+  "diag_status_running": "En cours",
+  "diag_status_completed": "Terminée",
+  "diag_status_failed": "Échec",
+  "diag_status_cancelled": "Annulée",
+  "diag_started": "Démarrée le {time}",
+  "diag_updated": "mise à jour le {time}",
+  "diag_errors": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} erreur",
+        "countPlural=other": "{count} erreurs",
+        "countPlural=*": "{count} erreurs"
+      }
+    }
+  ],
+  "diag_warnings_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} avertissement",
+        "countPlural=other": "{count} avertissements",
+        "countPlural=*": "{count} avertissements"
+      }
+    }
+  ],
+  "diag_progress": "{processed} / {total}",
+  "diag_warn_untitled": "Sans titre",
+  "diag_warn_failed": "échec",
+  "diag_warn_season_not_on_tmdb": "{show}, saison {season} : absente de TMDB ({episodes})",
+  "diag_warn_not_on_server": "{head} : absent de ce serveur",
+  "diag_warn_reason_line": "{head} : {reason}",
+  "diag_warn_push_failed": "{head} : {reason}",
+  "diag_warn_push_failed_action": "{head} · {action} : {reason}",
+  "diag_warn_matched": "{head} : associé",
+  "diag_warn_matched_to": "{head} : associé à {show}",
+  "diag_warn_matched_to_tvdb": "{head} : associé à {show} (TVDB {tvdb})",
+  "diag_warn_matched_via_tvdb": "{head} : associé via TVDB {tvdb}",
+  "diag_warn_group_not_on_server": "{series} : pas sur ce serveur ({episodes})",
+  "diag_warn_group": "{series} : {episodes} · {reason}",
+  "diag_warn_group_action": "{series} : {episodes} · {action} : {reason}"
 }
