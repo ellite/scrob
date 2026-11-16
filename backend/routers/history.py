@@ -1727,7 +1727,7 @@ from core.identity import find_media, find_show, link_show_ids
 from datetime import datetime
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm.attributes import flag_modified
 from core.timeutil import utcnow
 
@@ -2405,6 +2405,15 @@ class SeasonWatchRequest(BaseModel):
     season_number: int
     episode_order: str | None = None
     watched_at: datetime | None = None  # omitted = now; explicit null = unknown date
+    # Only mark episodes up to and including this one (in the season's own
+    # numbering for the chosen order). Omitted = the whole season.
+    through_episode: int | None = Field(default=None, ge=0, strict=True)
+
+    @model_validator(mode="after")
+    def _no_cutoff_for_specials(self):
+        if self.through_episode is not None and self.season_number == 0:
+            raise ValueError("through_episode is not supported for specials")
+        return self
 
 
 class ShowWatchRequest(BaseModel):
@@ -2896,7 +2905,10 @@ async def mark_season_watched(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
-    """Mark all aired episodes of a season as watched, fetching from TMDB if needed."""
+    """Mark all aired episodes of a season as watched, fetching from TMDB if needed.
+
+    With through_episode, only the episodes up to and including that one are marked.
+    """
     # 1. Ensure show exists
     show = await _resolve_series_show(db, body.series_tmdb_id, body.series_tvdb_id)
 
@@ -2943,7 +2955,8 @@ async def mark_season_watched(
         tvdb_fallback_episodes = await _fetch_tvdb_season_episodes(db, show, body.season_number, current_user.id)
     elif not is_aired_order(_watch_order):
         target_positions = await canonical_pairs_for_display_season(
-            db, show.tmdb_id, _watch_order, body.season_number
+            db, show.tmdb_id, _watch_order, body.season_number,
+            through_episode=body.through_episode,
         )
         if not target_positions:
             target_positions = None
@@ -2985,6 +2998,11 @@ async def mark_season_watched(
         }
         for tvdb_ep in tvdb_fallback_episodes:
             if tvdb_ep.get("episode_number") is None or not _has_aired(tvdb_ep.get("air_date"), today):
+                continue
+            if body.through_episode is not None and (
+                tvdb_ep["episode_number"] > body.through_episode
+                or not _has_confirmed_air_date(tvdb_ep.get("air_date"), today)
+            ):
                 continue
             position = (body.season_number, tvdb_ep["episode_number"])
             existing = existing_map.get(position)
@@ -3049,6 +3067,12 @@ async def mark_season_watched(
             for ep in season_data.get("episodes", []):
                 position = (canonical_season, ep["episode_number"])
                 if target_positions is not None and position not in target_positions:
+                    continue
+                if (
+                    target_positions is None
+                    and body.through_episode is not None
+                    and ep["episode_number"] > body.through_episode
+                ):
                     continue
                 air_date_str = ep.get("air_date")
                 if not air_date_str:

@@ -3,6 +3,7 @@ import { getViewerTimeZone } from "../../../../../lib/viewerTimeZone";
 import Base from "../../../../../layouts/Base.astro";
 import { formatDate, formatRating } from "../../../../../lib/format";
 import { m } from "../../../../../paraglide/messages.js";
+import WatchThroughButton from "../../../../../components/WatchThroughButton.astro";
 import ActionBar from "../../../../../components/ActionBar.astro";
 import WatchStats from "../../../../../components/WatchStats.astro";
 import CommentsSection from "../../../../../components/CommentsSection.astro";
@@ -195,6 +196,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
                   ratingPosterPath={episode.still_path || episode.season?.poster_path || show?.poster_path}
                   airDate={episode.air_date}
                 />
+                {Number(season_number) > 0 && <WatchThroughButton seriesId={Number(id)} season={Number(season_number)} episode={Number(episode_number)} episodeOrder={episode.episode_order ?? "tmdb"} tvdbId={show?.tvdb_id ?? undefined} />}
               </div>
             )}
 

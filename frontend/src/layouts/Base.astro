@@ -1938,7 +1938,7 @@ const bottomNavItem = (active: boolean) =>
     let _watchHistoryAirDate = '';
     // Set when the modal is being used to mark a whole season/show watched
     // (no single item's history applies) rather than logging one item's play.
-    let _watchHistoryBulkMode: { kind: 'season' | 'show'; seriesId: string; season: string; episodeOrder: string; btn: HTMLElement; tvdbId: string } | null = null;
+    let _watchHistoryBulkMode: { kind: 'season' | 'show' | 'previous'; seriesId: string; season: string; episodeOrder: string; btn: HTMLElement; tvdbId: string; throughEpisode: string } | null = null;
 
     const toLocal = (d: Date) => {
       const p = (n: number) => String(n).padStart(2, '0');
@@ -2010,19 +2010,19 @@ const bottomNavItem = (active: boolean) =>
       throw new Error(JSON.stringify({ detail: m.watch_show_job_timed_out() }));
     }
 
-    function openBulkWatchModal(btn: HTMLElement, kind: 'season' | 'show', seriesId: string, season = '', episodeOrder = '', tvdbId = '') {
-      _watchHistoryBulkMode = { kind, seriesId, season, episodeOrder, btn, tvdbId };
+    function openBulkWatchModal(btn: HTMLElement, kind: 'season' | 'show' | 'previous', seriesId: string, season = '', episodeOrder = '', tvdbId = '', throughEpisode = '') {
+      _watchHistoryBulkMode = { kind, seriesId, season, episodeOrder, btn, tvdbId, throughEpisode };
       // No single date applies across a whole season/show - never offer it here.
       _watchHistoryAirDate = '';
 
-      document.getElementById('watch-history-modal-title')!.textContent = kind === 'season' ? m.watch_mark_season_watched() : m.watch_mark_show_watched();
+      document.getElementById('watch-history-modal-title')!.textContent = kind === 'previous' ? m.watch_through_modal_title({ episode: throughEpisode }) : kind === 'season' ? m.watch_mark_season_watched() : m.watch_mark_show_watched();
       document.getElementById('watch-history-modal-events')!.classList.add('hidden');
       // Bulk mode has no per-item play list, so its own remove-everything
       // action lives on the same button.
       const bulkUnwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
       bulkUnwatchBtn.textContent = kind === 'season' ? m.watch_remove_all_season() : m.watch_remove_all();
       bulkUnwatchBtn.disabled = false;
-      bulkUnwatchBtn.classList.remove('hidden');
+      bulkUnwatchBtn.classList.toggle('hidden', kind === 'previous');
       // Below "Mark as watched" here; the single-item modal keeps it on top.
       document.getElementById('watch-history-log-btn')!.after(bulkUnwatchBtn);
       document.getElementById('watch-history-add-play-label')!.classList.add('hidden');
@@ -2151,6 +2151,7 @@ const bottomNavItem = (active: boolean) =>
     document.getElementById('watch-history-unwatch-btn')!.addEventListener('click', async () => {
       if (_watchHistoryBulkMode) {
         const { kind, seriesId, season, episodeOrder, btn: sourceBtn } = _watchHistoryBulkMode;
+        if (kind === 'previous') return;
         const ok = kind === 'season'
           ? await showConfirm(m.watch_remove_all_season_confirm_title(), m.watch_remove_all_season_confirm_body())
           : await showConfirm(m.watch_remove_all_show_confirm_title(), m.watch_remove_all_show_confirm_body());
@@ -2266,21 +2267,24 @@ const bottomNavItem = (active: boolean) =>
         logBtn.innerHTML = '<svg class="inline-block w-4 h-4 mr-2 -mt-0.5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>' + esc(m.common_saving());
 
         if (_watchHistoryBulkMode) {
-          const { kind, seriesId, season, episodeOrder, btn: sourceBtn, tvdbId: bulkTvdbId } = _watchHistoryBulkMode;
+          const { kind, seriesId, season, episodeOrder, btn: sourceBtn, tvdbId: bulkTvdbId, throughEpisode } = _watchHistoryBulkMode;
           // A TheTVDB-only show's card carries its TVDB id as its id: send it
           // as series_tvdb_id and never as series_tmdb_id (a different show).
           const idBody: Record<string, unknown> = sourceBtn.closest<HTMLElement>('[data-card]')?.dataset.tvdbOnly === 'true'
             ? { series_tvdb_id: Number(seriesId) }
             : { series_tmdb_id: Number(seriesId), ...(bulkTvdbId ? { series_tvdb_id: Number(bulkTvdbId) } : {}) };
           try {
-            if (kind === 'season') {
+            if (kind === 'season' || kind === 'previous') {
               const body: Record<string, unknown> = {
                 ...idBody,
                 season_number: Number(season),
                 watched_at: watchedAt,
               };
+              if (kind === 'previous') body.through_episode = Number(throughEpisode);
               if (nonAiredOrder(episodeOrder)) body.episode_order = episodeOrder;
               await apiFetch('/history/season', 'POST', body);
+              // Several episodes changed at once: reload instead of patching the page.
+              if (kind === 'previous') { window.location.reload(); return; }
               cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, season, episodeOrder, true);
               syncShowWatchPctFromDOM(seriesId);
             } else {
@@ -2363,6 +2367,11 @@ const bottomNavItem = (active: boolean) =>
     document.addEventListener('click', async (e) => {
       const target = e.target as Element;
 
+      const through = target.closest<HTMLElement>('[data-watch-through]');
+      if (through) {
+        openBulkWatchModal(through, 'previous', through.dataset.seriesId || '', through.dataset.season || '', through.dataset.episodeOrder || '', through.dataset.tvdbId || '', through.dataset.episode || '');
+        return;
+      }
       const btn = target.closest<HTMLElement>('[data-action]');
       if (!btn) return;
 

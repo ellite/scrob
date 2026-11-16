@@ -1040,5 +1040,86 @@ class WatchEventSourceTests(unittest.TestCase):
                 self._make(source=bad)
 
 
+class WatchThroughTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tmdb_cutoff_keeps_existing_watches_and_excludes_future_unknown_and_later_episodes(self):
+        eps = [Media(id=10 + i, tmdb_id=1000 + i, media_type=MediaType.episode, show_id=55, season_number=1, episode_number=i) for i in range(1, 7)]
+        # E1 already watched, E2 not aired yet, E3 undated (all before the cutoff),
+        # E4 is the one that must be added, E5 lies after the cutoff, E6 is not aired.
+        dates = {2: "2999-01-01", 3: None, 6: "2999-01-01"}
+        payload = {"episodes": [{"episode_number": i, "id": 1000 + i, "air_date": dates.get(i, "2020-01-01")} for i in (3, 1, 6, 5, 4, 2)]}
+        show = Show(id=55, tmdb_id=100, title="Test", canonical_source="tmdb")
+        db = _FakeSession([eps, None])
+        db.info["tmdb_key_7"] = "synthetic"
+        with patch.object(history, "_resolve_series_show", AsyncMock(return_value=show)), \
+             patch.object(history.tmdb, "get_season", AsyncMock(return_value=payload)), \
+             patch.object(history, "get_already_watched_for_bulk_mark", AsyncMock(return_value={11})), \
+             patch.object(history, "record_rewatch_progress", AsyncMock()), \
+             patch.object(history, "_push_watch_state", AsyncMock()) as push:
+            result = await history.mark_season_watched(
+                history.SeasonWatchRequest(series_tmdb_id=100, season_number=1, through_episode=4, watched_at=None),
+                db, SimpleNamespace(id=7),
+            )
+        watches = [x for x in db.added if isinstance(x, WatchEvent)]
+        self.assertEqual(result["count"], 1)
+        self.assertEqual([(x.media_id, x.watched_at) for x in watches], [(14, None)])
+        self.assertEqual(push.await_args.args[2], [14])
+
+    async def test_tvdb_cutoff_uses_tvdb_numbers_and_requires_a_known_air_date(self):
+        eps = [Media(id=10 + i, tvdb_id=1000 + i, media_type=MediaType.episode, show_id=55, season_number=1, episode_number=i) for i in range(1, 5)]
+        payload = [{"episode_number": i, "air_date": None if i == 2 else "2999-01-01" if i == 3 else "2020-01-01"} for i in (4, 3, 2, 1)]
+        show = Show(id=55, tvdb_id=500, title="TVDB", canonical_source="tvdb")
+        db = _FakeSession([eps, None])
+        db.info["tmdb_key_7"] = "synthetic"
+        with patch.object(history, "_resolve_series_show", AsyncMock(return_value=show)), \
+             patch.object(history, "_fetch_tvdb_season_episodes", AsyncMock(return_value=payload)), \
+             patch.object(history, "get_already_watched_for_bulk_mark", AsyncMock(return_value=set())), \
+             patch.object(history, "record_rewatch_progress", AsyncMock()), \
+             patch.object(history, "_push_watch_state", AsyncMock()):
+            result = await history.mark_season_watched(
+                history.SeasonWatchRequest(series_tvdb_id=500, season_number=1, through_episode=3, watched_at=datetime(2020, 6, 1)),
+                db, SimpleNamespace(id=7),
+            )
+        watches = [x for x in db.added if isinstance(x, WatchEvent)]
+        self.assertEqual(result["count"], 1)
+        self.assertEqual([(x.media_id, x.watched_at) for x in watches], [(11, datetime(2020, 6, 1))])
+
+    async def test_alternative_order_cutoff_uses_display_positions_in_real_sql(self):
+        from sqlalchemy import create_engine
+        from core.episode_order import canonical_pairs_for_display_season
+        engine = create_engine("sqlite://")
+        with engine.begin() as conn:
+            ShowEpisodePosition.__table__.create(conn)
+            conn.execute(ShowEpisodePosition.__table__.insert(), [
+                dict(series_tmdb_id=100, order_key="tvdb:official", display_season=1, display_episode=3, tmdb_episode_id=1, tmdb_season_number=1, tmdb_episode_number=1),
+                dict(series_tmdb_id=100, order_key="tvdb:official", display_season=1, display_episode=1, tmdb_episode_id=2, tmdb_season_number=3, tmdb_episode_number=7),
+                dict(series_tmdb_id=100, order_key="tvdb:official", display_season=1, display_episode=2, tmdb_episode_id=3, tmdb_season_number=2, tmdb_episode_number=5),
+                dict(series_tmdb_id=100, order_key="tvdb:official", display_season=2, display_episode=1, tmdb_episode_id=4, tmdb_season_number=4, tmdb_episode_number=1),
+            ])
+
+            class Db:
+                async def execute(self, stmt):
+                    return conn.execute(stmt)
+
+            self.assertEqual(
+                await canonical_pairs_for_display_season(Db(), 100, "tvdb:official", 1, through_episode=2),
+                {(3, 7), (2, 5)},
+            )
+        engine.dispose()
+
+    def test_invalid_cutoffs_are_rejected(self):
+        from pydantic import ValidationError
+        for value in (-1, True, "2"):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                history.SeasonWatchRequest(series_tmdb_id=100, season_number=1, through_episode=value)
+        self.assertEqual(history.SeasonWatchRequest(series_tmdb_id=100, season_number=1, through_episode=2).through_episode, 2)
+
+    def test_specials_cannot_use_a_cutoff(self):
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError):
+            history.SeasonWatchRequest(series_tmdb_id=100, season_number=0, through_episode=2)
+        # The whole-season request for specials is unchanged.
+        self.assertIsNone(history.SeasonWatchRequest(series_tmdb_id=100, season_number=0).through_episode)
+
+
 if __name__ == "__main__":
     unittest.main()

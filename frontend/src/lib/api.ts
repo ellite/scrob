@@ -152,6 +152,7 @@ export interface EpisodeItem {
 
 export interface ShowSummary {
   tmdb_id: number;
+  tvdb_id?: number | null;
   title: string;
   poster_path: string | null;
   backdrop_path: string | null;
