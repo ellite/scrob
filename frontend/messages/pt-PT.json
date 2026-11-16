@@ -630,6 +630,8 @@
   "stat_rated": "Classificados",
   "stat_followers": "Seguidores",
   "search_no_results": "Nenhum resultado encontrado para «{query}».",
+  "search_suggest_label": "Sugestões de pesquisa",
+  "search_suggest_see_all": "Ver todos os resultados para «{query}»",
   "discover_tmdb_required_body": "Adicione o seu token de acesso de leitura do TMDB nas definições para desbloquear Descobrir.",
   "discover_for_you": "Para si",
   "discover_for_you_hint": "Com base nos seus géneros favoritos",
