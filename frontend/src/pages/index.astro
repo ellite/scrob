@@ -1,24 +1,20 @@
 ---
 import Base from "../layouts/Base.astro";
-import MediaRow from "../components/MediaRow.astro";
-import MediaCard from "../components/MediaCard.astro";
-import EpisodeCard from "../components/EpisodeCard.astro";
-import ContinueWatchingCard from "../components/ContinueWatchingCard.astro";
-import { api, type ContinueWatchingItem, type MediaItem, tmdbImageUrl } from "../lib/api";
-import { formatEpisodesLeft } from "../lib/media-format";
-import { episodeHref } from "../lib/episodeHref";
+import HomeSections from "../components/HomeSections.astro";
+import HomeSectionsSkeleton from "../components/HomeSectionsSkeleton.astro";
+import { api } from "../lib/api";
 import { m } from "../paraglide/messages.js";
-import { formatRating } from "../lib/format";
 
 const { token, user } = Astro.locals;
 Astro.response.headers.set("Cache-Control", "no-store");
 const apiUrl = import.meta.env.PUBLIC_API_URL ?? "http://localhost:8000";
 
-// Fetch settings first to check for TMDB key
-let settings: Awaited<ReturnType<typeof api.auth.getSettings>> | null = null;
+// The settings come from the middleware, so this page itself waits for nothing for a signed-in
+// viewer: the layout and the skeleton are sent at once, and the rows that need the backend
+// (HomeSections) stream in after them.
 let hasTmdbKey = false;
 if (token) {
-  settings = Astro.locals.settings ?? await api.auth.getSettings(token);
+  const settings = Astro.locals.settings ?? await api.auth.getSettings(token);
   hasTmdbKey = !!settings?.has_effective_tmdb_key;
 } else {
   // Anonymous visitor - only reachable at all when the admin enabled
@@ -26,74 +22,6 @@ if (token) {
   const status = await api.profile.publicAccessStatus().catch(() => ({ enable_logged_out_navigation: false }));
   hasTmdbKey = status.enable_logged_out_navigation;
 }
-
-let recentMovies: { results: MediaItem[] } = { results: [] };
-let recentShows: { results: MediaItem[] } = { results: [] };
-let continueWatching: ContinueWatchingItem[] = [];
-let nextUp: MediaItem[] = [];
-
-if (token) {
-  const results = await Promise.allSettled([
-    api.media.recentlyAdded("movie", token),
-    api.media.recentlyAdded("episode", token),
-    api.history.continueWatching(token),
-    api.history.nextUp(token, 10),
-  ]);
-
-  if (results[0].status === "fulfilled") recentMovies = results[0].value;
-  if (results[1].status === "fulfilled") recentShows = results[1].value;
-  if (results[2].status === "fulfilled")
-    continueWatching = results[2].value?.continue_watching ?? [];
-  if (results[3].status === "fulfilled") {
-    const raw = results[3].value?.next_up ?? [];
-    if (settings?.shuffle_next_up) {
-      for (let i = raw.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [raw[i], raw[j]] = [raw[j], raw[i]];
-      }
-    }
-    nextUp = raw;
-  }
-}
-
-// Anonymous visitors never have a Next Up hero (it's inherently personal),
-// which leaves a gap at the top of the page - fill it with a Trending Shows
-// hero in the same visual treatment instead. Fetched server-side (not via
-// the client-side loadSection() below, like the rest of Trending Shows)
-// so it can render immediately as a real hero, not pop in after a fetch.
-let trendingShowsForHero: MediaItem[] = [];
-if (!token) {
-  try {
-    const data = await api.media.trendingShows(1);
-    trendingShowsForHero = data.results ?? [];
-  } catch {}
-}
-
-const FALLBACK_BACKDROPS: string[] = [
-  "https://image.tmdb.org/t/p/original/n4nGpp7VQJWJzZSKanpFkcxhsE4.jpg",
-  "https://image.tmdb.org/t/p/original/cPaAXKa3QCgyfk5j848cVSrVs9p.jpg",
-  "https://image.tmdb.org/t/p/original/5dQGAaAcX7MLtl1KcqXMjkBgTtg.jpg",
-  "https://image.tmdb.org/t/p/original/rJFqKcmMSttdNP58l0dVzY2NcTA.jpg",
-  "https://image.tmdb.org/t/p/original/r0Q6eeN9L1ORL9QsV0Sg8ZV3vnv.jpg",
-  "https://image.tmdb.org/t/p/original/vZePKXaSO3537aJTxifE3Rrwobb.jpg",
-  "https://image.tmdb.org/t/p/original/kfUWupX3phYp7AleZA2U1dmVcjX.jpg",
-  "https://image.tmdb.org/t/p/original/ejdD20cdHNFAYAN2DlqPToXKyzx.jpg",
-  "https://image.tmdb.org/t/p/original/dqK9Hag1054tghRQSqLSfrkvQnA.jpg",
-  "https://image.tmdb.org/t/p/original/ctiw6FZK4N36LmkjSklWEbuvlq9.jpg",
-  "https://image.tmdb.org/t/p/original/5kD1o6exM1RbauVLJjtNzseiM1Q.jpg",
-  "https://image.tmdb.org/t/p/original/c6OLXfKAk5BKeR6broC8pYiCquX.jpg",
-];
-
-const backdropPool: MediaItem[] = [
-  ...recentMovies.results.filter(movie => !!movie.backdrop_path),
-  ...recentShows.results.filter(e => !!e.backdrop_path),
-];
-const discoverPick = backdropPool.length > 0
-  ? backdropPool[Math.floor(Math.random() * backdropPool.length)]
-  : null;
-const discoverBackdropUrl = discoverPick?.backdrop_path
-  ? tmdbImageUrl(discoverPick.backdrop_path, "w1280")
-  : FALLBACK_BACKDROPS[Math.floor(Math.random() * FALLBACK_BACKDROPS.length)];
 ---
 
 <Base title={m.home_page_title()}>
@@ -112,215 +40,12 @@ const discoverBackdropUrl = discoverPick?.backdrop_path
     </div>
   )}
 
-  {!token && trendingShowsForHero.length > 0 && (() => {
-    const hero = trendingShowsForHero[0];
-    const rest = trendingShowsForHero.slice(1, 13);
-    const heroHref = `/show/${hero.tmdb_id}`;
-    const heroBackdrop = tmdbImageUrl(hero.backdrop_path, "w1280");
-    return (
-      <section class="relative md:-mt-8 mb-16">
-        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-screen overflow-hidden pointer-events-none" style="height: 100%;">
-          {heroBackdrop ? (
-            <img
-              src={heroBackdrop}
-              alt={hero.title}
-              class="w-full h-full object-cover"
-              loading="eager"
-              decoding="async"
-            />
-          ) : (
-            <div class="w-full h-full bg-zinc-900"></div>
-          )}
-          <div class="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-zinc-950/20"></div>
-          <div class="absolute inset-0 bg-gradient-to-r from-zinc-950/70 via-transparent to-transparent"></div>
-        </div>
-
-        <div class="relative aspect-[16/9] sm:aspect-[21/8] md:aspect-[21/5] flex flex-col">
-          <div class="flex items-center justify-between pt-8 pb-0">
-            <h2 class="section-headline">{m.section_trending_shows()}</h2>
-            <a href="/trending/shows" class="text-sm font-bold uppercase tracking-widest text-zinc-400 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-              {m.common_see_all()}
-              <span class="group-hover/all:translate-x-1 transition-transform">→</span>
-            </a>
-          </div>
-
-          <div class="flex-1 flex items-end pb-6 sm:pb-8">
-            <a href={heroHref} class="block max-w-2xl group">
-              {hero.tmdb_rating != null && hero.tmdb_rating > 0 && (
-                <span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-3 py-1 rounded-full mb-3">
-                  <span class="text-sm leading-none">★</span> {formatRating(hero.tmdb_rating)}
-                </span>
-              )}
-              <h3 class="text-2xl sm:text-4xl font-black text-zinc-100 leading-tight mb-1 drop-shadow-lg group-hover:text-blue-200 transition-colors">
-                {hero.title}
-              </h3>
-              {hero.overview && (
-                <p class="text-sm sm:text-base text-zinc-300 font-medium line-clamp-2 max-w-lg drop-shadow">{hero.overview}</p>
-              )}
-            </a>
-          </div>
-        </div>
-
-        {rest.length > 0 && (
-          <div class="relative flex gap-3 overflow-x-auto pb-3 scrollbar-none pt-6 -mx-6 px-6 md:mx-0 md:px-0">
-            {rest.map((item) => <div class="flex-shrink-0 w-40"><MediaCard item={item} /></div>)}
-          </div>
-        )}
-      </section>
-    );
-  })()}
-
-  {nextUp.length > 0 && settings?.minimalist_next_up && (
-    <section class="mb-16">
-      <div class="flex items-center justify-between mb-8">
-        <h2 class="section-headline">{m.section_next_up()}</h2>
-        <a href="/next-up" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-          {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
-        </a>
-      </div>
-      <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
-        {nextUp.map((item) => (
-          <div class="flex-shrink-0 w-56"><EpisodeCard item={item} /></div>
-        ))}
-      </div>
-    </section>
+  {token && (
+    <div id="home-pending">
+      <HomeSectionsSkeleton />
+    </div>
   )}
-
-  {nextUp.length > 0 && !settings?.minimalist_next_up && (() => {
-    const hero = nextUp[0];
-    const rest = nextUp.slice(1);
-    const heroHref = episodeHref(hero) ?? `/media/${hero.type}/${hero.tmdb_id}`;
-    const episodeLabel = hero.season_number != null && hero.episode_number != null
-      ? m.home_episode_label({ season: hero.season_number, episode: hero.episode_number })
-      : null;
-    const rawBackdrop = hero.backdrop_path || hero.show_backdrop_path;
-    const heroBackdrop = tmdbImageUrl(rawBackdrop, "w1280");
-    return (
-      <section class="relative md:-mt-8 mb-16">
-        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-screen overflow-hidden pointer-events-none" style="height: 100%;">
-          {heroBackdrop ? (
-            <img
-              src={heroBackdrop}
-              alt={hero.title}
-              class="w-full h-full object-cover"
-              loading="eager"
-              decoding="async"
-            />
-          ) : (
-            <div class="w-full h-full bg-zinc-900"></div>
-          )}
-          <div class="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-zinc-950/20"></div>
-          <div class="absolute inset-0 bg-gradient-to-r from-zinc-950/70 via-transparent to-transparent"></div>
-        </div>
-
-        <div class="relative aspect-[16/9] sm:aspect-[21/8] md:aspect-[21/5] flex flex-col">
-          <div class="flex items-center justify-between pt-8 pb-0">
-            <h2 class="section-headline">{m.section_next_up()}</h2>
-            <a href="/next-up" class="text-sm font-bold uppercase tracking-widest text-white hover:text-blue-400 transition-all flex items-center gap-2 group/all bg-black/50 backdrop-blur-sm border border-white/10 rounded-full px-3 py-1.5 shadow-lg">
-              {m.common_see_all()}
-              <span class="group-hover/all:translate-x-1 transition-transform">→</span>
-            </a>
-          </div>
-
-          <div class="flex-1 flex items-end pb-6 sm:pb-8">
-            <a href={heroHref} class="block max-w-2xl group">
-              {episodeLabel && (
-                <span class="inline-block text-xs font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full mb-3">
-                  {episodeLabel}
-                </span>
-              )}
-              <h3 class="text-2xl sm:text-4xl font-black text-zinc-100 leading-tight mb-1 drop-shadow-lg group-hover:text-blue-200 transition-colors">
-                {hero.show_title ?? hero.title}
-              </h3>
-              {hero.show_title && (
-                <p class="text-sm sm:text-base text-zinc-300 font-medium truncate">{hero.title}</p>
-              )}
-              {formatEpisodesLeft(hero.episodes_left, hero.remaining_runtime) && (
-                <p class="text-xs sm:text-sm text-zinc-400 font-medium mt-1.5 drop-shadow">
-                  {formatEpisodesLeft(hero.episodes_left, hero.remaining_runtime)}
-                </p>
-              )}
-            </a>
-          </div>
-        </div>
-
-        {rest.length > 0 && (
-          <div class="relative flex gap-3 overflow-x-auto pb-3 scrollbar-none pt-6 -mx-6 px-6 md:mx-0 md:px-0">
-            {rest.map((item) => <div class="flex-shrink-0 w-40"><MediaCard item={item} /></div>)}
-          </div>
-        )}
-      </section>
-    );
-  })()}
-
-  {continueWatching.length > 0 && (
-    <section id="continue-watching-section" class="mb-16">
-      <div class="flex items-center justify-between mb-8">
-        <h2 class="section-headline">{m.section_continue_watching()}</h2>
-        <a href="/continue-watching" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-          {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
-        </a>
-      </div>
-      <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
-        {continueWatching.slice(0, 12).map((item) => (
-          <div class="flex-shrink-0 w-40"><ContinueWatchingCard item={item} /></div>
-        ))}
-      </div>
-    </section>
-  )}
-
-  {recentMovies.results?.length > 0 && (
-    <section class="mb-16">
-      <div class="flex items-center justify-between mb-8">
-        <h2 class="section-headline">{m.section_recently_added_movies()}</h2>
-        <a href="/collection/movies?sort=created_at" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-          {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
-        </a>
-      </div>
-      <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
-        {recentMovies.results.map((item) => (
-          <div class="flex-shrink-0 w-40"><MediaCard item={item} /></div>
-        ))}
-      </div>
-    </section>
-  )}
-
-  {recentShows.results?.length > 0 && (
-    <section class="mb-16">
-      <div class="flex items-center justify-between mb-8">
-        <h2 class="section-headline">{m.section_recently_added_episodes()}</h2>
-        <a href="/collection/shows?sort=created_at" class="text-sm font-bold uppercase tracking-widest text-zinc-500 hover:text-blue-400 transition-all flex items-center gap-2 group/all">
-          {m.common_see_all()} <span class="group-hover/all:translate-x-1 transition-transform">→</span>
-        </a>
-      </div>
-      <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none -mx-6 px-6 md:mx-0 md:px-0">
-        {recentShows.results.map((item) => (
-          <div class="flex-shrink-0 w-56"><EpisodeCard item={item} /></div>
-        ))}
-      </div>
-    </section>
-  )}
-
-  {hasTmdbKey && (
-    <section class="relative mb-16 rounded-3xl overflow-hidden h-48 sm:h-56 flex items-center">
-      <img src={discoverBackdropUrl} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy" decoding="async" />
-      <div class="absolute inset-0 bg-gradient-to-r from-zinc-950/90 via-zinc-950/60 to-zinc-950/20"></div>
-      <div class="absolute inset-0 bg-gradient-to-t from-zinc-950/60 via-transparent to-transparent"></div>
-      <div class="relative px-8 sm:px-12">
-        <p class="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-2">{m.home_discover_kicker()}</p>
-        <h2 class="text-2xl sm:text-3xl font-black text-zinc-100 mb-5 leading-tight" set:html={m.home_discover_headline()} />
-        <a
-          href="/discover"
-          class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-blue-900/40 active:scale-95 text-sm uppercase tracking-wider"
-        >
-          {m.nav_discover()}
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
-            <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-          </svg>
-        </a>
-      </div>
-    </section>
-  )}
+  <HomeSections hasTmdbKey={hasTmdbKey} />
 
   {hasTmdbKey && (
     <>

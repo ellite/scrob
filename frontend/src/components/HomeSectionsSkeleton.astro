@@ -1,0 +1,18 @@
+---
+// Shown on the home page while the HomeSections server island loads: the shape of the Next Up
+// hero and one row of cards, in the same pulse style as the Trending rows below it.
+---
+<section class="relative md:-mt-8 mb-16" aria-hidden="true">
+  <div class="relative aspect-[16/9] sm:aspect-[21/8] md:aspect-[21/5] rounded-3xl bg-zinc-900 border border-zinc-800 animate-pulse"></div>
+  <div class="flex gap-3 overflow-x-auto pb-3 scrollbar-none pt-6 -mx-6 px-6 md:mx-0 md:px-0">
+    {Array.from({ length: 10 }).map(() => (
+      <div class="flex-shrink-0 w-40 animate-pulse rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800">
+        <div class="aspect-[2/3] bg-zinc-800"></div>
+        <div class="p-3 space-y-2">
+          <div class="h-3 bg-zinc-800 rounded w-3/4"></div>
+          <div class="h-2 bg-zinc-800 rounded w-1/4"></div>
+        </div>
+      </div>
+    ))}
+  </div>
+</section>
