@@ -39,6 +39,24 @@ export function genreLabel(name: string): string {
   return GENRES[name]?.() ?? name;
 }
 
+// Credit groups as shown on person pages (see backend core/credit_order.py).
+const DEPARTMENTS: Record<string, () => string> = {
+  "Actor": m.person_department_acting,
+  "Directing": m.person_department_directing,
+  "Story": m.person_department_writing,
+  "Camera": m.person_department_camera,
+  "Editing": m.person_department_editing,
+  "Music": m.person_department_music,
+  "Effects": m.person_department_visual_effects,
+  "Other": m.person_department_other,
+  "Thanks": m.person_department_thanks,
+  "Production": m.person_department_production,
+};
+
+export function departmentLabel(name: string): string {
+  return DEPARTMENTS[name]?.() ?? name;
+}
+
 const SHOW_STATUSES: Record<string, () => string> = {
   "Returning Series": m.show_status_returning,
   "In Production": m.show_status_in_production,

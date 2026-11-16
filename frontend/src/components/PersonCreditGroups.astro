@@ -1,0 +1,90 @@
+---
+import MediaCard from "./MediaCard.astro";
+import type { MediaItem, PersonCreditGroup } from "../lib/api";
+import { crewJobLabel, departmentLabel } from "../lib/labels";
+import { formatNumber } from "../lib/format";
+import { m } from "../paraglide/messages.js";
+
+interface Props {
+  groups: PersonCreditGroup[];
+  personId: number;
+  pageSize: number;
+}
+
+const { groups, personId, pageSize } = Astro.props;
+const KINDS: { kind: "movie" | "series"; label: () => string }[] = [
+  { kind: "movie", label: m.common_movies },
+  { kind: "series", label: m.common_shows },
+];
+---
+
+<div class="space-y-10" id="credit-groups" data-person-id={personId} data-page-size={pageSize}>
+  {KINDS.map(({ kind, label }) => {
+    const sections = groups.filter((g) => g.kind === kind);
+    return sections.length > 0 && (
+      <section class="space-y-6">
+        <h3 class="text-xl font-bold text-zinc-100">{label()}</h3>
+        {sections.map((group) => (
+          <div data-credit-group data-kind={group.kind} data-job={group.job} data-page="1" data-total={group.total_credits} class="space-y-4">
+            <h4 class="text-sm font-semibold text-zinc-300">
+              {departmentLabel(group.job)}
+              <span class="font-normal text-zinc-500"> ({formatNumber(group.total_credits)})</span>
+            </h4>
+            <div data-credit-grid class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {group.credits.map((item) => (
+                <div class="flex flex-col gap-1">
+                  <MediaCard item={item as unknown as MediaItem} />
+                  {item.jobs && item.jobs.length > 0 ? (
+                    <p class="text-xs text-zinc-500 truncate px-1">{[...new Set(item.jobs.map(crewJobLabel))].join(" · ")}</p>
+                  ) : item.character ? (
+                    <p class="text-xs text-zinc-500 truncate px-1">{m.person_as_character({ character: item.character })}</p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <p data-credit-error hidden role="alert" class="text-sm text-red-400">{m.common_failed_to_load()}</p>
+            {group.total_credits > pageSize && (
+              <button type="button" data-credit-more class="px-4 py-2 text-sm rounded-lg bg-zinc-800 text-zinc-400 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer hover:bg-zinc-700 transition-colors">
+                {m.person_load_more()}
+              </button>
+            )}
+          </div>
+        ))}
+      </section>
+    );
+  })}
+</div>
+
+<script>
+  // Each group pages on its own: a movie/show x job group asks the partial for the
+  // next page of just that group, keeping the active library/genre/year/rating filters.
+  const root = document.getElementById("credit-groups");
+  root?.querySelectorAll<HTMLElement>("[data-credit-group]").forEach((group) => {
+    const button = group.querySelector<HTMLButtonElement>("[data-credit-more]");
+    const error = group.querySelector<HTMLElement>("[data-credit-error]");
+    button?.addEventListener("click", async () => {
+      if (button.disabled || !root) return;
+      button.disabled = true;
+      if (error) error.hidden = true;
+      try {
+        const page = Number(group.dataset.page) + 1;
+        const params = new URLSearchParams(window.location.search);
+        params.set("person_id", root.dataset.personId!);
+        params.set("page", String(page));
+        params.set("credit_kind", group.dataset.kind!);
+        params.set("credit_job", group.dataset.job!);
+        const res = await fetch("/partials/person-credits?" + params.toString());
+        if (!res.ok) throw new Error("request failed");
+        const wrapper = new DOMParser().parseFromString(await res.text(), "text/html").querySelector("[data-total-credits]");
+        if (!wrapper) throw new Error("missing credits");
+        group.querySelector("[data-credit-grid]")?.append(...Array.from(wrapper.children));
+        group.dataset.page = String(page);
+        if (page * Number(root.dataset.pageSize) >= Number(wrapper.getAttribute("data-total-credits"))) button.hidden = true;
+      } catch {
+        if (error) error.hidden = false;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+</script>

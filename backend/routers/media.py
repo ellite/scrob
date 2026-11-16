@@ -5,7 +5,7 @@ import math
 import re
 import urllib.parse
 import uuid
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field
@@ -39,6 +39,8 @@ from core.episode_order import (
 from models.profile import UserProfileData
 from core import tmdb
 from core.identity import find_media
+from core.credit_order import CREDIT_ORDER
+from core.person_credits import format_person_credits, group_person_credits
 from core.watch_stats import get_watch_stats
 from core.limiter import limiter
 from core.networks import search_curated_networks
@@ -1985,6 +1987,8 @@ async def recently_added(
 
 
 _PERSON_PAGE_SIZE = 20
+# Grouped requests page each movie/show x group on its own, so their first page is smaller.
+_PERSON_GROUP_PAGE_SIZE = 12
 
 @router.get("/person/{person_id}")
 async def get_person_details(
@@ -1994,6 +1998,9 @@ async def get_person_details(
     genre: list[str] = Query(default=[]),  # OR'd together — any selected genre matches
     year: list[int] = Query(default=[]),  # OR'd together — any selected year matches
     min_rating: str | None = Query(None),  # "9".."5" (N+ stars) or "lt5" (under 5 stars)
+    grouped: bool = Query(False),  # also return `credit_groups` (kind x department, first page each)
+    credit_kind: Literal["movie", "series"] | None = Query(None),
+    credit_job: str | None = Query(None, max_length=100),  # credit group, e.g. "Directing"
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
@@ -2007,62 +2014,7 @@ async def get_person_details(
             raise HTTPException(status_code=404, detail="TMDB API Key not configured")
         data = await tmdb.get_person(person_id, api_key=tmdb_key)
         credits = data.get("combined_credits", {})
-        formatted_credits = []
-        for c in credits.get("cast", []):
-            m_type = "movie" if c.get("media_type") == "movie" else "series"
-            popularity = c.get("popularity", 0)
-            if c.get("media_type") == "tv":
-                episode_count = c.get("episode_count") or 0
-                role_weight = min(episode_count, 20) / 20.0
-            else:
-                order = c.get("order") or 0
-                role_weight = max(0.05, 1.0 - order * 0.05)
-            formatted_credits.append({
-                "tmdb_id": c.get("id"),
-                "type": m_type,
-                "title": c.get("title") or c.get("name"),
-                "poster_path": tmdb.poster_url(c.get("poster_path")),
-                "release_date": c.get("release_date") or c.get("first_air_date"),
-                "character": c.get("character"),
-                "popularity": popularity,
-                "adult": c.get("adult", False),
-                "genre_ids": c.get("genre_ids", []),
-                "vote_average": c.get("vote_average") or 0,
-                "_score": popularity * max(role_weight, 0.05),
-            })
-        _crew_dept_weight = {"Directing": 1.0, "Writing": 0.9, "Production": 0.7, "Creator": 1.0}
-        for c in credits.get("crew", []):
-            m_type = "movie" if c.get("media_type") == "movie" else "series"
-            popularity = c.get("popularity", 0)
-            role_weight = _crew_dept_weight.get(c.get("department", ""), 0.5)
-            formatted_credits.append({
-                "tmdb_id": c.get("id"),
-                "type": m_type,
-                "title": c.get("title") or c.get("name"),
-                "poster_path": tmdb.poster_url(c.get("poster_path")),
-                "release_date": c.get("release_date") or c.get("first_air_date"),
-                "character": c.get("job"),
-                "popularity": popularity,
-                "adult": c.get("adult", False),
-                "genre_ids": c.get("genre_ids", []),
-                "vote_average": c.get("vote_average") or 0,
-                "_score": popularity * role_weight,
-            })
-        # Deduplicate by tmdb_id — a person may appear in multiple episodes of the
-        # same show; keep the entry with the highest score.
-        seen: dict[int, int] = {}  # tmdb_id -> index in formatted_credits
-        deduped: list[dict] = []
-        for credit in formatted_credits:
-            tid = credit["tmdb_id"]
-            if tid in seen:
-                if credit["_score"] > deduped[seen[tid]]["_score"]:
-                    deduped[seen[tid]] = credit
-            else:
-                seen[tid] = len(deduped)
-                deduped.append(credit)
-        deduped.sort(key=lambda x: x["_score"], reverse=True)
-        for credit in deduped:
-            del credit["_score"]
+        deduped = format_person_credits(credits, tmdb.poster_url)
 
         # Cheap in-memory filters first (no DB work) to shrink the list before
         # the collection cross-reference below, which does need a DB round-trip.
@@ -2100,11 +2052,27 @@ async def get_person_details(
             wants_in_library = collection == "in"
             deduped = [c for c in deduped if bool(c.get("in_library")) == wants_in_library]
 
+        # Group the full filtered filmography before any page is sliced, so group
+        # totals and the job list are not limited to the current page.
+        all_groups = group_person_credits(deduped)
+        available_jobs = sorted({g["job"] for g in all_groups}, key=CREDIT_ORDER.index)
+        for credit in deduped:
+            credit.pop("roles", None)
+        if credit_kind or credit_job:
+            all_groups = [g for g in all_groups
+                          if (not credit_kind or g["kind"] == credit_kind)
+                          and (not credit_job or g["job"] == credit_job)]
+            # Flat list = the titles of the selected groups, each labelled for its group.
+            deduped = list({(item["type"], item["tmdb_id"]): item
+                            for g in all_groups for item in g["credits"]}.values())
         total_credits = len(deduped)
-        start = (page - 1) * _PERSON_PAGE_SIZE
-        top_credits = deduped[start:start + _PERSON_PAGE_SIZE]
+        page_size = _PERSON_GROUP_PAGE_SIZE if (grouped or credit_kind or credit_job) else _PERSON_PAGE_SIZE
+        start = (page - 1) * page_size
+        top_credits = deduped[start:start + page_size]
+        credit_groups = [{**g, "credits": g["credits"][:page_size]} for g in all_groups] if grouped else []
         if collection not in ("in", "out"):
-            await enrich_with_state(db, effective_user_id, top_credits)
+            await enrich_with_state(db, effective_user_id,
+                                    top_credits + [item for g in credit_groups for item in g["credits"]])
 
         # Which of the user's lists contain this person?
         user_list_ids_q = await db.execute(select(UserList.id).where(UserList.user_id == effective_user_id))
@@ -2131,9 +2099,11 @@ async def get_person_details(
             "place_of_birth": data.get("place_of_birth"),
             "known_for_department": data.get("known_for_department"),
             "credits": top_credits,
+            "credit_groups": credit_groups,
+            "available_jobs": available_jobs,
             "total_credits": total_credits,
             "page": page,
-            "page_size": _PERSON_PAGE_SIZE,
+            "page_size": page_size,
             "collection": collection,
             "in_lists": person_in_lists,
         }

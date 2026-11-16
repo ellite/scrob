@@ -237,10 +237,18 @@ export interface PersonCredit {
   poster_path: string | null;
   release_date: string | null;
   character: string | null;
+  jobs?: string[];
   watched?: boolean;
   in_lists?: number[];
   in_library?: boolean;
   collection_pct?: number;
+}
+
+export interface PersonCreditGroup {
+  kind: "movie" | "series";
+  job: string; // credit group, e.g. "Actor" or "Directing"
+  total_credits: number;
+  credits: PersonCredit[];
 }
 
 export interface PersonDetail {
@@ -252,6 +260,8 @@ export interface PersonDetail {
   birthday: string | null;
   place_of_birth: string | null;
   credits: PersonCredit[];
+  credit_groups?: PersonCreditGroup[];
+  available_jobs?: string[];
   total_credits: number;
   page: number;
   page_size: number;
@@ -1438,10 +1448,13 @@ export const api = {
       personId: number,
       page: number = 1,
       token?: string,
-      filters?: { collection?: "in" | "out" | ""; genre?: string[]; year?: number[]; minRating?: string },
+      filters?: { collection?: "in" | "out" | ""; genre?: string[]; year?: number[]; minRating?: string; grouped?: boolean; creditKind?: "movie" | "series"; creditJob?: string },
     ) =>
       get<PersonDetail>(`/media/person/${personId}`, {
         page,
+        grouped: filters?.grouped || undefined,
+        credit_kind: filters?.creditKind || undefined,
+        credit_job: filters?.creditJob || undefined,
         collection: filters?.collection || undefined,
         genre: filters?.genre?.length ? filters.genre : undefined,
         year: filters?.year?.length ? filters.year : undefined,
