@@ -533,6 +533,7 @@
   "filter_lists": "Listas",
   "filter_in_a_list": "Numa lista",
   "filter_not_in_a_list": "Fora de listas",
+  "filter_missing_episodes": "Com episódios em falta",
   "filter_status": "Estado",
   "explore_tmdb_required_body": [
     {

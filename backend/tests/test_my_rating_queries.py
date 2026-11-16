@@ -96,6 +96,7 @@ class MyRatingQueryTests(unittest.IsolatedAsyncioTestCase):
                 status=[],
                 watched=[],
                 my_rating=[9],
+                incomplete=False,
                 in_list=None,
                 db=db,
                 current_user=SimpleNamespace(id=42),
