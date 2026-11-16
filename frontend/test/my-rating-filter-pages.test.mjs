@@ -29,16 +29,26 @@ for (const page of ["collection/movies.astro", "collection/shows.astro"]) {
   });
 }
 
+test("history.astro filters by My Rating and keeps it across tabs, search, and pages (#316)", async () => {
+  const source = await pageSource("history.astro");
+  assert.match(source, /import \{ MY_RATING_OPTIONS, parseMyRating \} from "\.\.\/lib\/my-rating"/);
+  assert.match(source, /const myRating = parseMyRating\(Astro\.url\)/);
+  assert.match(source, /my_rating:\s*myRating/);
+  assert.match(source, /append\("my_rating", String\(rating\)\)/);
+  assert.match(source, /name="my_rating"/);
+  assert.match(source, /key:\s*"my_rating", label:\s*m\.filter_my_rating\(\)/);
+});
+
 test("the My Rating values and chips are defined once, in lib/my-rating.ts", async () => {
   const source = await readFile(path.join(frontendRoot, "src", "lib", "my-rating.ts"), "utf8");
   assert.match(source, /getAll\("my_rating"\).*Number\.isInteger\(n\) && n >= 1 && n <= 10/);
   assert.match(source, /export const MY_RATING_OPTIONS/);
-  for (const page of ["movies.astro", "shows.astro", "collection/movies.astro", "collection/shows.astro"]) {
+  for (const page of ["movies.astro", "shows.astro", "collection/movies.astro", "collection/shows.astro", "history.astro"]) {
     assert.doesNotMatch(await pageSource(page), /getAll\("my_rating"\)|const MY_RATING_OPTIONS/);
   }
 });
 
-test("the API client exposes My Rating to the movie, show, and explore requests", async () => {
+test("the API client exposes My Rating to the movie, show, explore, and history requests", async () => {
   const source = await readFile(path.join(frontendRoot, "src", "lib", "api.ts"), "utf8");
-  assert.equal((source.match(/my_rating\?: number\[\]/g) ?? []).length, 3);
+  assert.equal((source.match(/my_rating\?: number\[\]/g) ?? []).length, 4);
 });

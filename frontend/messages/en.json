@@ -847,6 +847,7 @@
   "history_no_results_for": "No results for \"{query}\"",
   "history_empty": "No history yet",
   "history_clear_search": "Clear search",
+  "history_no_filter_match": "No history matches the selected filters",
   "history_go_discover": "Go discover something",
   "history_select": "Select",
   "history_select_done": "Done",

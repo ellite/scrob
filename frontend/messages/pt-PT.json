@@ -847,6 +847,7 @@
   "history_no_results_for": "Sem resultados para «{query}»",
   "history_empty": "Ainda não há histórico",
   "history_clear_search": "Limpar pesquisa",
+  "history_no_filter_match": "Nenhum registo do histórico corresponde aos filtros selecionados",
   "history_go_discover": "Vá descobrir algo",
   "history_select": "Selecionar",
   "history_select_done": "Concluir",
