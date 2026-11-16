@@ -1882,6 +1882,7 @@
   "conn_select_profile": "Selecionar perfil",
   "conn_ratings": "Classificações",
   "conn_lists": "Listas",
+  "conn_mdblist_lists_hint": "As suas listas do MDBList, estáticas e dinâmicas, e as listas importadas do MDBList são mantidas como cópias só de leitura que seguem o MDBList: os itens adicionados ou removidos lá são adicionados ou removidos aqui, e a cópia de uma lista eliminada no MDBList é eliminada. Corre em cada importação e sincronização automática.",
   "conn_comments": "Comentários",
   "conn_trakt_community_comments": "Comentários da comunidade",
   "conn_trakt_community_comments_hint": "Mostra os comentários públicos do Trakt (não os seus) nas páginas de filmes, séries, temporadas e episódios.",

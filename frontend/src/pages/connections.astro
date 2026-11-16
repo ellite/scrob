@@ -1187,6 +1187,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           <input type="checkbox" name="mdblist_sync_dropped" id="mdblist_sync_dropped" checked={settings.mdblist_sync_dropped !== false} class="sync-pref-checkbox w-4 h-4 rounded accent-violet-500 cursor-pointer" />
                           <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{m.conn_dropped_shows()}</span>
                         </label>
+                        <label class="flex items-center gap-3 cursor-pointer group" title={m.conn_mdblist_lists_hint()}>
+                          <input type="checkbox" name="mdblist_sync_lists" id="mdblist_sync_lists" checked={!!settings.mdblist_sync_lists} class="sync-pref-checkbox w-4 h-4 rounded accent-violet-500 cursor-pointer" />
+                          <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{m.conn_lists()}</span>
+                        </label>
                         <button
                           type="button"
                           data-action="sync_mdblist"
@@ -3557,6 +3561,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const mdblistSyncKeys = [
               'mdblist_sync_watched', 'mdblist_sync_ratings', 'mdblist_sync_watchlist', 'mdblist_sync_dropped',
               'mdblist_push_watched', 'mdblist_push_ratings', 'mdblist_push_watchlist', 'mdblist_push_collection', 'mdblist_push_dropped', 'mdblist_scrobble',
+              'mdblist_sync_lists',
             ];
             for (const key of mdblistSyncKeys) {
               const el = document.getElementById(key) as HTMLInputElement | null;
@@ -3984,6 +3989,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               mdblist_sync_ratings: m.conn_item_ratings(),
               mdblist_sync_watchlist: m.conn_item_watchlist(),
               mdblist_sync_dropped: m.conn_item_dropped_shows(),
+              mdblist_sync_lists: m.conn_item_lists(),
             };
             const selected = Array.from(document.querySelectorAll<HTMLInputElement>('.sync-pref-checkbox'))
               .filter(el => el.checked && labels[el.name])

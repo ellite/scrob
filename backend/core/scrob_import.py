@@ -56,7 +56,7 @@ _CONNECTIONS_SETTINGS_FIELDS = (
     "simkl_sync_watched", "simkl_sync_ratings", "simkl_sync_lists", "simkl_sync_dropped",
     "simkl_push_watched", "simkl_push_ratings", "simkl_push_dropped", "simkl_scrobble",
     "mdblist_api_key", "mdblist_sync_watched", "mdblist_sync_ratings", "mdblist_sync_watchlist",
-    "mdblist_push_watched", "mdblist_push_ratings", "mdblist_push_watchlist", "mdblist_push_collection", "mdblist_scrobble",
+    "mdblist_push_watched", "mdblist_push_ratings", "mdblist_push_watchlist", "mdblist_sync_lists", "mdblist_push_collection", "mdblist_scrobble",
 )
 
 _HISTORY_RE = re.compile(r"^watched-history-\d+\.json$")

@@ -257,6 +257,14 @@ async def get_list(api_key: str, list_ref: str) -> dict[str, Any]:
     return metadata
 
 
+async def get_my_lists(api_key: str) -> list[dict[str, Any]]:
+    """The API key owner's own lists (id, name, dynamic, ...)."""
+    data = await _request_json("GET", "/lists/user", api_key)
+    if not isinstance(data, list):
+        raise MDBListAPIError("MDBList GET /lists/user returned an invalid response")
+    return [entry for entry in data if isinstance(entry, dict)]
+
+
 async def get_list_items(
     api_key: str,
     list_ref: str,

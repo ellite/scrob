@@ -14,7 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import mdblist as mdblist_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
-from core.native_watchlist import split_key, sync_service_watchlist, watchlist_lock
+from core.native_watchlist import (
+    add_media_to_watchlist, load_watchlist_keys, split_key, sync_service_watchlist, watchlist_lock,
+)
 from core.watchlist_reconcile import media_key
 from core.rewatch import record_rewatch_progress
 from core.watch_dedup import get_dedup_window_minutes
@@ -23,6 +25,7 @@ from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
 from models.collection import Collection
 from models.events import WatchEvent
+from models.lists import List as ListModel, ListItem
 from models.media import Media
 from models.ratings import Rating, RatingChanges
 from models.show import Show
@@ -617,6 +620,39 @@ def _not_found_keys(result: dict[str, Any], keys: list[str]) -> set[str]:
     return failed & set(keys)
 
 
+async def _remote_resolvers(
+    db: AsyncSession,
+    payload: dict[str, Any],
+    api_key: str | None,
+    external_cache: dict[tuple[str, str], int | None],
+    stats: dict[str, int],
+    *,
+    bare_id_is_tmdb: bool = False,
+) -> dict[str, Any]:
+    """Typed key -> lazy Media resolver for a fetched movies/shows payload.
+
+    List items (bare_id_is_tmdb) carry the TMDB id as a bare "id", the way
+    Kometa reads them too; sync endpoints nest it under "ids"."""
+    remote: dict[str, Any] = {}
+    for kind, media_type, key_kind in (("movies", "movie", "movie"), ("shows", "tv", "show")):
+        for entry in payload.get(kind, []):
+            data = _entry_data(kind, entry)
+            tmdb_id = _integer(data.get("id")) if bare_id_is_tmdb and _tmdb_id(data) is None else None
+            if not tmdb_id:
+                tmdb_id = await _resolve_external_tmdb_id(data, media_type, api_key, external_cache)
+            if not tmdb_id:
+                stats["skipped"] += 1
+                continue
+            title = str(data.get("title") or data.get("name") or "")
+            getter = _get_or_create_movie_media if kind == "movies" else _get_or_create_series_media
+
+            async def _resolve(getter=getter, tmdb_id=tmdb_id, title=title):
+                return await getter(db, tmdb_id, title, api_key)
+
+            remote[media_key(key_kind, tmdb_id)] = _resolve
+    return remote
+
+
 async def _sync_watchlist(
     db: AsyncSession,
     user_id: int,
@@ -631,21 +667,7 @@ async def _sync_watchlist(
 ) -> None:
     """Reconcile the MDBList watchlist (`payload`, fetched in full) with the
     native Scrob watchlist and store the new baseline on settings."""
-    remote = {}
-    for kind, media_type, key_kind in (("movies", "movie", "movie"), ("shows", "tv", "show")):
-        for entry in payload.get(kind, []):
-            data = _entry_data(kind, entry)
-            tmdb_id = await _resolve_external_tmdb_id(data, media_type, api_key, external_cache)
-            if not tmdb_id:
-                stats["skipped"] += 1
-                continue
-            title = str(data.get("title") or data.get("name") or "")
-            getter = _get_or_create_movie_media if kind == "movies" else _get_or_create_series_media
-
-            async def _resolve(getter=getter, tmdb_id=tmdb_id, title=title):
-                return await getter(db, tmdb_id, title, api_key)
-
-            remote[media_key(key_kind, tmdb_id)] = _resolve
+    remote = await _remote_resolvers(db, payload, api_key, external_cache, stats)
 
     async def _push_add(keys: list[str], _local) -> set[str]:
         try:
@@ -682,6 +704,190 @@ async def _sync_watchlist(
     stats["watchlist_removed"] += result.removed
     stats["watchlist_pushed"] = stats.get("watchlist_pushed", 0) + result.pushed_added
     stats["watchlist_unpushed"] = stats.get("watchlist_unpushed", 0) + result.pushed_removed
+
+
+# Mirrored MDBList lists (_sync_lists). A fetch longer than the import cap is
+# skipped rather than mirrored: get_list_items stops at the cap, and a
+# truncated fetch would read as removals.
+def _list_sync_max_items() -> int:
+    from routers.lists import _import_max_items
+    return _import_max_items()
+
+
+# Same circuit breaker as core/watchlist_reconcile.py: a fetch that comes back
+# empty, or (for a list that isn't dynamic) without most of what it held last
+# time, looks exactly like a broken fetch, so the list is left alone.
+LIST_SUPPRESS_MIN_ITEMS = 10
+LIST_SUPPRESS_MAX_FRACTION = 0.5
+
+
+def _list_ref(slug: str) -> str:
+    """mdblist_slug "list:<id>" (or "list:<user>/<slug>" for an import of a
+    list MDBList returned no id for) -> the ref the MDBList API takes."""
+    return slug.removeprefix("list:")
+
+
+def _mirror_suppressed_reason(lst: ListModel, remote_keys: set[str]) -> str | None:
+    previous = set(lst.mdblist_synced_keys or [])
+    if len(previous) < LIST_SUPPRESS_MIN_ITEMS:
+        return None
+    if not remote_keys:
+        return f"MDBList returned no items, {len(previous)} last time"
+    gone = previous - remote_keys
+    if lst.mdblist_static is not False and len(gone) > LIST_SUPPRESS_MAX_FRACTION * len(previous):
+        return f"MDBList dropped {len(gone)} of {len(previous)} items since last time"
+    return None
+
+
+async def _mirror_list(
+    db: AsyncSession,
+    lst: ListModel,
+    remote: dict[str, Any],
+    label: str,
+    stats: dict[str, int],
+) -> None:
+    """Make the Scrob list's whole movies and shows exactly the MDBList
+    list's. Season entries are left alone; MDBList lists don't hold them.
+    Flushes; the caller commits."""
+    local = await load_watchlist_keys(db, lst.id)
+    remote_keys = set(remote)
+    reason = _mirror_suppressed_reason(lst, remote_keys)
+    if reason:
+        logger.warning(
+            "Not mirroring %s: %s. Leaving the Scrob copy as it is until a fetch looks complete.",
+            label, reason,
+        )
+        stats["lists_suppressed"] = stats.get("lists_suppressed", 0) + 1
+        return
+
+    for key in sorted(remote_keys - set(local)):
+        try:
+            # A savepoint per item, so one failure doesn't abort the shared
+            # transaction. A failed add is retried by the next sync.
+            async with db.begin_nested():
+                media = await remote[key]()
+                if media is None:
+                    stats["skipped"] += 1
+                    continue
+                await add_media_to_watchlist(db, lst.id, media.id)
+            stats["list_items_added"] = stats.get("list_items_added", 0) + 1
+        except Exception as exc:
+            logger.warning("Failed to add %s to %s: %s", key, label, exc)
+            stats["errors"] += 1
+
+    remove_ids = [media_id for key, (media_id, _title) in local.items() if key not in remote_keys]
+    if remove_ids:
+        await db.execute(
+            delete(ListItem).where(
+                ListItem.list_id == lst.id,
+                ListItem.media_id.in_(remove_ids),
+                ListItem.season_number.is_(None),
+            )
+        )
+        stats["list_items_removed"] = stats.get("list_items_removed", 0) + len(remove_ids)
+
+    lst.mdblist_synced_keys = sorted(remote_keys)
+    await db.flush()
+
+
+async def _sync_lists(
+    db: AsyncSession,
+    user_id: int,
+    settings: UserSettings,
+    api_key: str | None,
+    external_cache: dict[tuple[str, str], int | None],
+    stats: dict[str, int],
+) -> None:
+    """Mirror MDBList lists into Scrob. MDBList is the source of truth and
+    each Scrob list is a local copy of one MDBList list:
+
+    - Every list the API key owns, static or dynamic, gets a Scrob list,
+      keyed by mdblist_slug "list:<id>" like a manual import, so a list
+      imported earlier is reused rather than duplicated.
+    - Every other list imported from MDBList (someone else's public list) is
+      refreshed too.
+    - Each sync makes the copy's movies and shows exactly the MDBList list's,
+      and renames an owned copy to match. Edits to a copy in Scrob are
+      refused while the sync is on (routers/lists.py), since the next sync
+      would undo them.
+    - A Scrob copy of an owned list that is gone from MDBList is deleted. A
+      copy of someone else's list stays when it can't be fetched, since that
+      can't tell a deleted list from a private one or an outage."""
+    mdblist_key = settings.mdblist_api_key
+    remote_lists = await mdblist_client.get_my_lists(mdblist_key)
+
+    owned: dict[str, tuple[str, bool]] = {}
+    for remote_list in remote_lists:
+        list_id = _integer(remote_list.get("id"))
+        name = str(remote_list.get("name") or "").strip()
+        if list_id is not None and name:
+            owned[f"list:{list_id}"] = (name, not remote_list.get("dynamic"))
+
+    async with watchlist_lock(user_id):
+        rows = await db.execute(
+            select(ListModel).where(
+                ListModel.user_id == user_id,
+                ListModel.mdblist_slug.like("list:%"),
+            )
+        )
+        local_lists = {lst.mdblist_slug: lst for lst in rows.scalars()}
+
+        for slug, (name, static) in owned.items():
+            lst = local_lists.get(slug)
+            if lst is None:
+                lst = ListModel(user_id=user_id, name=name[:255], mdblist_slug=slug)
+                db.add(lst)
+                await db.flush()
+                local_lists[slug] = lst
+                stats["lists"] += 1
+            lst.name = name[:255]
+            lst.mdblist_owned = True
+            lst.mdblist_static = static
+        await db.commit()
+
+        targets: list[ListModel] = []
+        for slug, lst in list(local_lists.items()):
+            if slug in owned:
+                targets.append(lst)
+            elif lst.mdblist_owned:
+                if not owned:
+                    # An empty answer while copies of owned lists exist is
+                    # more likely a bad response than every list deleted.
+                    logger.warning(
+                        "MDBList returned no lists for user %s; keeping %s", user_id, lst.name,
+                    )
+                    continue
+                logger.info("MDBList list %s (%s) is gone; deleting its Scrob copy", slug, lst.name)
+                await db.delete(lst)
+                stats["lists_deleted"] = stats.get("lists_deleted", 0) + 1
+            else:
+                targets.append(lst)
+        await db.commit()
+
+    max_items = _list_sync_max_items()
+    for lst in targets:
+        label = f"MDBList list {_list_ref(lst.mdblist_slug)} ({lst.name})"
+        try:
+            items = await mdblist_client.get_list_items(
+                mdblist_key, _list_ref(lst.mdblist_slug), max_items=max_items + 1
+            )
+        except Exception as exc:
+            logger.warning("Could not fetch %s for user %s: %s", label, user_id, exc)
+            stats["errors"] += 1
+            continue
+        if len(items.get("movies", [])) + len(items.get("shows", [])) > max_items:
+            logger.warning(
+                "Skipping %s for user %s: more than %d items (LIST_IMPORT_MAX_ITEMS)",
+                label, user_id, max_items,
+            )
+            stats["lists_skipped"] = stats.get("lists_skipped", 0) + 1
+            continue
+        remote = await _remote_resolvers(
+            db, items, api_key, external_cache, stats, bare_id_is_tmdb=True
+        )
+        async with watchlist_lock(user_id):
+            await _mirror_list(db, lst, remote, label, stats)
+            await db.commit()
 
 
 async def run_mdblist_sync(user_id: int, job_id: int) -> None:
@@ -766,6 +972,13 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
                     db, user_id, snapshots["dropped"].get("shows", [])
                 )
             await db.commit()
+            if settings.mdblist_sync_lists:
+                await _raise_if_cancelled(db, job_id)
+                await db.execute(
+                    update(SyncJob).where(SyncJob.id == job_id).values(current_step="Syncing MDBList lists")
+                )
+                await db.commit()
+                await _sync_lists(db, user_id, settings, tmdb_key, external_cache, stats)
 
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
@@ -1097,7 +1310,8 @@ async def sync_mdblist(
 ):
     result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = _require_key(result.scalar_one_or_none())
-    if not any((settings.mdblist_sync_watched, settings.mdblist_sync_ratings, settings.mdblist_sync_watchlist, settings.mdblist_sync_dropped)):
+    if not any((settings.mdblist_sync_watched, settings.mdblist_sync_ratings, settings.mdblist_sync_watchlist,
+                settings.mdblist_sync_dropped, settings.mdblist_sync_lists)):
         raise HTTPException(status_code=400, detail="Enable at least one MDBList pull option")
 
     job = SyncJob(user_id=current_user.id, source=CollectionSource.mdblist, status=SyncStatus.pending)
@@ -1144,6 +1358,17 @@ async def mdblist_disconnect(
 
     if settings:
         settings.mdblist_api_key = None
+        # Unlink mirrored lists: they stay as ordinary, editable Scrob lists,
+        # and a later connection (maybe another MDBList account) neither
+        # deletes them as gone nor trusts their old snapshot.
+        await db.execute(
+            update(ListModel)
+            .where(
+                ListModel.user_id == current_user.id,
+                (ListModel.mdblist_synced_keys.is_not(None)) | (ListModel.mdblist_owned.is_(True)),
+            )
+            .values(mdblist_synced_keys=None, mdblist_static=None, mdblist_owned=None)
+        )
         await db.commit()
 
     return {"status": "disconnected"}

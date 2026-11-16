@@ -1882,6 +1882,7 @@
   "conn_select_profile": "Select Profile",
   "conn_ratings": "Ratings",
   "conn_lists": "Lists",
+  "conn_mdblist_lists_hint": "Your MDBList lists, static and dynamic, and lists you imported from MDBList are kept as read-only copies that follow MDBList: items added or removed there are added or removed here, and a copy of a list you delete on MDBList is deleted. Runs on every pull and auto sync.",
   "conn_comments": "Comments",
   "conn_trakt_community_comments": "Community Comments",
   "conn_trakt_community_comments_hint": "Show Trakt's public comments (not your own) on movie, show, season, and episode pages.",
