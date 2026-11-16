@@ -19,6 +19,47 @@ TVDB_IMAGE_BASE = "https://artworks.thetvdb.com"
 
 DEFAULT_CACHE_TTL = 1800  # 30 minutes - same rationale as core/tmdb.py's response cache
 
+_HTTP_TIMEOUT = 30.0
+
+# Errors from a kept-alive connection that went stale (reset by TVDB's edge or
+# a NAT/proxy in between): _request retries once, which opens a fresh one.
+_STALE_CONNECTION = (httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError)
+
+# One pooled http2 client for the whole process, opened and closed by
+# main.lifespan; same setup and rationale as core/tmdb.py.
+_client: httpx.AsyncClient | None = None
+
+
+def init_client() -> None:
+    global _client
+    _client = httpx.AsyncClient(
+        http2=True,
+        timeout=httpx.Timeout(_HTTP_TIMEOUT),
+        limits=httpx.Limits(max_connections=None, keepalive_expiry=120.0),
+    )
+
+
+async def close_client() -> None:
+    global _client
+    # Cleared first: a call racing shutdown falls back instead of using a closed client.
+    client, _client = _client, None
+    if client is not None:
+        await client.aclose()
+
+
+async def _request(method: str, url: str, **kwargs) -> httpx.Response:
+    """Send one request on the shared client, or on a client per call outside
+    the app lifespan (unit tests, scripts)."""
+    client = _client
+    if client is None:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(_HTTP_TIMEOUT)) as fresh:
+            return await fresh.request(method, url, **kwargs)
+    try:
+        return await client.request(method, url, **kwargs)
+    except _STALE_CONNECTION:
+        return await client.request(method, url, **kwargs)
+
+
 # In-memory token cache keyed by (api_key, pin) - a PIN change must force a
 # fresh /login rather than reusing a token minted for the old credential.
 _token_cache: dict[tuple[str, str | None], tuple[str, float]] = {}
@@ -141,14 +182,14 @@ async def _get_token(api_key: str, pin: str | None = None) -> str:
         body = {"apikey": api_key}
         if pin:
             body["pin"] = pin
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            r = await client.post(
-                f"{TVDB_BASE}/login",
-                json=body,
-                headers={"Content-Type": "application/json", "Accept": "application/json"},
-            )
-            r.raise_for_status()
-            data = r.json()
+        r = await _request(
+            "POST",
+            f"{TVDB_BASE}/login",
+            json=body,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        r.raise_for_status()
+        data = r.json()
 
         token = data["data"]["token"]
         # TVDB tokens last 30 days; cache for 29 days
@@ -176,17 +217,17 @@ async def _get(
             return cached
 
     token = await _get_token(api_key)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        r = await client.get(
-            f"{TVDB_BASE}{path}",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            params=params or {},
-        )
-        r.raise_for_status()
-        data = r.json()
-        if cache_key is not None:
-            _cache.set(cache_key, data, cache_ttl)
-        return data
+    r = await _request(
+        "GET",
+        f"{TVDB_BASE}{path}",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        params=params or {},
+    )
+    r.raise_for_status()
+    data = r.json()
+    if cache_key is not None:
+        _cache.set(cache_key, data, cache_ttl)
+    return data
 
 
 async def validate_api_key(api_key: str, pin: str | None = None) -> bool:
