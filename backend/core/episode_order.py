@@ -331,9 +331,14 @@ async def _order_positions_from_tmdb_group(
 async def _order_positions_from_tvdb_type(
     db: AsyncSession, series_tmdb_id: int, order_key: str, show_tvdb_id: int,
     tmdb_api_key: str, tvdb_api_key: str, cache_ttl: float | None,
+    *, force: bool = False,
+    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> list[ShowEpisodePosition]:
     # Every tvdb:* order needs the tvdb-episode-id <-> canonical bridge.
-    await ensure_episode_order_mapping(db, series_tmdb_id, tmdb_api_key, tvdb_api_key)
+    await ensure_episode_order_mapping(
+        db, series_tmdb_id, tmdb_api_key, tvdb_api_key,
+        force=force, on_progress=on_progress,
+    )
     bridge = {
         m.tvdb_id: m
         for m in (await db.execute(
@@ -455,7 +460,8 @@ async def build_order_positions(
                 with db.no_autoflush:
                     await link_show_ids(db, show, tvdb_id=show_tvdb_id)
         rows = await _order_positions_from_tvdb_type(
-            db, series_tmdb_id, key, show_tvdb_id, tmdb_api_key, tvdb_api_key, cache_ttl
+            db, series_tmdb_id, key, show_tvdb_id, tmdb_api_key, tvdb_api_key, cache_ttl,
+            force=force, on_progress=on_progress,
         )
     else:
         raise ValueError(f"Unsupported episode order: {order_key}")
