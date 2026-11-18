@@ -392,3 +392,36 @@ class SeasonNavigationOrderTests(unittest.IsolatedAsyncioTestCase):
             payload = await shows.get_show_season(312415, 6, db, SimpleNamespace(id=7))
         self.assertEqual([s['season_number'] for s in payload['show']['seasons_meta']], [6, 7])
         self.assertEqual(payload['show']['seasons_meta'][0]['name'], 'Series F')
+
+    async def test_nonlocal_season_uses_ordered_payload_and_navigation(self):
+        db = AsyncMock()
+        empty = MagicMock()
+        empty.scalars.return_value.all.return_value = []
+        empty.all.return_value = []
+        empty.scalar_one_or_none.return_value = None
+        found = MagicMock()
+        found.scalar_one_or_none.return_value = None
+        db.execute.side_effect = [found] + [empty] * 20
+        positions = {
+            (1, 1): SimpleNamespace(display_season=6, display_episode=1),
+            (2, 1): SimpleNamespace(display_season=7, display_episode=1),
+        }
+        with (
+            patch.object(shows, 'get_episode_order', AsyncMock(return_value=SimpleNamespace(episode_order='tvdb:official', tvdb_id=None))),
+            patch.object(shows, 'get_user_tmdb_key', AsyncMock(return_value='key')),
+            patch.object(shows, 'get_user_metadata_language', AsyncMock(return_value='en')),
+            patch.object(shows, 'check_tmdb_key', return_value=True),
+            patch.object(shows, '_tvdb_season_art', AsyncMock(return_value={6: {'name': 'Series F'}})) as season_art,
+            patch.object(shows, '_resolve_ordered_season', AsyncMock(return_value=({'name': 'Series F', 'episodes': []}, set()))),
+            patch.object(shows, 'get_position_maps', AsyncMock(return_value=(positions, {}))),
+            patch.object(shows.tmdb, 'get_show', AsyncMock(return_value={'name': 'QI XL', 'external_ids': {'tvdb_id': 369316}})),
+            patch.object(shows.tmdb, 'get_season', AsyncMock(side_effect=AssertionError('must not fetch canonical display season'))),
+            patch.object(shows, 'get_watch_stats', AsyncMock(return_value=SimpleNamespace(plays=0, watch_time_minutes=0, last_watched_at=None))),
+            patch.object(shows, 'enrich_with_state', AsyncMock()),
+        ):
+            payload = await shows.get_show_season(312415, 6, db, SimpleNamespace(id=7))
+        self.assertEqual([s['season_number'] for s in payload['show']['seasons_meta']], [6, 7])
+        self.assertEqual(payload['show']['seasons_meta'][0]['name'], 'Series F')
+        self.assertIsNone(payload['show']['id'])
+        self.assertEqual(payload['name'], 'Series F')
+        season_art.assert_awaited_once_with(db, 7, 'tvdb:official', 369316)

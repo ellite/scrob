@@ -1753,12 +1753,17 @@ async def get_show_season(
     api_key = await get_user_tmdb_key(db, effective_user_id)
     metadata_lang = await get_user_metadata_language(db, effective_user_id)
 
-    if show and not is_aired_order(order_key) and check_tmdb_key(api_key):
+    tmdb_show_data = None
+    if not is_aired_order(order_key) and check_tmdb_key(api_key):
+        if not show:
+            tmdb_show_data = await tmdb.get_show(
+                series_tmdb_id, api_key=api_key, language=metadata_lang,
+            )
         season_art = await _tvdb_season_art(
             db, effective_user_id, order_key,
             (order_pref_row.tvdb_id if order_pref_row else None)
-            or show.tvdb_id
-            or ((show.tmdb_data or {}).get("external_ids") or {}).get("tvdb_id"),
+            or (show.tvdb_id if show else None)
+            or ((((show.tmdb_data if show else tmdb_show_data) or {}).get("external_ids") or {}).get("tvdb_id")),
         )
         ordered_season = await _resolve_ordered_season(
             db, series_tmdb_id, order_key, season_number, api_key, metadata_lang, season_art,
@@ -1791,10 +1796,13 @@ async def get_show_season(
 
             # Fetch season and show info (if not local) in parallel
             if not show:
-                tmdb_data, tmdb_show_data = await asyncio.gather(
-                    tmdb.get_season(series_tmdb_id, season_number, api_key=api_key, language=metadata_lang),
-                    tmdb.get_show(series_tmdb_id, api_key=api_key, language=metadata_lang),
-                )
+                if ordered_season:
+                    tmdb_data = ordered_season[0]
+                else:
+                    tmdb_data, tmdb_show_data = await asyncio.gather(
+                        tmdb.get_season(series_tmdb_id, season_number, api_key=api_key, language=metadata_lang),
+                        tmdb.get_show(series_tmdb_id, api_key=api_key, language=metadata_lang),
+                    )
                 show_info = {
                     "id": None,
                     "tmdb_id": series_tmdb_id,
@@ -1814,6 +1822,10 @@ async def get_show_season(
                     series_tmdb_id, season_number, api_key=api_key, language=metadata_lang
                 )
                 show_info = format_show(show)
+
+            if not show and ordered_season:
+                by_canonical, _ = await get_position_maps(db, series_tmdb_id, order_key)
+                _remap_show_seasons(show_info, by_canonical, season_art)
 
             # Bulk fetch watched state and ratings for episodes in this season
             tmdb_episodes = tmdb_data.get("episodes", [])
