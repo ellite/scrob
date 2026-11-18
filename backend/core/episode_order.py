@@ -53,14 +53,17 @@ def _titles_match(tmdb_title: str, tvdb_title: str, air_date_distance: int | Non
     """Whether a TMDB and a TVDB episode title (both already normalised) name
     the same episode, given how far apart their air dates are.
 
-    Equal titles within a day of each other have always matched (a missing date
-    counts as no disagreement). TVDB also often prefixes the series name onto a
-    special ("Kimagure Orange Road: White Lovers" against TMDB's "White
-    Lovers"), so one title that is the other with a prefix in front matches
-    too - but only when both dates are known and within a day, since a
-    title-suffix match alone is much weaker than an equal title (#351)."""
+    Distinctive equal titles can bridge broadcast-date drift; the caller
+    accepts only a single candidate. Generic titles and suffix matches still
+    need the existing date guard to avoid confusing unrelated episodes.
+    """
     if not tmdb_title or not tvdb_title:
         return False
+    generic = tmdb_title in {"pilot", "special", "specials", "episode", "part"} or bool(
+        re.fullmatch(r"(?:episode|ep|part|chapter|special)(?:[0-9]+|[ivxlcdm]+)", tmdb_title)
+    )
+    if tmdb_title == tvdb_title and not generic:
+        return True
     if air_date_distance is not None and air_date_distance > 1:
         return False
     if tmdb_title == tvdb_title:
@@ -689,7 +692,7 @@ async def _match_tmdb_to_tvdb_episodes(
     on_progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> list[EpisodeOrderMapping]:
     """Matches TMDB episodes to TVDB episodes by external id, falling back to
-    normalised title + air-date within 1 day. Returns new EpisodeOrderMapping
+    unique normalised distinctive title, or title + air-date within 1 day. Returns new EpisodeOrderMapping
     instances (not yet added to any session) - shared by the full-show
     (ensure_episode_order_mapping) and incremental (ensure_episode_order_mapping_for_season)
     computations, which differ only in which episodes they pass in and how

@@ -360,3 +360,35 @@ class TvdbSeasonArtTests(unittest.IsolatedAsyncioTestCase):
         }])
         # An episode that was only showing the show poster now shows its season's.
         self.assertEqual(payload["seasons"]["season_1"][0]["poster_path"], "https://artworks.thetvdb.com/banners/s1.jpg")
+
+
+class SeasonNavigationOrderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_season_detail_uses_display_seasons_for_navigation(self):
+        show = SimpleNamespace(id=1, tmdb_id=312415, tvdb_id=369316)
+        db = AsyncMock()
+        empty = MagicMock()
+        empty.scalars.return_value.all.return_value = []
+        empty.all.return_value = []
+        empty.scalar_one_or_none.return_value = None
+        found = MagicMock()
+        found.scalar_one_or_none.return_value = show
+        db.execute.side_effect = [found] + [empty] * 20
+        positions = {
+            (1, 1): SimpleNamespace(display_season=6, display_episode=1),
+            (2, 1): SimpleNamespace(display_season=7, display_episode=1),
+        }
+        with (
+            patch.object(shows, 'get_episode_order', AsyncMock(return_value=SimpleNamespace(episode_order='tvdb:official', tvdb_id=369316))),
+            patch.object(shows, 'get_user_tmdb_key', AsyncMock(return_value='key')),
+            patch.object(shows, 'get_user_metadata_language', AsyncMock(return_value='en')),
+            patch.object(shows, 'check_tmdb_key', return_value=True),
+            patch.object(shows, '_tvdb_season_art', AsyncMock(return_value={6: {'name': 'Series F'}})),
+            patch.object(shows, '_resolve_ordered_season', AsyncMock(return_value=({'episodes': []}, set()))),
+            patch.object(shows, 'get_position_maps', AsyncMock(return_value=(positions, {}))),
+            patch.object(shows, 'format_show', return_value={'seasons_meta': [{'season_number': 1}, {'season_number': 2}]}),
+            patch.object(shows, 'get_watch_stats', AsyncMock(return_value=SimpleNamespace(plays=0, watch_time_minutes=0, last_watched_at=None))),
+            patch.object(shows, 'enrich_with_state', AsyncMock()),
+        ):
+            payload = await shows.get_show_season(312415, 6, db, SimpleNamespace(id=7))
+        self.assertEqual([s['season_number'] for s in payload['show']['seasons_meta']], [6, 7])
+        self.assertEqual(payload['show']['seasons_meta'][0]['name'], 'Series F')

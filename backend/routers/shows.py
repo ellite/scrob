@@ -1807,6 +1807,8 @@ async def get_show_season(
             elif ordered_season:
                 tmdb_data = ordered_season[0]
                 show_info = format_show(show)
+                by_canonical, _ = await get_position_maps(db, series_tmdb_id, order_key)
+                _remap_show_seasons(show_info, by_canonical, season_art)
             else:
                 tmdb_data = await tmdb.get_season(
                     series_tmdb_id, season_number, api_key=api_key, language=metadata_lang
