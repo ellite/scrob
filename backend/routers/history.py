@@ -1340,7 +1340,6 @@ async def _drop_ghost_tvdb_candidates(
     if not ghost_media_ids:
         return candidates
 
-    ghost_by_show = {m.show_id: m for m in suspects if m.id in ghost_media_ids}
     collected = {
         r[0] for r in (await db.execute(
             select(Collection.media_id).where(
@@ -1349,25 +1348,28 @@ async def _drop_ghost_tvdb_candidates(
         )).all()
     }
     drop: set[int] = set()
-    for show_id, ghost in ghost_by_show.items():
-        if ghost.id in collected:
+    last_tmdb_by_show: dict[int, bool] = {}
+    for ghost in suspects:
+        if ghost.id not in ghost_media_ids or ghost.id in collected:
             continue
-        season, episode = last_per_show[show_id]
-        last_tmdb = await db.scalar(
-            select(Media.id)
-            .join(WatchEvent, WatchEvent.media_id == Media.id)
-            .where(
-                WatchEvent.user_id == user_id,
-                Media.show_id == show_id,
-                Media.season_number == season,
-                Media.episode_number == episode,
-                Media.tmdb_id.isnot(None),
-            )
-            .limit(1)
-        )
+        show_id = ghost.show_id
+        if show_id not in last_tmdb_by_show:
+            season, episode = last_per_show[show_id]
+            last_tmdb_by_show[show_id] = (await db.scalar(
+                select(Media.id)
+                .join(WatchEvent, WatchEvent.media_id == Media.id)
+                .where(
+                    WatchEvent.user_id == user_id,
+                    Media.show_id == show_id,
+                    Media.season_number == season,
+                    Media.episode_number == episode,
+                    Media.tmdb_id.isnot(None),
+                )
+                .limit(1)
+            )) is not None
         # An active rewatch's position has no watch-event row of its own
         # to inspect, so it only counts when a TMDB-sourced event matches.
-        if last_tmdb is not None:
+        if last_tmdb_by_show[show_id]:
             drop.add(ghost.id)
     return [m for m in candidates if m.id not in drop]
 

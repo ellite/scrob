@@ -2637,6 +2637,35 @@ async def refresh_show_metadata(
             if absent:
                 candidates.append(media)
         if candidates:
+            # #174: a tvdb:* order (any user) or an episode-order mapping makes
+            # raw TVDB numbering meaningful - never prune those rows here.
+            tvdb_order_in_use = await db.scalar(
+                select(UserShowEpisodeOrder.id).where(
+                    UserShowEpisodeOrder.series_tmdb_id == show.tmdb_id,
+                    or_(
+                        UserShowEpisodeOrder.episode_order.like("tvdb:%"),
+                        UserShowEpisodeOrder.episode_order == "tvdb",
+                    ),
+                ).limit(1)
+            )
+            if tvdb_order_in_use is not None:
+                candidates = []
+        if candidates:
+            mappings = (await db.execute(
+                select(
+                    EpisodeOrderMapping.tvdb_id,
+                    EpisodeOrderMapping.tvdb_season_number,
+                    EpisodeOrderMapping.tvdb_episode_number,
+                ).where(EpisodeOrderMapping.series_tmdb_id == show.tmdb_id)
+            )).all()
+            mapped_ids = {r[0] for r in mappings}
+            mapped_positions = {(r[1], r[2]) for r in mappings}
+            candidates = [
+                m for m in candidates
+                if (m.tvdb_id is None or m.tvdb_id not in mapped_ids)
+                and (m.season_number, m.episode_number) not in mapped_positions
+            ]
+        if candidates:
             ghost_ids = await unreferenced_media_ids(db, [m.id for m in candidates])
             if ghost_ids:
                 await db.execute(delete(Media).where(Media.id.in_(ghost_ids)))
