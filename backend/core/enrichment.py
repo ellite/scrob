@@ -1,7 +1,7 @@
 import inspect
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -116,6 +116,38 @@ def tmdb_season_covers(show_tmdb_data: dict | None, season_number: int, episode_
         if season.get("season_number") == season_number:
             return episode_number <= (season.get("episode_count") or 0)
     return False
+
+
+def is_ghost_candidate(media: Media) -> bool:
+    """An episode row with no TMDB identity: either TVDB-sourced
+    (``is_unmapped_tvdb_episode``) or a bare stub with no ids at all (#581)."""
+    return media.media_type == MediaType.episode and media.tmdb_id is None
+
+
+async def unreferenced_media_ids(db: AsyncSession, media_ids) -> set[int]:
+    """Subset of ``media_ids`` that no user references anywhere (watch events,
+    collection, ratings, list items, playback progress/sessions, rewatch
+    progress) - safe to delete without losing any user data (#581)."""
+    from models.events import WatchEvent
+    from models.collection import Collection
+    from models.ratings import Rating
+    from models.lists import ListItem
+    from models.playback_progress import PlaybackProgress
+    from models.playback_session import PlaybackSession
+    from models.rewatch import RewatchProgress
+
+    remaining = set(media_ids)
+    if not remaining:
+        return remaining
+    for model in (WatchEvent, Collection, Rating, ListItem, PlaybackProgress,
+                  PlaybackSession, RewatchProgress):
+        if not remaining:
+            break
+        res = await db.execute(
+            select(model.media_id).where(model.media_id.in_(remaining)).distinct()
+        )
+        remaining -= {r[0] for r in res.all()}
+    return remaining
 
 
 def is_unmapped_tvdb_episode(media: Media) -> bool:

@@ -4,7 +4,7 @@ from datetime import datetime, date, timezone
 from pydantic import BaseModel
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy import select, update, func, case, cast as sa_cast, Text, or_, and_
+from sqlalchemy import select, update, delete, func, case, cast as sa_cast, Text, or_, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
@@ -54,6 +54,8 @@ from core.enrichment import (
     create_media_safely,
     apply_media_change_safely,
     is_unmapped_tvdb_episode,
+    is_ghost_candidate,
+    unreferenced_media_ids,
 )
 from core.identity import find_media, link_show_ids
 from core.watch_stats import WatchStats, get_watch_stats
@@ -1170,6 +1172,20 @@ async def get_show(
             .order_by(Media.season_number.asc(), Media.episode_number.asc())
         )
         episodes = episodes_result.scalars().all()
+
+        # #581: under TMDB aired order on a TMDB-canonical show, hide
+        # unreferenced TVDB-sourced rows - they have no TMDB counterpart and
+        # would only show as dead ghost episodes.
+        if (
+            show.tmdb_id is not None
+            and show.canonical_source != "tvdb"
+            and is_aired_order(selected_episode_order)
+        ):
+            ghosts = [ep for ep in episodes if is_ghost_candidate(ep)]
+            if ghosts:
+                hidden = await unreferenced_media_ids(db, [ep.id for ep in ghosts])
+                if hidden:
+                    episodes = [ep for ep in episodes if ep.id not in hidden]
 
         seasons_meta = {
             s["season_number"]: s for s in (show.tmdb_data or {}).get("seasons", [])
@@ -2513,6 +2529,9 @@ async def refresh_show_metadata(
 
     semaphore = asyncio.Semaphore(10)
     season_data: dict[int, dict[int, dict]] = {}
+    # Seasons whose TMDB fetch succeeded; a season missing from here failed
+    # transiently, so its absent episodes are NOT proof of a ghost (#581).
+    fetched_tmdb_seasons: set[int] = set()
 
     # Collect seasons needed: linked episodes + all show seasons (for orphan matching)
     linked_seasons = {ep.season_number for ep in episodes if ep.season_number is not None}
@@ -2527,6 +2546,7 @@ async def refresh_show_metadata(
                 # See the matching comment on the tmdb.get_show call above.
                 d = await tmdb.get_season(series_tmdb_id, sn, api_key=api_key, cache_ttl=None)
                 season_data[sn] = {ep["episode_number"]: ep for ep in d.get("episodes", [])}
+                fetched_tmdb_seasons.add(sn)
             except Exception:
                 season_data[sn] = {}
 
@@ -2599,8 +2619,32 @@ async def refresh_show_metadata(
                 )
         return media
 
+    # #581: on a TMDB-canonical show, drop unreferenced TVDB-sourced / bare
+    # episode rows TMDB confirms don't exist (ghosts from a TVDB fallback).
+    ghost_ids: set[int] = set()
+    if show.tmdb_id is not None and show.canonical_source != "tvdb":
+        candidates = []
+        for media in episodes:
+            if media.season_number is None or media.episode_number is None:
+                continue
+            if not is_ghost_candidate(media):
+                continue
+            absent = (
+                (media.season_number in fetched_tmdb_seasons
+                 and media.episode_number not in season_data.get(media.season_number, {}))
+                or media.season_number not in tmdb_seasons
+            )
+            if absent:
+                candidates.append(media)
+        if candidates:
+            ghost_ids = await unreferenced_media_ids(db, [m.id for m in candidates])
+            if ghost_ids:
+                await db.execute(delete(Media).where(Media.id.in_(ghost_ids)))
+
     episode_ids: list[int] = []
     for media in episodes:
+        if media.id in ghost_ids:
+            continue
         media = await apply_best_available(media)
         episode_ids.append(media.id)
 

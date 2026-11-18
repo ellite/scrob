@@ -515,9 +515,14 @@ async def batch_enrich_items(
     api_key: str = None,
     show_title_map: dict[int, str] | None = None,
     user_id: int | None = None,
+    prune_absent: bool = False,
 ) -> list[dict]:
     """
     Parallel enrichment for newly created media.
+    With prune_absent (non-collection syncs, e.g. Nuvio watched/progress): an
+    episode TMDB confirms doesn't exist on a TMDB-canonical show in the user's
+    TMDB aired order gets no TVDB fallback and its unreferenced stub is deleted
+    rather than left as a ghost row (#581).
     Episodes: one TMDB /season/{n} call per unique season (3865 calls vs 45k).
     Movies: parallel /movie/{id} calls.
     Returns a list of warning dicts for seasons/items that couldn't be enriched.
@@ -618,6 +623,20 @@ async def batch_enrich_items(
     async def apply_tvdb_ep_data(media: Media, raw_ep: dict) -> None:
         await enrich_episode_from_tvdb(media, tvdb_client.format_episode(raw_ep))
 
+    prune_stids: set[int] = set()
+    if prune_absent and user_id:
+        from core.episode_order import resolve_order_key, is_aired_order
+        canon_res = await db.execute(
+            select(Show.tmdb_id).where(
+                Show.tmdb_id.in_({stid for (stid, _) in season_to_eps}),
+                Show.canonical_source != "tvdb",
+            )
+        )
+        for (stid,) in canon_res.all():
+            if is_aired_order(await resolve_order_key(db, user_id, stid)):
+                prune_stids.add(stid)
+
+    ghost_stubs: list[Media] = []
     tvdb_resolved_season_keys: set[tuple] = set()
     for (stid, sn), ep_list in season_to_eps.items():
         ep_map = season_data.get((stid, sn), {})
@@ -627,12 +646,33 @@ async def batch_enrich_items(
             if ep:
                 await apply_media_change_safely(db, media, lambda media=media, ep=ep: apply_ep_data(media, ep))
                 continue
+            if (
+                stid in prune_stids
+                and (stid, sn) not in failed_season_keys
+                and media.tmdb_id is None
+            ):
+                mapped = await db.scalar(
+                    select(EpisodeOrderMapping.id).where(
+                        EpisodeOrderMapping.series_tmdb_id == stid,
+                        EpisodeOrderMapping.tvdb_season_number == sn,
+                        EpisodeOrderMapping.tvdb_episode_number == media.episode_number,
+                    ).limit(1)
+                )
+                if mapped is None:
+                    ghost_stubs.append(media)
+                    continue
             tvdb_ep = tvdb_ep_map.get(media.episode_number)
             if tvdb_ep:
                 await apply_media_change_safely(
                     db, media, lambda media=media, tvdb_ep=tvdb_ep: apply_tvdb_ep_data(media, tvdb_ep)
                 )
                 tvdb_resolved_season_keys.add((stid, sn))
+
+    if ghost_stubs:
+        from core.enrichment import unreferenced_media_ids
+        stub_ids = await unreferenced_media_ids(db, [m.id for m in ghost_stubs])
+        if stub_ids:
+            await db.execute(delete(Media).where(Media.id.in_(stub_ids)))
 
     # Build per-season warning entries (one entry per still-failed season) -
     # a season fully recovered via TVDB doesn't need to warn the user.
@@ -2809,7 +2849,8 @@ async def sync_items(
                             series_title_map[series_tmdb_id] = title
 
         warnings = await batch_enrich_items(
-            db, new_media_for_enrichment, api_key=api_key, show_title_map=series_title_map, user_id=user_id
+            db, new_media_for_enrichment, api_key=api_key, show_title_map=series_title_map, user_id=user_id,
+            prune_absent=(not sync_collection and source == CollectionSource.nuvio),
         )
         await db.commit()
 

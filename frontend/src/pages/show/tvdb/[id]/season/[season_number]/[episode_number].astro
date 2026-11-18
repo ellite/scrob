@@ -28,9 +28,13 @@ try {
 }
 
 // #174: TMDB-matched shows render on /show/{tmdb_id} with the TVDB aired order.
-if (episode?.show?.tmdb_id) {
+// Only when the episode has a TMDB counterpart (#581): a TVDB-only episode
+// would 404 on the TMDB route, so it renders here instead.
+if (episode?.show?.tmdb_id && episode?.tmdb_id) {
+  const tmdbSeason = episode.tmdb_season_number ?? season_number;
+  const tmdbEpisode = episode.tmdb_episode_number ?? episode_number;
   return Astro.redirect(
-    `/show/${episode.show.tmdb_id}/season/${season_number}/${episode_number}`, 301,
+    `/show/${episode.show.tmdb_id}/season/${tmdbSeason}/${tmdbEpisode}`, 301,
   );
 }
 

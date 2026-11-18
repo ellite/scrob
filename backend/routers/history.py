@@ -1301,6 +1301,77 @@ async def _refresh_next_episode_air_dates(
         await db.commit()
 
 
+async def _drop_ghost_tvdb_candidates(
+    db: AsyncSession,
+    user_id: int,
+    candidates: list[Media],
+    last_per_show: dict[int, tuple[int, int]],
+) -> list[Media]:
+    """#581: drop an uncollected TVDB-sourced next-episode candidate on a
+    TMDB-canonical show when the user is on TMDB aired order and their last
+    watched episode there is TMDB-numbered - it is a leftover ghost (TVDB
+    split an episode TMDB doesn't have), so the TMDB next-episode fallback
+    decides instead. Collected rows, TVDB-canonical shows, `tvdb:*` orders and
+    users whose last watched episode is itself TVDB-sourced (#426) keep it."""
+    suspects = [m for m in candidates if is_unmapped_tvdb_episode(m)]
+    if not suspects:
+        return candidates
+    show_ids = {m.show_id for m in suspects}
+    shows = {
+        s.id: s for s in (await db.execute(select(Show).where(Show.id.in_(show_ids)))).scalars().all()
+    }
+    tmdb_shows = {sid: s for sid, s in shows.items() if not _is_tvdb_canonical(s)}
+    if not tmdb_shows:
+        return candidates
+    from core.episode_order import get_episode_orders_for_series, is_aired_order
+
+    orders = await get_episode_orders_for_series(
+        db, user_id, [s.tmdb_id for s in tmdb_shows.values()]
+    )
+    ghost_media_ids: set[int] = set()
+    for m in suspects:
+        show = tmdb_shows.get(m.show_id)
+        if show is None:
+            continue
+        row = orders.get(show.tmdb_id)
+        if not is_aired_order(row.episode_order if row else None):
+            continue
+        ghost_media_ids.add(m.id)
+    if not ghost_media_ids:
+        return candidates
+
+    ghost_by_show = {m.show_id: m for m in suspects if m.id in ghost_media_ids}
+    collected = {
+        r[0] for r in (await db.execute(
+            select(Collection.media_id).where(
+                Collection.user_id == user_id, Collection.media_id.in_(ghost_media_ids)
+            )
+        )).all()
+    }
+    drop: set[int] = set()
+    for show_id, ghost in ghost_by_show.items():
+        if ghost.id in collected:
+            continue
+        season, episode = last_per_show[show_id]
+        last_tmdb = await db.scalar(
+            select(Media.id)
+            .join(WatchEvent, WatchEvent.media_id == Media.id)
+            .where(
+                WatchEvent.user_id == user_id,
+                Media.show_id == show_id,
+                Media.season_number == season,
+                Media.episode_number == episode,
+                Media.tmdb_id.isnot(None),
+            )
+            .limit(1)
+        )
+        # An active rewatch's position has no watch-event row of its own
+        # to inspect, so it only counts when a TMDB-sourced event matches.
+        if last_tmdb is not None:
+            drop.add(ghost.id)
+    return [m for m in candidates if m.id not in drop]
+
+
 @router.get("/next-up")
 async def get_next_up(
     db: AsyncSession = Depends(get_db),
@@ -1370,6 +1441,9 @@ async def get_next_up(
     # Step 2: the immediately next episode per show, picked in the database.
     candidates_result = await db.execute(_next_episode_candidates_stmt(last_per_show))
     candidates = candidates_result.scalars().all()
+    candidates = await _drop_ghost_tvdb_candidates(
+        db, current_user.id, candidates, last_per_show
+    )
 
     # Take only the immediately next episode per show
     next_per_show: dict[int, Media] = {}

@@ -193,7 +193,7 @@ class RefreshShowMetadataTvdbFallbackCorruptionTests(unittest.IsolatedAsyncioTes
     silently overwrite an already-correct, TMDB-sourced episode."""
 
     def _show(self):
-        return SimpleNamespace(id=1, tmdb_id=980001, tvdb_id=980002, title="Show")
+        return SimpleNamespace(id=1, tmdb_id=980001, tvdb_id=980002, title="Show", canonical_source="tmdb")
 
     def _tmdb_show_data(self):
         return {"name": "Show", "seasons": [{"season_number": 1, "episode_count": 10, "name": "Season 1"}]}
