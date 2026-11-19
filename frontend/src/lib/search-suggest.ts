@@ -11,11 +11,12 @@
 // the other client scripts.
 import { m } from "../paraglide/messages.js";
 import { episodeHref } from "./episodeHref";
+import { rankByMatch } from "./search-rank";
 
 const MIN_CHARS = 2;        // the backend's /media/search rejects shorter queries
 const DEBOUNCE_MS = 300;
 const MAX_SUGGESTIONS = 8;
-const MAX_COLLECTIONS = 2;  // collections fill in after movies/shows/people
+const MAX_COLLECTIONS = 2;  // at most this many collections, so they can't crowd out titles
 const CACHE_SIZE = 30;
 
 interface SuggestItem {
@@ -24,6 +25,7 @@ interface SuggestItem {
   tvdb_id?: number | null;
   type: string;
   title?: string | null;
+  original_title?: string | null;
   poster_path?: string | null;
   release_date?: string | null;
   adult?: boolean;
@@ -135,16 +137,21 @@ async function fetchSuggestions(q: string, signal: AbortSignal): Promise<Suggest
     }),
   ]);
 
-  const toSuggestions = (items: SuggestItem[]): Suggestion[] =>
-    items.flatMap((item) => {
-      const href = suggestionHref(item);
-      return href && item.title ? [{ item, href }] : [];
-    });
-  const mainS = toSuggestions(main);
-  const colS = toSuggestions(collections);
-
-  const picked = mainS.slice(0, MAX_SUGGESTIONS - Math.min(MAX_COLLECTIONS, colS.length));
-  picked.push(...colS.slice(0, MAX_SUGGESTIONS - picked.length));
+  // Rank everything together by how well the title matches what was typed;
+  // the backend's popularity order breaks ties. Collections come last in the
+  // input, so on a tie a movie, show or person goes first.
+  const picked: Suggestion[] = [];
+  let collectionCount = 0;
+  for (const item of rankByMatch([...main, ...collections], q)) {
+    if (picked.length >= MAX_SUGGESTIONS) break;
+    const href = suggestionHref(item);
+    if (!href || !item.title) continue;
+    if (item.type === "collection") {
+      if (collectionCount >= MAX_COLLECTIONS) continue;
+      collectionCount++;
+    }
+    picked.push({ item, href });
+  }
 
   cache.set(q, picked);
   if (cache.size > CACHE_SIZE) cache.delete(cache.keys().next().value!);
