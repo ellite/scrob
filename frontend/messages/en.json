@@ -1825,6 +1825,7 @@
   "conn_api_key_token_optional": "API Key / Token (Optional)",
   "conn_scrob_bingebase": "Scrob → Bingebase",
   "conn_watched_status": "Watched status",
+  "conn_sync_watched_hint": "Also applies to live webhook scrobbling: with this off, items you finish on this server are not marked watched in Scrob, even through the webhook.",
   "conn_push_all_history": "Push all history",
   "conn_media_managers": "Media Managers",
   "conn_let_me_customize_root_folder_quality": "Let me customize root folder/quality profile/tags when adding",

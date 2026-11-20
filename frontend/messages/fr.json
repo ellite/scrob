@@ -1825,6 +1825,7 @@
   "conn_api_key_token_optional": "Clé API / jeton (facultatif)",
   "conn_scrob_bingebase": "Scrob → Bingebase",
   "conn_watched_status": "État de visionnage",
+  "conn_sync_watched_hint": "S'applique aussi au scrobbling en direct par webhook : désactivé, les éléments terminés sur ce serveur ne sont pas marqués comme vus dans Scrob, même via le webhook.",
   "conn_push_all_history": "Envoyer tout l’historique",
   "conn_media_managers": "Gestionnaires de médias",
   "conn_let_me_customize_root_folder_quality": "Me laisser personnaliser le dossier racine, le profil de qualité et les tags lors de l’ajout",
