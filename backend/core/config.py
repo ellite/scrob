@@ -1,6 +1,36 @@
+import os
 from pathlib import Path
-from typing import Optional
+from typing import MutableMapping, Optional
 from pydantic_settings import BaseSettings
+
+
+def load_file_secrets(
+    field_names: list[str],
+    environ: MutableMapping[str, str] | None = None,
+) -> list[str]:
+    """Docker/Compose secrets support (#500): for every setting NAME with a
+    NAME_FILE variable pointing at a file (e.g. SECRET_KEY_FILE=/run/secrets/
+    secret_key), load the file's contents into NAME. An explicitly set NAME
+    wins, so existing deployments are unaffected. Only real setting names are
+    considered, never arbitrary *_FILE variables. Trailing newlines are
+    stripped, as editors and `echo` leave one behind. Returns the names loaded.
+
+    A _FILE that cannot be read stops startup with a clear message instead of
+    letting the app boot without the secret it was told to use."""
+    env = os.environ if environ is None else environ
+    loaded: list[str] = []
+    for name in field_names:
+        file_var = f"{name.upper()}_FILE"
+        path = env.get(file_var)
+        if not path or env.get(name.upper()):
+            continue
+        try:
+            value = Path(path).read_text(encoding="utf-8").rstrip("\r\n")
+        except OSError as exc:
+            raise RuntimeError(f"{file_var} is set to {path!r} but it cannot be read: {exc.strerror or exc}") from exc
+        env[name.upper()] = value
+        loaded.append(name)
+    return loaded
 
 
 class Settings(BaseSettings):
@@ -107,4 +137,5 @@ class Settings(BaseSettings):
     }
 
 
+load_file_secrets(list(Settings.model_fields))
 settings = Settings()

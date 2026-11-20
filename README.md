@@ -322,6 +322,27 @@ environment:
 
 See `docker-compose.yaml` for the full list of OIDC variables and other variables.
 
+### Docker secrets
+
+Any setting can be read from a file instead of an environment variable by adding the `_FILE` suffix to its name, which is how Docker Compose secrets are mounted under `/run/secrets`. This works for every variable in the table above, including `SECRET_KEY`, `POSTGRES_PASSWORD`, `SMTP_PASSWORD` and `OIDC_CLIENT_SECRET`. If both `NAME` and `NAME_FILE` are set, `NAME` wins. A trailing newline in the file is ignored, and Scrob refuses to start if a `_FILE` path cannot be read.
+
+```yaml
+services:
+  scrob:
+    environment:
+      SECRET_KEY_FILE: /run/secrets/scrob_secret_key
+      POSTGRES_PASSWORD_FILE: /run/secrets/scrob_db_password
+    secrets:
+      - scrob_secret_key
+      - scrob_db_password
+
+secrets:
+  scrob_secret_key:
+    file: ./secrets/scrob_secret_key.txt
+  scrob_db_password:
+    file: ./secrets/scrob_db_password.txt
+```
+
 ### Reverse proxy
 
 Scrob listens on port `7330`. Place a reverse proxy (Caddy, Nginx, Traefik) in front for HTTPS - required for the PWA install prompt on non-localhost addresses.
