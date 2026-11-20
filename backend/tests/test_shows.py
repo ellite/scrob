@@ -76,6 +76,57 @@ class FindLocalShowForTvdbTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(show.title, "Cross-linked")
 
 
+class ResolveTvdbShowTests(FindLocalShowForTvdbTests):
+    """#585: TVDB cross-links a TMDB id whose entry was deleted. TMDB answers
+    404, which used to bubble up as a 500 on the TVDB show/season/episode page."""
+
+    SHOW_DATA = {"title": "Gone From TMDB", "overview": "o", "seasons": [], "genres": []}
+
+    @staticmethod
+    def _http_error(status):
+        import httpx
+
+        req = httpx.Request("GET", "https://api.themoviedb.org/3/tv/1")
+        return httpx.HTTPStatusError("err", request=req, response=httpx.Response(status, request=req))
+
+    async def test_dead_tmdb_entry_falls_back_to_tvdb_only_show(self):
+        with patch("routers.webhooks._find_or_create_show", AsyncMock(side_effect=self._http_error(404))):
+            async with self.Session() as db:
+                show, tmdb_id = await shows._resolve_tvdb_show(db, 4242, self.SHOW_DATA, 999, "key")
+                self.assertIsNone(tmdb_id)
+                self.assertIsNone(show.tmdb_id)
+                self.assertEqual(show.tvdb_id, 4242)
+                self.assertEqual(show.canonical_source, "tvdb")
+                self.assertEqual(show.title, "Gone From TMDB")
+
+    async def test_other_tmdb_http_errors_still_surface(self):
+        import httpx
+
+        with patch("routers.webhooks._find_or_create_show", AsyncMock(side_effect=self._http_error(401))):
+            async with self.Session() as db:
+                with self.assertRaises(httpx.HTTPStatusError):
+                    await shows._resolve_tvdb_show(db, 4242, self.SHOW_DATA, 999, "key")
+
+    async def test_live_tmdb_entry_is_used_unchanged(self):
+        sentinel = SimpleNamespace(tmdb_id=999)
+        with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=sentinel)):
+            async with self.Session() as db:
+                show, tmdb_id = await shows._resolve_tvdb_show(db, 4242, self.SHOW_DATA, 999, "key")
+                self.assertIs(show, sentinel)
+                self.assertEqual(tmdb_id, 999)
+
+    async def test_existing_local_show_is_reused_without_asking_tmdb(self):
+        from models.show import Show
+
+        with patch("routers.webhooks._find_or_create_show", AsyncMock(side_effect=AssertionError("no TMDB call"))):
+            async with self.Session() as db:
+                db.add(Show(title="Local", tvdb_id=4242, tmdb_id=None))
+                await db.commit()
+                show, tmdb_id = await shows._resolve_tvdb_show(db, 4242, self.SHOW_DATA, 999, "key")
+                self.assertEqual(show.title, "Local")
+                self.assertEqual(tmdb_id, 999)
+
+
 class _Scalars:
     def __init__(self, item=None):
         self.item = item

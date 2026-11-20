@@ -1,4 +1,5 @@
 import asyncio
+import httpx
 import time
 from datetime import datetime, date, timezone
 from pydantic import BaseModel
@@ -130,6 +131,52 @@ async def _find_local_show_for_tvdb(
         conditions.append(ShowModel.tmdb_id == series_tmdb_id)
     result = await db.execute(select(ShowModel).where(or_(*conditions)))
     return result.scalar_one_or_none()
+
+
+async def _resolve_tvdb_show(
+    db: AsyncSession,
+    tvdb_id: int,
+    show_data: dict,
+    series_tmdb_id: int | None,
+    tmdb_api_key: str | None,
+) -> tuple[ShowModel, int | None]:
+    """The local Show behind a TVDB page, created on first visit.
+
+    Returns (show, series_tmdb_id). A TVDB series can cross-link a TMDB id
+    whose entry has since been deleted (#585): TMDB answers 404 and the page
+    would 500 even though TVDB has everything it needs. In that case the show
+    is built from TVDB alone and the dead TMDB id is dropped (None) so callers
+    don't keep chasing it."""
+    show = await _find_local_show_for_tvdb(db, tvdb_id, series_tmdb_id)
+    if show is not None:
+        return show, series_tmdb_id
+    if series_tmdb_id:
+        from routers.webhooks import _find_or_create_show
+        try:
+            return await _find_or_create_show(db, series_tmdb_id, tmdb_api_key), series_tmdb_id
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 404:
+                raise
+            series_tmdb_id = None
+    # Show has no (live) TMDB presence - mirrors the "resolve an unmatched
+    # show to TVDB" flow in routers/sync.py.
+    show = ShowModel(
+        tvdb_id=tvdb_id,
+        tmdb_id=None,
+        canonical_source="tvdb",
+        title=show_data.get("title") or f"TVDB #{tvdb_id}",
+        original_title=show_data.get("original_title"),
+        overview=show_data.get("overview"),
+        poster_path=show_data.get("poster_path"),
+        backdrop_path=show_data.get("backdrop_path"),
+        status=show_data.get("status"),
+        first_air_date=show_data.get("first_air_date"),
+        last_air_date=show_data.get("last_air_date"),
+        tmdb_data={"seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
+    )
+    db.add(show)
+    await db.flush()
+    return show, series_tmdb_id
 
 
 async def _enrich_tvdb_seasons(
@@ -2735,31 +2782,8 @@ async def get_tvdb_show(
 
     series_tmdb_id = show_data.get("tmdb_id_cross")
     series_tmdb_id = int(series_tmdb_id) if series_tmdb_id else None
-    show = await _find_local_show_for_tvdb(db, tvdb_id, series_tmdb_id)
-    if show is None:
-        if series_tmdb_id:
-            tmdb_api_key_for_show = await get_user_tmdb_key(db, effective_user_id)
-            from routers.webhooks import _find_or_create_show
-            show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key_for_show)
-        else:
-            # Show has no TMDB presence at all — mirrors the "resolve an
-            # unmatched show to TVDB" flow in routers/sync.py.
-            show = ShowModel(
-                tvdb_id=tvdb_id,
-                tmdb_id=None,
-                canonical_source="tvdb",
-                title=show_data.get("title") or f"TVDB #{tvdb_id}",
-                original_title=show_data.get("original_title"),
-                overview=show_data.get("overview"),
-                poster_path=show_data.get("poster_path"),
-                backdrop_path=show_data.get("backdrop_path"),
-                status=show_data.get("status"),
-                first_air_date=show_data.get("first_air_date"),
-                last_air_date=show_data.get("last_air_date"),
-                tmdb_data={"seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
-            )
-            db.add(show)
-            await db.flush()
+    tmdb_key_for_show = await get_user_tmdb_key(db, effective_user_id) if series_tmdb_id else None
+    show, series_tmdb_id = await _resolve_tvdb_show(db, tvdb_id, show_data, series_tmdb_id, tmdb_key_for_show)
 
     # Link this Show to its TVDB id (see #101 — mark-as-watched/collect
     # endpoints only ever look shows up by tmdb_id, so without this they can
@@ -3121,31 +3145,8 @@ async def get_tvdb_season(
 
     series_tmdb_id = show_data.get("tmdb_id_cross")
     series_tmdb_id = int(series_tmdb_id) if series_tmdb_id else None
-    show = await _find_local_show_for_tvdb(db, tvdb_id, series_tmdb_id)
-    if show is None:
-        if series_tmdb_id:
-            tmdb_api_key_for_show = await get_user_tmdb_key(db, effective_user_id)
-            from routers.webhooks import _find_or_create_show
-            show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key_for_show)
-        else:
-            # Show has no TMDB presence at all — mirrors the "resolve an
-            # unmatched show to TVDB" flow in routers/sync.py.
-            show = ShowModel(
-                tvdb_id=tvdb_id,
-                tmdb_id=None,
-                canonical_source="tvdb",
-                title=show_data.get("title") or f"TVDB #{tvdb_id}",
-                original_title=show_data.get("original_title"),
-                overview=show_data.get("overview"),
-                poster_path=show_data.get("poster_path"),
-                backdrop_path=show_data.get("backdrop_path"),
-                status=show_data.get("status"),
-                first_air_date=show_data.get("first_air_date"),
-                last_air_date=show_data.get("last_air_date"),
-                tmdb_data={"seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
-            )
-            db.add(show)
-            await db.flush()
+    tmdb_key_for_show = await get_user_tmdb_key(db, effective_user_id) if series_tmdb_id else None
+    show, series_tmdb_id = await _resolve_tvdb_show(db, tvdb_id, show_data, series_tmdb_id, tmdb_key_for_show)
 
     # Link this Show to its TVDB id (see #101 — mark-as-watched/collect
     # endpoints only ever look shows up by tmdb_id, so without this they can
@@ -3496,31 +3497,8 @@ async def get_tvdb_episode(
 
     series_tmdb_id = show_data.get("tmdb_id_cross")
     series_tmdb_id = int(series_tmdb_id) if series_tmdb_id else None
-    show = await _find_local_show_for_tvdb(db, tvdb_id, series_tmdb_id)
-    if show is None:
-        if series_tmdb_id:
-            tmdb_api_key = await get_user_tmdb_key(db, effective_user_id)
-            from routers.webhooks import _find_or_create_show
-            show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key)
-        else:
-            # Show has no TMDB presence at all — mirrors the "resolve an
-            # unmatched show to TVDB" flow in routers/sync.py.
-            show = ShowModel(
-                tvdb_id=tvdb_id,
-                tmdb_id=None,
-                canonical_source="tvdb",
-                title=show_data.get("title") or f"TVDB #{tvdb_id}",
-                original_title=show_data.get("original_title"),
-                overview=show_data.get("overview"),
-                poster_path=show_data.get("poster_path"),
-                backdrop_path=show_data.get("backdrop_path"),
-                status=show_data.get("status"),
-                first_air_date=show_data.get("first_air_date"),
-                last_air_date=show_data.get("last_air_date"),
-                tmdb_data={"seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
-            )
-            db.add(show)
-            await db.flush()
+    tmdb_key_for_show = await get_user_tmdb_key(db, effective_user_id) if series_tmdb_id else None
+    show, series_tmdb_id = await _resolve_tvdb_show(db, tvdb_id, show_data, series_tmdb_id, tmdb_key_for_show)
 
     # Link this Show to its TVDB id (found-via-tmdb_id and _find_or_create_show
     # both leave it unset) so mark-as-watched/collect endpoints — which only
