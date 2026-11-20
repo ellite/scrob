@@ -14,6 +14,9 @@ from routers import webhooks, media, history, ratings, sync, shows, auth, lists,
 from core.access_log import install as install_access_log_redaction
 install_access_log_redaction()
 
+from core.dns_compat import install as install_dns_compat
+install_dns_compat()
+
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
