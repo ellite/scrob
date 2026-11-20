@@ -31,3 +31,4 @@ frontend/.astro/
 **/__pycache__/
 *.log
 *.pid
+docker-compose-test-db.yaml

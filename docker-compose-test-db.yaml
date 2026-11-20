@@ -1,5 +1,6 @@
 services:
   db:
+    container_name: scrob-dev-db
     image: postgres:16-alpine
     restart: unless-stopped
     env_file: .env
