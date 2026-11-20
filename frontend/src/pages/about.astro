@@ -1,4 +1,5 @@
 ---
+import { readAppVersion } from "../lib/appVersion";
 import Base from "../layouts/Base.astro";
 import { connectionIconHtml } from "../lib/connectionIcons";
 import { escapeHtml } from "../lib/format";
@@ -45,7 +46,7 @@ const creditGroups: { label: string; services: { name: string; type: string; url
   },
 ];
 
-const currentVersion = process.env.APP_VERSION ?? 'dev';
+const currentVersion = readAppVersion();
 
 let latestVersion: string | null = null;
 let releaseUrl: string | null = null;

@@ -16,6 +16,9 @@ FROM python:3.12-alpine
 
 ARG APP_VERSION=dev
 ENV APP_VERSION=${APP_VERSION}
+# Also baked into a file: updaters that recreate a container from its old config
+# carry the previous image's ENV along, so the env var alone goes stale (#140).
+RUN mkdir -p /app && printf '%s' "${APP_VERSION}" > /app/VERSION
 ENV TZ=UTC
 
 # nodejs runs the Astro server, su-exec drops privileges in the entrypoint,
