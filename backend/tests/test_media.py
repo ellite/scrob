@@ -129,7 +129,7 @@ class TmdbListStudioParamsTests(unittest.IsolatedAsyncioTestCase):
         base = dict(
             type=MediaType.movie, category="popular", page=1, genre=[], year=[],
             min_rating=None, status=None, original_language=None, network=None,
-            company=None, collection=[], watch=[], arr=[], in_list=[], exclude_language=[], exclude_genre=[], my_rating=[],
+            company=None, collection=[], watch=[], arr=[], in_list=[], exclude_language=[], exclude_genre=[], my_rating=[], dropped=[],
             db=SimpleNamespace(execute=AsyncMock(return_value=_FakeExecResult())),
             current_user=SimpleNamespace(id=7),
         )
@@ -190,7 +190,7 @@ class TmdbListExcludeLanguageTests(unittest.IsolatedAsyncioTestCase):
             out = await media_router.get_tmdb_list(
                 type=MediaType.series, category=category, page=1, genre=[], year=[], min_rating=None,
                 status=None, original_language=None, network=None, company=None, collection=[],
-                watch=[], arr=[], in_list=[], exclude_language=exclude, exclude_genre=[], my_rating=[],
+                watch=[], arr=[], in_list=[], exclude_language=exclude, exclude_genre=[], my_rating=[], dropped=[],
                 db=SimpleNamespace(execute=AsyncMock(return_value=_FakeExecResult())),
                 current_user=SimpleNamespace(id=7),
             )

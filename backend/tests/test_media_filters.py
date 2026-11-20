@@ -7,7 +7,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from routers.media import _apply_local_filters, _paginate_matches
 
 
-def _item(tmdb_id, in_library=False, watched=False, watch_started=False, is_monitored=False, release_date=None, user_rating=None):
+def _item(tmdb_id, in_library=False, watched=False, watch_started=False, is_monitored=False, release_date=None, user_rating=None, dropped=False):
     return {
         "tmdb_id": tmdb_id,
         "in_library": in_library,
@@ -16,6 +16,7 @@ def _item(tmdb_id, in_library=False, watched=False, watch_started=False, is_moni
         "is_monitored": is_monitored,
         "release_date": release_date,
         "user_rating": user_rating,
+        "dropped": dropped,
     }
 
 
@@ -87,6 +88,20 @@ class ApplyLocalFiltersTests(unittest.TestCase):
         items = [_item(1, is_monitored=True), _item(2, is_monitored=False)]
         self.assertEqual([i["tmdb_id"] for i in _apply_local_filters(items, [], [], ["added"])], [1])
         self.assertEqual([i["tmdb_id"] for i in _apply_local_filters(items, [], [], ["notadded"])], [2])
+
+    def test_dropped_and_notdropped(self):
+        items = [_item(1, dropped=True), _item(2, dropped=False)]
+        self.assertEqual([i["tmdb_id"] for i in _apply_local_filters(items, [], [], [], dropped=["dropped"])], [1])
+        self.assertEqual([i["tmdb_id"] for i in _apply_local_filters(items, [], [], [], dropped=["notdropped"])], [2])
+
+    def test_dropped_combines_with_other_local_filters(self):
+        items = [
+            _item(1, in_library=True, dropped=True),
+            _item(2, in_library=True, dropped=False),
+            _item(3, in_library=False, dropped=False),
+        ]
+        result = _apply_local_filters(items, ["in"], [], [], dropped=["notdropped"])
+        self.assertEqual([i["tmdb_id"] for i in result], [2])
 
     def test_filters_combine_with_and_semantics_across_categories(self):
         items = [
