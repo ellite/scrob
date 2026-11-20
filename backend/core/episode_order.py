@@ -688,6 +688,32 @@ async def get_tmdb_to_tvdb_positions(
     }
 
 
+async def to_simkl_positions(
+    db: AsyncSession,
+    positions: list[tuple[int, int, int]],
+) -> list[tuple[int, int, int]]:
+    """Translate (show_tmdb_id, season, episode) triples, which are TMDB
+    coordinates, into the TVDB ones Simkl indexes episodes by (#453).
+
+    Simkl resolves a show's episodes through TVDB's season layout, so an
+    episode TMDB numbers S2E91 is S2E33 to it and the TMDB coordinates are
+    rejected as not found. Scrob already stores that TMDB -> TVDB mapping for
+    shows whose episodes it has matched; an episode with no stored mapping is
+    returned unchanged, so shows where the two providers agree (or that were
+    never mapped) behave exactly as before. Output has the same length and
+    order as the input."""
+    if not positions:
+        return []
+    by_key = await get_tmdb_to_tvdb_positions(db, sorted({show_id for show_id, _, _ in positions}))
+    translated: list[tuple[int, int, int]] = []
+    for show_id, season, episode in positions:
+        mapping = by_key.get((show_id, season, episode))
+        translated.append(
+            (show_id, mapping.tvdb_season_number, mapping.tvdb_episode_number) if mapping else (show_id, season, episode)
+        )
+    return translated
+
+
 async def _match_tmdb_to_tvdb_episodes(
     tmdb_episodes: list[dict],
     tvdb_episodes: list[dict],

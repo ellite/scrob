@@ -33,6 +33,7 @@ from core.jellyfin import get_jellyfin_tmdb_id
 import core.trakt as trakt_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely, enrich_media_safely, apply_media_change_safely, enrich_episode_from_tvdb
 from core.identity import coerce_id, link_show_ids
+from core.episode_order import to_simkl_positions
 from core.episode_order import (
     ensure_episode_order_mapping,
     load_tvdb_episode_id_positions,
@@ -1672,12 +1673,13 @@ async def _fan_out_changes_to_other_connections(
 
         if push_simkl_watched and new_watched_ids:
             simkl_watched_at_by_media = await _latest_watched_at(db, user_id, list(new_watched_ids))
+            simkl_episode_pushes: list[tuple[int, int, int, datetime]] = []
             for mid in new_watched_ids:
                 media = media_by_id.get(mid)
                 if not media or not media.tmdb_id:
                     continue
                 # Simkl has no unknown-date representation, and watched_at=None means
-                # "stamp as now" on its side — skip rather than fabricate a date.
+                # "stamp as now" on its side - skip rather than fabricate a date.
                 watched_at = simkl_watched_at_by_media.get(mid)
                 if watched_at is None:
                     continue
@@ -1690,12 +1692,19 @@ async def _fan_out_changes_to_other_connections(
                 elif media.media_type == MediaType.episode and media.show_id and media.season_number is not None and media.episode_number is not None:
                     show = shows_by_id.get(media.show_id)
                     if show and show.tmdb_id:
-                        push_tasks.append(
-                            simkl_client.add_episode_to_history(
-                                settings.simkl_client_id, settings.simkl_access_token,
-                                show.tmdb_id, media.season_number, media.episode_number, watched_at,
-                            )
-                        )
+                        simkl_episode_pushes.append((show.tmdb_id, media.season_number, media.episode_number, watched_at))
+            # Simkl indexes episodes by TVDB's layout, so send the TVDB
+            # coordinates Scrob has mapped (#453), looked up in one batch.
+            simkl_positions = await to_simkl_positions(
+                db, [(show_id, season, episode) for show_id, season, episode, _ in simkl_episode_pushes]
+            )
+            for (show_id, season, episode), (_, _, _, watched_at) in zip(simkl_positions, simkl_episode_pushes):
+                push_tasks.append(
+                    simkl_client.add_episode_to_history(
+                        settings.simkl_client_id, settings.simkl_access_token,
+                        show_id, season, episode, watched_at,
+                    )
+                )
 
         # Simkl has no "rated but not watched" state: rating an item that isn't
         # already in one of its lists auto-files it as watched (today's date), and

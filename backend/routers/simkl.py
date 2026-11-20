@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import simkl as simkl_client
+from core.episode_order import to_simkl_positions
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
 from core.identity import coerce_id
 from core.native_watchlist import sync_service_watchlist, watchlist_lock
@@ -845,6 +846,15 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                 # the least-recently-watched items rather than an arbitrary slice.
                 movie_candidates.sort(key=lambda item: item[1])
                 episode_candidates.sort(key=lambda item: item[3])
+                # Simkl indexes episodes by TVDB's layout, so send the TVDB
+                # coordinates Scrob has mapped (#453). Order is preserved.
+                simkl_positions = await to_simkl_positions(
+                    db, [(show_id, season, episode) for show_id, season, episode, _ in episode_candidates]
+                )
+                episode_candidates = [
+                    (show_id, season, episode, watched_at)
+                    for (show_id, season, episode), (_, _, _, watched_at) in zip(simkl_positions, episode_candidates)
+                ]
 
             movie_rating_candidates: list[tuple[int, float]] = []
             show_rating_candidates: list[tuple[int, float]] = []

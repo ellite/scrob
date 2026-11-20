@@ -46,6 +46,13 @@ def _scrobble_params(client_id: str) -> dict:
     }
 
 
+# Sent on every show in a /sync/history write. It tells Simkl to route the
+# season/episode coordinates through TVDB's season layout, which is how its
+# anime catalogue (split per cour, or numbered absolutely) is indexed; for
+# non-anime shows it does nothing (#453).
+_TVDB_ANIME_SEASONS = {"use_tvdb_anime_seasons": True}
+
+
 def _iso_utc(value: datetime) -> str:
     """Format a datetime as an ISO-8601 UTC string with a Z suffix.
 
@@ -396,6 +403,7 @@ async def add_history_batch(
         body["shows"] = [
             {
                 "ids": {"tmdb": show_tmdb_id},
+                **_TVDB_ANIME_SEASONS,
                 "seasons": [
                     {
                         "number": season,
@@ -510,6 +518,7 @@ async def add_episode_to_history(
             json={
                 "shows": [{
                     "ids": {"tmdb": show_tmdb_id},
+                    **_TVDB_ANIME_SEASONS,
                     "seasons": [{
                         "number": season_number,
                         "episodes": [episode],
@@ -538,6 +547,7 @@ async def remove_episode_from_history(
             json={
                 "shows": [{
                     "ids": {"tmdb": show_tmdb_id},
+                    **_TVDB_ANIME_SEASONS,
                     "seasons": [{
                         "number": season_number,
                         "episodes": [{"number": episode_number}],

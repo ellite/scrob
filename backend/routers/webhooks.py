@@ -28,6 +28,7 @@ from models.playback_progress import PlaybackProgress
 from models.library_selections import PlexLibrarySelection, JellyfinLibrarySelection, EmbyLibrarySelection
 from core.enrichment import create_media_safely, enrich_media, enrich_media_safely
 from core.identity import coerce_id, link_show_ids, show_tvdb_id_is_free
+from core.episode_order import to_simkl_positions
 from core.episode_order import (
     ensure_episode_order_mapping_for_season,
     get_episode_order,
@@ -141,9 +142,10 @@ async def _maybe_simkl_scrobble(
     a little more forgiving; it still resolves the tmdb id to Simkl's own layout
     though, so the same season-split mismatch is reported back (inside a 201) as
     not_found - add_episode_to_history now raises SimklHistoryRejected on that
-    rather than logging a false success. A watch lost this way needs the
-    TMDB->Simkl layout remap that isn't built yet; for now it is logged, not
-    silently dropped (#328)."""
+    rather than logging a false success. Episode coordinates are translated to
+    TVDB's layout through the stored episode mapping before any of these calls
+    (#453), which is what Simkl resolves anime seasons against; a watch that
+    still can't be resolved is logged, not silently dropped (#328)."""
     if not (settings and settings.simkl_scrobble and settings.simkl_access_token and settings.simkl_client_id):
         return
 
@@ -176,6 +178,17 @@ async def _maybe_simkl_scrobble(
     elif not is_movie:
         return
 
+    # Simkl indexes episodes by TVDB's season layout, so an episode TMDB numbers
+    # S2E91 has to go out as the TVDB S2E33 it is there (#453).
+    simkl_season, simkl_episode = getattr(media, "season_number", None), getattr(media, "episode_number", None)
+    if is_episode and db is not None:
+        try:
+            _, simkl_season, simkl_episode = (
+                await to_simkl_positions(db, [(show.tmdb_id, media.season_number, media.episode_number)])
+            )[0]
+        except Exception as exc:
+            log.warning("[Simkl scrobble] could not look up the TVDB position, using TMDB's: %s", exc)
+
     try:
         if is_movie:
             if action == "start":
@@ -195,8 +208,8 @@ async def _maybe_simkl_scrobble(
                 await simkl_client.checkin_episode(
                     cid, token,
                     show_tmdb_id=show.tmdb_id,
-                    season_number=media.season_number,
-                    episode_number=media.episode_number,
+                    season_number=simkl_season,
+                    episode_number=simkl_episode,
                     show_title=show.title,
                     progress=progress,
                 )
@@ -204,8 +217,8 @@ async def _maybe_simkl_scrobble(
                 await simkl_client.stop_scrobble_episode(
                     cid, token,
                     show_tmdb_id=show.tmdb_id,
-                    season_number=media.season_number,
-                    episode_number=media.episode_number,
+                    season_number=simkl_season,
+                    episode_number=simkl_episode,
                     progress=progress,
                 )
     except Exception as exc:
@@ -215,7 +228,7 @@ async def _maybe_simkl_scrobble(
                     await simkl_client.add_movie_to_history(cid, token, media.tmdb_id)
                 else:
                     await simkl_client.add_episode_to_history(
-                        cid, token, show.tmdb_id, media.season_number, media.episode_number,
+                        cid, token, show.tmdb_id, simkl_season, simkl_episode,
                     )
                 log.info(
                     "[Simkl scrobble] stop call failed (%s) - recorded the watch via /sync/history instead", exc,

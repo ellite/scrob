@@ -30,7 +30,7 @@ from core.rewatch import get_active_rewatch, record_rewatch_progress, get_alread
 from core.media_runtime import effective_runtime_expression
 from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event, expand_to_same_episode_media_ids
 from core.enrichment import create_media_safely
-from core.episode_order import get_episode_orders_for_series, get_tmdb_to_tvdb_positions
+from core.episode_order import get_episode_orders_for_series, get_tmdb_to_tvdb_positions, to_simkl_positions
 
 from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
@@ -167,12 +167,16 @@ async def _push_watch_state(
                 show_res = await db.execute(select(Show).where(Show.id == media.show_id))
                 show = show_res.scalar_one_or_none()
                 if show and show.tmdb_id:
+                    # Simkl indexes episodes by TVDB's layout (#453).
+                    _, simkl_season, simkl_episode = (
+                        await to_simkl_positions(db, [(show.tmdb_id, media.season_number, media.episode_number)])
+                    )[0]
                     if watched:
                         watched_at = resolved_watched_at.get(media.id)
                         if watched_at is not None:
-                            tasks.append((f"simkl add episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", simkl_client.add_episode_to_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number, watched_at)))
+                            tasks.append((f"simkl add episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", simkl_client.add_episode_to_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, simkl_season, simkl_episode, watched_at)))
                     else:
-                        tasks.append((f"simkl remove episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", simkl_client.remove_episode_from_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, media.season_number, media.episode_number)))
+                        tasks.append((f"simkl remove episode {show.tmdb_id} S{media.season_number}E{media.episode_number}", simkl_client.remove_episode_from_history(settings.simkl_client_id, settings.simkl_access_token, show.tmdb_id, simkl_season, simkl_episode)))
 
     trakt_token: str | None = None
     if push_trakt and settings.trakt_client_id:
