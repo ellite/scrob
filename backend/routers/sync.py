@@ -4795,6 +4795,59 @@ async def _apply_nuvio_progress(
     await db.commit()
 
 
+# A resume position stamped within this long before a completed watch is the
+# tail of the same viewing (a client reporting its final position as it
+# finishes), not a new partial rewatch.
+_OBSOLETE_PROGRESS_GRACE = timedelta(minutes=5)
+
+
+async def _prune_obsolete_progress(db: AsyncSession, user_id: int) -> int:
+    """Drop resume positions that a later completed watch has superseded (#584).
+
+    Nuvio/Stremio imports record an episode's intermediate position while it is
+    playing and its completed watch later, so Continue Watching kept showing
+    the finished episode at its old percentage. A position is obsolete when the
+    newest completed watch of the same item is not older than it. A position
+    stamped after the last completion is a genuine rewatch in progress and is
+    kept. Compared against watch events rather than the Nuvio response so it
+    holds for already-known events and when playback-progress sync is off."""
+    progress_rows = (
+        await db.execute(
+            select(PlaybackProgress.id, PlaybackProgress.media_id, PlaybackProgress.updated_at).where(
+                PlaybackProgress.user_id == user_id
+            )
+        )
+    ).all()
+    if not progress_rows:
+        return 0
+    media_ids = list({media_id for _, media_id, _ in progress_rows})
+    latest_watch: dict[int, datetime] = {}
+    for i in range(0, len(media_ids), _MAX_IN_PARAMS):
+        result = await db.execute(
+            select(WatchEvent.media_id, func.max(WatchEvent.watched_at))
+            .where(
+                WatchEvent.user_id == user_id,
+                WatchEvent.completed.is_(True),
+                WatchEvent.watched_at.isnot(None),
+                WatchEvent.media_id.in_(media_ids[i : i + _MAX_IN_PARAMS]),
+            )
+            .group_by(WatchEvent.media_id)
+        )
+        latest_watch.update({media_id: watched_at for media_id, watched_at in result.all()})
+    obsolete_ids = [
+        progress_id
+        for progress_id, media_id, updated_at in progress_rows
+        if updated_at is not None
+        and media_id in latest_watch
+        and updated_at <= latest_watch[media_id] + _OBSOLETE_PROGRESS_GRACE
+    ]
+    for i in range(0, len(obsolete_ids), _MAX_IN_PARAMS):
+        await db.execute(delete(PlaybackProgress).where(PlaybackProgress.id.in_(obsolete_ids[i : i + _MAX_IN_PARAMS])))
+    if obsolete_ids:
+        await db.commit()
+    return len(obsolete_ids)
+
+
 async def run_nuvio_sync(
     user_id: int,
     job_id: int,
@@ -5042,6 +5095,7 @@ async def _run_nuvio_sync(
 
             if progress_records:
                 await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids)
+            await _prune_obsolete_progress(db, user_id)
 
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
@@ -5639,6 +5693,7 @@ async def _run_stremio_sync(
                 )
             if progress_records:
                 await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids)
+            await _prune_obsolete_progress(db, user_id)
 
             complete_snapshot_ids = (
                 {str(record["content_id"]) for record in library_records}
