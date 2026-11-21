@@ -124,7 +124,123 @@ class ResolveTvdbShowTests(FindLocalShowForTvdbTests):
                 await db.commit()
                 show, tmdb_id = await shows._resolve_tvdb_show(db, 4242, self.SHOW_DATA, 999, "key")
                 self.assertEqual(show.title, "Local")
+                self.assertIsNone(tmdb_id)
+
+    async def test_existing_local_show_with_tmdb_id_keeps_it(self):
+        from models.show import Show
+
+        with patch("routers.webhooks._find_or_create_show", AsyncMock(side_effect=AssertionError("no TMDB call"))):
+            async with self.Session() as db:
+                db.add(Show(title="Local", tvdb_id=4242, tmdb_id=999))
+                await db.commit()
+                show, tmdb_id = await shows._resolve_tvdb_show(db, 4242, self.SHOW_DATA, 999, "key")
                 self.assertEqual(tmdb_id, 999)
+
+
+class GetTvdbShowDeadTmdbCrossLinkTests(FindLocalShowForTvdbTests):
+    """#585 endpoint level: TVDB 387219 (Formula 1) style payload cross-links a
+    deleted TMDB id; TMDB answers 404. The response must carry null tmdb_id and
+    tmdb_id_cross (so the frontend neither redirects nor 404s), and a repeat
+    visit that finds the TVDB-only local show must not resurrect the dead id."""
+
+    TVDB_ID = 387219
+    DEAD_TMDB_ID = 999999
+
+    async def _call(self):
+        import httpx
+
+        req = httpx.Request("GET", "https://api.themoviedb.org/3/tv/999999")
+        dead = httpx.HTTPStatusError("404", request=req, response=httpx.Response(404, request=req))
+        show_data = {
+            "title": "Formula 1", "overview": "o", "seasons": [], "genres": [],
+            "tmdb_id_cross": self.DEAD_TMDB_ID, "imdb_id": None,
+        }
+        with patch.object(shows, "get_user_tvdb_key", AsyncMock(return_value="tvdb-key")), \
+             patch.object(shows, "get_user_tmdb_key", AsyncMock(return_value="tmdb-key")), \
+             patch.object(shows, "get_user_metadata_language", AsyncMock(return_value="en")), \
+             patch.object(shows.tvdb_client, "get_series", AsyncMock(return_value={})), \
+             patch.object(shows.tvdb_client, "format_series", MagicMock(return_value=dict(show_data))), \
+             patch.object(shows.tvdb_client, "format_cast", MagicMock(return_value=[])), \
+             patch.object(shows.tvdb_client, "get_series_episodes", AsyncMock(return_value=[])), \
+             patch.object(shows, "_enrich_tvdb_seasons", AsyncMock(return_value=([], {}))), \
+             patch("routers.webhooks._find_or_create_show", AsyncMock(side_effect=dead)):
+            async with self.Session() as db:
+                return await shows.get_tvdb_show(self.TVDB_ID, db=db, current_user=SimpleNamespace(id=1))
+
+    async def test_dead_tmdb_cross_link_yields_null_tmdb_fields(self):
+        data = await self._call()
+        self.assertIsNone(data["tmdb_id"])
+        self.assertIsNone(data["tmdb_id_cross"])
+        self.assertIsNotNone(data["id"])
+
+    async def test_second_visit_keeps_single_show_and_null_tmdb_fields(self):
+        first = await self._call()
+        second = await self._call()
+        self.assertEqual(first["id"], second["id"])
+        self.assertIsNone(second["tmdb_id"])
+        self.assertIsNone(second["tmdb_id_cross"])
+
+
+class GetTvdbShowDeadTmdbHttpRouteTests(FindLocalShowForTvdbTests):
+    """#585 over the real HTTP route (GET /shows/tvdb/{id}) with the real
+    router, dependency chain, TVDB remoteIds parsing and TMDB client. Only the
+    network edge is simulated: TVDB's series payload cross-links TMDB id 999999
+    and api.themoviedb.org answers a genuine HTTP 404 for it."""
+
+    TVDB_ID = 387219
+    DEAD_TMDB_ID = 999999
+
+    async def test_route_returns_null_tmdb_fields_when_cross_link_is_dead(self):
+        import httpx
+        from fastapi import FastAPI
+
+        from core import tmdb as tmdb_client
+        from db import get_db
+        from dependencies import get_optional_user_or_api_key
+
+        tmdb_urls: list[str] = []
+
+        def tmdb_handler(request: httpx.Request) -> httpx.Response:
+            tmdb_urls.append(str(request.url))
+            return httpx.Response(404, json={"success": False, "status_code": 34}, request=request)
+
+        raw_series = {
+            "id": self.TVDB_ID, "name": "Formula 1", "overview": "o", "seasons": [],
+            "remoteIds": [
+                {"id": "tt0000001", "sourceName": "IMDB"},
+                {"id": str(self.DEAD_TMDB_ID), "sourceName": "TheMovieDB.com"},
+            ],
+        }
+
+        app = FastAPI()
+        app.include_router(shows.router, prefix="/shows")
+
+        async def _db():
+            async with self.Session() as db:
+                yield db
+
+        app.dependency_overrides[get_db] = _db
+        app.dependency_overrides[get_optional_user_or_api_key] = lambda: SimpleNamespace(id=1)
+
+        tmdb_http = httpx.AsyncClient(transport=httpx.MockTransport(tmdb_handler))
+        self.addAsyncCleanup(tmdb_http.aclose)
+        with patch.object(tmdb_client, "_client", tmdb_http), \
+             patch.object(shows, "get_user_tvdb_key", AsyncMock(return_value="tvdb-key")), \
+             patch.object(shows, "get_user_tmdb_key", AsyncMock(return_value="tmdb-key")), \
+             patch.object(shows, "get_user_metadata_language", AsyncMock(return_value="en")), \
+             patch.object(shows.tvdb_client, "get_series", AsyncMock(return_value=raw_series)), \
+             patch.object(shows.tvdb_client, "get_series_episodes", AsyncMock(return_value=[])):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                ids = []
+                for _ in range(2):
+                    r = await client.get(f"/shows/tvdb/{self.TVDB_ID}")
+                    self.assertEqual(r.status_code, 200, r.text)
+                    body = r.json()
+                    self.assertIsNone(body["tmdb_id"])
+                    self.assertIsNone(body["tmdb_id_cross"])
+                    ids.append(body["id"])
+                self.assertEqual(ids[0], ids[1])
+        self.assertTrue(any(f"/tv/{self.DEAD_TMDB_ID}" in u for u in tmdb_urls), tmdb_urls)
 
 
 class _Scalars:

@@ -149,7 +149,8 @@ async def _resolve_tvdb_show(
     don't keep chasing it."""
     show = await _find_local_show_for_tvdb(db, tvdb_id, series_tmdb_id)
     if show is not None:
-        return show, series_tmdb_id
+        # A TVDB-only local show must not resurrect a dead cross-linked id.
+        return show, show.tmdb_id
     if series_tmdb_id:
         from routers.webhooks import _find_or_create_show
         try:
@@ -3082,7 +3083,7 @@ async def get_tvdb_show(
         "tagline": None,
         "tmdb_rating": tmdb_show.get("vote_average"),
         "imdb_id": show_data.get("imdb_id"),
-        "tmdb_id_cross": show_data.get("tmdb_id_cross"),
+        "tmdb_id_cross": series_tmdb_id,
         "episode_order": "tvdb",
         "adult": False,
         "in_library": in_library,
