@@ -97,8 +97,11 @@ _cache = _TTLCache()
 
 # One pooled client for the whole process, opened and closed by main.lifespan:
 # a client per call rebuilt its TLS context (blocking the event loop) and paid
-# DNS + TCP + TLS on every request. keepalive_expiry must stay below TMDB's
-# edge idle timeout (~3 min). No connection cap, as before: a pool wait would
+# DNS + TCP + TLS on every request. httpx only evicts idle connections lazily
+# (on the next request), so idle connections TMDB's edge has already closed sit
+# half-closed in CLOSE_WAIT until then. Cap max_keepalive_connections (an
+# explicit Limits() leaves it unbounded) and keep keepalive_expiry short (#588).
+# No connection cap, as before: a pool wait would
 # count against _HTTP_TIMEOUT and could trip the breaker.
 _client: httpx.AsyncClient | None = None
 
@@ -107,7 +110,9 @@ def init_client() -> None:
     global _client
     _client = httpx.AsyncClient(
         timeout=httpx.Timeout(_HTTP_TIMEOUT),
-        limits=httpx.Limits(max_connections=None, keepalive_expiry=120.0),
+        limits=httpx.Limits(
+            max_connections=None, max_keepalive_connections=5, keepalive_expiry=30.0
+        ),
     )
 
 
