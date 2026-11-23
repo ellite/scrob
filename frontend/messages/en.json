@@ -630,6 +630,8 @@
   "stat_rated": "Rated",
   "stat_followers": "Followers",
   "search_no_results": "No results found for \"{query}\".",
+  "search_suggest_label": "Search suggestions",
+  "search_suggest_see_all": "See all results for \"{query}\"",
   "discover_tmdb_required_body": "Add your TMDB Read Access Token in settings to unlock Discover.",
   "discover_for_you": "For You",
   "discover_for_you_hint": "Based on your favourite genres",
