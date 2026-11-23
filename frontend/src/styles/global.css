@@ -123,6 +123,13 @@ html {
   scroll-padding-top: var(--nav-h, 0px);
 }
 
+/* Nav inputs already sit inside the pinned header. Reserving that same header
+   space while one is focused makes caret visibility scroll the page on every
+   keystroke. Keep the offset for content targets, but not for nav input focus. */
+html:has(nav.sticky input:focus) {
+  scroll-padding-top: 0;
+}
+
 body {
   /* No rubber-band bounce on the shell */
   overscroll-behavior: none;
