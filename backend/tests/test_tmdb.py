@@ -185,6 +185,12 @@ class SharedClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(requests), 3)
 
+    async def test_lifespan_client_negotiates_http2(self) -> None:
+        # Built for real (no mock) so a missing h2 package fails here instead
+        # of at app startup.
+        tmdb.init_client()
+        self.assertTrue(tmdb._client._transport._pool._http2)
+
 
 class DiscoverGenreIdsTests(unittest.IsolatedAsyncioTestCase):
     """Regression tests for multi-genre selection on Explore Movies/Shows:
