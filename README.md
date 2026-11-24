@@ -74,7 +74,7 @@ Scrob syncs your libraries from **Jellyfin**, **Plex**, **Emby**, **Nuvio**, **A
 - **Release schedule**: Movie pages show the full release schedule - theatrical, digital, and physical dates - sourced from TMDB.
 - **TMDB integration**: Rich metadata for every title - posters, backdrops, cast, crew, trailers, collections, and more.
 - **RPDB rating posters**: Optionally use RatingPosterDB movie and show posters with embedded ratings. Configure your own key and customize the artwork and rating sources through RPDB.
-- **Metadata language**: Set a preferred display language per profile - titles, overviews, and episode names show translated where available, independent of the rest of the UI's language.
+- **Metadata language**: Set a preferred display language per profile - titles, overviews, and episode names show translated where available, independent of the rest of the UI's language. Without an explicit setting, the browser's language is used (this also applies to logged-out visitors of public lists and profiles).
 - **Search**: Search TMDB across movies, shows, people, and collections, merged with your local library data.
 - **Pick a Movie / Pick a Show**: Get a suggestion on what to watch next from your library or your streaming services based on your preferences.
 - **Trending & Airing Today**: Daily trending movies and shows from TMDB, plus episodes airing today filtered to your collection.

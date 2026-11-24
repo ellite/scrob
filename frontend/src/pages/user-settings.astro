@@ -288,7 +288,7 @@ const COUNTRIES = [
             name="metadata_language"
             class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           >
-            <option value="">{m.profile_settings_english_default()}</option>
+            <option value="">{m.profile_settings_metadata_language_automatic()}</option>
             {METADATA_LANGUAGES.map(([code, name]) => (
               <option value={code} selected={prefs.metadata_language === code}>{localizedLanguageName(METADATA_DISPLAY_CODES[code] ?? code, name)}</option>
             ))}
