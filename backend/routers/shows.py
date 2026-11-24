@@ -3004,7 +3004,7 @@ async def get_tvdb_show(
 
     # Prefer TMDB's networks - they carry the id + logo the /network/{id} link
     # needs, and a TVDB-ordered show still has a TMDB counterpart here whenever
-    # tmdb_id_cross is set. TVDB's own network list (name only, often empty) is
+    # tmdb_id_cross is set. TVDB's own networks (originalNetwork/latestNetwork, name only) are
     # just the fallback for a show with no TMDB presence at all.
     if tmdb_show.get("networks"):
         networks = [
@@ -3017,8 +3017,8 @@ async def get_tvdb_show(
             for n in tmdb_show["networks"]
         ]
     else:
-        networks = [{"id": None, "name": n.get("name"), "logo_path": None, "origin_country": None}
-                    for n in (raw.get("networks") or []) if n.get("name")]
+        networks = [{"id": None, "name": name, "logo_path": None, "origin_country": None}
+                    for name in tvdb_client.network_names(raw)]
 
     rewatch_info = None
     if show:
