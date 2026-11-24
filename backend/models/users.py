@@ -182,6 +182,7 @@ class UserSettings(Base):
     time_format_24h : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     use_hls_player  : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     show_play_button : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    page_size : Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     shuffle_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     minimalist_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     next_up_by_recent_watch : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
