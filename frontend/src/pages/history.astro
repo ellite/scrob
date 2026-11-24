@@ -3,7 +3,9 @@ import Base from "../layouts/Base.astro";
 import HistoryCard from "../components/HistoryCard.astro";
 import HistoryShowGroup from "../components/HistoryShowGroup.astro";
 import Pagination from "../components/Pagination.astro";
+import FilterPanel from "../components/FilterPanel.astro";
 import { api, type WatchEvent } from "../lib/api";
+import { MY_RATING_OPTIONS, parseMyRating } from "../lib/my-rating";
 import { formatDate } from "../lib/format";
 import { m } from "../paraglide/messages.js";
 import { getViewerTimeZone } from "../lib/viewerTimeZone";
@@ -14,11 +16,16 @@ Astro.response.headers.set("Cache-Control", "no-store");
 const page = Number(Astro.url.searchParams.get("page") || 1);
 const type = Astro.url.searchParams.get("type") || undefined;
 const q = Astro.url.searchParams.get("q") || "";
+// #316: only plays of movies/episodes the user rated with one of these values.
+const myRating = parseMyRating(Astro.url);
 const use24h = Astro.cookies.get("time_format_24h")?.value === "true";
 const timeZone = getViewerTimeZone(Astro.cookies);
 const condenseByShow = Astro.locals.settings?.condense_history_by_show === true;
 
-const history = await api.history.list({ page, page_size: 40, type, q: q || undefined }, token);
+const history = await api.history.list({
+  page, page_size: 40, type, q: q || undefined,
+  ...(myRating.length ? { my_rating: myRating } : {}),
+}, token);
 
 // Grouping logic
 const groupedHistory = history.results.reduce<Record<string, WatchEvent[]>>((acc, event) => {
@@ -102,12 +109,14 @@ for (const date of dates) {
 
 // Builds a /history URL for a given type/q combo, defaulting each to the
 // current page's value so a link only needs to say what it's changing.
+// The My Rating filter always carries over.
 const historyUrl = (overrides: { type?: string; q?: string } = {}) => {
   const nextType = overrides.type !== undefined ? overrides.type : (type || "");
   const nextQ = overrides.q !== undefined ? overrides.q : q;
   const params = new URLSearchParams();
   if (nextType) params.set("type", nextType);
   if (nextQ) params.set("q", nextQ);
+  myRating.forEach((rating) => params.append("my_rating", String(rating)));
   const qs = params.toString();
   return `/history${qs ? `?${qs}` : ""}`;
 };
@@ -120,7 +129,7 @@ const baseUrl = historyUrl();
     <h1 class="page-title mb-8">{m.history_page_title()}</h1>
 
     <div class="flex flex-col md:flex-row md:items-center gap-3 mb-8">
-      <div class="flex items-center justify-between gap-3 md:contents">
+      <div class="flex flex-wrap items-center justify-between gap-3 md:contents">
         <div id="history-tabs" class="flex gap-3">
           <a
             href={historyUrl({ type: "" })}
@@ -141,17 +150,28 @@ const baseUrl = historyUrl();
             {m.common_shows()}
           </a>
         </div>
-        <button
-          id="history-select-toggle"
-          type="button"
-          class="md:ml-auto px-4 py-1.5 rounded-full text-sm font-medium transition active:scale-95 active:opacity-70 bg-zinc-800 text-zinc-400 hover:text-zinc-100 cursor-pointer"
-        >
-          {m.history_select()}
-        </button>
+        <div class="md:ml-auto flex items-center gap-3">
+          <FilterPanel
+            id="history-filters"
+            basePath="/history"
+            extraParams={{ type: type || "", q }}
+            sections={[
+              { key: "my_rating", label: m.filter_my_rating(), options: MY_RATING_OPTIONS, selected: myRating.map(String) },
+            ]}
+          />
+          <button
+            id="history-select-toggle"
+            type="button"
+            class="px-4 py-1.5 rounded-full text-sm font-medium transition active:scale-95 active:opacity-70 bg-zinc-800 text-zinc-400 hover:text-zinc-100 cursor-pointer"
+          >
+            {m.history_select()}
+          </button>
+        </div>
       </div>
 
       <form action="/history" method="GET" class="relative md:w-72">
         {type && <input type="hidden" name="type" value={type} />}
+        {myRating.map((rating) => <input type="hidden" name="my_rating" value={rating} />)}
         <svg id="history-search-icon" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
         </svg>
@@ -173,10 +193,14 @@ const baseUrl = historyUrl();
     <div id="history-results">
     {dates.length === 0 ? (
       <div class="bg-zinc-900/50 rounded-2xl p-12 text-center">
-        <div class="text-zinc-500 mb-2">{q ? m.history_no_results_for({ query: q }) : m.history_empty()}</div>
-        <a href={q ? historyUrl({ q: "" }) : "/"} class="text-blue-500 hover:text-blue-400 font-medium transition-colors">
-          {q ? m.history_clear_search() : m.history_go_discover()}
-        </a>
+        <div class="text-zinc-500 mb-2">{q ? m.history_no_results_for({ query: q }) : myRating.length ? m.history_no_filter_match() : m.history_empty()}</div>
+        {q ? (
+          <a href={historyUrl({ q: "" })} class="text-blue-500 hover:text-blue-400 font-medium transition-colors">{m.history_clear_search()}</a>
+        ) : myRating.length ? (
+          <a href={`/history${type ? `?${new URLSearchParams({ type })}` : ""}`} class="text-blue-500 hover:text-blue-400 font-medium transition-colors">{m.filters_clear()}</a>
+        ) : (
+          <a href="/" class="text-blue-500 hover:text-blue-400 font-medium transition-colors">{m.history_go_discover()}</a>
+        )}
       </div>
     ) : (
       <div class="space-y-10">
@@ -321,6 +345,11 @@ const baseUrl = historyUrl();
       // replaceState, not push - a history entry per keystroke would make
       // "back" useless.
       window.history.replaceState(null, '', url);
+      // Keep the filter panel's Apply in step with the new search term.
+      document.getElementById('history-filters')?.setAttribute(
+        'data-extra-params',
+        JSON.stringify({ type: params.get('type') || '', q: params.get('q') || '' }),
+      );
       setLoading(false);
     }
 
