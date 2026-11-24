@@ -104,6 +104,26 @@ const days = Object.keys(byDay);
           options: [{ value: "watched", label: m.filter_watched_option() }, { value: "unwatched", label: m.filter_unwatched_option() }] },
       ]}
     />
+    {token && (
+      <div class="relative group">
+        <button id="cal-copy-subscription" type="button" aria-label={m.calendar_copy_subscription()}
+          data-sonarr-only={String(sonarrOnly)} data-sonarr-monitored={String(sonarrMonitored)}
+          class="flex items-center p-2.5 text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-blue-500">
+          <svg aria-hidden="true" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="8" y="8" width="12" height="12" rx="2" />
+            <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+          </svg>
+        </button>
+        <span id="cal-copy-label" aria-hidden="true" class="pointer-events-none invisible group-hover:visible group-focus-within:visible absolute z-20 top-full right-0 mt-1 w-max max-w-52 rounded bg-zinc-800 px-2 py-1 text-xs text-white">{m.calendar_copy_subscription()}</span>
+        <span id="cal-copy-status" role="status" class="absolute z-30 top-full right-0 mt-1 w-max max-w-52 rounded bg-zinc-800 px-2 py-1 text-xs text-white empty:sr-only"></span>
+        {/* Last resort when the browser refuses every copy method: the link,
+            selected, for a manual copy. */}
+        <label id="cal-copy-manual" hidden class="absolute z-30 top-full right-0 mt-1 w-72 max-w-[80vw] rounded bg-zinc-800 p-2 text-xs text-white">
+          <span class="block mb-1">{m.calendar_copy_subscription_manual()}</span>
+          <input type="text" readonly class="w-full rounded bg-zinc-900 px-2 py-1 text-zinc-200" />
+        </label>
+      </div>
+    )}
     <button
       id="cal-refresh-btn"
       class="flex items-center gap-2 px-4 py-2 text-sm font-bold text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-xl hover:border-zinc-600 hover:text-zinc-200 transition-all cursor-pointer shrink-0"
@@ -166,6 +186,85 @@ const days = Object.keys(byDay);
 
   <p class="text-zinc-500 mt-8">{m.calendar_footer_days({ days: lookaheadDays })}</p>
 </Base>
+
+<script>
+  import { calendarSubscriptionUrl } from "../lib/calendar-subscription.js";
+  import { m } from "../paraglide/messages.js";
+
+  const button = document.querySelector<HTMLButtonElement>('#cal-copy-subscription');
+  const status = document.querySelector<HTMLElement>('#cal-copy-status');
+  const label = document.querySelector<HTMLElement>('#cal-copy-label');
+  const manual = document.querySelector<HTMLElement>('#cal-copy-manual');
+  let feedbackTimer: ReturnType<typeof setTimeout>;
+
+  function copyWithSelection(text: string) {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+    document.body.appendChild(area);
+    area.select();
+    const copied = document.execCommand('copy');
+    area.remove();
+    if (!copied) throw new Error('execCommand copy failed');
+  }
+
+  function showManual(url: string) {
+    const input = manual!.querySelector('input')!;
+    input.value = url;
+    manual!.hidden = false;
+    input.focus();
+    input.select();
+    input.addEventListener('blur', () => { manual!.hidden = true; input.value = ''; }, { once: true });
+  }
+  button?.addEventListener('click', async () => {
+    if (!status || button.disabled) return;
+    button.disabled = true;
+    clearTimeout(feedbackTimer);
+    status.textContent = '';
+    if (label) label.hidden = true;
+    if (manual) manual.hidden = true;
+    let url = '';
+    try {
+      const address = async () => {
+        const response = await fetch('/api/proxy/auth/me', { cache: 'no-store' });
+        if (!response.ok) throw new Error('Could not load API key');
+        const { api_key } = await response.json();
+        if (!api_key) throw new Error('API key missing');
+        const days = Number(document.querySelector<HTMLSelectElement>('#cal-days-select')!.value);
+        return calendarSubscriptionUrl(window.location.origin, api_key, days,
+          button.dataset.sonarrOnly === 'true', button.dataset.sonarrMonitored === 'true');
+      };
+      // The async Clipboard API only exists on HTTPS or localhost; self-hosted
+      // instances on plain HTTP fall back to execCommand (as connections.astro).
+      if (window.isSecureContext && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+        const content = address().then(value => { url = value; return new Blob([value], { type: 'text/plain' }); });
+        // Permission can be denied before the browser consumes the item.
+        void content.catch(() => {});
+        await navigator.clipboard.write([new ClipboardItem({ 'text/plain': content })]);
+      } else if (window.isSecureContext && navigator.clipboard?.writeText) {
+        url = await address();
+        await navigator.clipboard.writeText(url);
+      } else {
+        url = await address();
+        copyWithSelection(url);
+      }
+      status.textContent = m.common_copied();
+    } catch {
+      if (url && manual) {
+        showManual(url);
+      } else {
+        status.textContent = m.conn_could_not_copy_to_clipboard();
+      }
+    } finally {
+      button.disabled = false;
+      feedbackTimer = setTimeout(() => {
+        status.textContent = '';
+        if (label) label.hidden = false;
+      }, 2500);
+    }
+  });
+</script>
 
 <script define:vars={{ token, needsCompute }}>
   const refreshBtn = document.getElementById('cal-refresh-btn');
