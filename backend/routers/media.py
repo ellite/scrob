@@ -2299,15 +2299,20 @@ _IN_LIST_CHECKS = {
     "in": lambda i: bool(i.get("in_lists")),
     "out": lambda i: not i.get("in_lists"),
 }
+_DROPPED_CHECKS = {
+    "dropped": lambda i: bool(i.get("dropped")),
+    "notdropped": lambda i: not i.get("dropped"),
+}
 
 
 def _apply_local_filters(
     items: list[dict], collection: list[str], watch: list[str], arr: list[str], year: list[int] | None = None,
     in_list: list[str] | None = None, my_rating: list[int] | None = None,
+    dropped: list[str] | None = None,
 ) -> list[dict]:
     """Local-only filters get_tmdb_list applies after TMDB enrichment.
 
-    collection/watch/arr/my_rating can't be expressed by TMDB's discover API at all.
+    collection/watch/arr/my_rating/dropped can't be expressed by TMDB's discover API at all.
     year could (primary_release_year/first_air_date_year), but only as a
     single value - TMDB has no "year A OR year B" for discover, so a
     multi-year selection is applied locally here instead, same as the others.
@@ -2318,7 +2323,7 @@ def _apply_local_filters(
     no check, so a category made up entirely of unrecognized values is a
     no-op rather than matching nothing.
     """
-    for values, checks in ((collection, _COLLECTION_CHECKS), (watch, _WATCH_CHECKS), (arr, _ARR_CHECKS), (in_list or [], _IN_LIST_CHECKS)):
+    for values, checks in ((collection, _COLLECTION_CHECKS), (watch, _WATCH_CHECKS), (arr, _ARR_CHECKS), (in_list or [], _IN_LIST_CHECKS), (dropped or [], _DROPPED_CHECKS)):
         if not values:
             continue
         active = [checks[v] for v in values if v in checks]
@@ -2394,6 +2399,8 @@ async def get_tmdb_list(
     # in_list = in|out: membership of any of the user's lists (#255).
     in_list: list[str] = Query(default=[]),
     my_rating: list[MyRatingValue] = Query(default=[]),
+    # dropped = dropped|notdropped: personal drop state (#532).
+    dropped: list[str] = Query(default=[]),
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
@@ -2408,7 +2415,7 @@ async def get_tmdb_list(
             raise HTTPException(status_code=401, detail="Not authenticated")
         tmdb_key = gs.tmdb_api_key
         # No personal library/watch history to filter on without a user.
-        collection, watch, arr, my_rating = [], [], [], []
+        collection, watch, arr, my_rating, dropped = [], [], [], [], []
     else:
         tmdb_key = await get_user_tmdb_key(db, current_user.id)
 
@@ -2437,6 +2444,13 @@ async def get_tmdb_list(
         # to TMDB's default English (#235 follow-up). No profile to read a
         # language from when browsing anonymously.
         metadata_lang = await get_user_metadata_language(db, current_user.id) if current_user else None
+
+        # Dropped state is personal and local-only. Resolve it only when the
+        # filter is active so ordinary Explore requests keep the existing fast path.
+        dropped_movie_tmdb_ids: set[int] = set()
+        dropped_show_tmdb_ids: set[int] = set()
+        if current_user is not None and dropped:
+            dropped_movie_tmdb_ids, dropped_show_tmdb_ids = await _dropped_tmdb_ids(db, current_user.id)
 
         async def _fetch_tmdb_page(fetch_page: int) -> dict:
             if has_filters:
@@ -2533,11 +2547,15 @@ async def get_tmdb_list(
                 )
             if current_user is not None:
                 await enrich_with_state(db, current_user.id, enriched)
+            if dropped:
+                dropped_ids = dropped_movie_tmdb_ids if type == MediaType.movie else dropped_show_tmdb_ids
+                for item in enriched:
+                    item["dropped"] = item.get("tmdb_id") in dropped_ids
             return enriched
 
         excluded_languages = _expand_excluded_languages(exclude_language)
 
-        if not (collection or watch or arr or year or in_list or excluded_languages or my_rating):
+        if not (collection or watch or arr or year or in_list or excluded_languages or my_rating or dropped):
             data = await _fetch_tmdb_page(page)
             enriched = await _build_enriched(data.get("results", []))
             return {
@@ -2581,7 +2599,7 @@ async def get_tmdb_list(
                 ]
             if batch_results:
                 enriched = await _build_enriched(batch_results)
-                matched.extend(_apply_local_filters(enriched, collection, watch, arr, year, in_list, my_rating))
+                matched.extend(_apply_local_filters(enriched, collection, watch, arr, year, in_list, my_rating, dropped))
             scan_page = batch_end + 1
             if total_tmdb_pages is not None and scan_page > total_tmdb_pages:
                 break
