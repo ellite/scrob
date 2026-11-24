@@ -1519,7 +1519,7 @@ export const api = {
   },
 
   shows: {
-    list: (params?: { sort?: string; page?: number; page_size?: number; genre?: string[]; year?: number[]; status?: string[]; watched?: string[]; in_list?: string; my_rating?: number[] }, token?: string) =>
+    list: (params?: { sort?: string; page?: number; page_size?: number; genre?: string[]; year?: number[]; status?: string[]; watched?: string[]; in_list?: string; incomplete?: boolean; my_rating?: number[] }, token?: string) =>
       get<{ page: number; page_size: number; total_results: number; total_pages: number; results: any[] }>("/shows", params, token),
 
     years: (token?: string) =>

@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 import time
+from types import SimpleNamespace
 from datetime import datetime, date, timezone
 from pydantic import BaseModel
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException
@@ -308,6 +309,74 @@ def format_show(show: ShowModel) -> dict:
     }
 
 
+async def _incomplete_show_ids(db: AsyncSession, user_id: int) -> list[int]:
+    """Ids of collected shows missing at least one aired regular episode.
+
+    One grouped query for the collected counts (distinct season/episode, like
+    the card's collection_pct). The aired totals come from the cached Show row
+    via total_aired_episodes - never a live TMDB call - so a still-airing show
+    can disagree with its card for a while (the card asks TMDB live; accepted).
+    A directly collected series with zero episode rows is incomplete too.
+    Season 0 specials are excluded from both sides.
+    """
+    episodes = (
+        select(Media.show_id.label("show_id"), Media.season_number, Media.episode_number)
+        .join(Collection, Collection.media_id == Media.id)
+        .where(
+            Collection.user_id == user_id,
+            Media.media_type == MediaType.episode,
+            Media.show_id.isnot(None),
+            Media.season_number.isnot(None),
+            Media.season_number != 0,
+            Media.episode_number.isnot(None),
+        )
+        .group_by(Media.show_id, Media.season_number, Media.episode_number)
+        .subquery()
+    )
+    counts = (
+        select(episodes.c.show_id, func.count().label("collected"))
+        .group_by(episodes.c.show_id)
+        .subquery()
+    )
+    direct_series_tmdb_ids = (
+        select(Media.tmdb_id)
+        .join(Collection, Collection.media_id == Media.id)
+        .where(
+            Collection.user_id == user_id,
+            Media.media_type == MediaType.series,
+            Media.tmdb_id.isnot(None),
+        )
+        .distinct()
+        .subquery()
+    )
+    rows = (await db.execute(
+        select(
+            ShowModel.id,
+            ShowModel.status,
+            ShowModel.tmdb_data["seasons"].label("seasons"),
+            ShowModel.tmdb_data["last_episode_to_air"].label("last_episode_to_air"),
+            ShowModel.tmdb_data["next_episode_to_air"].label("next_episode_to_air"),
+            counts.c.collected,
+        )
+        .outerjoin(counts, counts.c.show_id == ShowModel.id)
+        .where(or_(
+            counts.c.show_id.isnot(None),
+            ShowModel.tmdb_id.in_(select(direct_series_tmdb_ids)),
+        ))
+    )).all()
+    incomplete: list[int] = []
+    for r in rows:
+        show = SimpleNamespace(status=r.status, tmdb_data={
+            "seasons": r.seasons or [],
+            "last_episode_to_air": r.last_episode_to_air,
+            "next_episode_to_air": r.next_episode_to_air,
+        })
+        total = total_aired_episodes(show)
+        if total > 0 and (r.collected or 0) < total:
+            incomplete.append(r.id)
+    return incomplete
+
+
 @router.get("")
 async def list_shows(
     db: AsyncSession = Depends(get_db),
@@ -323,6 +392,7 @@ async def list_shows(
     # in_list = in|out: membership of any of the user's lists (#255;
     # season-level list items live on the same series Media row and count too).
     in_list: str | None = Query(None),
+    incomplete: bool = Query(False),
 ):
     offset = (page - 1) * page_size
 
@@ -382,6 +452,9 @@ async def list_shows(
         base_query = base_query.where(or_(*[ShowModel.first_air_date.like(f'{y}%') for y in year]))
     if status:
         base_query = base_query.where(ShowModel.status.in_(status))
+    if incomplete:
+        # Server-side so total_results and pagination stay exact.
+        base_query = base_query.where(ShowModel.id.in_(await _incomplete_show_ids(db, current_user.id)))
     watched_states = set(watched)
     if watched_states and watched_states != {"watched", "unwatched"}:
         # "Watched" here means the user has watched at least one episode
