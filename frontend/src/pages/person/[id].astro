@@ -4,8 +4,9 @@ import MediaCard from "../../components/MediaCard.astro";
 import ActionBar from "../../components/ActionBar.astro";
 import CommentsSection from "../../components/CommentsSection.astro";
 import FilterPanel from "../../components/FilterPanel.astro";
+import PersonCreditGroups from "../../components/PersonCreditGroups.astro";
 import { api, type MediaItem } from "../../lib/api";
-import { genreLabel, sortByLabel } from "../../lib/labels";
+import { departmentLabel, genreLabel, sortByLabel } from "../../lib/labels";
 import { m } from "../../paraglide/messages.js";
 export const prerender = false;
 
@@ -16,10 +17,11 @@ const collection: "in" | "out" | "" = collectionParam === "in" || collectionPara
 const genre = Astro.url.searchParams.getAll("genre");
 const year = Astro.url.searchParams.getAll("year").map(Number).filter((y) => !Number.isNaN(y));
 const minRating = Astro.url.searchParams.get("min_rating") ?? "";
-const person = await api.media.getPerson(Number(id), 1, token, { collection, genre, year, minRating });
+const creditJob = Astro.url.searchParams.get("credit_job") ?? "";
+const person = await api.media.getPerson(Number(id), 1, token, { collection, genre, year, minRating, grouped: true, creditJob });
 
-const credits = person.credits || [];
-const totalPages = Math.ceil(person.total_credits / person.page_size);
+const creditGroups = person.credit_groups || [];
+const availableJobs = person.available_jobs || [];
 
 const MOVIE_GENRES = [
   "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary",
@@ -127,6 +129,9 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
               { key: "collection", label: m.filter_collection(), options: [{ value: "in", label: m.filter_in_my_collection() }, { value: "out", label: m.filter_not_in_my_collection() }], selected: collection ? [collection] : [], multi: false },
               { key: "genre", label: m.filter_genre(), options: sortByLabel(CREDIT_GENRES.map((g) => ({ value: g, label: genreLabel(g) }))), selected: genre },
               { key: "year", label: m.filter_year(), options: years.map((y) => ({ value: String(y), label: String(y) })), selected: year.map(String) },
+              ...(availableJobs.length > 1
+                ? [{ key: "credit_job", label: m.person_filter_job(), options: availableJobs.map((j) => ({ value: j, label: departmentLabel(j) })), selected: creditJob ? [creditJob] : [], multi: false }]
+                : []),
               {
                 key: "min_rating",
                 label: m.filter_rating(),
@@ -140,26 +145,12 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
             ]}
           />
         </div>
-        {credits.length === 0 && (collection || genre.length > 0 || year.length > 0 || minRating) ? (
-          <p class="text-zinc-500 text-sm">{m.person_no_matching_credits()}</p>
+        {creditGroups.length === 0 ? (
+          (collection || genre.length > 0 || year.length > 0 || minRating || creditJob) && (
+            <p class="text-zinc-500 text-sm">{m.person_no_matching_credits()}</p>
+          )
         ) : (
-          <div id="credits-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-            {credits.map((item) => (
-              <div class="flex flex-col gap-1">
-                <MediaCard item={item as unknown as MediaItem} />
-                {item.character && (
-                  <p class="text-xs text-zinc-500 truncate px-1">{m.person_as_character({ character: item.character })}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        {totalPages > 1 && (
-          <div id="credits-pagination" class="flex items-center justify-center gap-3 mt-8" data-config={JSON.stringify({ personId: person.tmdb_id, totalCredits: person.total_credits, pageSize: person.page_size, collection, genre, year, minRating })}>
-            <button id="credits-prev" disabled class="px-4 py-2 text-sm rounded-lg bg-zinc-800 text-zinc-400 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer hover:bg-zinc-700 transition-colors">← {m.common_previous()}</button>
-            <span id="credits-page-info" class="text-sm text-zinc-400">{m.pagination_page_of({ page: 1, total: totalPages })}</span>
-            <button id="credits-next" class="px-4 py-2 text-sm rounded-lg bg-zinc-800 text-zinc-400 border border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer hover:bg-zinc-700 transition-colors">{m.common_next()} →</button>
-          </div>
+          <PersonCreditGroups groups={creditGroups} personId={person.tmdb_id} pageSize={person.page_size} />
         )}
       </div>
 
@@ -212,61 +203,4 @@ const years = Array.from({ length: currentYear - 1949 }, (_, i) => currentYear -
     closeBtn?.addEventListener('click', closeModal);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
   }
-</script>
-
-<script>
-  import { m } from '../../paraglide/messages.js';
-
-  // Only rendered when there's more than one page of credits.
-  const paginationEl = document.getElementById('credits-pagination');
-  const { personId, totalCredits, pageSize, collection, genre, year, minRating } =
-    JSON.parse(paginationEl?.dataset.config ?? '{"totalCredits":0,"pageSize":1,"genre":[],"year":[]}');
-  const totalPages = Math.ceil(totalCredits / pageSize);
-  let currentPage = 1;
-  let loading = false;
-
-  const grid = document.getElementById('credits-grid');
-  const prevBtn = document.getElementById('credits-prev');
-  const nextBtn = document.getElementById('credits-next');
-  const pageInfo = document.getElementById('credits-page-info');
-
-  function updatePagination() {
-    if (!prevBtn || !nextBtn || !pageInfo) return;
-    prevBtn.disabled = currentPage <= 1;
-    nextBtn.disabled = currentPage >= totalPages;
-    pageInfo.textContent = m.pagination_page_of({ page: currentPage, total: totalPages });
-  }
-
-  async function loadPage(page) {
-    if (loading || !grid) return;
-    loading = true;
-    grid.style.opacity = '0.5';
-    grid.style.pointerEvents = 'none';
-
-    try {
-      const params = new URLSearchParams({ person_id: String(personId), page: String(page) });
-      if (collection) params.set('collection', collection);
-      genre.forEach((g) => params.append('genre', g));
-      year.forEach((y) => params.append('year', String(y)));
-      if (minRating) params.set('min_rating', minRating);
-      const res = await fetch('/partials/person-credits?' + params.toString());
-      if (!res.ok) return;
-      const html = await res.text();
-      const tmp = document.createElement('div');
-      tmp.innerHTML = html;
-      const wrapper = tmp.firstElementChild;
-      if (!wrapper) return;
-      grid.innerHTML = wrapper.innerHTML;
-      currentPage = page;
-      updatePagination();
-      grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } finally {
-      grid.style.opacity = '';
-      grid.style.pointerEvents = '';
-      loading = false;
-    }
-  }
-
-  if (prevBtn) prevBtn.addEventListener('click', function() { if (currentPage > 1) loadPage(currentPage - 1); });
-  if (nextBtn) nextBtn.addEventListener('click', function() { if (currentPage < totalPages) loadPage(currentPage + 1); });
 </script>

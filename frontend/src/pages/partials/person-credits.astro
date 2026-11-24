@@ -1,6 +1,7 @@
 ---
 import MediaCard from "../../components/MediaCard.astro";
 import { api, type MediaItem } from "../../lib/api";
+import { crewJobLabel } from "../../lib/labels";
 import { m } from "../../paraglide/messages.js";
 
 export const partial = true;
@@ -13,6 +14,9 @@ const collection: "in" | "out" | "" = collectionParam === "in" || collectionPara
 const genre = Astro.url.searchParams.getAll("genre");
 const year = Astro.url.searchParams.getAll("year").map(Number).filter((y) => !Number.isNaN(y));
 const minRating = Astro.url.searchParams.get("min_rating") ?? "";
+const kindParam = Astro.url.searchParams.get("credit_kind");
+const creditKind: "movie" | "series" | undefined = kindParam === "movie" || kindParam === "series" ? kindParam : undefined;
+const creditJob = Astro.url.searchParams.get("credit_job") || undefined;
 
 if (!personId) {
   return new Response(null, { status: 400 });
@@ -20,7 +24,7 @@ if (!personId) {
 
 let person: Awaited<ReturnType<typeof api.media.getPerson>>;
 try {
-  person = await api.media.getPerson(personId, page, token, { collection, genre, year, minRating });
+  person = await api.media.getPerson(personId, page, token, { collection, genre, year, minRating, creditKind, creditJob });
 } catch {
   return new Response(null, { status: 500 });
 }
@@ -32,9 +36,11 @@ const credits = person.credits || [];
   {credits.map((item) => (
     <div class="flex flex-col gap-1">
       <MediaCard item={item as unknown as MediaItem} />
-      {item.character && (
+      {item.jobs && item.jobs.length > 0 ? (
+        <p class="text-xs text-zinc-500 truncate px-1">{[...new Set(item.jobs.map(crewJobLabel))].join(" · ")}</p>
+      ) : item.character ? (
         <p class="text-xs text-zinc-500 truncate px-1">{m.person_as_character({ character: item.character })}</p>
-      )}
+      ) : null}
     </div>
   ))}
 </div>
