@@ -200,24 +200,27 @@ async def get_position_maps(
 
 async def canonical_pairs_for_display_season(
     db: AsyncSession, series_tmdb_id: int, order_key: str | None, display_season: int,
+    through_episode: int | None = None,
 ) -> set[tuple[int, int]]:
     """The canonical (season, episode) pairs a non-aired order groups into the
     given *display* season - what a bulk season action (collect/watch a season)
     needs to translate its target. Empty for aired order or an order whose
-    positions haven't been built yet."""
+    positions haven't been built yet. With through_episode, only the pairs up
+    to and including that display episode."""
     key = normalize_order_key(order_key)
     if is_aired_order(key):
         return set()
-    rows = (await db.execute(
-        select(
-            ShowEpisodePosition.tmdb_season_number,
-            ShowEpisodePosition.tmdb_episode_number,
-        ).where(
-            ShowEpisodePosition.series_tmdb_id == series_tmdb_id,
-            ShowEpisodePosition.order_key == key,
-            ShowEpisodePosition.display_season == display_season,
-        )
-    )).all()
+    stmt = select(
+        ShowEpisodePosition.tmdb_season_number,
+        ShowEpisodePosition.tmdb_episode_number,
+    ).where(
+        ShowEpisodePosition.series_tmdb_id == series_tmdb_id,
+        ShowEpisodePosition.order_key == key,
+        ShowEpisodePosition.display_season == display_season,
+    )
+    if through_episode is not None:
+        stmt = stmt.where(ShowEpisodePosition.display_episode <= through_episode)
+    rows = (await db.execute(stmt)).all()
     return {(s, e) for s, e in rows}
 
 

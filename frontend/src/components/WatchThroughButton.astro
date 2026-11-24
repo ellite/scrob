@@ -1,0 +1,14 @@
+---
+import { m } from "../paraglide/messages.js";
+
+interface Props { seriesId: number; season: number; episode: number; episodeOrder?: string; tvdbOnly?: boolean; tvdbId?: number | null; }
+const { seriesId, season, episode, episodeOrder = "tmdb", tvdbOnly = false, tvdbId = null } = Astro.props;
+---
+<div data-card data-tvdb-only={String(tvdbOnly)} class="mt-3">
+  <button type="button" data-watch-through data-series-id={seriesId} data-season={season}
+    data-episode={episode} data-episode-order={episodeOrder} data-tvdb-id={tvdbId ?? undefined}
+    class="px-3 py-2 text-sm font-semibold rounded-xl border border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-blue-500 cursor-pointer">
+    {m.watch_through_button()}
+  </button>
+  <p class="mt-1 text-xs text-zinc-400">{m.watch_through_hint()}</p>
+</div>
