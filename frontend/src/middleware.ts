@@ -118,6 +118,25 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
   };
 
+  // The user lookup, the session renewal and the settings each need only the token, not one
+  // another's answer, so they are asked together instead of one after the other: three backend
+  // round trips in a row were the floor under the first byte of every page. Each answer is used
+  // where it was before; a request whose token turns out to be bad has made two calls it did not
+  // need (the backend answers them 401).
+  const isPageLoad =
+    context.request.method === "GET" &&
+    !isStaticAsset &&
+    !pathname.startsWith("/api/") &&
+    (context.request.headers.get("accept") ?? "").includes("text/html");
+  const renewal = token && isPageLoad ? api.auth.renewSession(token) : null;
+  const settingsLookup =
+    token && !isStaticAsset && !pathname.startsWith("/api/")
+      ? api.auth.getSettings(token).catch(() => undefined)
+      : null;
+  // Handled at once so that one nobody awaits (the user lookup failed first) is not an
+  // unhandled rejection; the await below still sees the failure.
+  renewal?.catch(() => {});
+
   if (token) {
     try {
       // Verify token and get user info
@@ -128,14 +147,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
       // Sliding session: on a page load, swap the token for one with a fresh
       // expiry and re-set the cookie, so an active user never gets logged out.
       // Best effort - a failure here must never break the page.
-      const isPageLoad =
-        context.request.method === "GET" &&
-        !isStaticAsset &&
-        !pathname.startsWith("/api/") &&
-        (context.request.headers.get("accept") ?? "").includes("text/html");
-      if (isPageLoad) {
+      if (renewal) {
         try {
-          const renewed = await api.auth.renewSession(token);
+          const renewed = await renewal;
           if (renewed.access_token && renewed.expires_in) {
             context.cookies.set("token", renewed.access_token, {
               path: "/",
@@ -188,8 +202,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // Resolve the viewer's settings once per page (reused by the layout and the
   // pages that need them, e.g. the RPDB rating-poster toggle - #377). One
   // failed lookup just leaves the normal artwork and session intact.
-  if (context.locals.user && token && !isStaticAsset && !pathname.startsWith('/api/')) {
-    context.locals.settings = await api.auth.getSettings(token).catch(() => undefined);
+  if (context.locals.user && settingsLookup) {
+    context.locals.settings = await settingsLookup;
     context.locals.hasRpdbKey = !!context.locals.settings?.has_rpdb_key;
   }
 
