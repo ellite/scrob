@@ -1,0 +1,190 @@
+---
+import Base from "../layouts/Base.astro";
+import { m } from "../paraglide/messages.js";
+
+const { token } = Astro.locals;
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<Base title={m.nav_diagnostics()}>
+  <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
+
+  <div class="max-w-4xl mx-auto">
+    <h1 class="page-title mb-2">{m.nav_diagnostics()}</h1>
+    <p class="text-zinc-500 mb-8">{m.diag_intro()}</p>
+
+    <p id="diag-error" class="hidden text-red-400 text-sm mb-4"></p>
+    <p id="diag-empty" class="hidden text-zinc-500 text-sm">{m.diag_empty()}</p>
+    <div id="diag-jobs" class="space-y-3"></div>
+  </div>
+</Base>
+
+<script>
+  import { formatDateTime, formatNumber } from "../lib/format";
+  import { watchSourceLabel } from "../lib/media-format";
+  import { parseServerTime } from "../lib/syncTime";
+  import { describeSyncWarnings } from "../lib/syncWarnings";
+  import { m } from "../paraglide/messages.js";
+
+  type SyncJob = {
+    id: number;
+    source: string;
+    job_type: string;
+    status: string;
+    current_step: string | null;
+    total_items: number;
+    processed_items: number;
+    errors: number;
+    error_message: string | null;
+    warnings: unknown[] | null;
+    created_at: string;
+    updated_at: string;
+  };
+
+  const token = (document.getElementById("app-data") as HTMLElement).dataset.token ?? "";
+  const list = document.getElementById("diag-jobs") as HTMLElement;
+  const empty = document.getElementById("diag-empty") as HTMLElement;
+  const errorEl = document.getElementById("diag-error") as HTMLElement;
+  const POLL_MS = 5000;
+  const IDLE_POLL_MS = 60000;
+  let inFlight = false;
+  let anyActive = true;
+  let lastOpenedJobId: string | null = null;
+
+  const STATUS: Record<string, { label: () => string; className: string }> = {
+    completed: { label: m.diag_status_completed, className: "text-emerald-400" },
+    failed: { label: m.diag_status_failed, className: "text-red-400" },
+    running: { label: m.diag_status_running, className: "text-blue-400" },
+    pending: { label: m.diag_status_pending, className: "text-zinc-400" },
+    cancelled: { label: m.diag_status_cancelled, className: "text-zinc-500" },
+  };
+
+  // Unknown job types are shown as the backend names them.
+  const JOB_TYPE: Record<string, () => string> = {
+    pull: m.diag_type_pull,
+    push: m.diag_type_push,
+    import: m.diag_type_import,
+    heal: m.diag_type_heal,
+    episode_order: m.diag_type_episode_order,
+    episode_order_bulk: m.diag_type_episode_order_bulk,
+  };
+
+  function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string) {
+    const node = document.createElement(tag);
+    node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function formatTime(value: string): string {
+    return formatDateTime(parseServerTime(value), { dateStyle: "short", timeStyle: "short" });
+  }
+
+  function renderJob(job: SyncJob, openJobIds: Set<string>): HTMLElement {
+    const card = el("div", "bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3");
+
+    const status = STATUS[job.status];
+    const head = el("div", "flex items-center justify-between gap-3");
+    head.append(
+      el("span", "font-semibold text-zinc-100 min-w-0 break-words", m.diag_job_title({
+        source: watchSourceLabel(job.source) ?? job.source,
+        type: JOB_TYPE[job.job_type]?.() ?? job.job_type,
+      })),
+      el("span", `text-sm font-semibold shrink-0 ${status?.className ?? "text-zinc-400"}`, status?.label() ?? job.status),
+    );
+    card.append(head);
+
+    const meta = [m.diag_started({ time: formatTime(job.created_at) }), m.diag_updated({ time: formatTime(job.updated_at) })];
+    if (job.current_step) meta.push(job.current_step);
+    if (job.errors > 0) meta.push(m.diag_errors({ count: job.errors }));
+    card.append(el("p", "text-xs text-zinc-500 mt-1", meta.join(" · ")));
+
+    if (job.total_items > 0) {
+      const pct = Math.min(100, Math.round((job.processed_items / job.total_items) * 100));
+      const bar = el("div", "h-1.5 bg-zinc-800 rounded-full mt-2 overflow-hidden");
+      bar.setAttribute("role", "progressbar");
+      bar.setAttribute("aria-valuemin", "0");
+      bar.setAttribute("aria-valuemax", "100");
+      bar.setAttribute("aria-valuenow", String(pct));
+      const fill = el("div", "h-full bg-blue-500");
+      fill.style.width = `${pct}%`;
+      bar.append(fill);
+      card.append(bar, el("p", "text-xs text-zinc-500 mt-1", m.diag_progress({ processed: formatNumber(job.processed_items), total: formatNumber(job.total_items) })));
+    }
+
+    if (job.error_message) {
+      card.append(el("p", "text-sm text-red-400 mt-2 whitespace-pre-wrap break-words", job.error_message));
+    }
+
+    if (job.warnings && job.warnings.length > 0) {
+      const details = el("details", "mt-2 text-xs text-amber-400");
+      details.dataset.jobId = String(job.id);
+      details.open = openJobIds.has(String(job.id));
+      // Count what is listed (grouped lines), and say how many items sit behind
+      // them when episodes were grouped, like the warning banners on /connections.
+      const lines = describeSyncWarnings(job.warnings, m);
+      let summary = m.diag_warnings_count({ count: lines.length });
+      if (lines.length !== job.warnings.length) summary += ` (${m.diag_warnings_total({ count: job.warnings.length })})`;
+      details.append(el("summary", "cursor-pointer", summary));
+      for (const text of lines) {
+        details.append(el("p", "mt-1 whitespace-pre-wrap break-words text-zinc-400", text));
+      }
+      card.append(details);
+    }
+
+    return card;
+  }
+
+  async function refresh() {
+    // Never stack requests: a slow answer must not be overtaken by the next poll.
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      const res = await fetch("/api/proxy/sync/status", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const jobs: SyncJob[] = await res.json();
+      errorEl.classList.add("hidden");
+      empty.classList.toggle("hidden", jobs.length > 0);
+      // Every poll rebuilds the cards; carry over the expanded warnings list. If a
+      // click lands between the fetch and the accordion's toggle handler, two can
+      // be open here - keep only the one opened last.
+      const openIds = [...list.querySelectorAll<HTMLDetailsElement>("details[open][data-job-id]")].map((d) => d.dataset.jobId!);
+      const keepId = lastOpenedJobId && openIds.includes(lastOpenedJobId) ? lastOpenedJobId : openIds[0];
+      const openJobIds = new Set(keepId ? [keepId] : []);
+      list.replaceChildren(...jobs.map((job) => renderJob(job, openJobIds)));
+      anyActive = jobs.some((job) => job.status === "running" || job.status === "pending");
+    } catch (err) {
+      errorEl.textContent = m.diag_load_failed({ error: err instanceof Error ? err.message : String(err) });
+      errorEl.classList.remove("hidden");
+    } finally {
+      inFlight = false;
+    }
+  }
+
+  // Poll quickly while a job is running or pending, rarely otherwise. Hidden tabs
+  // skip the request and catch up as soon as they are visible again.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  async function tick() {
+    if (!document.hidden) await refresh();
+    clearTimeout(timer);
+    timer = setTimeout(tick, anyActive ? POLL_MS : IDLE_POLL_MS);
+  }
+  function restart() {
+    clearTimeout(timer);
+    tick();
+  }
+
+  // Accordion: opening one warnings list closes the others. "toggle" doesn't
+  // bubble, hence the capture phase.
+  list.addEventListener("toggle", (event) => {
+    const opened = event.target;
+    if (!(opened instanceof HTMLDetailsElement) || !opened.open) return;
+    lastOpenedJobId = opened.dataset.jobId ?? null;
+    for (const other of list.querySelectorAll<HTMLDetailsElement>("details[open]")) {
+      if (other !== opened) other.open = false;
+    }
+  }, true);
+
+  restart();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) restart(); });
+</script>
