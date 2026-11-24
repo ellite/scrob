@@ -727,6 +727,29 @@
   "common_top_cast": "Top Cast",
   "castcrew_cast": "Cast",
   "castcrew_crew": "Crew",
+  "castcrew_show_full_crew": "Show full crew",
+  "castcrew_back_to_cards": "Back to cards",
+  "castcrew_search_label": "Search crew by name or role",
+  "castcrew_search_placeholder": "Search names or roles",
+  "castcrew_list_label": "Full crew list",
+  "castcrew_no_matches": "No crew matches your search.",
+  "castcrew_people_count": [
+    {
+      "declarations": [
+        "input count",
+        "input formatted",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{formatted} person",
+        "countPlural=other": "{formatted} people",
+        "countPlural=*": "{formatted} people"
+      }
+    }
+  ],
   "heatmap_not_rated": "not rated",
   "media_trailer": "Trailer",
   "tmdb_collection_appearances": [

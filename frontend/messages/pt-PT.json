@@ -727,6 +727,29 @@
   "common_top_cast": "Elenco principal",
   "castcrew_cast": "Elenco",
   "castcrew_crew": "Equipa",
+  "castcrew_show_full_crew": "Mostrar toda a equipa",
+  "castcrew_back_to_cards": "Voltar aos cartões",
+  "castcrew_search_label": "Pesquisar na equipa por nome ou função",
+  "castcrew_search_placeholder": "Pesquisar nomes ou funções",
+  "castcrew_list_label": "Lista completa da equipa",
+  "castcrew_no_matches": "Nenhum elemento da equipa corresponde à pesquisa.",
+  "castcrew_people_count": [
+    {
+      "declarations": [
+        "input count",
+        "input formatted",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{formatted} pessoa",
+        "countPlural=other": "{formatted} pessoas",
+        "countPlural=*": "{formatted} pessoas"
+      }
+    }
+  ],
   "heatmap_not_rated": "sem classificação",
   "media_trailer": "Trailer",
   "tmdb_collection_appearances": [

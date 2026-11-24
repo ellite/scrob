@@ -727,6 +727,29 @@
   "common_top_cast": "Têtes d’affiche",
   "castcrew_cast": "Distribution",
   "castcrew_crew": "Équipe technique",
+  "castcrew_show_full_crew": "Afficher toute l’équipe",
+  "castcrew_back_to_cards": "Retour aux cartes",
+  "castcrew_search_label": "Rechercher dans l’équipe par nom ou fonction",
+  "castcrew_search_placeholder": "Rechercher un nom ou une fonction",
+  "castcrew_list_label": "Liste complète de l’équipe",
+  "castcrew_no_matches": "Aucun membre de l’équipe ne correspond à votre recherche.",
+  "castcrew_people_count": [
+    {
+      "declarations": [
+        "input count",
+        "input formatted",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{formatted} personne",
+        "countPlural=other": "{formatted} personnes",
+        "countPlural=*": "{formatted} personnes"
+      }
+    }
+  ],
   "heatmap_not_rated": "non noté",
   "media_trailer": "Bande-annonce",
   "tmdb_collection_appearances": [
